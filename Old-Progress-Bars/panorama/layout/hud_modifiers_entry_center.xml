@@ -1,0 +1,35 @@
+<!-- xml reconstructed by Source 2 Viewer 17.0.0.0 - https://valveresourceformat.github.io -->
+<root>
+	<styles>
+		<include src="s2r://panorama/styles/citadel_base_styles.vcss_c" />
+		<include src="s2r://panorama/styles/hud_ability_modifier_shared.vcss_c" />
+		<include src="s2r://panorama/styles/hud_modifiers_center.vcss_c" />
+		<include src="s2r://panorama/styles/hud_modifiers_icon.vcss_c" />
+	</styles>
+	<CitadelHudModifiers_Entry hittest="false" hittest-children="false">
+		<Image id="item_icon" />
+		<Panel id="channel_and_name">
+			<Panel id="ExtraInfo">
+				<Label class="UrnDescription" text="#modifier_citadel_holding_golden_idol" />
+				<Label class="UrnWarning" text="#modifier_citadel_holding_golden_idol_visible" />
+			</Panel>
+			<Panel id="bar_text_container">
+				<Label class="modifier_name" text="{s:modifier_name}" />
+				<Panel id="hint_container">
+					<Panel class="hint">
+						<CitadelBinding id="CancelAbilityBindingComponent" action="CancelAbility" />
+						<Label id="ExtraSlash" text="/" />
+						<CitadelBinding id="ExtraCancelAbilityBindingComponent" />
+						<Label class="action" html="true" text="#Cancel" />
+					</Panel>
+				</Panel>
+			</Panel>
+			<Panel id="bar_container">
+				<Panel id="bar_bg" />
+				<Panel id="modifier_progress_container">
+					<Panel id="modifier_progress" context="progress" progress="fill_right" start_value="0" end_value="1" />
+				</Panel>
+			</Panel>
+		</Panel>
+	</CitadelHudModifiers_Entry>
+</root>

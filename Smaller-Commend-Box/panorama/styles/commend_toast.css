@@ -1,0 +1,156 @@
+/* Prettified by Source 2 Viewer 17.0.0.0 - https://valveresourceformat.github.io */
+
+.CommendToast
+{
+	height: 45px;
+	width: 280px;
+	horizontal-align: right;
+	box-shadow: 4px 4px 12px #00000044;
+	margin-bottom: 8px;
+	padding: 0px 10px 0px 0px;
+	border-radius: 5px 0px 0px 5px;
+	flow-children: right;
+	background-image: url("s2r://panorama/images/post_game/commend_bg_psd.vtex");
+	background-size: 100% 100%;
+	background-repeat: no-repeat;
+	animation-name: CommendGroove;
+	animation-duration: 0.5s;
+	animation-iteration-count: 1;
+}
+
+#HeroImage
+{
+	height: 100%;
+	width: height-percentage( 100% );
+	background-color: #00000090;
+}
+
+#CommendLabel
+{
+	vertical-align: middle;
+	margin: 0px 8px;
+	width: fill-parent-flow( 1.0 );
+	max-height: 100%;
+	text-overflow: shrink;
+	font-size: 16px;
+	font-family: oracle;
+	color: offWhite;
+}
+
+#ReturnButton
+{
+	width: 34px;
+	height: 34px;
+	background-color: #ffffff04;
+	border-radius: 50%;
+	pre-transform-scale2d: 0.9;
+	tooltip-position: bottom;
+	vertical-align: middle;
+	margin-right: 6px;
+	transition-property: brightness, pre-transform-scale2d;
+	transition-duration: 0.08s;
+	transition-timing-function: ease-in-out;
+}
+
+#ReturnButton:hover
+{
+	pre-transform-scale2d: 1;
+	brightness: 1.3;
+}
+
+#ReturnButton:active
+{
+	pre-transform-scale2d: 0.9;
+	brightness: 1.3;
+}
+
+#ReturnButton .ReturnIcon
+{
+	horizontal-align: center;
+	vertical-align: middle;
+	width: 20px;
+	height: 20px;
+	background-image: url("s2r://panorama/images/icons/icon_thumbsup.vsvg");
+	background-repeat: no-repeat;
+	background-size: contain;
+	wash-color: offWhite;
+}
+
+.AlreadyCommended #ReturnButton
+{
+	visibility: collapse;
+}
+
+#DismissButton
+{
+	width: 26px;
+	height: 26px;
+	vertical-align: middle;
+	background-size: auto 70%;
+	background-position: center;
+	background-repeat: no-repeat;
+	background-image: url("s2r://panorama/images/icons/icon_x.vsvg");
+	opacity: 0.5;
+	wash-color: copperFlat;
+	pre-transform-scale2d: 0.9;
+	transition-property: brightness, pre-transform-scale2d;
+	transition-duration: 0.08s;
+	transition-timing-function: ease-in-out;
+}
+
+#DismissButton:hover
+{
+	pre-transform-scale2d: 1;
+	brightness: 1.3;
+}
+
+#DismissButton:active
+{
+	pre-transform-scale2d: 0.9;
+	brightness: 1.3;
+}
+
+@keyframes 'CommendGroove'
+{
+	0%
+	{
+		transform: rotateZ(-3deg);
+	}
+	
+	25%
+	{
+		transform: rotateZ(-3deg);
+	}
+	
+	26%
+	{
+		transform: rotateZ(2deg);
+	}
+	
+	50%
+	{
+		transform: rotateZ(2deg);
+	}
+	
+	51%
+	{
+		transform: rotateZ(-1deg);
+	}
+	
+	75%
+	{
+		transform: rotateZ(-1deg);
+	}
+	
+	76%
+	{
+		transform: rotateZ(0deg);
+	}
+	
+	100%
+	{
+		transform: rotateZ(0deg);
+	}
+	
+}
+

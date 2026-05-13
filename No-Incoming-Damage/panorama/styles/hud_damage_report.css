@@ -1,0 +1,29 @@
+/* Prettified by Source 2 Viewer 17.0.0.0 - https://valveresourceformat.github.io */
+
+@import url("s2r://panorama/styles/citadel_base_styles.vcss_c");
+@import url("s2r://panorama/styles/ability_icons.vcss_c");
+.HudDamageReport,#CitadelHudDamageReport,CitadelHudDamageReport
+{
+	ui-scale: 0% !important;
+	opacity: 0 !important;
+	visibility: collapse !important;
+	width: 0px !important;
+	height: 0px !important;
+	transform: translate3d(9999px, 0px, 0px) !important;
+	hittest: false !important;
+	pointer-events: none !important;
+}
+
+.HudDamageReport.ShowAlways,.HudDamageReport.Compact,.HudDamageReport.gScoreboardOpen,.dead .HudDamageReport,.HudDamageReport.ShowAlways:not(.Hidden),.HudDamageReport.gScoreboardOpen:not(.Hidden),.dead .HudDamageReport:not(.Hidden),.spec_mode .HudDamageReport:not(.Hidden),.connectedToHeroTesting .HudDamageReport.gScoreboardOpen
+{
+	visibility: collapse !important;
+	opacity: 0 !important;
+	ui-scale: 0% !important;
+}
+
+.HudDamageReport *
+{
+	visibility: collapse !important;
+	opacity: 0 !important;
+}
+
