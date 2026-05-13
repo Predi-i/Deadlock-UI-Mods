@@ -1,0 +1,89 @@
+/* Prettified by Source 2 Viewer 17.0.0.0 - https://valveresourceformat.github.io */
+
+CitadelMatchHistoryBlockSmall
+{
+	width: 60px;
+	height: 100%;
+	margin: 0px 5px;
+	border-radius: 4px;
+	background-color: #0c1411;
+	background-image: url("s2r://panorama/images/predi.vtex");
+	background-size: cover;
+	background-position: center;
+	background-repeat: no-repeat;
+	border: 2px solid #00401C;
+	overflow: clip;
+	flow-children: none;
+}
+
+CitadelMatchHistoryBlockSmall.loss
+{
+	background-color: #170d0d;
+	background-image: url("s2r://panorama/images/dawhat.vtex");
+	border: 2px solid #430001;
+}
+
+CitadelMatchHistoryBlockSmall:hover
+{
+	brightness: 1.3;
+}
+
+CitadelMatchHistoryBlockSmall .teamStripe
+{
+	visibility: collapse;
+}
+
+CitadelMatchHistoryBlockSmall .gameResult,CitadelMatchHistoryBlockSmall .gameResultShort
+{
+	width: 100%;
+	horizontal-align: center;
+	vertical-align: top;
+	margin-top: 15px;
+	font-family: oracle;
+	font-weight: bold;
+	font-size: 16px;
+	text-align: center;
+	color: #35FF8D !important;
+	text-shadow: none;
+	z-index: 10;
+}
+
+CitadelMatchHistoryBlockSmall.loss .gameResult,CitadelMatchHistoryBlockSmall.loss .gameResultShort
+{
+	color: #FF3538 !important;
+}
+
+CitadelMatchHistoryBlockSmall .heroImg
+{
+	width: 100%;
+	height: 90px;
+	margin: 0px;
+	horizontal-align: center;
+	vertical-align: bottom;
+	z-index: 0;
+	ignore-parent-flow: true;
+	opacity-brush: gradient( linear, 0% 100%, 0% 0%, from( rgba(255, 255, 255, 0.15) ), color-stop( 0.45, #ffffffff ), to( #ffffffff ) );
+}
+
+CitadelMatchHistoryBlockSmall #Overlay
+{
+	width: 100%;
+	height: 100%;
+	background-color: rgba(0,0,0, 0.85);
+	opacity: 0;
+	transition-property: opacity;
+	transition-duration: 0.15s;
+	z-index: 20;
+}
+
+CitadelMatchHistoryBlockSmall:hover #Overlay
+{
+	opacity: 1;
+}
+
+CitadelMatchHistoryBlockSmall .viewDetails
+{
+	horizontal-align: center;
+	vertical-align: middle;
+}
+
