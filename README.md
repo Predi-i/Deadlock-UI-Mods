@@ -6,7 +6,6 @@ These mods are built using the Panorama API (XML/CSS/JS) to improve overall play
 
 ## 🛠️ Included Mods
 
-### Projects
 * **[Match History Cards Redesign](https://gamebanana.com/mods/674856)** 
   A complete front-end overhaul of the match history screen. Rebuilt CSS to match a cleaner, more modern design concept. (Collaborative project).
 * **[Bridge Buff Reminder](https://gamebanana.com/mods/645941)**
