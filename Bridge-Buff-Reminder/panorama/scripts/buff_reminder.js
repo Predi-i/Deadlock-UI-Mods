@@ -1,34 +1,41 @@
 (function() {
     'use strict';
 
+    var CTX = $.GetContextPanel();
+
     var CONFIG = {
-        FIRST_ALERT: 290,       // 4:50
-        INTERVAL: 300,          // 5 Min
-        ALERT_WINDOW: 2,        
-        POLL_RATE: 0.1,         
-        POLL_RATE_IDLE: 1.0,    
+        FIRST_ALERT: 290, // 4:50
+        INTERVAL: 300, // 5 min
+        ALERT_WINDOW: 3,
+        POLL_RATE: 0.1,
+        POLL_RATE_IDLE: 1.0,
         SOUND_NAME: "BuffReminder.Alarm"
     };
 
     var State = {
+        rootPanel: null,
         clockPanel: null,
         lastAlertTime: -1
     };
 
     function getRoot() {
-        var ctx = $.GetContextPanel();
-        if (!ctx) return null;
-        var top = ctx;
-        while (top.GetParent()) { 
+        if (State.rootPanel && State.rootPanel.IsValid()) {
+            return State.rootPanel;
+        }
+
+        var top = CTX;
+        while (top && top.GetParent()) { 
             top = top.GetParent(); 
         }
-        return top.FindChildTraverse("Hud") || top;
+        
+        State.rootPanel = top.FindChildTraverse("Hud") || top;
+        return State.rootPanel;
     }
 
     function isModeIgnored(root) {
         if (!root || !root.BHasClass) return false;
         
-        if (root.BHasClass("connectedToHideout") || root.BHasClass("InHideout")) return true;
+        if (root.BHasClass("connectedToHideout") || root.BHasClass("InHideout") || root.BHasClass("connectedToHeroTesting")) return true;
         if (root.BHasClass("gamemode_streetbrawl")) return true;
         
         return false;
@@ -37,24 +44,37 @@
     function getCurrentTime(root) {
         if (!State.clockPanel || !State.clockPanel.IsValid()) {
             State.clockPanel = root.FindChildTraverse("GameTime");
-            if (!State.clockPanel) return 0;
+            if (!State.clockPanel) return null;
         }
 
         var text = State.clockPanel.text;
-        if (!text) return 0;
+        if (!text) return null;
 
         var parts = text.split(':');
-        if (parts.length !== 2) return 0;
-
-        var min = parseInt(parts[0], 10);
-        var sec = parseInt(parts[1], 10);
-
-        if (isNaN(min) || isNaN(sec)) return 0;
+        var isNegative = text.charAt(0) === '-';
         
-        return (min * 60) + sec;
+        var hours = 0, mins = 0, secs = 0;
+
+        if (parts.length === 3) {
+            hours = Math.abs(parseInt(parts[0], 10));
+            mins = parseInt(parts[1], 10);
+            secs = parseInt(parts[2], 10);
+        } else if (parts.length === 2) {
+            mins = Math.abs(parseInt(parts[0], 10));
+            secs = parseInt(parts[1], 10);
+        } else {
+            return null;
+        }
+
+        if (isNaN(hours) || isNaN(mins) || isNaN(secs)) return null;
+
+        var totalSeconds = (hours * 3600) + (mins * 60) + secs;
+        return isNegative ? -totalSeconds : totalSeconds;
     }
 
     function loop() {
+        if (!CTX || !CTX.IsValid()) return; 
+
         var root = getRoot();
 
         if (isModeIgnored(root)) {
@@ -65,7 +85,7 @@
 
         var currentTime = getCurrentTime(root);
 
-        if (currentTime === 0) {
+        if (currentTime === null) {
              $.Schedule(CONFIG.POLL_RATE, loop);
              return;
         }

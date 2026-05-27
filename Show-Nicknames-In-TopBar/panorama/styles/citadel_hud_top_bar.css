@@ -37,6 +37,7 @@ CitadelHudTopBar
     horizontal-align: center;
     text-shadow: 0px 0px 2px 3.0 #000000;
     margin-top: -17px;
+	z-index: 999;
 }
 
 .spec_mode .AlwaysPlayerName
