@@ -21,11 +21,20 @@ These mods are built using the Panorama API (XML/CSS/JS) to improve overall play
 
 ## ⚙️ Build & Installation
 
-**Note:** This repository contains the raw source code. Before installing, you must compile the mods.
+This repository contains the raw source code. To use these mods in-game, you need to compile them into `.vpk` format. I have included an automated build script to make this easy!
 
-1. **Compile Source:** Use the Dota 2 Workshop Tools or [Reduced CSDK](https://deadlockmodding.pages.dev/modding-tools/csdk-12) to compile the `.js`, `.css`, and `.xml` files.
-2. **Create VPK Structure:** After compiling, pack the files into a `.vpk` archive using Source 2 Viewer.
-3. **Deploy via Mod Manager:** Add your compiled VPK file to [Deadlock Mod Manager](https://gamebanana.com/tools/20646) or [Grimoire Mod Manager](https://gamebanana.com/tools/22583) and enable it.
+**Prerequisites:**
+You must have [Reduced CSDK 12](https://deadlockmodding.pages.dev/modding-tools/csdk-12) extracted to `C:\Reduced_CSDK_12` on your computer.
+
+**How to build:**
+1. Download or clone this repository to your PC.
+2. Navigate to the `tools` folder and run `build_mod.bat`.
+3. The script will show a list of available mods. Type the number of the mod you want to build and press Enter.
+4. The script will automatically compile and pack the mod.
+5. Grab your finished `.vpk` file from the newly created `builds/` folder!
+
+**Deployment:**
+Add your compiled `.vpk` file to [Deadlock Mod Manager](https://gamebanana.com/tools/20646) or [Grimoire Mod Manager](https://gamebanana.com/tools/22583) and enable it.
 
 ## 📜 License & Usage
 
