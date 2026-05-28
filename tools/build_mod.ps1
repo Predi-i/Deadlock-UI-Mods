@@ -212,31 +212,42 @@ while ($true) {
         Write-Host "Step 2/3: Compiling assets..." -ForegroundColor Cyan
         
         $AllowedExts = @('.xml', '.css', '.js', '.vsndevts', '.wav', '.vtex', '.vsvg')
-        $FilesToCompile = Get-ChildItem -Path $TempContent -Recurse -File | Where-Object { $_.Extension -in $AllowedExts }
+        $FilesToCompile = @(Get-ChildItem -Path $TempContent -Recurse -File | Where-Object { $_.Extension -in $AllowedExts })
         
         $errorCount = 0
         $totalFiles = $FilesToCompile.Count
-        $currentIndex = 0
 
-        foreach ($file in $FilesToCompile) {
-            $currentIndex++
+        if ($totalFiles -gt 0) {
+            $batchSize = 25
+            $batches = [math]::Ceiling($totalFiles / $batchSize)
             
-            $statusText = "  Compiling [$currentIndex/$totalFiles]: $($file.Name)"
-            $padLength = [math]::Max(0, 80 - $statusText.Length)
-            $padding = " " * $padLength
-            
-            Write-Host "`r$statusText$padding" -NoNewline -ForegroundColor Yellow
+            for ($i = 0; $i -lt $batches; $i++) {
+                $batchFiles = $FilesToCompile | Select-Object -Skip ($i * $batchSize) -First $batchSize
+                
+                $statusText = "  Compiling batch $($i + 1)/$batches ($($batchFiles.Count) files)..."
+                $padLength = [math]::Max(0, 80 - $statusText.Length)
+                $padding = " " * $padLength
+                
+                Write-Host "`r$statusText$padding" -NoNewline -ForegroundColor Yellow
 
-            $CompileOutput = & $Compiler -i $file.FullName -nop4 2>&1
-            
-            if ($LASTEXITCODE -ne 0) {
-                Write-Host "`n  [!] Error compiling: $($file.Name)" -ForegroundColor Red
-                Write-Host "      Details: $CompileOutput" -ForegroundColor DarkRed
-                $errorCount++
+                $compilerArgs = @()
+                foreach ($file in $batchFiles) {
+                    $compilerArgs += "-i"
+                    $compilerArgs += $file.FullName
+                }
+                $compilerArgs += "-nop4"
+                
+                $CompileOutput = & $Compiler @compilerArgs 2>&1
+                
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Host "`n  [!] Error compiling batch $($i + 1)" -ForegroundColor Red
+                    Write-Host "      Details: $CompileOutput" -ForegroundColor DarkRed
+                    $errorCount += $batchFiles.Count
+                }
             }
+            
+            Write-Host "`n  Done compiling $totalFiles files." -ForegroundColor Green
         }
-        
-        if ($totalFiles -gt 0) { Write-Host "`n  Done compiling $totalFiles files." -ForegroundColor Green }
 
         if ($errorCount -gt 0) {
             Write-Host "WARNING: $errorCount files failed to compile. VPK might be incomplete." -ForegroundColor Red
