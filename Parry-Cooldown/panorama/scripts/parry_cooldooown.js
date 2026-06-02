@@ -7,9 +7,11 @@
         cachedGunData: null,
         cachedGunElement: null,
         cachedInventory: null,
+        cachedBuffModifiers: null,
         customParryLabel: null,
         parryEndTime: 0,
         parryIsActive: false,
+        ignoreCurrentCycle: false,
         lastText: "",
         lastVis: ""
     };
@@ -58,6 +60,16 @@
         return false;
     }
 
+    function IsCarryingUrn(root) {
+        if (!State.cachedBuffModifiers || !State.cachedBuffModifiers.IsValid()) {
+            State.cachedBuffModifiers = root.FindChildTraverse("BuffModifiers");
+        }
+        if (!State.cachedBuffModifiers) return false;
+        
+        var idolBuffs = State.cachedBuffModifiers.FindChildrenWithClassTraverse("MODIFIER_STATE_HOLDING_IDOL");
+        return idolBuffs && idolBuffs.length > 0;
+    }
+
     function UpdateParryTimer() {
         var nextDelay = 0.0;
         try {
@@ -88,9 +100,9 @@
                 label.style.horizontalAlign = "left";
                 label.style.x = "55%";
                 label.style.y = "82px";
-                label.style.marginLeft = "-7px";
+                label.style.marginLeft = "1px";
                 label.style.width = "40px";
-                label.style.textAlign = "center";
+                label.style.textAlign = "left";
                 label.style.fontSize = "18px";
                 label.style.fontWeight = "bold";
                 label.style.color = "#e75b5b";
@@ -113,6 +125,7 @@
 
                 if (!State.parryIsActive) {
                     State.parryIsActive = true;
+                    State.ignoreCurrentCycle = false;
                     State.parryEndTime = now + (maxCd * 1000);
                 } else if (now >= State.parryEndTime) {
                     if ((now - State.parryEndTime) > 150) {
@@ -120,9 +133,13 @@
                     }
                 }
 
+                if (IsCarryingUrn(root)) {
+                    State.ignoreCurrentCycle = true;
+                }
+
                 var timeLeft = (State.parryEndTime - now) / 1000.0;
                 
-                if (timeLeft <= 0) {
+                if (timeLeft <= 0 || State.ignoreCurrentCycle) {
                     if (State.lastVis !== "collapse") {
                         label.style.visibility = "collapse";
                         State.lastVis = "collapse";
