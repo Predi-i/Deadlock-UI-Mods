@@ -1,0 +1,162 @@
+(function() {
+    const BASE_PARRY_COOLDOWN = 4.5;
+    const REBUTTAL_PARRY_COOLDOWN = 2.75;
+
+    var State = {
+        cachedRoot: null,
+        cachedGunData: null,
+        cachedGunElement: null,
+        cachedInventory: null,
+        customParryLabel: null,
+        parryEndTime: 0,
+        parryIsActive: false,
+        lastText: "",
+        lastVis: ""
+    };
+
+    function GetUIRoot() {
+        if (State.cachedRoot && State.cachedRoot.IsValid()) {
+            return State.cachedRoot;
+        }
+        var root = $.GetContextPanel();
+        while (root && root.GetParent && root.GetParent()) {
+            root = root.GetParent();
+        }
+        State.cachedRoot = root || null;
+        return State.cachedRoot;
+    }
+
+    function HasRebuttal(root) {
+        if (!State.cachedInventory || !State.cachedInventory.IsValid()) {
+            State.cachedInventory = root.FindChildTraverse("StatsAndModsContainer");
+        }
+        if (!State.cachedInventory) return false;
+        
+        var rebuttals = State.cachedInventory.FindChildrenWithClassTraverse("parryRebuttal");
+        if (!rebuttals || rebuttals.length === 0) return false;
+
+        for (var i = 0; i < rebuttals.length; i++) {
+            var el = rebuttals[i];
+            
+            if (el.BHasClass("recentPurchase") || el.BHasClass("QuickbuyItem")) {
+                continue;
+            }
+            
+            var isValid = true;
+            var curr = el.GetParent();
+            while (curr && curr.IsValid() && curr !== State.cachedInventory) {
+                var pid = curr.id;
+                if (pid === "CitadelHudQuickbuy" || pid === "QuickBuyQueueContainer" || pid === "Shop" || pid === "RecentPurchasesPanel") {
+                    isValid = false;
+                    break;
+                }
+                curr = curr.GetParent();
+            }
+            
+            if (isValid) return true;
+        }
+        return false;
+    }
+
+    function UpdateParryTimer() {
+        var nextDelay = 0.0;
+        try {
+            var root = GetUIRoot();
+            if (!root) {
+                nextDelay = 1.0;
+                return;
+            }
+
+            var gunData = State.cachedGunData;
+            if (!gunData || !gunData.IsValid()) {
+                gunData = root.FindChildTraverse("gun_data");
+                State.cachedGunData = gunData || null;
+                if (gunData) {
+                    State.cachedGunElement = gunData.GetParent();
+                }
+            }
+
+            if (!gunData) {
+                nextDelay = 1.0;
+                return;
+            }
+
+            var label = State.customParryLabel;
+            if (!label || !label.IsValid()) {
+                label = $.CreatePanel("Label", gunData, "CustomParryTimerText");
+                label.style.verticalAlign = "center";
+                label.style.horizontalAlign = "left";
+                label.style.x = "55%";
+                label.style.y = "82px";
+                label.style.marginLeft = "-7px";
+                label.style.width = "40px";
+                label.style.textAlign = "center";
+                label.style.fontSize = "18px";
+                label.style.fontWeight = "bold";
+                label.style.color = "#e75b5b";
+                label.style.textShadow = "0px 0px 4px #000000, 0px 1px 3px #000000";
+                label.style.visibility = "collapse";
+                label.style.zIndex = "100";
+                State.customParryLabel = label;
+            }
+
+            var hasCooldown = false;
+            if (State.cachedGunElement && State.cachedGunElement.IsValid()) {
+                hasCooldown = State.cachedGunElement.BHasClass("parry_on_cooldown");
+            }
+            
+            var now = Date.now();
+
+            if (hasCooldown) {
+                nextDelay = 0.0;
+                var maxCd = HasRebuttal(root) ? REBUTTAL_PARRY_COOLDOWN : BASE_PARRY_COOLDOWN;
+
+                if (!State.parryIsActive) {
+                    State.parryIsActive = true;
+                    State.parryEndTime = now + (maxCd * 1000);
+                } else if (now >= State.parryEndTime) {
+                    if ((now - State.parryEndTime) > 150) {
+                        State.parryEndTime = State.parryEndTime + (maxCd * 1000);
+                    }
+                }
+
+                var timeLeft = (State.parryEndTime - now) / 1000.0;
+                
+                if (timeLeft <= 0) {
+                    if (State.lastVis !== "collapse") {
+                        label.style.visibility = "collapse";
+                        State.lastVis = "collapse";
+                    }
+                } else {
+                    var displayTime = timeLeft.toFixed(1);
+                    if (displayTime === "0.0" && timeLeft > 0) displayTime = "0.1";
+
+                    if (State.lastText !== displayTime) {
+                        label.text = displayTime;
+                        State.lastText = displayTime;
+                    }
+
+                    if (State.lastVis !== "visible") {
+                        label.style.visibility = "visible";
+                        State.lastVis = "visible";
+                    }
+                }
+            } else {
+                nextDelay = 0.03;
+                if (State.parryIsActive) {
+                    State.parryIsActive = false;
+                }
+
+                if (State.lastVis !== "collapse") {
+                    label.style.visibility = "collapse";
+                    State.lastVis = "collapse";
+                }
+            }
+        } catch (e) {
+        } finally {
+            $.Schedule(nextDelay, UpdateParryTimer);
+        }
+    }
+
+    $.Schedule(1.0, UpdateParryTimer);
+})();
