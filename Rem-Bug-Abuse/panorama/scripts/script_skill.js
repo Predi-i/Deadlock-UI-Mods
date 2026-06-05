@@ -4,16 +4,14 @@
         castHoldTime: 0.1,
         delayAfterCast1: 0.4,
         delayAfterUpgrade: 0.4,
-        loopInterval: 0.05,
-        toggleKey: "key_h",
-        holdTimeout: 0.5
+        toggleKey: "key_h"
     };
 
     var State = {
-        lastPressedTime: 0,
         cachedRoot: null,
         isExecutingCombo: false,
-        comboStep: 0 
+        comboStep: 0,
+        isRich: false
     };
 
     function GetUIRoot() {
@@ -61,8 +59,11 @@
             return;
         }
 
-        var tier1Pip = slot3.FindChildTraverse("AbilityUnlock1");
-        if (!tier1Pip || !tier1Pip.IsValid()) {
+        var targetPip = State.isRich 
+            ? slot3.FindChildTraverse("AbilityUnlock3") 
+            : slot3.FindChildTraverse("AbilityUnlock1");
+
+        if (!targetPip || !targetPip.IsValid()) {
             ResetCombo();
             return;
         }
@@ -78,8 +79,8 @@
                 break;
 
             case 2:
-                if (tier1Pip.BHasClass("canAffordUpgrade")) {
-                    SafeClick(tier1Pip);
+                if (targetPip.BHasClass("canAffordUpgrade")) {
+                    SafeClick(targetPip);
                     State.comboStep = 3;
                     $.Schedule(Config.delayAfterUpgrade, ExecuteComboStep);
                 } else {
@@ -88,10 +89,10 @@
                 break;
 
             case 3:
-                if (tier1Pip.BHasClass("canUndo")) {
-                    SafeClick(tier1Pip);
+                if (targetPip.BHasClass("canUndo")) {
+                    SafeClick(targetPip);
                 } else {
-                    SafeClick(tier1Pip);
+                    SafeClick(targetPip);
                 }
                 ResetCombo();
                 break;
@@ -102,46 +103,32 @@
         }
     }
 
-    function AutoUpgradeCycle() {
-        try {
-            var root = GetUIRoot();
-            if (!root) return;
-
-            var slot3 = root.FindChildTraverse("slot_signature_3");
-            if (!slot3) return;
-
-            var tier2Pip = slot3.FindChildTraverse("AbilityUnlock2");
-            if (tier2Pip && tier2Pip.IsValid() && tier2Pip.BHasClass("canUndo")) {
-                SafeClick(tier2Pip);
-            }
-
-            if (State.isExecutingCombo) return;
-
-            var tier1Pip = slot3.FindChildTraverse("AbilityUnlock1");
-            if (!tier1Pip || !tier1Pip.IsValid()) return;
-
-            var timeSinceLastPress = (Date.now() - State.lastPressedTime) / 1000;
-            var isKeyHeld = timeSinceLastPress < Config.holdTimeout;
-
-            if (isKeyHeld && tier1Pip.BHasClass("canAffordUpgrade")) {
-                State.isExecutingCombo = true;
-                State.comboStep = 1;
-                ExecuteComboStep();
-            }
-        } catch (e) {
-            ResetCombo();
-        } finally {
-            $.Schedule(Config.loopInterval, AutoUpgradeCycle);
-        }
-    }
-
     var panel = $.GetContextPanel();
     function OnKeyPress() {
-        State.lastPressedTime = Date.now();
+        if (State.isExecutingCombo) return;
+
+        var root = GetUIRoot();
+        if (!root) return;
+
+        var slot3 = root.FindChildTraverse("slot_signature_3");
+        if (!slot3) return;
+
+        var tier1Pip = slot3.FindChildTraverse("AbilityUnlock1");
+        var tier3Pip = slot3.FindChildTraverse("AbilityUnlock3");
+
+        if (tier3Pip && tier3Pip.IsValid() && tier3Pip.BHasClass("canAffordUpgrade")) {
+            State.isRich = true;
+            State.isExecutingCombo = true;
+            State.comboStep = 1;
+            ExecuteComboStep();
+        } else if (tier1Pip && tier1Pip.IsValid() && tier1Pip.BHasClass("canAffordUpgrade")) {
+            State.isRich = false;
+            State.isExecutingCombo = true;
+            State.comboStep = 1;
+            ExecuteComboStep();
+        }
     }
 
     $.RegisterKeyBind(panel, Config.toggleKey, OnKeyPress);
     $.RegisterKeyBind("", Config.toggleKey, OnKeyPress);
-
-    $.Schedule(1.0, AutoUpgradeCycle);
 })();
