@@ -1,14 +1,16 @@
 (function() {
     // Settings
     var Config = {
-        castHoldTime: 0.1,       // Key hold duration for ability cast (0.1s because why not)
-        delayAfterCast1: 0.4,    // Pause after first cast before upgrading
-        delayAfterUpgrade: 0.4,  // Pause after upgrade before undoing
-        delayAfterUndo: 0.4,     // Pause after undo before second cast
-        loopInterval: 0.05       // Check frequency for instant T2 undo
+        castHoldTime: 0.1,
+        delayAfterCast1: 0.4,
+        delayAfterUpgrade: 0.4,
+        loopInterval: 0.05,
+        toggleKey: "key_h",
+        holdTimeout: 0.5
     };
 
     var State = {
+        lastPressedTime: 0,
         cachedRoot: null,
         isExecutingCombo: false,
         comboStep: 0 
@@ -88,21 +90,10 @@
             case 3:
                 if (tier1Pip.BHasClass("canUndo")) {
                     SafeClick(tier1Pip);
-                    State.comboStep = 4;
-                    $.Schedule(Config.delayAfterUndo, ExecuteComboStep);
                 } else {
                     SafeClick(tier1Pip);
-                    State.comboStep = 4;
-                    $.Schedule(Config.delayAfterUndo, ExecuteComboStep);
                 }
-                break;
-
-            case 4:
-                $.DispatchEvent("CitadelConCommand", "+in_ability3");
-                $.Schedule(Config.castHoldTime, function() {
-                    $.DispatchEvent("CitadelConCommand", "-in_ability3");
-                    ResetCombo();
-                });
+                ResetCombo();
                 break;
 
             default:
@@ -119,7 +110,6 @@
             var slot3 = root.FindChildTraverse("slot_signature_3");
             if (!slot3) return;
 
-            // Safe Thingy
             var tier2Pip = slot3.FindChildTraverse("AbilityUnlock2");
             if (tier2Pip && tier2Pip.IsValid() && tier2Pip.BHasClass("canUndo")) {
                 SafeClick(tier2Pip);
@@ -130,7 +120,10 @@
             var tier1Pip = slot3.FindChildTraverse("AbilityUnlock1");
             if (!tier1Pip || !tier1Pip.IsValid()) return;
 
-            if (tier1Pip.BHasClass("canAffordUpgrade")) {
+            var timeSinceLastPress = (Date.now() - State.lastPressedTime) / 1000;
+            var isKeyHeld = timeSinceLastPress < Config.holdTimeout;
+
+            if (isKeyHeld && tier1Pip.BHasClass("canAffordUpgrade")) {
                 State.isExecutingCombo = true;
                 State.comboStep = 1;
                 ExecuteComboStep();
@@ -141,6 +134,14 @@
             $.Schedule(Config.loopInterval, AutoUpgradeCycle);
         }
     }
+
+    var panel = $.GetContextPanel();
+    function OnKeyPress() {
+        State.lastPressedTime = Date.now();
+    }
+
+    $.RegisterKeyBind(panel, Config.toggleKey, OnKeyPress);
+    $.RegisterKeyBind("", Config.toggleKey, OnKeyPress);
 
     $.Schedule(1.0, AutoUpgradeCycle);
 })();
