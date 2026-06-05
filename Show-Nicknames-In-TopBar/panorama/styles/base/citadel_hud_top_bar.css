@@ -3,7 +3,7 @@
 @define playerDetailsWidth: 88px;
 @define playerContainerWidth: 120px;
 @define playerDetailsMargin: 0px;
-@define idolScoreResultDisplayTime: 3.1;
+@define idolScoreResultDisplayTime: 5.1;
 CitadelHudTopBar
 {
     height: 100%;
@@ -1278,37 +1278,58 @@ ProgressBar
 
 #IdolCashInMeter
 {
-    width: 78px;
-    height: 78px;
-    border-radius: 64px;
+    width: 270px;
+    height: 114px;
     horizontal-align: middle;
-    margin-top: 130px;
+    margin-top: 120px;
     ui-scale: 120%;
+    padding: 0px 8px;
+    visibility: collapse;
     opacity-mask: url("s2r://panorama/images/main_menu/text_speckle_mask_main_psd.vtex") 0.7;
     opacity-mask-scale: 100% 200%;
+    transition-property: border, background-color;
+    transition-duration: 0.1s;
+}
+
+#IdolCashInMeter.in_range.captured,#IdolCashInMeter.in_range.capturing
+{
+    visibility: visible;
+}
+
+.gScoreboardOpen #IdolCashInMeter.in_range.captured,.gScoreboardOpen #IdolCashInMeter.in_range.capturing
+{
     visibility: collapse;
+}
+
+#IdolCashInMeter.give_up_warning,#IdolCashInMeter.gave_up
+{
+    border: 2px solid #f9ec7430;
+    border-radius: 10px;
+    background-color: #f9ec7410;
+    animation-name: Idol_Capture_Pulse;
+    animation-duration: 0.5s;
+    animation-iteration-count: 1;
 }
 
 #IdolCashInMeter.captured
 {
-    visibility: visible;
-    opacity: 0.0;
+    opacity: 0;
     animation-name: Idol_Captured;
-    animation-duration: 3s;
+    animation-duration: 5s;
     animation-iteration-count: 1;
     animation-timing-function: ease-out;
+    visibility: visible;
 }
 
 #IdolCashInMeter.capturing
 {
-    visibility: visible;
     animation-name: Idol_Capture_Pulse;
-    animation-duration: 0.8s;
+    animation-duration: 1s;
     animation-iteration-count: infinite;
     animation-direction: alternate;
 }
 
-#IdolCashInMeter.capturing.enemy
+#IdolCashInMeter.contested
 {
     animation-duration: 0.5s;
     animation-name: Idol_Capture_Enemy_Pulse;
@@ -1321,21 +1342,22 @@ ProgressBar
     animation-iteration-count: 1;
 }
 
-.gScoreboardOpen #IdolCashInMeter
-{
-    visibility: collapse;
-}
-
 #IdolCashInMeter #IdolIndicator
 {
     horizontal-align: center;
     vertical-align: center;
-    width: 48px;
-    height: 48px;
-    border-radius: 64px;
-    box-shadow: 2px 2px 0px offBlack&30;
-    animation-name: TagGroove1;
-    animation-duration: 2s;
+    width: 100%;
+    height: 100%;
+    flow-children: right;
+    animation-name: TagGrooveSm;
+    animation-duration: 3s;
+    animation-iteration-count: infinite;
+}
+
+.capturing #IdolCashInMeter #IdolIndicator
+{
+    animation-name: TagGrooveSm;
+    animation-duration: 3s;
     animation-iteration-count: infinite;
 }
 
@@ -1344,6 +1366,98 @@ ProgressBar
     animation-name: TagGroove1;
     animation-duration: 2s;
     animation-iteration-count: infinite;
+}
+
+#IdolCashInMeter #IdolIndicator .IdolCashInMeter
+{
+    width: 45%;
+    height: 100%;
+}
+
+#IdolCashInMeter #IdolIndicator .IdolTeamText
+{
+    horizontal-align: center;
+    vertical-align: center;
+    opacity: 0.5;
+    font-size: 18px;
+    color: white;
+    font-family: block;
+    padding: 5px;
+    text-transform: uppercase;
+    text-shadow: 0px 0px 5.0 offBlack;
+    text-overflow: shrink;
+}
+
+#IdolCashInMeter #IdolIndicator .IdolProgressBar
+{
+    width: 100%;
+    height: 20px;
+    vertical-align: center;
+    horizontal-align: center;
+    border-radius: 0px 50px 50px 0px;
+    background-color: rgba(0, 0, 0, 0.9);
+}
+
+#IdolCashInMeter #IdolIndicator .friendly .IdolProgressBar
+{
+    transform: scaleX(-1);
+}
+
+#IdolCashInMeter #IdolIndicator .team_1 .IdolProgressBar
+{
+    transform: scaleX(-1);
+}
+
+#IdolCashInMeter #IdolIndicator .enemy .ProgressBarLeft
+{
+    background-color: colorEnemy;
+    background-color: gradient( linear, 0% 0%, 100% 0%, from( #e05a5a ), to( #971c1c ) );
+}
+
+#IdolCashInMeter #IdolIndicator .friendly .ProgressBarLeft
+{
+    background-color: #49adb8;
+    background-color: gradient( linear, 0% 0%, 100% 0%, from( #5fc1cb ), to( #0b5685 ) );
+}
+
+#IdolCashInMeter #IdolIndicator .team_1 .ProgressBarLeft
+{
+    background-color: colorEnemy;
+    background-color: gradient( linear, 0% 0%, 100% 0%, from( team1Color ), to( team1ColorDark ) );
+}
+
+#IdolCashInMeter #IdolIndicator .team_2 .ProgressBarLeft
+{
+    background-color: #49adb8;
+    background-color: gradient( linear, 0% 0%, 100% 0%, from( team2Color ), to( team2ColorDark ) );
+}
+
+#IdolCashInMeter #IdolIndicator .capturing .IdolTeamText
+{
+    opacity: 1;
+    animation-name: Idol_ProgressText_Capturing;
+    animation-duration: 0.2s;
+    animation-iteration-count: infinite;
+    animation-direction: reverse;
+}
+
+#IdolCashInMeter #IdolIndicator .blocked .IdolTeamText
+{
+    color: offBlack;
+    text-shadow: 0px 0px 0px 3.0 offWhite;
+    animation-name: Idol_ProgressText_Blocked;
+    animation-duration: 0.3s;
+    animation-iteration-count: infinite;
+}
+
+.captured #IdolCashInMeter #IdolIndicator .blocked .IdolTeamText
+{
+    animation-name: none;
+}
+
+.friendly #IdolCashInMeter #IdolIndicator .blocked .IdolTeamText
+{
+    text-shadow: 0px 0px 0px 3.0 red;
 }
 
 #IdolCashInMeter #IdolIndicator #IdolCashInMeter_Timer
@@ -1355,40 +1469,46 @@ ProgressBar
 
 #IdolCashInMeter #IdolIndicator #Idol_Center
 {
-    width: 40px;
-    height: 40px;
-    background-color: black;
+    width: 50px;
+    height: 50px;
+    margin: 0px -14px;
+    background-color: #49adb8;
+    background-color: gradient( linear, 0% 0%, 0% 100%, from( #9df3fd ), to( #2f81b4 ) );
     horizontal-align: center;
     vertical-align: center;
     border-radius: 50%;
+    z-index: 10;
+    box-shadow: 0px 0px 20px offBlack&90;
 }
 
 #IdolCashInMeter #IdolIndicator .idol_icon
 {
-    width: 40px;
-    height: 40px;
+    width: 60px;
+    height: 60px;
     horizontal-align: center;
     vertical-align: center;
     background-image: url("s2r://panorama/images/minimap/soul_jar_marker_psd.vtex");
     background-repeat: no-repeat;
     background-position: center;
     background-size: contain;
+    z-index: 10;
 }
 
 #IdolCashInMeter #IdolTextureElement
 {
-    width: 48px;
-    height: 48px;
+    width: 50px;
+    height: 50px;
     horizontal-align: center;
     vertical-align: center;
     ignore-parent-flow: true;
     border: 3px solid shardColor;
     border-radius: 50%;
+    opacity: 0.5;
 }
 
-.friend #IdolCashInMeter #IdolTextureElement
+.captured_friendly #IdolCashInMeter #IdolTextureElement
 {
-    border: 3px solid shardColor;
+    border: 3px solid shardColor&90;
 }
 
 .enemy #IdolCashInMeter #IdolTextureElement
@@ -1399,16 +1519,34 @@ ProgressBar
     background-position: center;
     background-repeat: no-repeat;
     wash-color: colorEnemy;
+    opacity: 1;
 }
 
-.team_1 #IdolCashInMeter #IdolTextureElement
+.captured_team_1 #IdolCashInMeter #IdolTextureElement
 {
     border: 3px solid team1Color;
 }
 
-.team_2 #IdolCashInMeter #IdolTextureElement
+.captured_team_2 #IdolCashInMeter #IdolTextureElement
 {
     border: 3px solid team2Color;
+}
+
+#IdolCashInMeter.captured #IdolIndicator .blocked .IdolTeamText
+{
+    animation-name: none;
+    text-shadow: 0px 0px 0px 3.0 offWhite&05;
+    color: offBlack;
+}
+
+#IdolCashInMeter.captured #IdolIndicator .partial_progress
+{
+    opacity: 0.6;
+}
+
+#IdolCashInMeter.captured #IdolIndicator .full_progress .IdolTeamText
+{
+    opacity: 1;
 }
 
 #IdolCashInMeter.capturing #IdolTextureElement
@@ -1423,58 +1561,150 @@ ProgressBar
     animation-iteration-count: 3;
 }
 
-#IdolCashInMeter.captured.friend #IdolTextureElement
+#IdolCashInMeter.captured_friend #IdolTextureElement
 {
     border: 3px solid shardColor;
 }
 
-#IdolCashInMeter.captured.team_1 #IdolTextureElement
+#IdolCashInMeter.captured_team_1 #IdolTextureElement
 {
     border: 3px solid shardColor;
 }
 
-#IdolCashInMeter.captured.team_2 #IdolTextureElement
+#IdolCashInMeter.captured_team_2 #IdolTextureElement
 {
     border: 3px solid shardColor;
 }
 
-#IdolCashInMeter.captured.enemy #IdolTextureElement
+#IdolCashInMeter.captured_enemy #IdolTextureElement
 {
     border: 0px solid #ffffff00;
     background-image: url("s2r://panorama/images/icons/icon_x.vsvg");
     background-size: cover;
     background-position: center;
     background-repeat: no-repeat;
+    opacity: 1;
+    animation-name: Idol_Captured_Texture_Failure;
     wash-color: colorEnemy;
 }
 
-#IdolCashInMeter.enemy #IdolIndicator #Idol_Center
+#IdolCashInMeter.captured_enemy #IdolIndicator #Idol_Center
 {
     background-color: colorEnemy;
     background-color: gradient( linear, 0% 0%, 0% 100%, from( #e05a5a ), to( #971c1c ) );
 }
 
-#IdolCashInMeter.friendly #IdolIndicator #Idol_Center
+#IdolCashInMeter.captured_friendly #IdolIndicator #Idol_Center
 {
     background-color: #49adb8;
     background-color: gradient( linear, 0% 0%, 0% 100%, from( #5fc1cb ), to( #0b5685 ) );
 }
 
-#IdolCashInMeter.team_1 #IdolIndicator #Idol_Center
+#IdolCashInMeter.captured_team_1 #IdolIndicator #Idol_Center
 {
     background-color: colorEnemy;
     background-color: gradient( linear, 0% 0%, 0% 100%, from( team1Color ), to( team1ColorDark ) );
 }
 
-#IdolCashInMeter.team_2 #IdolIndicator #Idol_Center
+#IdolCashInMeter.captured_team_2 #IdolIndicator #Idol_Center
 {
     background-color: #49adb8;
     background-color: gradient( linear, 0% 0%, 0% 100%, from( team2Color ), to( team2ColorDark ) );
 }
 
-#IdolCashInMeter.enemy #IdolIndicator #IdolCashInMeter_Timer
+#IdolParticipants
 {
-    background-color: #ffc7c7;
+    height: 28px;
+    horizontal-align: middle;
+    vertical-align: bottom;
+    ignore-parent-flow: true;
+    margin-bottom: 10px;
+    width: 100%;
+    flow-children: right;
+}
+
+#IdolParticipants .IdolParticipantsColumn
+{
+    width: 100px;
+}
+
+#IdolParticipants #IdolParticipantsColumnRight
+{
+    horizontal-align: right;
+}
+
+#IdolParticipants .IdolParticipantsTeam
+{
+    border-radius: 50px;
+    max-width: 120px;
+    padding: 2px 8px;
+}
+
+#IdolParticipants .IdolParticipantsTeam.friendly
+{
+    background-color: offWhite&10;
+}
+
+#IdolParticipants .IdolParticipantsTeam.enemy
+{
+    background-color: colorEnemy&30;
+}
+
+#IdolParticipants .IdolParticipantsTeam.team1
+{
+    background-color: team1Color&30;
+}
+
+#IdolParticipants .IdolParticipantsTeam.team2
+{
+    background-color: team2Color&30;
+}
+
+#IdolParticipants #IdolParticipantsTeam1
+{
+    flow-children: left;
+}
+
+#IdolParticipants #IdolParticipantsTeam2
+{
+    flow-children: right;
+}
+
+#IdolParticipants .IdolParticipant
+{
+    width: 10px;
+    height: 10px;
+    vertical-align: middle;
+    margin: 5px;
+    background-color: blue;
+}
+
+#IdolParticipants CitadelHeroImage
+{
+    width: 18px;
+    height: 18px;
+    width: fill-parent-flow(1.0);
+    height: fill-parent-flow(1.0);
+}
+
+Label.idol_time_warning
+{
+    horizontal-align: center;
+    font-family: block;
+    font-size: 14px;
+    text-transform: uppercase;
+    text-shadow: 0px 0px 0px 3.0 offBlack;
+    color: #f9ec74;
+    margin-top: 10px;
+    visibility: collapse;
+    animation-name: TagGrooveSm;
+    animation-duration: 2s;
+    animation-iteration-count: infinite;
+}
+
+.give_up_warning Label.idol_time_warning,.gave_up Label.idol_time_warning
+{
+    visibility: visible;
 }
 
 @keyframes 'Idol_Capture_Pulse'
@@ -1487,7 +1717,7 @@ ProgressBar
     
     50%
     {
-        pre-transform-scale2d: 1.08;
+        pre-transform-scale2d: 1.03;
         brightness: 1.2;
     }
     
@@ -1499,26 +1729,152 @@ ProgressBar
     
 }
 
+@keyframes 'Idol_ProgressText_Capturing'
+{
+    0%
+    {
+        transform: rotateZ(-2deg);
+        brightness: 1;
+    }
+    
+    50%
+    {
+        transform: rotateZ(0deg);
+        brightness: 1.2;
+    }
+    
+    100%
+    {
+        transform: rotateZ(2deg);
+        brightness: 1;
+    }
+    
+}
+
+@keyframes 'Idol_Capture_Left'
+{
+    0%
+    {
+        transform: rotateZ(3deg);
+    }
+    
+    25%
+    {
+        transform: rotateZ(3deg);
+    }
+    
+    26%
+    {
+        transform: rotateZ(0deg);
+    }
+    
+    50%
+    {
+        transform: rotateZ(0deg);
+    }
+    
+    51%
+    {
+        transform: rotateZ(1deg);
+    }
+    
+    75%
+    {
+        transform: rotateZ(1deg);
+    }
+    
+    76%
+    {
+        transform: rotateZ(0deg);
+    }
+    
+    100%
+    {
+        transform: rotateZ(0deg);
+    }
+    
+}
+
+@keyframes 'Idol_Capture_Right'
+{
+    0%
+    {
+        transform: rotateZ(-3deg);
+    }
+    
+    25%
+    {
+        transform: rotateZ(-3deg);
+    }
+    
+    26%
+    {
+        transform: rotateZ(0deg);
+    }
+    
+    50%
+    {
+        transform: rotateZ(0deg);
+    }
+    
+    51%
+    {
+        transform: rotateZ(-1deg);
+    }
+    
+    75%
+    {
+        transform: rotateZ(-1deg);
+    }
+    
+    76%
+    {
+        transform: rotateZ(0deg);
+    }
+    
+    100%
+    {
+        transform: rotateZ(0deg);
+    }
+    
+}
+
+@keyframes 'Idol_ProgressText_Blocked'
+{
+    0%
+    {
+        pre-transform-scale2d: 1;
+    }
+    
+    50%
+    {
+        pre-transform-scale2d: 1.2;
+    }
+    
+    100%
+    {
+        pre-transform-scale2d: 1;
+    }
+    
+}
+
 @keyframes 'Idol_Capture_Enemy_Pulse'
 {
     0%
     {
         pre-transform-scale2d: 1;
-        transform: translate3d(0px, 0px, 0px) rotateZ(-5deg);
         brightness: 1;
     }
     
     50%
     {
         pre-transform-scale2d: 1.05;
-        transform: translate3d(0px, 4px, 0px) rotateZ(0deg);
-        brightness: 1.2;
+        brightness: 1.6;
     }
     
     100%
     {
         pre-transform-scale2d: 1;
-        transform: translate3d(0px, 0px, 0px) rotateZ(5deg);
         brightness: 1;
     }
     
@@ -1564,19 +1920,19 @@ ProgressBar
     
     5%
     {
-        pre-transform-scale2d: 1.6;
+        pre-transform-scale2d: 1.4;
     }
     
     80%
     {
-        pre-transform-scale2d: 1.6;
+        pre-transform-scale2d: 1.4;
         opacity: 1.0;
     }
     
     100%
     {
         opacity: 0.0;
-        pre-transform-scale2d: 1.6;
+        pre-transform-scale2d: 1.4;
     }
     
 }
@@ -1588,6 +1944,23 @@ ProgressBar
         pre-transform-scale2d: 1;
         opacity: 0;
         opacity: 0.1;
+    }
+    
+    100%
+    {
+        opacity: 0.0;
+        pre-transform-scale2d: 1.8;
+    }
+    
+}
+
+@keyframes 'Idol_Captured_Texture_Failure'
+{
+    0%
+    {
+        pre-transform-scale2d: 1;
+        opacity: 0;
+        opacity: 0.8;
     }
     
     100%
@@ -1976,12 +2349,26 @@ CitadelHudTopBar CitadelHudItemBarGraph
     height: 22px;
     text-align: center;
     width: 100%;
-    font-weight: semi-bold;
     color: #FFF6D8;
     opacity: 0.5;
     font-size: 16px;
     font-family: oracle;
     font-weight: normal;
+}
+
+#PlayerNameNWContainer .HeroName
+{
+    padding-top: 0px;
+    margin-bottom: 5px;
+    text-overflow: shrink;
+    vertical-align: center;
+    max-height: 16px;
+    text-align: center;
+    width: 100%;
+    font-weight: semi-bold;
+    opacity: 0.2;
+    font-size: 10px;
+    font-family: block;
 }
 
 .InParty .PlayerName
@@ -2234,7 +2621,9 @@ CitadelHudTopBarPlayer:hover CitadelTopBarPlayerDetails
     height: 40px;
     align: center bottom;
     margin-bottom: 5px;
-    background-size: 100% 100%;
+    background-size: contain;
+    background-repeat: no-repeat;
+    background-position: center;
     img-shadow: 0px 0px 10px #00000060;
 }
 
@@ -2936,6 +3325,50 @@ CitadelHudTopBarPlayer.LaneSwapDefault.LaneNum6 #LaneSwapContainer,CitadelHudTop
     100%
     {
         transform: rotateZ(0deg);
+    }
+    
+}
+
+@keyframes 'TagGrooveSm'
+{
+    0%
+    {
+        transform: rotateZ(-2deg);
+    }
+    
+    25%
+    {
+        transform: rotateZ(-2deg);
+    }
+    
+    26%
+    {
+        transform: rotateZ(1deg);
+    }
+    
+    50%
+    {
+        transform: rotateZ(1deg);
+    }
+    
+    51%
+    {
+        transform: rotateZ(0deg);
+    }
+    
+    75%
+    {
+        transform: rotateZ(0deg);
+    }
+    
+    76%
+    {
+        transform: rotateZ(-1deg);
+    }
+    
+    100%
+    {
+        transform: rotateZ(-1deg);
     }
     
 }

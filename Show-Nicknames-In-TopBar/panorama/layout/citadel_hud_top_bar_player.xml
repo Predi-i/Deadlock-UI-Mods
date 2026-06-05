@@ -77,12 +77,13 @@
             </Panel>
         </Panel>
 		
-        <Label class="AlwaysPlayerName" text="{s:player_name}" />
-        
+		<Label class="AlwaysPlayerName" text="{s:player_name}" />
+		
         <Panel id="PlayerNameNWContainer" onmouseover="CitadelTopDownScoreboardPlayerHovered();">
             <Panel id="BackgroundStrip" />
             <Panel class="PlayerInfoContainer TopBottomFlow">
                 <Label class="PlayerName" text="{s:player_name}" />
+                <Label class="HeroName" text="{s:hero_name}" />
                 <Panel id="KDAContainer" class="TopBottomFlow">
                     <Panel class="KDALabels LeftRightFlow">
                         <Label class="StatLabel" text="#Citadel_Scoreboard_KDA_Kills" />
