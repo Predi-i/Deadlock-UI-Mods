@@ -1,0 +1,12 @@
+<!-- xml reconstructed by Source 2 Viewer 17.0.0.0 - https://valveresourceformat.github.io -->
+<root>
+	<styles>
+		<include src="s2r://panorama/styles/base.vcss_c" />
+	</styles>
+		<scripts>
+		<include src="s2r://panorama/scripts/buff_reminder.vjs_c" />
+	</scripts>
+	<Panel class="WindowRoot" hittest="false" disallowedstyleflags="hover,descendantfocus">
+		<CitadelHud id="Hud" hittest="false" />
+	</Panel>
+</root>
