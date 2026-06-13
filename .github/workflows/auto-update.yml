@@ -50,8 +50,13 @@ jobs:
 
       - name: Extract CSDK
         if: steps.git_check.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
-        shell: pwsh
-        run: Expand-Archive -Path "csdk.zip" -DestinationPath "C:\Reduced_CSDK_12" -Force
+        shell: bash
+        run: |
+          echo "File size:"
+          ls -lh csdk.zip
+          echo "Unpacking..."
+          mkdir -p /c/Reduced_CSDK_12
+          7z x csdk.zip -oC:/Reduced_CSDK_12 -y
 
       - name: Compile and Pack VPK (Headless Hack)
         if: steps.git_check.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
@@ -75,13 +80,13 @@ jobs:
           $Packer = "$Csdk\game\bin\win64\CSDKCfgVPK.exe"
           $OutVpk = "$PWD\builds\$ModName.vpk"
           
-          Write-Host "Запускаем упаковщик..."
+          Write-Host "Running Packer..."
           Start-Process -FilePath $Packer -ArgumentList "`"$GameDir`"", "`"$OutVpk`""
           
           Start-Sleep -Seconds 4
           
           Stop-Process -Name "CSDKCfgVPK" -Force -ErrorAction SilentlyContinue
-          Write-Host "VPK запакован, процесс завершен."
+          Write-Host "VPK is packed."
 
       - name: Create GitHub Release
         if: steps.git_check.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
