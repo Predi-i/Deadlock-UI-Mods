@@ -45,7 +45,7 @@ jobs:
       - name: Download CSDK
         if: steps.git_check.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
         shell: bash
-        run: gdown "${{ secrets.CSDK_DRIVE_URL }}" -O csdk.zip --fuzzy
+        run: gdown "${{ secrets.CSDK_DRIVE_URL }}" -O csdk.zip
 
       - name: Extract CSDK
         if: steps.git_check.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
