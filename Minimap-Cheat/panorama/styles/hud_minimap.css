@@ -1,0 +1,1760 @@
+/* Prettified by Source 2 Viewer 17.0.0.0 - https://valveresourceformat.github.io */
+
+@define ColorEnemy: #ff410d;
+@define ColorEnemyHigh: #FF8D6E;
+@define ColorEnemyLow: #AA2B09;
+@define ColorFriendly: #FFEFD7;
+@define ColorFriendlyHigh: #FEF0DB;
+@define ColorFriendlyLow: #998E7D;
+@define ColorTeam1: #E7B659;
+@define ColorTeam1High: #E7B659;
+@define ColorTeam1Low: #E7B659;
+@define ColorTeam2: #5B79E6;
+@define ColorTeam2High: #5B79E6;
+@define ColorTeam2Low: #5B79E6;
+@define ColorEnemyObjective: #DC4C2FFF;
+@define ZIndexSpectatedPlayer: 24;
+@define ZIndexPingObjective: 23;
+@define ZIndexPingEnemyPlayer: 22;
+@define ZIndexPingFriendlyPlayer: 21;
+@define ZIndexLocalPlayerHigh: 20;
+@define ZIndexLocalPlayerLow: 19;
+@define ZIndexLocalPlayer: 18;
+@define ZIndexEnemyPlayerHigh: 17;
+@define ZIndexFriendlyPlayerHigh: 16;
+@define ZIndexObjective: 15;
+@define ZIndexFriendlyPlayer: 14;
+@define ZIndexEnemyPlayer: 13;
+@define ZIndexFriendlyPlayerLow: 12;
+@define ZIndexEnemyPlayerLow: 11;
+@define ZIndexObjectiveMapTargetting: 10;
+@define ZIndexMidboss: 4;
+@define ZIndexT1Shop: 3;
+@define ZIndexNeutral: 2;
+@define ZIndexTeleporter: 1;
+@define ZIndexMidStairs: 1;
+@define ZIndexDeadPlayer: 0;
+@define ZIndexPingLocalPlayer: 0;
+@define HudMinimapSize-1: 665px;
+@define HudMinimapSize0: 807.5px;
+@define HudMinimapSize1: 950px;
+@define HudMinimapSize2: 1092.5px;
+@define HudMinimapSize3: 1235px;
+@define HudMinimapSize4: 1377.5px;
+@define HudMinimapSize5: 1520px;
+@define HudMinimapSize6: 1662.5px;
+@define HudMinimapSize7: 1805px;
+@define HudMinimapSize8: 1947.5px;
+@define HudMinimapSize9: 2090px;
+@define HudMinimapSize10: 2232.5px;
+@define HudMinimapSize11: 2375px;
+.HudMinimap
+{
+	width: 100%;
+	height: 100%;
+	border: 1px solid transparent;
+}
+
+#hud_minimap
+{
+	width: 100%;
+	height: 100%;
+	background-color: rgba(25, 25, 25, 0.7);
+	transition-property: width, height, transform, ui-scale;
+	transition-duration: 0.12s;
+	border-radius: 50%;
+	vertical-align: center;
+	horizontal-align: center;
+}
+
+.useZoomedMinimap #hud_minimap
+{
+	width: HudMinimapSize5;
+	height: HudMinimapSize5;
+	overflow: noclip;
+	vertical-align: center;
+	horizontal-align: center;
+	transition-property: transform, ui-scale, height, width;
+	transition-duration: 0.12s;
+	ui-scale: 100%;
+}
+
+.useZoomedMinimap #hud_minimap.zoomLevel-1
+{
+	width: HudMinimapSize-1;
+	height: HudMinimapSize-1;
+}
+
+.useZoomedMinimap #hud_minimap.zoomLevel0
+{
+	width: HudMinimapSize0;
+	height: HudMinimapSize0;
+}
+
+.useZoomedMinimap #hud_minimap.zoomLevel1
+{
+	width: HudMinimapSize1;
+	height: HudMinimapSize1;
+}
+
+.useZoomedMinimap #hud_minimap.zoomLevel2
+{
+	width: HudMinimapSize2;
+	height: HudMinimapSize2;
+}
+
+.useZoomedMinimap #hud_minimap.zoomLevel3
+{
+	width: HudMinimapSize3;
+	height: HudMinimapSize3;
+}
+
+.useZoomedMinimap #hud_minimap.zoomLevel4
+{
+	width: HudMinimapSize4;
+	height: HudMinimapSize4;
+}
+
+.useZoomedMinimap #hud_minimap.zoomLevel6
+{
+	width: HudMinimapSize6;
+	height: HudMinimapSize6;
+}
+
+.useZoomedMinimap #hud_minimap.zoomLevel7
+{
+	width: HudMinimapSize7;
+	height: HudMinimapSize7;
+}
+
+.useZoomedMinimap #hud_minimap.zoomLevel8
+{
+	width: HudMinimapSize8;
+	height: HudMinimapSize8;
+}
+
+.useZoomedMinimap #hud_minimap.zoomLevel9
+{
+	width: HudMinimapSize9;
+	height: HudMinimapSize9;
+}
+
+.useZoomedMinimap #hud_minimap.zoomLevel10
+{
+	width: HudMinimapSize10;
+	height: HudMinimapSize10;
+}
+
+.useZoomedMinimap #hud_minimap.zoomLevel11
+{
+	width: HudMinimapSize11;
+	height: HudMinimapSize11;
+}
+
+.useZoomedMinimap #hud_minimap.gScoreboardOpen
+{
+	width: 380px;
+	height: 380px;
+}
+
+#map_render
+{
+	width: 100%;
+	height: 100%;
+	z-index: -2;
+	overflow: noclip;
+	opacity: 0.35;
+}
+
+#MinimapBackgroundTest
+{
+	height: 100%;
+	width: 100%;
+	overflow: clip;
+}
+
+#canvas
+{
+	horizontal-align: center;
+	width: 100%;
+	height: 100%;
+	z-index: -1;
+	opacity: 1;
+	transition-property: opacity;
+	transition-duration: 0.5s;
+}
+
+#MinimapEffects
+{
+	width: 100%;
+	height: 100%;
+	visibility: collapse;
+}
+
+.EnableMinimapEffects #MinimapEffects
+{
+	visibility: visible;
+}
+
+.modifier_state_no_minimap
+{
+	visibility: collapse;
+}
+
+.useZoomedMinimap #canvas
+{
+	overflow: noclip;
+}
+
+.NewMinimapBackgroundsContainer,.HideOldZiplines #canvas,#MinimapParticleScenePanel
+{
+	visibility: collapse;
+}
+
+.ShowNewMinimap .NewMinimapBackgroundsContainer,.ShowNewZiplines #MinimapParticleScenePanel
+{
+	visibility: visible;
+}
+
+.NewMinimapBackgroundsContainer,#MinimapParticleScenePanel
+{
+	height: 100%;
+	width: 100%;
+}
+
+#MinimapParticleScenePanel
+{
+	transform: rotateZ( 180deg );
+	z-index: -1;
+}
+
+.newMinimapBackground
+{
+	height: 100%;
+	width: 100%;
+	background-size: 100% 100%;
+}
+
+.backgroundImage
+{
+	background-image: url("s2r://panorama/images/minimap/base/minimap_bg_psd.vtex");
+	z-index: -3;
+	visibility: collapse;
+}
+
+#CastRange
+{
+	width: 100%;
+	height: 100%;
+	background-size: 100% 100%;
+	z-index: -3;
+	visibility: collapse;
+}
+
+.newMinimapBackground.midImage
+{
+	width: 100%;
+	height: 100%;
+	background-size: 100% 100%;
+	overflow: noclip;
+	visibility: collapse;
+}
+
+.useZoomedMinimap .newMinimapBackground.midImage
+{
+	visibility: visible;
+}
+
+.topImage
+{
+	background-image: url("s2r://panorama/images/minimap/base/minimap_frame_psd.vtex");
+}
+
+.NewMinimapZiplinesContainer
+{
+	width: 100%;
+	height: 100%;
+	opacity: 0;
+}
+
+.ziplineYellowLane
+{
+	background-image: url("s2r://panorama/images/minimap/base/minimap_lane_1_psd.vtex");
+	wash-color: laneYellowColor;
+	wash-color: #B6AC3C;
+	opacity: 0.2;
+}
+
+.ziplineGreenLane
+{
+	background-image: url("s2r://panorama/images/minimap/base/minimap_lane_2_psd.vtex");
+	wash-color: laneGreenColor;
+	wash-color: #61C579;
+	opacity: 0.2;
+}
+
+.ziplineBlueLane
+{
+	background-image: url("s2r://panorama/images/minimap/base/minimap_lane_3_psd.vtex");
+	wash-color: laneBlueColor;
+	wash-color: #2DA0CA;
+	opacity: 0.2;
+}
+
+.ziplinePurpleLane
+{
+	background-image: url("s2r://panorama/images/minimap/base/minimap_lane_4_psd.vtex");
+	wash-color: lanePurpleColor;
+	wash-color: #A05ED7;
+	opacity: 0.2;
+}
+
+.is_underground #map_render
+{
+	opacity: 0;
+}
+
+.button_image
+{
+	vertical-align: center;
+	horizontal-align: center;
+}
+
+.map_button
+{
+	width: 7%;
+	height: 7%;
+	opacity: 0.2;
+	transition-property: opacity, transform, width, height, pre-transform-scale2d;
+	transition-duration: 0.1s;
+	pre-transform-scale2d: 1;
+	z-index: 0;
+	overflow: noclip;
+	background-color: none;
+	background-size: 100% 100%;
+	background-position: 50% 50%;
+}
+
+.client_cone_fov
+{
+	opacity: 0.0;
+	z-index: -1;
+	overflow: noclip;
+	background-color: none;
+	background-size: 100% 100%;
+	background-position: 50% 50%;
+	wash-color: rgb(178, 255, 229);
+}
+
+.client_cone_fov.active
+{
+	opacity: 0.15;
+}
+
+.client_cone_fov.player
+{
+	width: 65%;
+	height: 65%;
+}
+
+.playerWasClamped #BackgroundImage
+{
+	border: 6px solid orange;
+}
+
+.map_button.idol_spawn,.map_button.idol_return_snippet
+{
+	height: 32px;
+	width: 32px;
+}
+
+.useZoomedMinimap .gScoreboardOpen .player.map_button
+{
+	pre-transform-scale2d: 1;
+}
+
+.useZoomedMinimap .player.map_button
+{
+	pre-transform-scale2d: 0.3;
+}
+
+.useZoomedMinimap .zoomLevel9 .player.map_button,.useZoomedMinimap .zoomLevel10 .player.map_button,.useZoomedMinimap .zoomLevel11 .player.map_button
+{
+	pre-transform-scale2d: 0.2;
+}
+
+.map_button.active
+{
+	opacity: 1;
+}
+
+.map_button.neutral_spawn
+{
+	width: 15px;
+	height: 15px;
+}
+
+.map_button.player
+{
+	width: 1%;
+	height: 1%;
+	z-index: ZIndexFriendlyPlayer;
+}
+
+.map_button.player.spectate
+{
+	z-index: ZIndexSpectatedPlayer;
+}
+
+.map_button.idol_spawn
+{
+	width: 32px;
+	height: 32px;
+	background-image: url("s2r://panorama/images/minimap/soul_jar_marker_psd.vtex");
+	img-shadow: 0px 0px 18px 0 shardColor&50;
+}
+
+.map_button.gold_spawn
+{
+	width: 16px;
+	height: 16px;
+	background-image: url("s2r://panorama/images/minimap/unsecured_souls.vsvg");
+	wash-color: rgb(130, 255, 249);
+}
+
+.map_button.rejuv_crystal
+{
+	width: 16px;
+	height: 16px;
+	background-image: url("s2r://panorama/images/minimap/rejuv_crystal_psd.vtex");
+	wash-color: rgb(130, 255, 249);
+}
+
+.map_button.powerup_spawn
+{
+	width: 20px;
+	height: 20px;
+	background-repeat: no-repeat;
+	background-image: url("s2r://panorama/images/minimap/gold_crate_marker_psd.vtex");
+	img-shadow: 0px 0px 12px 0 gray;
+	opacity: 0;
+	transition-property: opacity;
+	transition-duration: 1s;
+}
+
+.invert_map .map_button.powerup_spawn
+{
+	transform: rotateZ(180deg);
+}
+
+.map_button.powerup_gun
+{
+	background-image: url("s2r://panorama/images/minimap/powerup_weapon.vsvg");
+	wash-color: #FFCC80;
+	opacity: 1;
+}
+
+.map_button.powerup_survival
+{
+	background-image: url("s2r://panorama/images/minimap/powerup_health.vsvg");
+	wash-color: #D7FF9A;
+	opacity: 1;
+}
+
+.map_button.powerup_casting
+{
+	background-image: url("s2r://panorama/images/minimap/powerup_magic.vsvg");
+	wash-color: #E1A6FF;
+	opacity: 1;
+}
+
+.map_button.powerup_movement
+{
+	background-image: url("s2r://panorama/images/minimap/powerup_movement.vsvg");
+	wash-color: #99FFDD;
+	opacity: 1;
+}
+
+.map_button.shop_tunnel
+{
+	width: 1024px;
+	height: 1024px;
+	background-repeat: no-repeat;
+	background-image: url("s2r://panorama/images/minimap/base/minimap_midtown_mid_tunnels_psd.vtex");
+	background-size: 100% 100%;
+	background-position: center;
+	opacity: 0;
+	z-index: -1;
+	transition-property: opacity;
+	transition-duration: 0.5s;
+}
+
+.map_button.shop_tunnel.is_visible
+{
+	visibility: visible;
+	opacity: 1.0;
+}
+
+.map_button.shop_tunnel_exit.is_visible
+{
+	visibility: visible;
+}
+
+.map_button.shop_tunnel_exit
+{
+	visibility:collapse;
+	width: 16px;
+	height: 16px;
+	background-repeat: no-repeat;
+	background-image: url("s2r://panorama/images/minimap/icon_stairs.vsvg");
+	background-size: 100% 100%;
+	background-position: center;
+	opacity: 1.0;
+	z-index: ZIndexObjective;
+}
+
+.map_button.teleporter_onRight
+{
+	transform: scaleX(-1);
+}
+
+.map_button.teleporter_off
+{
+	visibility: collapse;
+}
+
+.map_button.teleporter_far
+{
+	visibility: visible;
+	width: 16px;
+	height: 16px;
+	background-size: contain;
+	background-position: center;
+	background-repeat: no-repeat;
+	background-image: url("s2r://panorama/images/minimap/minimap_teleporter_go_right.vsvg");
+	opacity: 0;
+	z-index: ZIndexTeleporter;
+}
+
+.map_button.teleporter_nearby
+{
+	width: 16px;
+	height: 16px;
+	background-repeat: no-repeat;
+	background-image: url("s2r://panorama/images/minimap/minimap_teleporter_go_right.vsvg");
+	background-size: 100% 100%;
+	background-position: center;
+	opacity: 1;
+	z-index: ZIndexTeleporter;
+}
+
+.map_button.teleporter_active
+{
+	width: 20px;
+	height: 20px;
+	background-repeat: no-repeat;
+	background-image: url("s2r://panorama/images/minimap/minimap_teleporter_highlight.vsvg");
+	background-size: contain;
+	background-position: center;
+	opacity: 1.0;
+	z-index: ZIndexTeleporter;
+	animation-name: teleportActive;
+	animation-iteration-count: infinite;
+	animation-duration: 1.3s;
+}
+
+@keyframes 'teleportActive'
+{
+	0%
+	{
+		brightness: 0.5;
+		pre-transform-scale2d: 1;
+	}
+	
+	50%
+	{
+		brightness: 3;
+		pre-transform-scale2d: 2.5;
+	}
+	
+	100%
+	{
+		brightness: 0.5;
+		pre-transform-scale2d: 1;
+	}
+	
+}
+
+.map_button.neutral
+{
+	width: 24px;
+	height: 24px;
+	z-index: ZIndexNeutral;
+	opacity: 0;
+}
+
+.map_button.neutral.active
+{
+	opacity: 1;
+}
+
+.map_button.neutral_weak
+{
+	background-image: url("s2r://panorama/images/minimap/neutral_small_psd.vtex");
+}
+
+.map_button.neutral_medium
+{
+	background-image: url("s2r://panorama/images/minimap/neutral_medium_psd.vtex");
+}
+
+.map_button.neutral_large
+{
+	background-image: url("s2r://panorama/images/minimap/neutral_large_psd.vtex");
+}
+
+.map_button.neutral_vault
+{
+	background-image: url("s2r://panorama/images/minimap/neutral_vault_psd.vtex");
+}
+
+.map_button.mid_boss
+{
+	width: 64px;
+	height: 64px;
+	z-index: ZIndexMidboss;
+}
+
+.map_button.boss_icon_t1 .boss_health_bg,.map_button.boss_barracks_icon .boss_health_bg
+{
+	background-image: url("s2r://panorama/images/minimap/boss_health_psd.vtex");
+}
+
+.map_button.mid_boss .boss_image
+{
+	background-image: url("s2r://panorama/images/minimap/super_neutral_marker_psd.vtex");
+	saturation: 0;
+	opacity: 0.5;
+	brightness: 0.3;
+	width: 100%;
+	height: 100%;
+	background-size: cover;
+}
+
+.map_button.mid_boss #BackerRing
+{
+	width: 66%;
+	height: 66%;
+	background-color: #000000ee;
+	horizontal-align: center;
+	vertical-align: middle;
+	border-radius: 50%;
+	opacity: 0.4;
+	border: 2px solid rgba(163, 163, 163, 0.137);
+}
+
+.map_button.mid_boss #Ring
+{
+	width: 66%;
+	height: 66%;
+	background-color: #00000090;
+	horizontal-align: middle;
+	vertical-align: middle;
+	border-radius: 50%;
+	border: 2px solid rgba(163, 163, 163, 0.137);
+}
+
+.map_button.mid_boss #Spawned
+{
+	width: 100%;
+	height: 100%;
+	visibility:collapse;
+}
+
+.map_button.mid_boss.midboss_spawned #Spawned
+{
+	width: 64px;
+	height: 64px;
+	background-size: 100% 100%;
+	background-position: 50% 50%;
+	background-image: url("s2r://panorama/images/minimap/super_neutral_marker_psd.vtex");
+	visibility:visible;
+	overflow: noclip;
+}
+
+.map_button.mid_boss .midboss_timer
+{
+	text-align: center;
+	horizontal-align: middle;
+	vertical-align: middle;
+	width: 100%;
+	height: 40%;
+}
+
+.map_button.mid_boss #NextSpawnTimer
+{
+	width: 100%;
+	height: 100%;
+	visibility: collapse;
+}
+
+.map_button.mid_boss.isDetailView #NextSpawnTimer
+{
+	visibility: visible;
+}
+
+.map_button.mid_boss #BossHealth
+{
+	visibility: visible;
+	opacity: 0.7;
+}
+
+.map_button.mid_boss.midboss_spawned #NextSpawnTimer,.map_button.mid_boss.midboss_spawned #BossHealth,.map_button.mid_boss.midboss_spawned #BackerRing
+{
+	visibility: collapse;
+}
+
+.map_button.boss
+{
+	z-index: ZIndexObjective;
+}
+
+.map_button .boss_health,.map_button .boss_health_bg,.map_button .boss_health_s2,.map_button .boss_health_bg_s2
+{
+	background-size: 100% 100%;
+	background-position: 50% 50%;
+	width: 100%;
+	height: 100%;
+}
+
+.map_button.boss.team1 .boss_image
+{
+	wash-color: ColorTeam1;
+}
+
+.map_button.boss.team2 .boss_image
+{
+	wash-color: ColorTeam2;
+}
+
+.map_button.friend.boss .boss_image
+{
+	wash-color: offWhite;
+}
+
+.map_button.enemy.boss .boss_image
+{
+	wash-color: ColorEnemyObjective;
+}
+
+.map_button.friend.boss.yellowLane .boss_image
+{
+	wash-color: #FFDF40;
+}
+
+.map_button.friend.boss.greenLane .boss_image
+{
+	wash-color: magenta;
+}
+
+.map_button.friend.boss.blueLane .boss_image
+{
+	wash-color: #2EC7E6;
+}
+
+.map_button.friend.boss.purpleLane .boss_image
+{
+	wash-color: #6BB247;
+}
+
+.map_button.boss_icon_t1
+{
+	width: 40px;
+	height: 40px;
+}
+
+.map_button.boss_icon_t2
+{
+	width: 64px;
+	height: 64px;
+}
+
+.map_button.boss_barracks_icon
+{
+	width: 40px;
+	height: 40px;
+}
+
+.map_button.boss_icon_t3
+{
+	width: 80px;
+	height: 80px;
+}
+
+.map_button.boss_buildingzip
+{
+	width: 32px;
+	height: 32px;
+}
+
+.map_button.boss_icon_t1 .boss_health_bg,.map_button.boss_barracks_icon .boss_health_bg
+{
+	background-image: url("s2r://panorama/images/minimap/boss_health_psd.vtex");
+}
+
+.map_button.boss_icon_t1 .boss_health,.map_button.boss_barracks_icon .boss_health
+{
+	background-image: url("s2r://panorama/images/minimap/boss_health_fill_psd.vtex");
+}
+
+.map_button.boss_icon_t2 .boss_health_bg
+{
+	background-image: url("s2r://panorama/images/minimap/boss_health_t2_psd.vtex");
+}
+
+.map_button.boss_icon_t2 .boss_health
+{
+	background-image: url("s2r://panorama/images/minimap/boss_health_fill_t2_psd.vtex");
+}
+
+.map_button.boss_buildingzip .boss_health
+{
+	background-image: url("s2r://panorama/images/minimap/boss_health_fill_t2_psd.vtex");
+}
+
+.map_button.boss_buildingzip .boss_health_bg
+{
+	background-image: url("s2r://panorama/images/minimap/boss_health_t2_psd.vtex");
+}
+
+.map_button.boss_icon_t3 .boss_health
+{
+	background-image: url("s2r://panorama/images/minimap/boss_health_final_fill_psd.vtex");
+}
+
+.map_button.boss_icon_t3 .boss_health_bg
+{
+	background-image: url("s2r://panorama/images/minimap/boss_health_final_psd.vtex");
+}
+
+.map_button.boss_icon_t3 .boss_health_s2
+{
+	background-image: url("s2r://panorama/images/minimap/boss_health_final_stage2_fill_psd.vtex");
+}
+
+.map_button.boss_icon_t3 .boss_health_bg_s2
+{
+	background-image: url("s2r://panorama/images/minimap/boss_health_final_stage2_psd.vtex");
+}
+
+.map_button.boss_icon_t3.friend .boss_health_bg,.map_button.boss_icon_t3.friend .boss_health,.map_button.boss_icon_t3.team1 .boss_health_bg,.map_button.boss_icon_t3.team1 .boss_health
+{
+	transform: rotateZ(180deg);
+}
+
+.map_button.boss_icon_t3.enemy .boss_health_bg,.map_button.boss_icon_t3.enemy .boss_health
+{
+	transform: rotateZ(0deg);
+}
+
+.map_button.idol_dropping
+{
+	background-image: url("s2r://panorama/images/minimap/soul_jar_marker_psd.vtex");
+	background-size: 150% 150%;
+	background-position: 50% 50%;
+	wash-color: grey;
+	border: 10px solid magenta;
+}
+
+.idol_return_snippet #MainImage
+{
+	visibility: collapse;
+	height: 110%;
+	width: 110%;
+}
+
+.idol_return_snippet.holding_idol #MainImage
+{
+	visibility: visible;
+}
+
+.map_button.idol_return
+{
+	background-image: url("s2r://panorama/images/minimap/soul_jar_marker_return_psd.vtex");
+	background-size: 150% 150%;
+	background-position: 50% 50%;
+}
+
+.map_button.idol_return_friendly
+{
+	width: 96px;
+	height: 96px;
+	background-image: url("s2r://panorama/images/minimap/soul_jar_marker_return_psd.vtex");
+	background-size: 50%;
+	background-position: 50%;
+	background-repeat: no-repeat;
+	img-shadow: 0px 0px 8px 0 gray;
+	z-index: ZIndexObjective;
+}
+
+.map_button.idol_return_enemy
+{
+	width: 96px;
+	height: 96px;
+	background-image: url("s2r://panorama/images/minimap/soul_jar_marker_return_enemy_psd.vtex");
+	background-size: 50%;
+	background-position: 50%;
+	background-repeat: no-repeat;
+	img-shadow: 0px 0px 8px 0 gray;
+	z-index: ZIndexObjective;
+}
+
+.idolReturnTarget
+{
+	visibility: collapse;
+	height: 48px;
+	width: 48px;
+	vertical-align: center;
+	horizontal-align: center;
+	overflow: noclip;
+	wash-color: #34ddff;
+}
+
+.map_button.idol_return_friendly .idolReturnTarget,.map_button.idol_return_enemy .idolReturnTarget
+{
+	visibility: visible;
+}
+
+.idolPulse
+{
+	height: 24px;
+	width: 24px;
+	vertical-align: center;
+	horizontal-align: center;
+	overflow: noclip;
+}
+
+.map_button.idol_return_enemy .idolReturnTarget
+{
+	wash-color: ColorEnemyObjective;
+}
+
+.pingIdol1
+{
+	animation-name: idolPulse;
+	animation-duration: 1.5s;
+	animation-timing-function: linear;
+	animation-iteration-count: infinite;
+}
+
+.pingIdol2
+{
+	animation-name: idolPulse;
+	animation-duration: 1.5s;
+	animation-delay: 0.35s;
+	animation-timing-function: linear;
+	animation-iteration-count: infinite;
+}
+
+.pingIdol3
+{
+	animation-name: idolPulse;
+	animation-duration: 1.5s;
+	animation-delay: 0.7s;
+	animation-timing-function: linear;
+	animation-iteration-count: infinite;
+}
+
+@keyframes 'idolPulse'
+{
+	0%
+	{
+		opacity: 0;
+		pre-transform-scale2d: 2.35;
+	}
+	
+	59.99%
+	{
+		opacity: 0.5;
+		pre-transform-scale2d: 1;
+	}
+	
+	60%
+	{
+		opacity: 0.5;
+		pre-transform-scale2d: 1;
+	}
+	
+	99.99%
+	{
+		opacity: 0.5;
+		pre-transform-scale2d: 1;
+	}
+	
+	100%
+	{
+		opacity: 0;
+		pre-transform-scale2d: 1;
+	}
+	
+}
+
+@keyframes 'idolReturn'
+{
+	0%
+	{
+		brightness: 1;
+		pre-transform-scale2d: 1;
+	}
+	
+	50%
+	{
+		brightness: 1.3;
+		pre-transform-scale2d: 1.2;
+	}
+	
+	100%
+	{
+		brightness: 1;
+		pre-transform-scale2d: 1;
+	}
+	
+}
+
+.map_button.gold_dropping
+{
+	width: 3.5%;
+	height: 3.5%;
+	background-image: url("s2r://panorama/images/minimap/gold_psd.vtex");
+	background-size: 100% 100%;
+	background-position: 50% 50%;
+	wash-color: grey;
+}
+
+.map_button.tier1_shop
+{
+	background-image: url("s2r://panorama/images/minimap/minimap_shop_psd.vtex");
+	background-size: 50% 50%;
+	background-position: 50% 50%;
+	background-repeat: no-repeat;
+	background-position: center;
+	img-shadow: 0px 0px 8px 1 black;
+	z-index: ZIndexT1Shop;
+	width: 32px;
+	height: 32px;
+}
+
+.map_button.guided_arrow
+{
+	background-image: url("s2r://panorama/images/minimap/archer_guided_arrow_psd.vtex");
+	background-size: 85% 85%;
+	background-position: 50% 50%;
+	background-repeat: no-repeat;
+}
+
+.map_button.bookworm_knight
+{
+	background-image: url("s2r://panorama/images/minimap/bookworm_knight_psd.vtex");
+	background-size: 35% 35%;
+	background-position: 50% 50%;
+	background-repeat: no-repeat;
+}
+
+.map_button.necro_gravestone
+{
+	background-image: url("s2r://panorama/images/minimap/necro_gravestone_psd.vtex");
+	background-size: 75% 75%;
+	background-position: 50% 50%;
+	background-repeat: no-repeat;
+}
+
+.map_button.necro_skele
+{
+	width: 5px;
+	height: 5px;
+	border-radius: 50%;
+	background-color: #C3FA82 background-position: 50% 50%;
+	background-repeat: no-repeat;
+}
+
+.map_button.doorman_doorway
+{
+	width: 50%;
+	height: 50%;
+	background-image: url("s2r://panorama/images/minimap/doorman_doorway_psd.vtex");
+	background-size: 10% 10%;
+	background-position: 50% 50%;
+	background-repeat: no-repeat;
+}
+
+.map_button.doorman_doorway #CastRange
+{
+	horizontal-align: center;
+	vertical-align: center;
+	opacity: 0.1;
+	border: 2px solid offWhite&90;
+	border-radius: 500px;
+	box-shadow: inset 0px 0px 60px offWhite&05;
+	visibility: visible;
+}
+
+.map_button.capture_point
+{
+	background-image: url("s2r://panorama/images/minimap/escort_capture_psd.vtex");
+	background-size: 100%;
+	background-position: 50% 50%;
+	background-repeat: no-repeat;
+	img-shadow: 0px 0px 8px 0 #555;
+}
+
+.map_button.escort
+{
+	background-image: url("s2r://panorama/images/minimap/escort_friendly_psd.vtex");
+	width: 96px;
+	height: 96px;
+	background-size: 35%;
+	background-position: 35%;
+	background-repeat: no-repeat;
+}
+
+.map_button.escort .enemy
+{
+	background-image: url("s2r://panorama/images/minimap/escort_enemy_psd.vtex");
+}
+
+.map_button.escort .team1
+{
+	background-image: url("s2r://panorama/images/minimap/escort_team2_psd.vtex");
+}
+
+.map_button.escort .team2
+{
+	background-image: url("s2r://panorama/images/minimap/escort_team2_psd.vtex");
+}
+
+.map_button.mid_stairs
+{
+	background-image: url("s2r://panorama/images/minimap/icon_stairs_mid.vsvg");
+	width: 24px;
+	height: 24px;
+	background-size: 50% 50%;
+	background-position: 50% 50%;
+	background-repeat: no-repeat;
+	opacity: 0;
+	z-index: ZIndexMidStairs;
+}
+
+.map_button.mid_stairs.right_stairs
+{
+	transform: scaleX(-1);
+}
+
+.map_button.player.enemy
+{
+	z-index: ZIndexEnemyPlayer;
+}
+
+.map_button.player.enemy.arrowUp
+{
+	z-index: 999;
+}
+
+.map_button.player.enemy.arrowDown
+{
+	z-index: ZIndexEnemyPlayerLow;
+}
+
+.map_button.player.friend
+{
+	z-index: ZIndexFriendlyPlayer;
+}
+
+.map_button.player.friend.arrowUp
+{
+	z-index: ZIndexFriendlyPlayerHigh;
+}
+
+.map_button.player.friend.arrowLow
+{
+	z-index: ZIndexFriendlyPlayerLow;
+}
+
+.map_button.localplayer.friend
+{
+	width: 15%;
+	height: 15%;
+	z-index: ZIndexLocalPlayer;
+}
+
+.map_button.localplayer.friend.arrowUp
+{
+	z-index: ZIndexLocalPlayerHigh;
+	background-color: #00000000;
+}
+
+.map_button.localplayer.friend.arrowDown
+{
+	z-index: ZIndexLocalPlayerLow;
+	background-color: #00000000;
+}
+
+.map_button.localplayer.spectate
+{
+	width: 12%;
+	height: 12%;
+}
+
+.map_button.player.enemy.PlayerDead .map_button.player.enemy.arrowUp.PlayerDead,.map_button.player.enemy.arrowDown.PlayerDead,.map_button.player.friend.PlayerDead .map_button.player.friend.arrowUp.PlayerDead,.map_button.player.friend.arrowDown.PlayerDead,.map_button.localplayer.friend.PlayerDead
+{
+	z-index: 999;
+}
+
+#DeathImage
+{
+	background-image: url("s2r://panorama/images/hud/icons/skull.vsvg");
+	background-size: cover;
+	width: 100%;
+	height: 100%;
+	z-index: 100;
+	opacity: 0.2;
+	visibility: collapse;
+}
+
+.PlayerDead #DeathImage
+{
+	visibility: visible;
+}
+
+.PlayerDead #BackgroundImage
+{
+	opacity: 0.6;
+}
+
+.localplayer #DeathImage
+{
+	visibility: collapse;
+}
+
+.map_button.npc
+{
+	transition-property: position;
+	transition-duration: 0.2s;
+}
+
+.map_button.ammo,.map_button.shop
+{
+	width: 5%;
+	height: 5%;
+}
+
+.map_button.outpost
+{
+	width: 50px;
+	height: 50px;
+}
+
+@keyframes 'damage_pulse'
+{
+	0%
+	{
+		opacity: 0.3;
+	}
+	
+	50%
+	{
+		opacity: 1;
+	}
+	
+	100%
+	{
+		opacity: 0.3;
+	}
+	
+}
+
+.map_button.teleport_target:hover,.map_button.zipline_target:hover
+{
+	background-color: rgba(200, 255, 200, 0.6);
+}
+
+.map_button.hide_button
+{
+	visibility: collapse;
+}
+
+.map_button.friend.spectate,.map_button.enemy.spectate,.map_button.friend.spectate.arrowUp,.map_button.enemy.spectate.arrowUp,.map_button.friend.spectate.arrowDown,.map_button.enemy.spectate.arrowDown,.map_button.localplayer.spectate
+{
+	z-index: ZIndexSpectatedPlayer;
+}
+
+@keyframes 'lowHealthPulse'
+{
+	0%
+	{
+		opacity: 0.5;
+	}
+	
+	50%
+	{
+		opacity: 1;
+	}
+	
+	100%
+	{
+		opacity: 0.5;
+	}
+	
+}
+
+.standup.player .button_fill.lowHealth
+{
+	animation-name: lowHealthPulse;
+	animation-duration: 0.8s;
+	animation-iteration-count: infinite;
+}
+
+.button_image,.NeutralCampImage,#NeturalImagesContainer
+{
+	width: 100%;
+	height: 100%;
+	border: 8px solid red;
+}
+
+#NeturalImagesContainer
+{
+	z-index: 9999;
+	opacity: 0.3;
+	visibility: collapse;
+}
+
+#NeturalImagesContainer .CampHidden
+{
+	opacity: 0;
+}
+
+.SmallNeutralCamp
+{
+	opacity: 0.3;
+	border: 8px solid red;
+}
+
+.MediumNeutralCamp
+{
+	opacity: 0.4;
+	border: 8px solid red;
+}
+
+.StrongNeutralCamp
+{
+	opacity: 0.7;
+	border: 8px solid red;
+}
+
+.player #MainImage
+{
+	width: 85%;
+	height: 85%;
+	vertical-align: middle;
+	horizontal-align: middle;
+	img-shadow: 0px 0px 8px 2 black;
+}
+
+.player.localplayer #MainImage
+{
+	width: 110%;
+	height: 110%;
+	img-shadow: 0px 0px 12px 6 black;
+}
+
+.player.localplayer .button_image
+{
+	width: 100%;
+	height: 100%;
+	wash-color: white;
+	background-color: none;
+}
+
+#LocalSpecularImage
+{
+	visibility: collapse;
+}
+
+.player.localplayer #LocalSpecularImage
+{
+	width: 110%;
+	height: 110%;
+	vertical-align: middle;
+	horizontal-align: middle;
+	background-image: url("s2r://panorama/images/minimap/player_marker_self_spec_highlight_psd.vtex");
+	background-size: 100% 100%;
+	visibility: visible;
+	z-index: ZIndexSpectatedPlayer;
+}
+
+.standup.player .button_image
+{
+	width: 100%;
+	height: 100%;
+}
+
+.player #BackgroundImage
+{
+	width:100%;
+	height: 100%;
+	background-color: none;
+	background-position: center center;
+	background-size: 80% 80%;
+	background-repeat: no-repeat;
+	opacity: 0.9;
+	border-radius: 50px;
+}
+
+.player.team1 #BackgroundImage
+{
+	background-color: team1Color;
+}
+
+.player.team2 #BackgroundImage
+{
+	background-color: team2Color;
+}
+
+.friend.player #BackgroundImage
+{
+	background-color: offWhite;
+}
+
+.enemy.player #BackgroundImage
+{
+	background-color: colorEnemy;
+}
+
+#ArrowImage
+{
+	background-image: url("s2r://panorama/images/minimap/player_arrow_enemy_psd.vtex");
+	background-size: 100% 100%;
+	width: 100%;
+	height: 100%;
+	z-index: 9999;
+	brightness: 2;
+	visibility: collapse;
+}
+
+.playerWasClamped #ArrowImage
+{
+	visibility: visible;
+}
+
+.player.team1 #ArrowImage
+{
+	background-image: url("s2r://panorama/images/minimap/player_arrow_team1_psd.vtex");
+}
+
+.player.team2 #ArrowImage
+{
+	background-image: url("s2r://panorama/images/minimap/player_arrow_team2_psd.vtex");
+}
+
+.friend.player #ArrowImage
+{
+	background-image: url("s2r://panorama/images/minimap/player_arrow_friend_psd.vtex");
+}
+
+.enemy.player #ArrowImage
+{
+	background-image: url("s2r://panorama/images/minimap/player_arrow_enemy_psd.vtex");
+}
+
+.player.localplayer #ArrowImage
+{
+	opacity: 0;
+}
+
+#FrogImage
+{
+	background-image: url("s2r://panorama/images/heroes/frog_mm_psd.vtex");
+	background-size: contain;
+	background-repeat: no-repeat;
+	width: 85%;
+	height: 85%;
+	vertical-align: middle;
+	horizontal-align: middle;
+	z-index: 100;
+	border-radius: 50%;
+	visibility: collapse;
+}
+
+.Frog #MainImage
+{
+	visibility: collapse;
+}
+
+.Frog #FrogImage
+{
+	visibility: visible;
+}
+
+.spectate:not(.localplayer) .hero_button_image
+{
+	brightness: 1.5;
+}
+
+.precache
+{
+	background-image: url("s2r://panorama/images/minimap/npc_tower_friend_psd.vtex");
+	background-image: url("s2r://panorama/images/minimap/npc_tower_enemy_psd.vtex");
+	background-image: url("s2r://panorama/images/minimap/npc_dispenser_friend_psd.vtex");
+	background-image: url("s2r://panorama/images/minimap/player_marker_psd.vtex");
+	background-image: url("s2r://panorama/images/minimap/player_marker_self_psd.vtex");
+	background-image: url("s2r://panorama/images/minimap/npc_marker_enemy_psd.vtex");
+	background-image: url("s2r://panorama/images/minimap/npc_marker_friend_psd.vtex");
+	background-image: url("s2r://panorama/images/minimap/npc_marker_neutral_psd.vtex");
+	background-image: url("s2r://panorama/images/minimap/shop_psd.vtex");
+	background-image: url("s2r://panorama/images/minimap/neutral_small_psd.vtex");
+	background-image: url("s2r://panorama/images/minimap/neutral_small_up_psd.vtex");
+	background-image: url("s2r://panorama/images/minimap/neutral_small_down_psd.vtex");
+	background-image: url("s2r://panorama/images/minimap/neutral_medium_psd.vtex");
+	background-image: url("s2r://panorama/images/minimap/neutral_medium_up_psd.vtex");
+	background-image: url("s2r://panorama/images/minimap/neutral_medium_down_psd.vtex");
+	background-image: url("s2r://panorama/images/minimap/neutral_large_psd.vtex");
+	background-image: url("s2r://panorama/images/minimap/neutral_large_up_psd.vtex");
+	background-image: url("s2r://panorama/images/minimap/neutral_large_down_psd.vtex");
+	background-image: url("s2r://panorama/images/minimap/neutral_vault_psd.vtex");
+	background-image: url("s2r://panorama/images/minimap/health_pad_psd.vtex");
+	background-image: url("s2r://panorama/images/minimap/item_crate_spawn_psd.vtex");
+	background-image: url("s2r://panorama/images/minimap/ammo_box_psd.vtex");
+	background-image: url("s2r://panorama/images/minimap/boss_marker_enemy_psd.vtex");
+	background-image: url("s2r://panorama/images/minimap/boss_marker_friend_psd.vtex");
+	background-image: url("s2r://panorama/images/minimap/boss_marker_neutral_psd.vtex");
+	background-image: url("s2r://panorama/images/minimap/zip_line_marker_enemy_psd.vtex");
+	background-image: url("s2r://panorama/images/minimap/zip_line_marker_friend_psd.vtex");
+	background-image: url("s2r://panorama/images/minimap/zip_line_marker_neutral_psd.vtex");
+	background-image: url("s2r://panorama/images/minimap/hero_flag_mm_psd.vtex");
+	background-image: url("s2r://panorama/images/minimap/hero_flag_enemy_mm_psd.vtex");
+	background-image: url("s2r://panorama/images/minimap/hero_flag_fill_mm_psd.vtex");
+}
+
+.PlayerIsSpeaking .hero_button_image
+{
+	visibility: collapse;
+}
+
+.PlayerIsSpeaking .speaking_button_image
+{
+	visibility: visible;
+}
+
+.PlayerDead .dead_button_image
+{
+	visibility: visible;
+}
+
+.PlayerIsHoldingIdol .held_idol_image
+{
+	visibility: visible;
+}
+
+.held_idol_image
+{
+	z-index: 98;
+	width: 32px;
+	height: 32px;
+	transform: translateX(8px) translateY(10px);
+	background-size: 100% 100%;
+	background-image: url("s2r://panorama/images/minimap/soul_jar_marker_psd.vtex");
+	img-shadow: 0px 0px 8px 0.5 white;
+	visibility: collapse;
+	animation-name: held_idol_image;
+	animation-iteration-count: infinite;
+	animation-duration: 1.3s;
+}
+
+@keyframes 'held_idol_image'
+{
+	0%
+	{
+		brightness: 0.75;
+		pre-transform-scale2d: 1;
+	}
+	
+	50%
+	{
+		brightness: 1;
+		pre-transform-scale2d: 1.1;
+	}
+	
+	100%
+	{
+		brightness: 0.5;
+		pre-transform-scale2d: 1;
+	}
+	
+}
+
+.speaking_button_image
+{
+	z-index: 99;
+	background-size: 100% 100%;
+	background-position: 50% 50%;
+	background-image: url("s2r://panorama/images/minimap/minimap_speech_psd.vtex");
+	visibility: collapse;
+	height: 100%;
+	width: 100%;
+}
+
+.hover_panel
+{
+	vertical-align: center;
+	horizontal-align: center;
+	width: 70%;
+	height: 70%;
+	z-index: 99;
+	transform: rotateZ( 45deg );
+	margin: 2px;
+}
+
+.idol_return_enemy .hover_panel,.idol_return_friendly .hover_panel
+{
+	transform: rotateZ( 0deg );
+}
+
+.idolFavorPreview
+{
+	horizontal-align: center;
+	vertical-align: middle;
+	background-image: none;
+	background-size: contain;
+	background-position: 50% 50%;
+	width: 10px;
+	height: 10px;
+	z-index: 97;
+	img-shadow: 0px 0px 0px 3.0 offBlack;
+	opacity: 1;
+}
+
+.favor_player_team .idolFavorPreview
+{
+	visibility: visible;
+	background-image: url("s2r://panorama/images/icons/carat_down.vsvg");
+	margin-top: 4px;
+	wash-color: #63ff8d;
+}
+
+.favor_enemy_team .idolFavorPreview
+{
+	visibility: visible;
+	background-image: url("s2r://panorama/images/icons/carat_up.vsvg");
+	margin-top: 10px;
+	wash-color: ColorEnemy;
+	vertical-align: top;
+}
+
+.player .hover_panel
+{
+	border-radius: 50%;
+}
+
+.map_targeting .player .hover_panel
+{
+	width: 100%;
+	height: 100%;
+}
+
+.map_targeting .boss,.map_targeting .mid_boss
+{
+	z-index: ZIndexObjectiveMapTargetting;
+}
+
+.invert_map.HudMinimap
+{
+	transform: scaleY(-1) scaleX(-1);
+}
+
+.invert_map .button_image
+{
+	transform: scaleY(-1) scaleX(-1);
+}
+
+.invert_map .map_button.mid_stairs.right_stairs
+{
+	transform: rotateZ(180deg);
+}
+
+.invert_map .map_button.mid_stairs
+{
+	transform: rotateZ(180deg);
+	transform: scaleY(-1);
+}
+
+.invert_map .held_idol_image
+{
+	transform: rotateZ(180deg) translateX(8px) translateY(7px);
+}
+
+.invert_map .map_button
+{
+	transform: scaleY(-1) scaleX(-1);
+}
+
+.invert_map .speaking_button_image
+{
+	transform: rotateZ(180deg);
+}
+
+.enlarge_entry
+{
+	z-index: 100;
+}
+
+.map_button.enlarge_entry
+{
+	transform: scaleY(1.2) scaleX(1.2);
+}
+
+.invert_map .map_button.enlarge_entry
+{
+	transform: scaleY(-1.2) scaleX(-1.2);
+}
+
+.invert_map .map_button.player
+{
+	transform: scaleY(1) scaleX(1);
+}
+
+.gScoreboardOpen .map_button.player
+{
+	transform: scaleY(1.3) scaleX(1.3);
+	opacity: 1;
+}
+
+.gScoreboardOpen .map_button.player.enlarge_entry
+{
+	transform: scaleY(1.5) scaleX(1.5);
+}
+
+.connectedToHeroTesting:not(.isDefaultMap) .midImage,.connectedToHeroTesting:not(.isDefaultMap) #canvas,.connectedToHeroTesting:not(.isDefaultMap) .map_button
+{
+	visibility: collapse;
+}
+
+.connectedToHeroTesting .forceShowMinimap .map_button.player
+{
+	visibility: visible;
+}
+
+.gDetailView #map_render,.gScoreboardOpen #map_render
+{
+	opacity: 0.85;
+}
+
+.gDetailView .map_button.teleporter_nearby,.gDetailView .map_button.teleporter_far,.gScoreboardOpen .map_button.teleporter_nearby,.gScoreboardOpen .map_button.teleporter_far
+{
+	opacity: 1;
+}
+
+.hasActivateEvent.showHitBox
+{
+	visibility: visible;
+	background-color: rgba(200, 50, 50, 0.5);
+}
+
