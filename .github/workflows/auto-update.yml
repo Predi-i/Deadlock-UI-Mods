@@ -51,8 +51,7 @@ jobs:
           echo "File size:"
           ls -lh csdk.zip
           echo "Unpacking..."
-          mkdir -p /c/Reduced_CSDK_12
-          7z x csdk.zip -oC:/Reduced_CSDK_12 -y
+          7z x csdk.zip -oC:/ -y
 
       - name: Compile and Pack VPK (Headless Hack)
         if: steps.git_check.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
