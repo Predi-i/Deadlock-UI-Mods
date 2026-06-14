@@ -1,4 +1,4 @@
-name: Auto-Update TopBar Mod
+name: TopBar Mod Updater
 
 on:
   schedule:
@@ -47,32 +47,26 @@ jobs:
       - name: Extract CSDK
         if: steps.git_check.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
         shell: bash
-        run: |
-          echo "File size:"
-          ls -lh csdk.zip
-          echo "Unpacking..."
-          7z x csdk.zip -oC:/ -y
+        run: 7z x csdk.zip -oC:/ -y
 
-      - name: Compile and Pack VPK (Headless Hack)
+      - name: Compile and Pack VPK
         if: steps.git_check.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
         shell: pwsh
         run: |
           $ModName = "Show-Nicknames-In-TopBar"
-          $Csdk = "C:\Reduced_CSDK_12"
-
-          $CompilerFile = Get-ChildItem -Path $Csdk -Filter "resourcecompiler.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $CompilerFile) { Write-Error "resourcecompiler.exe NOT FOUND"; exit 1 }
-          $Compiler = $CompilerFile.FullName
-
-          $PackerFile = Get-ChildItem -Path $Csdk -Filter "csdkcfg.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $PackerFile) {
-              $PackerFile = Get-ChildItem -Path $Csdk -Filter "CSDKCfgVPK.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-              if (-not $PackerFile) { Write-Error "Packer NOT FOUND"; exit 1 }
+          $CsdkRoot = "C:\Reduced_CSDK_12"
+          
+          if (-not (Test-Path "$CsdkRoot\game\bin_cs2\win64\resourcecompiler.exe")) {
+              if (Test-Path "$CsdkRoot\Reduced_CSDK_12\game\bin_cs2\win64\resourcecompiler.exe") {
+                  $CsdkRoot = "$CsdkRoot\Reduced_CSDK_12"
+              }
           }
-          $Packer = $PackerFile.FullName
 
-          $ContentDir = "$Csdk\content\citadel_addons\build_$ModName"
-          $GameDir = "$Csdk\game\citadel_addons\build_$ModName"
+          $Compiler = "$CsdkRoot\game\bin_cs2\win64\resourcecompiler.exe"
+          $Packer = "$CsdkRoot\game\bin\win64\CSDKCfgVPK.exe"
+
+          $ContentDir = "$CsdkRoot\content\citadel_addons\build_$ModName"
+          $GameDir = "$CsdkRoot\game\citadel_addons\build_$ModName"
 
           New-Item -ItemType Directory -Force -Path $ContentDir | Out-Null
           Copy-Item -Path "$ModName\*" -Destination $ContentDir -Recurse -Force
@@ -85,18 +79,18 @@ jobs:
           New-Item -ItemType Directory -Force -Path "builds" | Out-Null
           $OutVpk = "$PWD\builds\$ModName.vpk"
           
-          Start-Process -FilePath $Packer -ArgumentList "`"$GameDir`"", "`"$OutVpk`""
-          Start-Sleep -Seconds 6
-          Stop-Process -Name $PackerFile.BaseName -Force -ErrorAction SilentlyContinue
+          $PackerDir = Split-Path $Packer
+          $Proc = Start-Process -FilePath $Packer -ArgumentList "`"$GameDir`"", "`"$OutVpk`"" -WorkingDirectory $PackerDir -PassThru
+          
+          try {
+              $Proc | Wait-Process -Timeout 30 -ErrorAction Stop
+          } catch {
+              $Proc | Stop-Process -Force -ErrorAction SilentlyContinue
+          }
           
           if (-not (Test-Path $OutVpk)) {
-              $FoundVpk = Get-ChildItem -Path $Csdk -Filter "*$ModName*.vpk" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-              if ($FoundVpk) {
-                  Copy-Item -Path $FoundVpk.FullName -Destination $OutVpk -Force
-              } else {
-                  Write-Error "VPK file was not found."
-                  exit 1
-              }
+              Write-Error "VPK file was not found at $OutVpk"
+              exit 1
           }
           exit 0
 
