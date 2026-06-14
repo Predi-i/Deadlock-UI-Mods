@@ -39,14 +39,10 @@ jobs:
             git push
           fi
 
-      - name: Install gdown for Google Drive
-        if: steps.git_check.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
-        run: pip install gdown
-
       - name: Download CSDK
         if: steps.git_check.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
         shell: bash
-        run: gdown "${{ secrets.CSDK_DRIVE_URL }}" -O csdk.zip
+        run: curl -L "${{ secrets.CSDK_DRIVE_URL }}" -o csdk.zip
 
       - name: Extract CSDK
         if: steps.git_check.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
