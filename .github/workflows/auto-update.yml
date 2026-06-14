@@ -79,7 +79,7 @@ jobs:
 
           $Files = Get-ChildItem -Path $ContentDir -Recurse -File | Where-Object { $_.Extension -in @('.css', '.xml', '.js') }
           foreach ($f in $Files) {
-              & $Compiler -i $f.FullName -nop4
+              & $Compiler -i $f.FullName -nop4 2>&1 | Out-Null
           }
 
           New-Item -ItemType Directory -Force -Path "builds" | Out-Null
@@ -89,6 +89,7 @@ jobs:
           Start-Sleep -Seconds 4
           Stop-Process -Name $PackerFile.BaseName -Force -ErrorAction SilentlyContinue
           Write-Host "VPK is packed."
+          exit 0
 
       - name: Create GitHub Release
         if: steps.git_check.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
