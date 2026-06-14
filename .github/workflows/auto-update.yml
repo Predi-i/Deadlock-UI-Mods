@@ -59,28 +59,35 @@ jobs:
         run: |
           $ModName = "Show-Nicknames-In-TopBar"
           $Csdk = "C:\Reduced_CSDK_12"
+
+          $CompilerFile = Get-ChildItem -Path $Csdk -Filter "resourcecompiler.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $CompilerFile) { Write-Error "resourcecompiler.exe NOT FOUND"; exit 1 }
+          $Compiler = $CompilerFile.FullName
+
+          $PackerFile = Get-ChildItem -Path $Csdk -Filter "csdkcfg.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $PackerFile) {
+              $PackerFile = Get-ChildItem -Path $Csdk -Filter "CSDKCfgVPK.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+              if (-not $PackerFile) { Write-Error "Packer NOT FOUND"; exit 1 }
+          }
+          $Packer = $PackerFile.FullName
+
           $ContentDir = "$Csdk\content\citadel_addons\build_$ModName"
           $GameDir = "$Csdk\game\citadel_addons\build_$ModName"
 
           New-Item -ItemType Directory -Force -Path $ContentDir | Out-Null
           Copy-Item -Path "$ModName\*" -Destination $ContentDir -Recurse -Force
 
-          $Compiler = "$Csdk\game\bin_cs2\win64\resourcecompiler.exe"
           $Files = Get-ChildItem -Path $ContentDir -Recurse -File | Where-Object { $_.Extension -in @('.css', '.xml', '.js') }
           foreach ($f in $Files) {
               & $Compiler -i $f.FullName -nop4
           }
 
           New-Item -ItemType Directory -Force -Path "builds" | Out-Null
-          $Packer = "$Csdk\game\bin\win64\CSDKCfgVPK.exe"
           $OutVpk = "$PWD\builds\$ModName.vpk"
           
-          Write-Host "Running Packer..."
           Start-Process -FilePath $Packer -ArgumentList "`"$GameDir`"", "`"$OutVpk`""
-          
           Start-Sleep -Seconds 4
-          
-          Stop-Process -Name "CSDKCfgVPK" -Force -ErrorAction SilentlyContinue
+          Stop-Process -Name $PackerFile.BaseName -Force -ErrorAction SilentlyContinue
           Write-Host "VPK is packed."
 
       - name: Create GitHub Release
