@@ -86,9 +86,16 @@ jobs:
           $OutVpk = "$PWD\builds\$ModName.vpk"
           
           Start-Process -FilePath $Packer -ArgumentList "`"$GameDir`"", "`"$OutVpk`""
-          Start-Sleep -Seconds 4
+          Start-Sleep -Seconds 6
           Stop-Process -Name $PackerFile.BaseName -Force -ErrorAction SilentlyContinue
-          Write-Host "VPK is packed."
+          
+          $FoundVpk = Get-ChildItem -Path $Csdk, $PWD -Filter "*.vpk" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($FoundVpk) {
+              Copy-Item -Path $FoundVpk.FullName -Destination $OutVpk -Force
+          } else {
+              Write-Error "VPK file was not found."
+              exit 1
+          }
           exit 0
 
       - name: Create GitHub Release
@@ -97,4 +104,4 @@ jobs:
         with:
           files: builds/Show-Nicknames-In-TopBar.vpk
           tag_name: "v${{ github.run_number }}"
-          name: "Auto-Update: Show Nicknames In Top Bar"
+          name: "Show Nicknames In Top Bar"
