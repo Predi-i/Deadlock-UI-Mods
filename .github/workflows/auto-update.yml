@@ -89,12 +89,14 @@ jobs:
           Start-Sleep -Seconds 6
           Stop-Process -Name $PackerFile.BaseName -Force -ErrorAction SilentlyContinue
           
-          $FoundVpk = Get-ChildItem -Path $Csdk, $PWD -Filter "*.vpk" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-          if ($FoundVpk) {
-              Copy-Item -Path $FoundVpk.FullName -Destination $OutVpk -Force
-          } else {
-              Write-Error "VPK file was not found."
-              exit 1
+          if (-not (Test-Path $OutVpk)) {
+              $FoundVpk = Get-ChildItem -Path $Csdk -Filter "*$ModName*.vpk" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+              if ($FoundVpk) {
+                  Copy-Item -Path $FoundVpk.FullName -Destination $OutVpk -Force
+              } else {
+                  Write-Error "VPK file was not found."
+                  exit 1
+              }
           }
           exit 0
 
