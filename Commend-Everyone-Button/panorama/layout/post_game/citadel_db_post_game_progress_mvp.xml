@@ -45,7 +45,7 @@
 			<Label class="KeyPlayerHeader" text="#Citadel_Post_Game_MVP_KeyPlayers" />
 		</Panel>
 		<Panel class="MVPHeroContainer">
-			<CitadelHeroSpotlight id="MVPHeroSpotlight" hittest="false" />
+			<CitadelHeroSpotlight id="MVPHeroSpotlight" />
 		</Panel>
 		<Panel class="MVPDetails">
 			<Panel class="MVPTrophySet">
