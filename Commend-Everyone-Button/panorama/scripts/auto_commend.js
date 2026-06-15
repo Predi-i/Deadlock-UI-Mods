@@ -47,19 +47,20 @@ var Utils = {
     },
 
     isPanelVisible: function(panel) {
-        return !!(panel && panel.IsValid && panel.IsValid() && panel.visible);
-    },
+        if (!panel || !panel.IsValid || !panel.IsValid() || !panel.visible) {
+            return false;
+        }
 
-    getVisibleAutoButtons: function(root) {
-        var btns = root.FindChildrenWithClassTraverse("AutoCommendStyle") || [];
-        var visible = [];
-        var i;
-        for (i = 0; i < btns.length; i++) {
-            if (Utils.isPanelVisible(btns[i])) {
-                visible.push(btns[i]);
+        if (panel.style) {
+            if (panel.style.visibility === "collapse") {
+                return false;
+            }
+            if (panel.style.opacity === "0") {
+                return false;
             }
         }
-        return visible;
+
+        return true;
     },
 
     getVisiblePlayerActionContainers: function(root) {
@@ -103,13 +104,6 @@ var Utils = {
         isLiveRequeue = Utils.hasLiveRequeueState(root);
 
         if (!isLiveRequeue) {
-            for (i = 0; i < autoButtons.length; i++) {
-                if (!autoButtons[i]) continue;
-                autoButtons[i].style.visibility = "visible";
-                autoButtons[i].style.opacity = "1";
-                autoButtons[i].enabled = true;
-                autoButtons[i].hittest = true;
-            }
             return;
         }
 
