@@ -1,5 +1,9 @@
 [CmdletBinding()]
-param([string]$ModFolderName)
+param(
+    [string]$ModFolderName,
+    [switch]$Force,
+    [switch]$CleanTemp
+)
 
 [console]::TreatControlCAsInput = $false
 $ErrorActionPreference = "Stop"
@@ -74,6 +78,11 @@ function Kill-Deadlock {
 function Start-Deadlock {
     Write-Host "Starting Deadlock..." -ForegroundColor Cyan
     Start-Process "steam://run/1422450"
+}
+
+function Get-CompileKeyForFile($FileInfo) {
+    $hash = (Get-FileHash -Path $FileInfo.FullName -Algorithm MD5).Hash
+    return "{0}|{1}|{2}" -f $hash, $FileInfo.Length, $FileInfo.LastWriteTimeUtc.Ticks
 }
 
 # ==============================================================================
@@ -166,7 +175,7 @@ $InitialMod = $ModFolderName
 while ($true) {
     Clear-Host
     Write-Host "=== Deadlock Mod Compiler (Incremental Build) ===" -ForegroundColor Cyan
-    Write-Host "Tip: Delete 'data/build_cache.json' to force a full rebuild.`n" -ForegroundColor DarkGray
+    Write-Host "Tip: use -Force for a full rebuild, -CleanTemp to wipe temporary build folders.`n" -ForegroundColor DarkGray
     
     $SelectedMod = $InitialMod
 
@@ -254,6 +263,12 @@ while ($true) {
     try {
         if ($Config.ExecutionMode -eq "BuildAndRestart") { Kill-Deadlock }
 
+        if ($CleanTemp) {
+            Write-Host "Cleaning temp build folders..." -ForegroundColor Yellow
+            if (Test-Path $TempContent) { Remove-Item -Path $TempContent -Recurse -Force }
+            if (Test-Path $TempGame) { Remove-Item -Path $TempGame -Recurse -Force }
+        }
+
         $BuildCache = @{}
         if (Test-Path $CachePath) {
             try {
@@ -266,6 +281,9 @@ while ($true) {
         if (-not (Test-Path $TempGame)) { New-Item -ItemType Directory -Force -Path $TempGame | Out-Null }
 
         Write-Host "Step 1/3: Checking for modified files (Hashing)..." -ForegroundColor Cyan
+        if ($Force) {
+            Write-Host "  Force rebuild enabled for this run." -ForegroundColor Yellow
+        }
         
         $SourceFiles = Get-ChildItem -Path $ModSourcePath -Recurse -File
         $CurrentFiles = @{}
@@ -281,12 +299,14 @@ while ($true) {
             $cacheKey = "${SelectedMod}|${relPath}".ToLower()
             $CurrentFiles[$cacheKey] = $true
 
-            $hash = (Get-FileHash -Path $file.FullName -Algorithm MD5).Hash
+            $compileKey = Get-CompileKeyForFile -FileInfo $file
             $contentDest = Join-Path $TempContent $relPath
 
-            $needsUpdate = $false
-            if (-not $BuildCache.Contains($cacheKey) -or $BuildCache[$cacheKey] -ne $hash -or -not (Test-Path $contentDest)) {
-                $needsUpdate = $true
+            $needsUpdate = $Force
+            if (-not $needsUpdate) {
+                if (-not $BuildCache.Contains($cacheKey) -or $BuildCache[$cacheKey] -ne $compileKey -or -not (Test-Path $contentDest)) {
+                    $needsUpdate = $true
+                }
             }
 
             if ($needsUpdate) {
@@ -307,7 +327,7 @@ while ($true) {
                     $FilesToCompile.Add($contentDest)
                 }
 
-                $BuildCache[$cacheKey] = $hash
+                $BuildCache[$cacheKey] = $compileKey
                 $updatedCount++
             }
         }
@@ -333,6 +353,13 @@ while ($true) {
         foreach ($k in $KeysToRemove) { $BuildCache.Remove($k) }
 
         Write-Host "  Found $updatedCount new/modified files. Removed $($KeysToRemove.Count) deleted files." -ForegroundColor DarkGray
+
+        if ($updatedCount -gt 0) {
+            $pngUpdates = ($SourceFiles | Where-Object { $_.Extension -eq '.png' -and $BuildCache.Contains("${SelectedMod}|$($_.FullName.Substring($ModSourcePath.Length + 1))".ToLower()) }).Count
+            if ($pngUpdates -gt 0) {
+                Write-Host "  PNG source changes are tracked via hash + file size + timestamp." -ForegroundColor DarkGray
+            }
+        }
 
         $CacheObj = New-Object PSObject
         foreach ($key in $BuildCache.Keys) {
