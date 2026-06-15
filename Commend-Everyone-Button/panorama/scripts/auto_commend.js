@@ -52,6 +52,7 @@ var Utils = {
     hasLiveRequeueState: function(root) {
         var playAgainButton = Utils.getPlayAgainButton(root);
         var buttonContent;
+        var parentScreen;
 
         if (!playAgainButton) {
             return false;
@@ -62,7 +63,12 @@ var Utils = {
             return false;
         }
 
-        return buttonContent.visible && playAgainButton.visible;
+        parentScreen = playAgainButton.GetParent ? playAgainButton.GetParent() : null;
+        if (!parentScreen || !parentScreen.IsValid || !parentScreen.IsValid()) {
+            return false;
+        }
+
+        return playAgainButton.visible && buttonContent.visible && parentScreen.visible;
     },
 
     syncButtonVisibility: function(root) {
@@ -82,10 +88,6 @@ var Utils = {
         isLiveRequeue = Utils.hasLiveRequeueState(root);
 
         if (!isLiveRequeue) {
-            if (playAgainButton) {
-                playAgainButton.style.visibility = "visible";
-                playAgainButton.style.opacity = "1";
-            }
             for (i = 0; i < autoButtons.length; i++) {
                 if (autoButtons[i]) {
                     autoButtons[i].style.visibility = "visible";
