@@ -80,6 +80,43 @@ function Start-Deadlock {
     Start-Process "steam://run/1422450"
 }
 
+function Show-SettingsMenu {
+    param([psobject]$ConfigObject)
+
+    while ($true) {
+        Clear-Host
+        Write-Host "=== Build Tool Settings ===" -ForegroundColor Cyan
+        Write-Host "[1] Build destination: $($ConfigObject.BuildDestination)"
+        Write-Host "[2] Execution mode:    $($ConfigObject.ExecutionMode)"
+        Write-Host "[3] Steam path:        $($ConfigObject.SteamPath)"
+        Write-Host "[4] CSDK path:         $($ConfigObject.CsdkPath)"
+        Write-Host "[0] Back"
+
+        $choice = Read-Host "Select setting"
+        switch ($choice) {
+            '1' {
+                if ($ConfigObject.BuildDestination -eq 'Ask') { $ConfigObject.BuildDestination = 'Builds' }
+                elseif ($ConfigObject.BuildDestination -eq 'Builds') { $ConfigObject.BuildDestination = 'Addons' }
+                else { $ConfigObject.BuildDestination = 'Ask' }
+            }
+            '2' {
+                if ($ConfigObject.ExecutionMode -eq 'BuildOnly') { $ConfigObject.ExecutionMode = 'BuildAndRestart' }
+                else { $ConfigObject.ExecutionMode = 'BuildOnly' }
+            }
+            '3' {
+                $ConfigObject.SteamPath = Read-Host "Enter Steam path"
+            }
+            '4' {
+                $ConfigObject.CsdkPath = Read-Host "Enter CSDK path"
+            }
+            '0' {
+                $ConfigObject | ConvertTo-Json -Depth 2 | Set-Content $ConfigPath -Encoding UTF8
+                return
+            }
+        }
+    }
+}
+
 function Get-CompileKeyForFile($FileInfo) {
     $hash = (Get-FileHash -Path $FileInfo.FullName -Algorithm MD5).Hash
     return "{0}|{1}|{2}" -f $hash, $FileInfo.Length, $FileInfo.LastWriteTimeUtc.Ticks
@@ -192,16 +229,48 @@ while ($true) {
             Wait-KeyPressAndExit
         }
 
+        Write-Host "[0] Settings"
         for ($i = 0; $i -lt $folders.Count; $i++) {
-            Write-Host "[$i] $($folders[$i].Name)"
+            Write-Host "[$($i + 1)] $($folders[$i].Name)"
         }
+        Write-Host "[S] Start Deadlock"
+        Write-Host "[R] Restart Deadlock"
 
         $validSelection = $false
         while (-not $validSelection) {
             $selection = Read-Host "Enter the number of the mod to compile"
-            if ([int]::TryParse($selection, [ref]$null) -and [int]$selection -ge 0 -and [int]$selection -lt $folders.Count) {
-                $SelectedMod = $folders[[int]$selection].Name
-                $validSelection = $true
+            switch ($selection.ToUpperInvariant()) {
+                '0' {
+                    Show-SettingsMenu -ConfigObject $Config
+                    $validSelection = $false
+                    Clear-Host
+                    Write-Host "Available mods to build:" -ForegroundColor White
+                    Write-Host "[0] Settings"
+                    for ($j = 0; $j -lt $folders.Count; $j++) {
+                        Write-Host "[$($j + 1)] $($folders[$j].Name)"
+                    }
+                    Write-Host "[S] Start Deadlock"
+                    Write-Host "[R] Restart Deadlock"
+                    continue
+                }
+                'S' {
+                    Start-Deadlock
+                    Start-Sleep -Seconds 1
+                    continue
+                }
+                'R' {
+                    Kill-Deadlock
+                    Start-Deadlock
+                    Start-Sleep -Seconds 1
+                    continue
+                }
+                default {
+                    $parsed = 0
+                    if ([int]::TryParse($selection, [ref]$parsed) -and $parsed -ge 1 -and $parsed -le $folders.Count) {
+                        $SelectedMod = $folders[$parsed - 1].Name
+                        $validSelection = $true
+                    }
+                }
             }
         }
     }
@@ -341,16 +410,32 @@ while ($true) {
                     $relPath = $key.Substring($prefix.Length)
                     
                     $cPath = Join-Path $TempContent $relPath
-                    if (Test-Path $cPath) { Remove-Item $cPath -Force }
+                    if (Test-Path $cPath) { Remove-Item $cPath -Recurse -Force }
 
                     $gPath = Join-Path $TempGame $relPath
                     $gPathC = $gPath + "_c"
-                    if (Test-Path $gPath) { Remove-Item $gPath -Force }
-                    if (Test-Path $gPathC) { Remove-Item $gPathC -Force }
+                    if (Test-Path $gPath) { Remove-Item $gPath -Recurse -Force }
+                    if (Test-Path $gPathC) { Remove-Item $gPathC -Recurse -Force }
                 }
             }
         }
         foreach ($k in $KeysToRemove) { $BuildCache.Remove($k) }
+
+        $TempContentFiles = @()
+        if (Test-Path $TempContent) {
+            $TempContentFiles = Get-ChildItem -Path $TempContent -Recurse -File
+        }
+        foreach ($tempFile in $TempContentFiles) {
+            $tempRelPath = $tempFile.FullName.Substring($TempContent.Length + 1)
+            $tempCacheKey = "${SelectedMod}|${tempRelPath}".ToLower()
+            if (-not $CurrentFiles.Contains($tempCacheKey)) {
+                Remove-Item -Path $tempFile.FullName -Force -ErrorAction SilentlyContinue
+                $tempGameFile = Join-Path $TempGame $tempRelPath
+                $tempGameCompiled = $tempGameFile + '_c'
+                if (Test-Path $tempGameFile) { Remove-Item -Path $tempGameFile -Recurse -Force -ErrorAction SilentlyContinue }
+                if (Test-Path $tempGameCompiled) { Remove-Item -Path $tempGameCompiled -Recurse -Force -ErrorAction SilentlyContinue }
+            }
+        }
 
         Write-Host "  Found $updatedCount new/modified files. Removed $($KeysToRemove.Count) deleted files." -ForegroundColor DarkGray
 
