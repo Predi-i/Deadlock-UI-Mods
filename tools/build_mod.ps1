@@ -360,7 +360,19 @@ while ($true) {
         
         $Utf8NoBom = New-Object System.Text.UTF8Encoding $false
         $AllowedExts = @('.xml', '.css', '.js', '.vsndevts', '.wav', '.vtex', '.vsvg', '.vpcf', '.vmdl', '.vmat')
-        $StaleCompiledExts = @('.xml_c', '.vcss_c', '.vjs_c', '.vsndevts_c', '.vtex_c', '.vsvg_c', '.vpcf_c', '.vmdl_c', '.vmat_c')
+        $CompileOutputs = @{
+            '.xml'      = '.xml_c'
+            '.css'      = '.vcss_c'
+            '.js'       = '.vjs_c'
+            '.vsndevts' = '.vsndevts_c'
+            '.wav'      = '.vsnd_c'
+            '.vtex'     = '.vtex_c'
+            '.vsvg'     = '.vsvg_c'
+            '.vpcf'     = '.vpcf_c'
+            '.vmdl'     = '.vmdl_c'
+            '.vmat'     = '.vmat_c'
+        }
+        $StaleCompiledExts = @('.xml_c', '.vcss_c', '.vjs_c', '.vsndevts_c', '.vsnd_c', '.vtex_c', '.vsvg_c', '.vpcf_c', '.vmdl_c', '.vmat_c')
         
         $updatedCount = 0
 
@@ -371,10 +383,14 @@ while ($true) {
 
             $compileKey = Get-CompileKeyForFile -FileInfo $file
             $contentDest = Join-Path $TempContent $relPath
+            $compiledDest = $null
+            if ($CompileOutputs.ContainsKey($file.Extension)) {
+                $compiledDest = Join-Path $TempGame ($relPath + $CompileOutputs[$file.Extension])
+            }
 
             $needsUpdate = $Force
             if (-not $needsUpdate) {
-                if (-not $BuildCache.Contains($cacheKey) -or $BuildCache[$cacheKey] -ne $compileKey -or -not (Test-Path $contentDest)) {
+                if (-not $BuildCache.Contains($cacheKey) -or $BuildCache[$cacheKey] -ne $compileKey -or -not (Test-Path $contentDest) -or ($compiledDest -and -not (Test-Path $compiledDest))) {
                     $needsUpdate = $true
                 }
             }
