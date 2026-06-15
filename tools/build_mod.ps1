@@ -388,9 +388,14 @@ while ($true) {
                 $compiledDest = Join-Path $TempGame ($relPath + $CompileOutputs[$file.Extension])
             }
 
+            $cachedCompileKey = $null
+            if ($BuildCache.Contains($cacheKey)) {
+                $cachedCompileKey = [string]$BuildCache[$cacheKey]
+            }
+
             $needsUpdate = $Force
             if (-not $needsUpdate) {
-                if (-not $BuildCache.Contains($cacheKey) -or $BuildCache[$cacheKey] -ne $compileKey -or -not (Test-Path $contentDest) -or ($compiledDest -and -not (Test-Path $compiledDest))) {
+                if ($null -eq $cachedCompileKey -or $cachedCompileKey.Trim() -ne $compileKey -or -not (Test-Path $contentDest) -or ($compiledDest -and -not (Test-Path $compiledDest))) {
                     $needsUpdate = $true
                 }
             }
