@@ -360,6 +360,7 @@ while ($true) {
         
         $Utf8NoBom = New-Object System.Text.UTF8Encoding $false
         $AllowedExts = @('.xml', '.css', '.js', '.vsndevts', '.wav', '.vtex', '.vsvg', '.vpcf', '.vmdl', '.vmat')
+        $StaleCompiledExts = @('.xml_c', '.vcss_c', '.vjs_c', '.vsndevts_c', '.vtex_c', '.vsvg_c', '.vpcf_c', '.vmdl_c', '.vmat_c')
         
         $updatedCount = 0
 
@@ -434,6 +435,28 @@ while ($true) {
                 $tempGameCompiled = $tempGameFile + '_c'
                 if (Test-Path $tempGameFile) { Remove-Item -Path $tempGameFile -Recurse -Force -ErrorAction SilentlyContinue }
                 if (Test-Path $tempGameCompiled) { Remove-Item -Path $tempGameCompiled -Recurse -Force -ErrorAction SilentlyContinue }
+            }
+        }
+
+        $TempGameFiles = @()
+        if (Test-Path $TempGame) {
+            $TempGameFiles = Get-ChildItem -Path $TempGame -Recurse -File
+        }
+        foreach ($tempGameEntry in $TempGameFiles) {
+            $gameRelPath = $tempGameEntry.FullName.Substring($TempGame.Length + 1)
+            $sourceCandidate = Join-Path $ModSourcePath $gameRelPath
+            $isCompiledArtifact = $false
+            foreach ($compiledExt in $StaleCompiledExts) {
+                if ($tempGameEntry.Name.EndsWith($compiledExt)) {
+                    $isCompiledArtifact = $true
+                    break
+                }
+            }
+
+            if (-not $isCompiledArtifact -and -not (Test-Path $sourceCandidate)) {
+                Remove-Item -Path $tempGameEntry.FullName -Force -ErrorAction SilentlyContinue
+                $compiledSibling = $tempGameEntry.FullName + '_c'
+                if (Test-Path $compiledSibling) { Remove-Item -Path $compiledSibling -Recurse -Force -ErrorAction SilentlyContinue }
             }
         }
 
