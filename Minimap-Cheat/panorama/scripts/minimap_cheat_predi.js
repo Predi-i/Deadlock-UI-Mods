@@ -1,159 +1,133 @@
 (function() {
-    "use strict";
+    'use strict';
 
-    // Configuration
-    const POLL_INTERVAL = 0.2;
-    const WAVE_COUNT = 2;
-    const CLICK_DELAY = 3;
-    const WAVE_DELAY = 3.0;
-    const TRIGGER_WORDS = ["missing"];
-    const CHAT_PANELS = ["Team1Chat", "Team2Chat", "ChatMessages"];
+    var WAVE_COUNT = 2;
+    var CLICK_DELAY = 3.0;
+    var WAVE_DELAY = 3.0;
+    var TRIGGER_KEY = 'key_m';
 
-    // State and Cache
-    const State = {
-        chatCounts: {},
-        isPinging: false
-    };
-    
-    const Cache = {
-        rootPanel: null,
-        chatContainers: {}
+    var State = {
+        isPinging: false,
+        rootPanel: null
     };
 
-    // Cache UI root panel to prevent repetitive tree traversal
+    function IsPanelValid(panel) {
+        return !!(panel && panel.IsValid && panel.IsValid());
+    }
+
     function GetUIRoot() {
-        if (Cache.rootPanel && Cache.rootPanel.IsValid && Cache.rootPanel.IsValid()) {
-            return Cache.rootPanel;
+        var root;
+        var guard;
+
+        if (IsPanelValid(State.rootPanel)) {
+            return State.rootPanel;
         }
 
-        let root = $.GetContextPanel();
-        let guard = 0;
+        root = $.GetContextPanel();
+        guard = 0;
         while (root && root.GetParent && root.GetParent() && guard < 50) {
             root = root.GetParent();
             guard++;
         }
-        
-        Cache.rootPanel = root;
-        return root;
+
+        State.rootPanel = root || null;
+        return State.rootPanel;
     }
 
     function PerformClick(btn, root) {
-        const minimap = root ? (root.FindChildTraverse("hud_minimap") || root.FindChildTraverse("minimap_container")) : null;
-        const hoverPanel = btn.FindChildTraverse("HoverPanel") || btn.FindChildTraverse("hover_panel") || btn;
+        var minimap = root ? (root.FindChildTraverse('hud_minimap') || root.FindChildTraverse('minimap_container')) : null;
+        var hoverPanel = btn ? (btn.FindChildTraverse('HoverPanel') || btn.FindChildTraverse('hover_panel') || btn) : null;
 
-        if (minimap) minimap.AddClass("gScoreboardOpen");
-        btn.AddClass("gScoreboardOpen");
+        if (!IsPanelValid(btn) || !IsPanelValid(hoverPanel)) {
+            return;
+        }
 
-        try { minimap.hittest = true; minimap.hittestchildren = true; } catch(e) {}
-        try { btn.hittest = true; btn.hittestchildren = true; } catch(e) {}
-        try { hoverPanel.hittest = true; hoverPanel.hittestchildren = true; } catch(e) {}
+        if (IsPanelValid(minimap)) {
+            minimap.AddClass('gScoreboardOpen');
+        }
+        btn.AddClass('gScoreboardOpen');
 
-        try { $.DispatchEvent("Activated", hoverPanel, "mouse"); } catch(e) {}
+        try { if (IsPanelValid(minimap)) { minimap.hittest = true; minimap.hittestchildren = true; } } catch (e) {}
+        try { btn.hittest = true; btn.hittestchildren = true; } catch (e) {}
+        try { hoverPanel.hittest = true; hoverPanel.hittestchildren = true; } catch (e) {}
+        try { $.DispatchEvent('Activated', hoverPanel, 'mouse'); } catch (e) {}
 
-        $.Schedule(0.02, () => {
-            if (minimap && minimap.IsValid()) minimap.RemoveClass("gScoreboardOpen");
-            if (btn && btn.IsValid()) btn.RemoveClass("gScoreboardOpen");
+        $.Schedule(0.02, function() {
+            if (IsPanelValid(minimap)) {
+                minimap.RemoveClass('gScoreboardOpen');
+            }
+            if (IsPanelValid(btn)) {
+                btn.RemoveClass('gScoreboardOpen');
+            }
         });
     }
 
+    function CollectEnemyButtons(root) {
+        var buttons;
+        var enemies;
+        var i;
+        var btn;
+
+        enemies = [];
+        if (!root || !root.FindChildrenWithClassTraverse) {
+            return enemies;
+        }
+
+        buttons = root.FindChildrenWithClassTraverse('map_button') || [];
+        for (i = 0; i < buttons.length; i++) {
+            btn = buttons[i];
+            if (IsPanelValid(btn) && btn.BHasClass('enemy') && btn.BHasClass('player')) {
+                enemies.push(btn);
+            }
+        }
+
+        return enemies;
+    }
+
     function FirePingWave(waveIndex) {
+        var root;
+        var enemies;
+
         if (waveIndex >= WAVE_COUNT) {
             State.isPinging = false;
             return;
         }
 
-        const root = GetUIRoot();
-        const enemies = [];
-        
-        if (root) {
-            const buttons = root.FindChildrenWithClassTraverse("map_button") || [];
-            for (let i = 0; i < buttons.length; i++) {
-                const btn = buttons[i];
-                if (btn && btn.IsValid() && btn.BHasClass("enemy") && btn.BHasClass("player")) {
-                    enemies.push(btn);
-                }
-            }
-        }
+        root = GetUIRoot();
+        enemies = CollectEnemyButtons(root);
 
         function ClickNextEnemy(enemyIndex) {
+            var targetBtn;
+
             if (enemyIndex >= enemies.length) {
-                $.Schedule(WAVE_DELAY, () => FirePingWave(waveIndex + 1));
+                $.Schedule(WAVE_DELAY, function() {
+                    FirePingWave(waveIndex + 1);
+                });
                 return;
             }
 
-            const targetBtn = enemies[enemyIndex];
-            if (targetBtn && targetBtn.IsValid()) {
+            targetBtn = enemies[enemyIndex];
+            if (IsPanelValid(targetBtn)) {
                 PerformClick(targetBtn, root);
             }
 
-            $.Schedule(CLICK_DELAY, () => ClickNextEnemy(enemyIndex + 1));
+            $.Schedule(CLICK_DELAY, function() {
+                ClickNextEnemy(enemyIndex + 1);
+            });
         }
 
         ClickNextEnemy(0);
     }
 
-    function ProcessChatMessage(msgPanel) {
-        if (!msgPanel || !msgPanel.IsValid()) return;
-        
-        const msgTextLabel = msgPanel.FindChildTraverse("MessageText");
-        if (!msgTextLabel || !msgTextLabel.text) return;
-        
-        const text = String(msgTextLabel.text).toLowerCase();
-        const isTriggered = TRIGGER_WORDS.some(word => text.includes(word));
-
-        if (!isTriggered || State.isPinging) return;
+    function StartPingSequence() {
+        if (State.isPinging) {
+            return;
+        }
 
         State.isPinging = true;
         FirePingWave(0);
     }
 
-    function GetMessagesContainer(panelId) {
-        let container = Cache.chatContainers[panelId];
-        
-        if (container && container.IsValid && container.IsValid()) {
-            return container;
-        }
-
-        const root = GetUIRoot();
-        if (!root) return null;
-
-        const chatPanel = root.FindChildTraverse(panelId);
-        if (chatPanel && chatPanel.IsValid()) {
-            container = chatPanel.FindChildTraverse("Messages");
-            if (container && container.IsValid()) {
-                Cache.chatContainers[panelId] = container;
-                return container;
-            }
-        }
-        return null;
-    }
-
-    function AutoPingLoop() {
-        try {
-            for (let i = 0; i < CHAT_PANELS.length; i++) {
-                const panelId = CHAT_PANELS[i];
-                const messagesContainer = GetMessagesContainer(panelId);
-                
-                if (!messagesContainer) continue;
-
-                const currentCount = messagesContainer.GetChildCount();
-                let lastCount = State.chatCounts[panelId] || 0;
-
-                // Handle chat clearing (e.g., player reconnects)
-                if (currentCount < lastCount) lastCount = 0;
-
-                if (currentCount > lastCount) {
-                    for (let j = lastCount; j < currentCount; j++) {
-                        ProcessChatMessage(messagesContainer.GetChild(j));
-                    }
-                    State.chatCounts[panelId] = currentCount;
-                }
-            }
-        } catch (e) {
-        } finally {
-            $.Schedule(POLL_INTERVAL, AutoPingLoop);
-        }
-    }
-
-    $.Schedule(2.0, AutoPingLoop);
+    $.RegisterKeyBind($.GetContextPanel(), TRIGGER_KEY, StartPingSequence);
+    $.RegisterKeyBind('', TRIGGER_KEY, StartPingSequence);
 })();

@@ -18,17 +18,29 @@
         lastAlertTime: -1
     };
 
+    function isValidPanel(panel) {
+        return !!(panel && panel.IsValid && panel.IsValid());
+    }
+
     function getRoot() {
-        if (State.rootPanel && State.rootPanel.IsValid()) {
+        var top = CTX;
+        var guard = 0;
+
+        if (isValidPanel(State.rootPanel)) {
             return State.rootPanel;
         }
 
-        var top = CTX;
-        while (top && top.GetParent()) { 
-            top = top.GetParent(); 
+        while (top && top.GetParent && top.GetParent() && guard < 50) {
+            top = top.GetParent();
+            guard++;
         }
-        
-        State.rootPanel = top.FindChildTraverse("Hud") || top;
+
+        if (!top) {
+            State.rootPanel = null;
+            return null;
+        }
+
+        State.rootPanel = top.FindChildTraverse ? (top.FindChildTraverse("Hud") || top) : top;
         return State.rootPanel;
     }
 
@@ -42,8 +54,10 @@
     }
 
     function getCurrentTime(root) {
-        if (!State.clockPanel || !State.clockPanel.IsValid()) {
-            State.clockPanel = root.FindChildTraverse("GameTime");
+        if (!root) return null;
+
+        if (!isValidPanel(State.clockPanel)) {
+            State.clockPanel = root.FindChildTraverse ? root.FindChildTraverse("GameTime") : null;
             if (!State.clockPanel) return null;
         }
 
@@ -86,7 +100,7 @@
         var currentTime = getCurrentTime(root);
 
         if (currentTime === null) {
-             $.Schedule(CONFIG.POLL_RATE, loop);
+             $.Schedule(CONFIG.POLL_RATE_IDLE, loop);
              return;
         }
 

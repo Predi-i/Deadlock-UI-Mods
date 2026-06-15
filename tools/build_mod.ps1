@@ -1,5 +1,9 @@
 [CmdletBinding()]
-param([string]$ModFolderName)
+param(
+    [string]$ModFolderName,
+    [switch]$Force,
+    [switch]$CleanTemp
+)
 
 [console]::TreatControlCAsInput = $false
 $ErrorActionPreference = "Stop"
@@ -74,6 +78,48 @@ function Kill-Deadlock {
 function Start-Deadlock {
     Write-Host "Starting Deadlock..." -ForegroundColor Cyan
     Start-Process "steam://run/1422450"
+}
+
+function Show-SettingsMenu {
+    param([psobject]$ConfigObject)
+
+    while ($true) {
+        Clear-Host
+        Write-Host "=== Build Tool Settings ===" -ForegroundColor Cyan
+        Write-Host "[1] Build destination: $($ConfigObject.BuildDestination)"
+        Write-Host "[2] Execution mode:    $($ConfigObject.ExecutionMode)"
+        Write-Host "[3] Steam path:        $($ConfigObject.SteamPath)"
+        Write-Host "[4] CSDK path:         $($ConfigObject.CsdkPath)"
+        Write-Host "[0] Back"
+
+        $choice = Read-Host "Select setting"
+        switch ($choice) {
+            '1' {
+                if ($ConfigObject.BuildDestination -eq 'Ask') { $ConfigObject.BuildDestination = 'Builds' }
+                elseif ($ConfigObject.BuildDestination -eq 'Builds') { $ConfigObject.BuildDestination = 'Addons' }
+                else { $ConfigObject.BuildDestination = 'Ask' }
+            }
+            '2' {
+                if ($ConfigObject.ExecutionMode -eq 'BuildOnly') { $ConfigObject.ExecutionMode = 'BuildAndRestart' }
+                else { $ConfigObject.ExecutionMode = 'BuildOnly' }
+            }
+            '3' {
+                $ConfigObject.SteamPath = Read-Host "Enter Steam path"
+            }
+            '4' {
+                $ConfigObject.CsdkPath = Read-Host "Enter CSDK path"
+            }
+            '0' {
+                $ConfigObject | ConvertTo-Json -Depth 2 | Set-Content $ConfigPath -Encoding UTF8
+                return
+            }
+        }
+    }
+}
+
+function Get-CompileKeyForFile($FileInfo) {
+    $hash = (Get-FileHash -Path $FileInfo.FullName -Algorithm MD5).Hash
+    return "{0}|{1}|{2}" -f $hash, $FileInfo.Length, $FileInfo.LastWriteTimeUtc.Ticks
 }
 
 # ==============================================================================
@@ -166,7 +212,7 @@ $InitialMod = $ModFolderName
 while ($true) {
     Clear-Host
     Write-Host "=== Deadlock Mod Compiler (Incremental Build) ===" -ForegroundColor Cyan
-    Write-Host "Tip: Delete 'data/build_cache.json' to force a full rebuild.`n" -ForegroundColor DarkGray
+    Write-Host "Tip: use -Force for a full rebuild, -CleanTemp to wipe temporary build folders.`n" -ForegroundColor DarkGray
     
     $SelectedMod = $InitialMod
 
@@ -183,16 +229,48 @@ while ($true) {
             Wait-KeyPressAndExit
         }
 
+        Write-Host "[0] Settings"
         for ($i = 0; $i -lt $folders.Count; $i++) {
-            Write-Host "[$i] $($folders[$i].Name)"
+            Write-Host "[$($i + 1)] $($folders[$i].Name)"
         }
+        Write-Host "[S] Start Deadlock"
+        Write-Host "[R] Restart Deadlock"
 
         $validSelection = $false
         while (-not $validSelection) {
             $selection = Read-Host "Enter the number of the mod to compile"
-            if ([int]::TryParse($selection, [ref]$null) -and [int]$selection -ge 0 -and [int]$selection -lt $folders.Count) {
-                $SelectedMod = $folders[[int]$selection].Name
-                $validSelection = $true
+            switch ($selection.ToUpperInvariant()) {
+                '0' {
+                    Show-SettingsMenu -ConfigObject $Config
+                    $validSelection = $false
+                    Clear-Host
+                    Write-Host "Available mods to build:" -ForegroundColor White
+                    Write-Host "[0] Settings"
+                    for ($j = 0; $j -lt $folders.Count; $j++) {
+                        Write-Host "[$($j + 1)] $($folders[$j].Name)"
+                    }
+                    Write-Host "[S] Start Deadlock"
+                    Write-Host "[R] Restart Deadlock"
+                    continue
+                }
+                'S' {
+                    Start-Deadlock
+                    Start-Sleep -Seconds 1
+                    continue
+                }
+                'R' {
+                    Kill-Deadlock
+                    Start-Deadlock
+                    Start-Sleep -Seconds 1
+                    continue
+                }
+                default {
+                    $parsed = 0
+                    if ([int]::TryParse($selection, [ref]$parsed) -and $parsed -ge 1 -and $parsed -le $folders.Count) {
+                        $SelectedMod = $folders[$parsed - 1].Name
+                        $validSelection = $true
+                    }
+                }
             }
         }
     }
@@ -254,6 +332,12 @@ while ($true) {
     try {
         if ($Config.ExecutionMode -eq "BuildAndRestart") { Kill-Deadlock }
 
+        if ($CleanTemp) {
+            Write-Host "Cleaning temp build folders..." -ForegroundColor Yellow
+            if (Test-Path $TempContent) { Remove-Item -Path $TempContent -Recurse -Force }
+            if (Test-Path $TempGame) { Remove-Item -Path $TempGame -Recurse -Force }
+        }
+
         $BuildCache = @{}
         if (Test-Path $CachePath) {
             try {
@@ -266,6 +350,9 @@ while ($true) {
         if (-not (Test-Path $TempGame)) { New-Item -ItemType Directory -Force -Path $TempGame | Out-Null }
 
         Write-Host "Step 1/3: Checking for modified files (Hashing)..." -ForegroundColor Cyan
+        if ($Force) {
+            Write-Host "  Force rebuild enabled for this run." -ForegroundColor Yellow
+        }
         
         $SourceFiles = Get-ChildItem -Path $ModSourcePath -Recurse -File
         $CurrentFiles = @{}
@@ -273,6 +360,7 @@ while ($true) {
         
         $Utf8NoBom = New-Object System.Text.UTF8Encoding $false
         $AllowedExts = @('.xml', '.css', '.js', '.vsndevts', '.wav', '.vtex', '.vsvg', '.vpcf', '.vmdl', '.vmat')
+        $StaleCompiledExts = @('.xml_c', '.vcss_c', '.vjs_c', '.vsndevts_c', '.vtex_c', '.vsvg_c', '.vpcf_c', '.vmdl_c', '.vmat_c')
         
         $updatedCount = 0
 
@@ -281,12 +369,14 @@ while ($true) {
             $cacheKey = "${SelectedMod}|${relPath}".ToLower()
             $CurrentFiles[$cacheKey] = $true
 
-            $hash = (Get-FileHash -Path $file.FullName -Algorithm MD5).Hash
+            $compileKey = Get-CompileKeyForFile -FileInfo $file
             $contentDest = Join-Path $TempContent $relPath
 
-            $needsUpdate = $false
-            if (-not $BuildCache.Contains($cacheKey) -or $BuildCache[$cacheKey] -ne $hash -or -not (Test-Path $contentDest)) {
-                $needsUpdate = $true
+            $needsUpdate = $Force
+            if (-not $needsUpdate) {
+                if (-not $BuildCache.Contains($cacheKey) -or $BuildCache[$cacheKey] -ne $compileKey -or -not (Test-Path $contentDest)) {
+                    $needsUpdate = $true
+                }
             }
 
             if ($needsUpdate) {
@@ -307,7 +397,7 @@ while ($true) {
                     $FilesToCompile.Add($contentDest)
                 }
 
-                $BuildCache[$cacheKey] = $hash
+                $BuildCache[$cacheKey] = $compileKey
                 $updatedCount++
             }
         }
@@ -321,18 +411,63 @@ while ($true) {
                     $relPath = $key.Substring($prefix.Length)
                     
                     $cPath = Join-Path $TempContent $relPath
-                    if (Test-Path $cPath) { Remove-Item $cPath -Force }
+                    if (Test-Path $cPath) { Remove-Item $cPath -Recurse -Force }
 
                     $gPath = Join-Path $TempGame $relPath
                     $gPathC = $gPath + "_c"
-                    if (Test-Path $gPath) { Remove-Item $gPath -Force }
-                    if (Test-Path $gPathC) { Remove-Item $gPathC -Force }
+                    if (Test-Path $gPath) { Remove-Item $gPath -Recurse -Force }
+                    if (Test-Path $gPathC) { Remove-Item $gPathC -Recurse -Force }
                 }
             }
         }
         foreach ($k in $KeysToRemove) { $BuildCache.Remove($k) }
 
+        $TempContentFiles = @()
+        if (Test-Path $TempContent) {
+            $TempContentFiles = Get-ChildItem -Path $TempContent -Recurse -File
+        }
+        foreach ($tempFile in $TempContentFiles) {
+            $tempRelPath = $tempFile.FullName.Substring($TempContent.Length + 1)
+            $tempCacheKey = "${SelectedMod}|${tempRelPath}".ToLower()
+            if (-not $CurrentFiles.Contains($tempCacheKey)) {
+                Remove-Item -Path $tempFile.FullName -Force -ErrorAction SilentlyContinue
+                $tempGameFile = Join-Path $TempGame $tempRelPath
+                $tempGameCompiled = $tempGameFile + '_c'
+                if (Test-Path $tempGameFile) { Remove-Item -Path $tempGameFile -Recurse -Force -ErrorAction SilentlyContinue }
+                if (Test-Path $tempGameCompiled) { Remove-Item -Path $tempGameCompiled -Recurse -Force -ErrorAction SilentlyContinue }
+            }
+        }
+
+        $TempGameFiles = @()
+        if (Test-Path $TempGame) {
+            $TempGameFiles = Get-ChildItem -Path $TempGame -Recurse -File
+        }
+        foreach ($tempGameEntry in $TempGameFiles) {
+            $gameRelPath = $tempGameEntry.FullName.Substring($TempGame.Length + 1)
+            $sourceCandidate = Join-Path $ModSourcePath $gameRelPath
+            $isCompiledArtifact = $false
+            foreach ($compiledExt in $StaleCompiledExts) {
+                if ($tempGameEntry.Name.EndsWith($compiledExt)) {
+                    $isCompiledArtifact = $true
+                    break
+                }
+            }
+
+            if (-not $isCompiledArtifact -and -not (Test-Path $sourceCandidate)) {
+                Remove-Item -Path $tempGameEntry.FullName -Force -ErrorAction SilentlyContinue
+                $compiledSibling = $tempGameEntry.FullName + '_c'
+                if (Test-Path $compiledSibling) { Remove-Item -Path $compiledSibling -Recurse -Force -ErrorAction SilentlyContinue }
+            }
+        }
+
         Write-Host "  Found $updatedCount new/modified files. Removed $($KeysToRemove.Count) deleted files." -ForegroundColor DarkGray
+
+        if ($updatedCount -gt 0) {
+            $pngUpdates = ($SourceFiles | Where-Object { $_.Extension -eq '.png' -and $BuildCache.Contains("${SelectedMod}|$($_.FullName.Substring($ModSourcePath.Length + 1))".ToLower()) }).Count
+            if ($pngUpdates -gt 0) {
+                Write-Host "  PNG source changes are tracked via hash + file size + timestamp." -ForegroundColor DarkGray
+            }
+        }
 
         $CacheObj = New-Object PSObject
         foreach ($key in $BuildCache.Keys) {
