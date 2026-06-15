@@ -16,13 +16,13 @@ var Utils = {
         var i;
 
         if (!panel || !panel.IsValid || !panel.IsValid()) return false;
-        
+
         events = [
             function() { $.DispatchEvent("MouseActivate", panel, "mouse"); },
             function() { $.DispatchEvent("Activated", panel, "mouse"); },
             function() { $.DispatchEvent("onactivate", panel); }
         ];
-        
+
         for (i = 0; i < events.length; i++) {
             try {
                 events[i]();
@@ -41,80 +41,94 @@ var Utils = {
             if (!btn) continue;
             btn.style.opacity = isVisible ? "1" : "0";
             btn.style.visibility = isVisible ? "visible" : "collapse";
+            btn.enabled = isVisible;
+            btn.hittest = !!isVisible;
         }
     },
 
-    getPlayAgainButton: function(root) {
-        var btn = root ? root.FindChildTraverse("PlayAgainButton") : null;
-        return btn && btn.IsValid && btn.IsValid() ? btn : null;
+    isPanelVisible: function(panel) {
+        return !!(panel && panel.IsValid && panel.IsValid() && panel.visible);
+    },
+
+    getVisibleAutoButtons: function(root) {
+        var btns = root.FindChildrenWithClassTraverse("AutoCommendStyle") || [];
+        var visible = [];
+        var i;
+        for (i = 0; i < btns.length; i++) {
+            if (Utils.isPanelVisible(btns[i])) {
+                visible.push(btns[i]);
+            }
+        }
+        return visible;
+    },
+
+    getVisiblePlayerActionContainers: function(root) {
+        var containers = root.FindChildrenWithClassTraverse("PlayerActionContainer") || [];
+        var visible = [];
+        var i;
+        for (i = 0; i < containers.length; i++) {
+            if (Utils.isPanelVisible(containers[i])) {
+                visible.push(containers[i]);
+            }
+        }
+        return visible;
     },
 
     hasLiveRequeueState: function(root) {
-        var playAgainButton = Utils.getPlayAgainButton(root);
+        var playAgainButton = root ? root.FindChildTraverse("PlayAgainButton") : null;
         var buttonContent;
-        var parentScreen;
+        var footerMid;
 
-        if (!playAgainButton) {
+        if (!Utils.isPanelVisible(playAgainButton)) {
             return false;
         }
 
         buttonContent = playAgainButton.FindChildTraverse("buttonContent");
-        if (!buttonContent || !buttonContent.IsValid || !buttonContent.IsValid()) {
-            return false;
-        }
+        footerMid = playAgainButton.GetParent ? playAgainButton.GetParent() : null;
 
-        parentScreen = playAgainButton.GetParent ? playAgainButton.GetParent() : null;
-        if (!parentScreen || !parentScreen.IsValid || !parentScreen.IsValid()) {
-            return false;
-        }
-
-        return playAgainButton.visible && buttonContent.visible && parentScreen.visible;
+        return Utils.isPanelVisible(buttonContent) && Utils.isPanelVisible(footerMid);
     },
 
     syncButtonVisibility: function(root) {
         var autoButtons;
-        var mvpButton;
         var playAgainButton;
         var isLiveRequeue;
         var i;
+        var isMvpButton;
 
-        if (!root) {
-            return;
-        }
+        if (!root) return;
 
         autoButtons = root.FindChildrenWithClassTraverse("AutoCommendStyle") || [];
-        mvpButton = root.FindChildTraverse("AutoCommendMVP");
-        playAgainButton = Utils.getPlayAgainButton(root);
+        playAgainButton = root.FindChildTraverse("PlayAgainButton");
         isLiveRequeue = Utils.hasLiveRequeueState(root);
 
         if (!isLiveRequeue) {
             for (i = 0; i < autoButtons.length; i++) {
-                if (autoButtons[i]) {
-                    autoButtons[i].style.visibility = "visible";
-                    autoButtons[i].style.opacity = "1";
-                }
+                if (!autoButtons[i]) continue;
+                autoButtons[i].style.visibility = "visible";
+                autoButtons[i].style.opacity = "1";
+                autoButtons[i].enabled = true;
+                autoButtons[i].hittest = true;
             }
             return;
         }
 
-        if (playAgainButton) {
-            if (mvpButton && mvpButton.IsValid && mvpButton.IsValid() && mvpButton.visible) {
+        for (i = 0; i < autoButtons.length; i++) {
+            if (!autoButtons[i]) continue;
+            isMvpButton = autoButtons[i].id === "AutoCommendMVP";
+            autoButtons[i].style.visibility = isMvpButton ? "visible" : "collapse";
+            autoButtons[i].style.opacity = isMvpButton ? "1" : "0";
+            autoButtons[i].enabled = isMvpButton;
+            autoButtons[i].hittest = isMvpButton;
+        }
+
+        if (playAgainButton && playAgainButton.IsValid && playAgainButton.IsValid()) {
+            if (Utils.isPanelVisible(root.FindChildTraverse("AutoCommendMVP"))) {
                 playAgainButton.style.visibility = "collapse";
                 playAgainButton.style.opacity = "0";
             } else {
                 playAgainButton.style.visibility = "visible";
                 playAgainButton.style.opacity = "1";
-            }
-        }
-
-        for (i = 0; i < autoButtons.length; i++) {
-            if (!autoButtons[i]) continue;
-            if (mvpButton && autoButtons[i] === mvpButton) {
-                autoButtons[i].style.visibility = "visible";
-                autoButtons[i].style.opacity = "1";
-            } else {
-                autoButtons[i].style.visibility = "collapse";
-                autoButtons[i].style.opacity = "0";
             }
         }
     }
@@ -140,11 +154,11 @@ function CheckForNewMatch() {
     var root = Utils.getRoot();
     var matchIdLabel;
     var currentMatchId;
-    
+
     if (root) {
         matchIdLabel = root.FindChildTraverse("MatchID");
         currentMatchId = matchIdLabel ? matchIdLabel.text : "";
-        
+
         if (currentMatchId && currentMatchId !== g_lastMatchId) {
             g_lastMatchId = currentMatchId;
             Utils.toggleCustomButtons(root, true);
@@ -153,7 +167,7 @@ function CheckForNewMatch() {
 
         Utils.syncButtonVisibility(root);
     }
-    
+
     $.Schedule(0.25, CheckForNewMatch);
 }
 
@@ -168,12 +182,14 @@ function CommendAll() {
 
     if (!root) return;
 
-    actionContainers = root.FindChildrenWithClassTraverse("PlayerActionContainer") || [];
+    Utils.toggleCustomButtons(root, false);
+
+    actionContainers = Utils.getVisiblePlayerActionContainers(root);
 
     for (i = 0; i < actionContainers.length; i++) {
         container = actionContainers[i];
         btn = container ? container.FindChildTraverse("CommendPlayerButton") : null;
-        
+
         if (btn && btn.IsValid && btn.IsValid() && btn.visible && !btn.BHasClass("ac_done")) {
             (function(targetBtn, delay) {
                 $.Schedule(delay, function() {
@@ -183,13 +199,10 @@ function CommendAll() {
                     }
                 });
             })(btn, delayMultiplier * CLICK_DELAY);
-            
+
             delayMultiplier++;
         }
     }
-
-    Utils.toggleCustomButtons(root, false);
-    Utils.syncButtonVisibility(root);
 }
 
 CheckForNewMatch();
