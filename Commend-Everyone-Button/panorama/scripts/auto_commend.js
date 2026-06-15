@@ -1,88 +1,133 @@
-let g_lastMatchId = "";
+var g_lastMatchId = "";
 
-// 1. Utils
-const Utils = {
+var Utils = {
     getRoot: function() {
-        let pnl = $.GetContextPanel();
-        while (pnl?.GetParent?.()) {
+        var pnl = $.GetContextPanel();
+        var guard = 0;
+        while (pnl && pnl.GetParent && pnl.GetParent() && guard < 50) {
             pnl = pnl.GetParent();
+            guard++;
         }
-        return pnl;
+        return pnl || null;
     },
 
     clickPanel: function(panel) {
-        if (!panel) return false;
+        var events;
+        var i;
+
+        if (!panel || !panel.IsValid || !panel.IsValid()) return false;
         
-        const events = [
-            () => $.DispatchEvent("MouseActivate", panel, "mouse"),
-            () => $.DispatchEvent("Activated", panel, "mouse"),
-            () => $.DispatchEvent("onactivate", panel)
+        events = [
+            function() { $.DispatchEvent("MouseActivate", panel, "mouse"); },
+            function() { $.DispatchEvent("Activated", panel, "mouse"); },
+            function() { $.DispatchEvent("onactivate", panel); }
         ];
         
-        for (const trigger of events) {
-            try { trigger(); return true; } catch (e) {}
+        for (i = 0; i < events.length; i++) {
+            try {
+                events[i]();
+                return true;
+            } catch (e) {}
         }
         return false;
     },
 
     toggleCustomButtons: function(root, isVisible) {
-        const btns = root.FindChildrenWithClassTraverse("AutoCommendStyle") || [];
-        for (const btn of btns) {
+        var btns = root.FindChildrenWithClassTraverse("AutoCommendStyle") || [];
+        var i;
+        var btn;
+        for (i = 0; i < btns.length; i++) {
+            btn = btns[i];
             if (!btn) continue;
             btn.style.opacity = isVisible ? "1" : "0";
             btn.style.visibility = isVisible ? "visible" : "collapse";
         }
+    },
+
+    setPlayAgainVisible: function(root, isVisible) {
+        var playAgainButton = root ? root.FindChildTraverse("PlayAgainButton") : null;
+        if (!playAgainButton) return;
+        playAgainButton.style.visibility = isVisible ? "visible" : "collapse";
+        playAgainButton.style.opacity = isVisible ? "1" : "0";
+    },
+
+    syncMvpViewState: function(root) {
+        var mvpScreen = root ? root.FindChildTraverse("AutoCommendMVP") : null;
+        var isMvpVisible = !!(mvpScreen && mvpScreen.IsValid && mvpScreen.IsValid() && mvpScreen.visible);
+        Utils.setPlayAgainVisible(root, !isMvpVisible);
     }
 };
 
-// 2. Background Tracker
+function ResetCommendState(root) {
+    var actionContainers;
+    var i;
+    var container;
+    var btn;
+
+    actionContainers = root.FindChildrenWithClassTraverse("PlayerActionContainer") || [];
+    for (i = 0; i < actionContainers.length; i++) {
+        container = actionContainers[i];
+        btn = container ? container.FindChildTraverse("CommendPlayerButton") : null;
+        if (btn) {
+            btn.RemoveClass("ac_done");
+        }
+    }
+}
+
 function CheckForNewMatch() {
-    const root = Utils.getRoot();
+    var root = Utils.getRoot();
+    var matchIdLabel;
+    var currentMatchId;
     
     if (root) {
-        const matchIdLabel = root.FindChildTraverse("MatchID");
-        const currentMatchId = matchIdLabel ? matchIdLabel.text : "";
+        matchIdLabel = root.FindChildTraverse("MatchID");
+        currentMatchId = matchIdLabel ? matchIdLabel.text : "";
         
         if (currentMatchId && currentMatchId !== g_lastMatchId) {
             g_lastMatchId = currentMatchId;
             Utils.toggleCustomButtons(root, true);
-            
-            const actionContainers = root.FindChildrenWithClassTraverse("PlayerActionContainer") || [];
-            for (const container of actionContainers) {
-                const btn = container.FindChildTraverse("CommendPlayerButton");
-                if (btn) {
-                    btn.RemoveClass("ac_done");
-                }
-            }
+            ResetCommendState(root);
         }
+
+        Utils.syncMvpViewState(root);
     }
     
-    $.Schedule(2.0, CheckForNewMatch);
+    $.Schedule(0.25, CheckForNewMatch);
 }
 
-// 3. Main Action
 function CommendAll() {
-    const root = Utils.getRoot();
+    var root = Utils.getRoot();
+    var actionContainers;
+    var CLICK_DELAY = 0.05;
+    var delayMultiplier = 0;
+    var i;
+    var container;
+    var btn;
+
     if (!root) return;
 
-    const actionContainers = root.FindChildrenWithClassTraverse("PlayerActionContainer") || [];
-    const CLICK_DELAY = 0.05; // Delay
-    let delayMultiplier = 0;
+    actionContainers = root.FindChildrenWithClassTraverse("PlayerActionContainer") || [];
 
-    for (const container of actionContainers) {
-        const btn = container.FindChildTraverse("CommendPlayerButton");
+    for (i = 0; i < actionContainers.length; i++) {
+        container = actionContainers[i];
+        btn = container ? container.FindChildTraverse("CommendPlayerButton") : null;
         
-        if (btn && btn.IsValid() && btn.visible && !btn.BHasClass("ac_done")) {
-            $.Schedule(delayMultiplier * CLICK_DELAY, () => {
-                Utils.clickPanel(btn);
-                btn.AddClass("ac_done");
-            });
+        if (btn && btn.IsValid && btn.IsValid() && btn.visible && !btn.BHasClass("ac_done")) {
+            (function(targetBtn, delay) {
+                $.Schedule(delay, function() {
+                    Utils.clickPanel(targetBtn);
+                    if (targetBtn && targetBtn.IsValid && targetBtn.IsValid()) {
+                        targetBtn.AddClass("ac_done");
+                    }
+                });
+            })(btn, delayMultiplier * CLICK_DELAY);
             
             delayMultiplier++;
         }
     }
 
     Utils.toggleCustomButtons(root, false);
+    Utils.syncMvpViewState(root);
 }
 
 CheckForNewMatch();
