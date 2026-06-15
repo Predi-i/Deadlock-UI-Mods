@@ -15,12 +15,15 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Download vanilla CSS
+      - name: Download vanilla CSS and XML
         shell: pwsh
         run: |
-          $baseURL = "https://raw.githubusercontent.com/SteamTracking/GameTracking-Deadlock/master/game/citadel/pak01_dir/panorama/styles"
-          New-Item -ItemType Directory -Force -Path "Show-Nicknames-In-TopBar/panorama/styles/base"
-          Invoke-WebRequest -Uri "$baseURL/citadel_hud_top_bar.css" -OutFile "Show-Nicknames-In-TopBar/panorama/styles/base/citadel_hud_top_bar.css"
+          $stylesBaseURL = "https://raw.githubusercontent.com/SteamTracking/GameTracking-Deadlock/master/game/citadel/pak01_dir/panorama/styles"
+          $layoutBaseURL = "https://raw.githubusercontent.com/SteamTracking/GameTracking-Deadlock/master/game/citadel/pak01_dir/panorama/layout"
+          New-Item -ItemType Directory -Force -Path "Show-Nicknames-In-TopBar/panorama/styles/base" | Out-Null
+          New-Item -ItemType Directory -Force -Path "Show-Nicknames-In-TopBar/panorama/layout/base" | Out-Null
+          Invoke-WebRequest -Uri "$stylesBaseURL/citadel_hud_top_bar.css" -OutFile "Show-Nicknames-In-TopBar/panorama/styles/base/citadel_hud_top_bar.css"
+          Invoke-WebRequest -Uri "$layoutBaseURL/citadel_hud_top_bar_player.xml" -OutFile "Show-Nicknames-In-TopBar/panorama/layout/base/citadel_hud_top_bar_player.xml"
 
       - name: Commit changes
         id: git_check
@@ -29,12 +32,13 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Show-Nicknames-In-TopBar/panorama/styles/base/citadel_hud_top_bar.css
+          git add Show-Nicknames-In-TopBar/panorama/layout/base/citadel_hud_top_bar_player.xml
           
           if git diff --staged --quiet; then
             echo "changed=false" >> $GITHUB_OUTPUT
           else
             echo "changed=true" >> $GITHUB_OUTPUT
-            git commit -m "Auto-update base CSS"
+            git commit -m "chore: auto-update topbar base panorama files"
             git pull --rebase origin main
             git push
           fi

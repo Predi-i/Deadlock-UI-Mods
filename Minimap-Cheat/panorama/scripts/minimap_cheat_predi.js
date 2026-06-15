@@ -129,4 +129,5 @@
     }
 
     $.RegisterKeyBind($.GetContextPanel(), TRIGGER_KEY, StartPingSequence);
+    $.RegisterKeyBind('', TRIGGER_KEY, StartPingSequence);
 })();
