@@ -118,8 +118,7 @@ function Show-SettingsMenu {
 }
 
 function Get-CompileKeyForFile($FileInfo) {
-    $hash = (Get-FileHash -Path $FileInfo.FullName -Algorithm MD5).Hash
-    return "{0}|{1}|{2}" -f $hash, $FileInfo.Length, $FileInfo.LastWriteTimeUtc.Ticks
+    return (Get-FileHash -Path $FileInfo.FullName -Algorithm MD5).Hash
 }
 
 # ==============================================================================
@@ -375,6 +374,7 @@ while ($true) {
         $StaleCompiledExts = @('.xml_c', '.vcss_c', '.vjs_c', '.vsndevts_c', '.vsnd_c', '.vtex_c', '.vsvg_c', '.vpcf_c', '.vmdl_c', '.vmat_c')
         
         $updatedCount = 0
+        $changedFiles = New-Object System.Collections.Generic.List[string]
 
         foreach ($file in $SourceFiles) {
             $relPath = $file.FullName.Substring($ModSourcePath.Length + 1)
@@ -415,6 +415,7 @@ while ($true) {
 
                 $BuildCache[$cacheKey] = $compileKey
                 $updatedCount++
+                $changedFiles.Add($relPath)
             }
         }
 
@@ -478,10 +479,10 @@ while ($true) {
 
         Write-Host "  Found $updatedCount new/modified files. Removed $($KeysToRemove.Count) deleted files." -ForegroundColor DarkGray
 
-        if ($updatedCount -gt 0) {
-            $pngUpdates = ($SourceFiles | Where-Object { $_.Extension -eq '.png' -and $BuildCache.Contains("${SelectedMod}|$($_.FullName.Substring($ModSourcePath.Length + 1))".ToLower()) }).Count
-            if ($pngUpdates -gt 0) {
-                Write-Host "  PNG source changes are tracked via hash + file size + timestamp." -ForegroundColor DarkGray
+        if ($changedFiles.Count -gt 0) {
+            Write-Host "  Changed files:" -ForegroundColor DarkGray
+            foreach ($changedFile in $changedFiles) {
+                Write-Host "    - $changedFile" -ForegroundColor DarkGray
             }
         }
 
