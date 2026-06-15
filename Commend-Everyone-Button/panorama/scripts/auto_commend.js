@@ -44,17 +44,77 @@ var Utils = {
         }
     },
 
-    setPlayAgainVisible: function(root, isVisible) {
-        var playAgainButton = root ? root.FindChildTraverse("PlayAgainButton") : null;
-        if (!playAgainButton) return;
-        playAgainButton.style.visibility = isVisible ? "visible" : "collapse";
-        playAgainButton.style.opacity = isVisible ? "1" : "0";
+    getPlayAgainButton: function(root) {
+        var btn = root ? root.FindChildTraverse("PlayAgainButton") : null;
+        return btn && btn.IsValid && btn.IsValid() ? btn : null;
     },
 
-    syncMvpViewState: function(root) {
-        var mvpScreen = root ? root.FindChildTraverse("AutoCommendMVP") : null;
-        var isMvpVisible = !!(mvpScreen && mvpScreen.IsValid && mvpScreen.IsValid() && mvpScreen.visible);
-        Utils.setPlayAgainVisible(root, !isMvpVisible);
+    hasLiveRequeueState: function(root) {
+        var playAgainButton = Utils.getPlayAgainButton(root);
+        var buttonContent;
+
+        if (!playAgainButton) {
+            return false;
+        }
+
+        buttonContent = playAgainButton.FindChildTraverse("buttonContent");
+        if (!buttonContent || !buttonContent.IsValid || !buttonContent.IsValid()) {
+            return false;
+        }
+
+        return buttonContent.visible && playAgainButton.visible;
+    },
+
+    syncButtonVisibility: function(root) {
+        var autoButtons;
+        var mvpButton;
+        var playAgainButton;
+        var isLiveRequeue;
+        var i;
+
+        if (!root) {
+            return;
+        }
+
+        autoButtons = root.FindChildrenWithClassTraverse("AutoCommendStyle") || [];
+        mvpButton = root.FindChildTraverse("AutoCommendMVP");
+        playAgainButton = Utils.getPlayAgainButton(root);
+        isLiveRequeue = Utils.hasLiveRequeueState(root);
+
+        if (!isLiveRequeue) {
+            if (playAgainButton) {
+                playAgainButton.style.visibility = "visible";
+                playAgainButton.style.opacity = "1";
+            }
+            for (i = 0; i < autoButtons.length; i++) {
+                if (autoButtons[i]) {
+                    autoButtons[i].style.visibility = "visible";
+                    autoButtons[i].style.opacity = "1";
+                }
+            }
+            return;
+        }
+
+        if (playAgainButton) {
+            if (mvpButton && mvpButton.IsValid && mvpButton.IsValid() && mvpButton.visible) {
+                playAgainButton.style.visibility = "collapse";
+                playAgainButton.style.opacity = "0";
+            } else {
+                playAgainButton.style.visibility = "visible";
+                playAgainButton.style.opacity = "1";
+            }
+        }
+
+        for (i = 0; i < autoButtons.length; i++) {
+            if (!autoButtons[i]) continue;
+            if (mvpButton && autoButtons[i] === mvpButton) {
+                autoButtons[i].style.visibility = "visible";
+                autoButtons[i].style.opacity = "1";
+            } else {
+                autoButtons[i].style.visibility = "collapse";
+                autoButtons[i].style.opacity = "0";
+            }
+        }
     }
 };
 
@@ -89,7 +149,7 @@ function CheckForNewMatch() {
             ResetCommendState(root);
         }
 
-        Utils.syncMvpViewState(root);
+        Utils.syncButtonVisibility(root);
     }
     
     $.Schedule(0.25, CheckForNewMatch);
@@ -127,7 +187,7 @@ function CommendAll() {
     }
 
     Utils.toggleCustomButtons(root, false);
-    Utils.syncMvpViewState(root);
+    Utils.syncButtonVisibility(root);
 }
 
 CheckForNewMatch();
