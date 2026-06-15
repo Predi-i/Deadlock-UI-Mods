@@ -15,15 +15,28 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Download vanilla CSS and XML
+      - name: Download vanilla CSS and rebuild XML override
         shell: pwsh
         run: |
           $stylesBaseURL = "https://raw.githubusercontent.com/SteamTracking/GameTracking-Deadlock/master/game/citadel/pak01_dir/panorama/styles"
           $layoutBaseURL = "https://raw.githubusercontent.com/SteamTracking/GameTracking-Deadlock/master/game/citadel/pak01_dir/panorama/layout"
+          $baseCssPath = "Show-Nicknames-In-TopBar/panorama/styles/base/citadel_hud_top_bar.css"
+          $baseXmlPath = "Show-Nicknames-In-TopBar/panorama/layout/base/citadel_hud_top_bar_player.xml"
+          $overrideXmlPath = "Show-Nicknames-In-TopBar/panorama/layout/citadel_hud_top_bar_player.xml"
           New-Item -ItemType Directory -Force -Path "Show-Nicknames-In-TopBar/panorama/styles/base" | Out-Null
           New-Item -ItemType Directory -Force -Path "Show-Nicknames-In-TopBar/panorama/layout/base" | Out-Null
-          Invoke-WebRequest -Uri "$stylesBaseURL/citadel_hud_top_bar.css" -OutFile "Show-Nicknames-In-TopBar/panorama/styles/base/citadel_hud_top_bar.css"
-          Invoke-WebRequest -Uri "$layoutBaseURL/citadel_hud_top_bar_player.xml" -OutFile "Show-Nicknames-In-TopBar/panorama/layout/base/citadel_hud_top_bar_player.xml"
+          Invoke-WebRequest -Uri "$stylesBaseURL/citadel_hud_top_bar.css" -OutFile $baseCssPath
+          Invoke-WebRequest -Uri "$layoutBaseURL/citadel_hud_top_bar_player.xml" -OutFile $baseXmlPath
+
+          $xml = Get-Content $baseXmlPath -Raw
+          $needle = "        <Panel id=\"PlayerNameNWContainer\" onmouseover=\"CitadelTopDownScoreboardPlayerHovered();\">"
+          $injection = "`r`n        <Label class=\"AlwaysPlayerName\" text=\"{s:player_name}\" />`r`n`r`n        <Panel id=\"PlayerNameNWContainer\" onmouseover=\"CitadelTopDownScoreboardPlayerHovered();\">"
+          if ($xml.Contains($needle)) {
+              $xml = $xml.Replace($needle, $injection)
+          } else {
+              throw "Could not find PlayerNameNWContainer anchor while rebuilding top bar XML override."
+          }
+          [System.IO.File]::WriteAllText((Resolve-Path ".").Path + "\" + $overrideXmlPath, $xml, (New-Object System.Text.UTF8Encoding $false))
 
       - name: Commit changes
         id: git_check
@@ -33,6 +46,7 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Show-Nicknames-In-TopBar/panorama/styles/base/citadel_hud_top_bar.css
           git add Show-Nicknames-In-TopBar/panorama/layout/base/citadel_hud_top_bar_player.xml
+          git add Show-Nicknames-In-TopBar/panorama/layout/citadel_hud_top_bar_player.xml
           
           if git diff --staged --quiet; then
             echo "changed=false" >> $GITHUB_OUTPUT
