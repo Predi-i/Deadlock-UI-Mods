@@ -393,14 +393,13 @@ while ($true) {
                 $cachedCompileKey = [string]$BuildCache[$cacheKey]
             }
 
-            $needsUpdate = $Force
-            if (-not $needsUpdate) {
-                if ($null -eq $cachedCompileKey -or $cachedCompileKey.Trim() -ne $compileKey -or -not (Test-Path $contentDest) -or ($compiledDest -and -not (Test-Path $compiledDest))) {
-                    $needsUpdate = $true
-                }
-            }
+            $hashChanged = $Force -or $null -eq $cachedCompileKey -or $cachedCompileKey.Trim() -ne $compileKey
+            $contentMissing = -not (Test-Path $contentDest)
+            $compiledMissing = $compiledDest -and -not (Test-Path $compiledDest)
+            $needsCopy = $hashChanged -or $contentMissing
+            $needsCompile = $hashChanged -or $compiledMissing
 
-            if ($needsUpdate) {
+            if ($needsCopy) {
                 $dir = Split-Path $contentDest
                 if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
 
@@ -413,11 +412,13 @@ while ($true) {
                         [System.IO.File]::WriteAllText($contentDest, $content, $Utf8NoBom)
                     }
                 }
+            }
 
-                if ($AllowedExts -contains $file.Extension) {
-                    $FilesToCompile.Add($contentDest)
-                }
+            if ($AllowedExts -contains $file.Extension -and ($needsCopy -or $needsCompile)) {
+                $FilesToCompile.Add($contentDest)
+            }
 
+            if ($hashChanged) {
                 $BuildCache[$cacheKey] = $compileKey
                 $updatedCount++
                 $changedFiles.Add($relPath)
