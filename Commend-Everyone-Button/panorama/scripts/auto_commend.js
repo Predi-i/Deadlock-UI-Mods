@@ -1,4 +1,5 @@
 var g_lastMatchId = "";
+var g_hasCommendedCurrentMatch = false;
 
 var Utils = {
     getRoot: function() {
@@ -80,7 +81,7 @@ var Utils = {
         var buttonContent;
         var footerMid;
 
-        if (!Utils.isPanelVisible(playAgainButton)) {
+        if (!playAgainButton || !playAgainButton.IsValid || !playAgainButton.IsValid()) {
             return false;
         }
 
@@ -90,12 +91,27 @@ var Utils = {
         return Utils.isPanelVisible(buttonContent) && Utils.isPanelVisible(footerMid);
     },
 
+    isMvpScreenVisible: function(root) {
+        var mvpScreen = root ? root.FindChildTraverse("MVPHeroSpotlight") : null;
+        return Utils.isPanelVisible(mvpScreen);
+    },
+
+    setPanelState: function(panel, isVisible) {
+        if (!panel || !panel.IsValid || !panel.IsValid()) return;
+        panel.style.visibility = isVisible ? "visible" : "collapse";
+        panel.style.opacity = isVisible ? "1" : "0";
+        panel.enabled = isVisible;
+        panel.hittest = !!isVisible;
+    },
+
     syncButtonVisibility: function(root) {
         var autoButtons;
         var playAgainButton;
         var isLiveRequeue;
+        var isMvpScreen;
         var i;
         var isMvpButton;
+        var shouldShowCommend;
 
         if (!root) return;
 
@@ -104,27 +120,24 @@ var Utils = {
         isLiveRequeue = Utils.hasLiveRequeueState(root);
 
         if (!isLiveRequeue) {
+            shouldShowCommend = !g_hasCommendedCurrentMatch;
+            for (i = 0; i < autoButtons.length; i++) {
+                Utils.setPanelState(autoButtons[i], shouldShowCommend);
+            }
+            Utils.setPanelState(playAgainButton, false);
             return;
         }
+
+        isMvpScreen = Utils.isMvpScreenVisible(root);
 
         for (i = 0; i < autoButtons.length; i++) {
             if (!autoButtons[i]) continue;
             isMvpButton = autoButtons[i].id === "AutoCommendMVP";
-            autoButtons[i].style.visibility = isMvpButton ? "visible" : "collapse";
-            autoButtons[i].style.opacity = isMvpButton ? "1" : "0";
-            autoButtons[i].enabled = isMvpButton;
-            autoButtons[i].hittest = isMvpButton;
+            shouldShowCommend = !g_hasCommendedCurrentMatch && (isMvpScreen ? isMvpButton : !isMvpButton);
+            Utils.setPanelState(autoButtons[i], shouldShowCommend);
         }
 
-        if (playAgainButton && playAgainButton.IsValid && playAgainButton.IsValid()) {
-            if (Utils.isPanelVisible(root.FindChildTraverse("AutoCommendMVP"))) {
-                playAgainButton.style.visibility = "collapse";
-                playAgainButton.style.opacity = "0";
-            } else {
-                playAgainButton.style.visibility = "visible";
-                playAgainButton.style.opacity = "1";
-            }
-        }
+        Utils.setPanelState(playAgainButton, !g_hasCommendedCurrentMatch && !isMvpScreen);
     }
 };
 
@@ -133,6 +146,9 @@ function ResetCommendState(root) {
     var i;
     var container;
     var btn;
+    var autoButtons;
+
+    g_hasCommendedCurrentMatch = false;
 
     actionContainers = root.FindChildrenWithClassTraverse("PlayerActionContainer") || [];
     for (i = 0; i < actionContainers.length; i++) {
@@ -140,6 +156,13 @@ function ResetCommendState(root) {
         btn = container ? container.FindChildTraverse("CommendPlayerButton") : null;
         if (btn) {
             btn.RemoveClass("ac_done");
+        }
+    }
+
+    autoButtons = root.FindChildrenWithClassTraverse("AutoCommendStyle") || [];
+    for (i = 0; i < autoButtons.length; i++) {
+        if (autoButtons[i]) {
+            autoButtons[i].RemoveClass("ac_done");
         }
     }
 }
@@ -176,7 +199,8 @@ function CommendAll() {
 
     if (!root) return;
 
-    Utils.toggleCustomButtons(root, false);
+    g_hasCommendedCurrentMatch = true;
+    Utils.syncButtonVisibility(root);
 
     actionContainers = Utils.getVisiblePlayerActionContainers(root);
 
