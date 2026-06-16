@@ -25,6 +25,15 @@ var Utils = {
         return !!(panel && panel.IsValid && panel.IsValid() && panel.BHasClass && panel.BHasClass(className));
     },
 
+    setClass: function(panel, className, shouldHaveClass) {
+        if (!panel || !panel.IsValid || !panel.IsValid()) return;
+        if (shouldHaveClass) {
+            panel.AddClass(className);
+        } else {
+            panel.RemoveClass(className);
+        }
+    },
+
     clickPanel: function(panel) {
         var events;
         var i;
@@ -147,7 +156,8 @@ var Utils = {
         playAgainButton = root.FindChildTraverse("PlayAgainButton");
         currentScreen = Utils.getCurrentScreen(root);
 
-        if (g_hasClickedCurrentMatch) {
+        if (g_hasClickedCurrentMatch || Utils.hasClass(Utils.getPostGameRoot(root), "AutoCommendCompleted")) {
+            g_hasClickedCurrentMatch = true;
             Utils.toggleCustomButtons(root, false);
             if (Utils.hasPlayAgainButton(root)) {
                 Utils.setPanelState(playAgainButton, !!g_isFreshPostMatch);
@@ -187,6 +197,7 @@ function ResetCommendState(root) {
     var btn;
 
     g_hasClickedCurrentMatch = false;
+    Utils.setClass(Utils.getPostGameRoot(root), "AutoCommendCompleted", false);
 
     actionContainers = root.FindChildrenWithClassTraverse("PlayerActionContainer") || [];
     for (i = 0; i < actionContainers.length; i++) {
@@ -265,6 +276,7 @@ function CommendAll() {
     }
 
     g_hasClickedCurrentMatch = true;
+    Utils.setClass(Utils.getPostGameRoot(root), "AutoCommendCompleted", true);
     Utils.toggleCustomButtons(root, false);
 
     playAgainButton = root.FindChildTraverse("PlayAgainButton");
