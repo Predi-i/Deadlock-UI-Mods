@@ -3,6 +3,7 @@ var g_lastObservedScreen = "";
 var g_hasCommendedCurrentMatch = false;
 var g_isFreshPostMatch = false;
 var g_shouldShowPlayAgainAfterCommend = false;
+var g_lastClickedMatchId = "";
 
 var Utils = {
     getRoot: function() {
@@ -194,9 +195,17 @@ function ResetCommendState(root) {
     var container;
     var btn;
     var autoButtons;
+    var matchIdLabel;
+    var currentMatchId;
 
     g_hasCommendedCurrentMatch = false;
     g_shouldShowPlayAgainAfterCommend = false;
+
+    matchIdLabel = root ? root.FindChildTraverse("MatchID") : null;
+    currentMatchId = matchIdLabel ? matchIdLabel.text : "";
+    if (currentMatchId && currentMatchId !== g_lastClickedMatchId) {
+        g_lastClickedMatchId = "";
+    }
 
     actionContainers = root.FindChildrenWithClassTraverse("PlayerActionContainer") || [];
     for (i = 0; i < actionContainers.length; i++) {
@@ -237,6 +246,11 @@ function CheckForNewMatch() {
             g_lastObservedScreen = currentScreen;
         }
 
+        if (currentMatchId && currentMatchId === g_lastClickedMatchId) {
+            g_hasCommendedCurrentMatch = true;
+            g_shouldShowPlayAgainAfterCommend = g_isFreshPostMatch;
+        }
+
         Utils.syncButtonVisibility(root);
     }
 
@@ -256,6 +270,7 @@ function CommendAll() {
 
     g_hasCommendedCurrentMatch = true;
     g_shouldShowPlayAgainAfterCommend = g_isFreshPostMatch;
+    g_lastClickedMatchId = g_lastMatchId;
     Utils.syncButtonVisibility(root);
 
     actionContainers = Utils.getVisiblePlayerActionContainers(root);
