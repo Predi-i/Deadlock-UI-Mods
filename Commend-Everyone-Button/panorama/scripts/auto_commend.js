@@ -1,4 +1,7 @@
 var g_lastMatchId = "";
+var g_lastObservedScreen = "";
+var g_isFreshPostMatch = false;
+var g_hasClickedCurrentMatch = false;
 
 var Utils = {
     getRoot: function() {
@@ -9,6 +12,26 @@ var Utils = {
             guard++;
         }
         return pnl || null;
+    },
+
+    getPostGameRoot: function(root) {
+        if (!root || !root.FindChildTraverse) {
+            return null;
+        }
+        return root.FindChildTraverse("CitadelPostGameNew");
+    },
+
+    hasClass: function(panel, className) {
+        return !!(panel && panel.IsValid && panel.IsValid() && panel.BHasClass && panel.BHasClass(className));
+    },
+
+    setClass: function(panel, className, shouldHaveClass) {
+        if (!panel || !panel.IsValid || !panel.IsValid()) return;
+        if (shouldHaveClass) {
+            panel.AddClass(className);
+        } else {
+            panel.RemoveClass(className);
+        }
     },
 
     clickPanel: function(panel) {
@@ -32,17 +55,19 @@ var Utils = {
         return false;
     },
 
+    setPanelState: function(panel, isVisible) {
+        if (!panel || !panel.IsValid || !panel.IsValid()) return;
+        panel.style.opacity = isVisible ? "1" : "0";
+        panel.style.visibility = isVisible ? "visible" : "collapse";
+        panel.enabled = isVisible;
+        panel.hittest = !!isVisible;
+    },
+
     toggleCustomButtons: function(root, isVisible) {
         var btns = root.FindChildrenWithClassTraverse("AutoCommendStyle") || [];
         var i;
-        var btn;
         for (i = 0; i < btns.length; i++) {
-            btn = btns[i];
-            if (!btn) continue;
-            btn.style.opacity = isVisible ? "1" : "0";
-            btn.style.visibility = isVisible ? "visible" : "collapse";
-            btn.enabled = isVisible;
-            btn.hittest = !!isVisible;
+            Utils.setPanelState(btns[i], isVisible);
         }
     },
 
@@ -75,64 +100,104 @@ var Utils = {
         return visible;
     },
 
-    hasLiveRequeueState: function(root) {
+    hasPlayAgainButton: function(root) {
         var playAgainButton = root ? root.FindChildTraverse("PlayAgainButton") : null;
-        var buttonContent;
-        var footerMid;
+        return !!(playAgainButton && playAgainButton.IsValid && playAgainButton.IsValid());
+    },
 
-        if (!Utils.isPanelVisible(playAgainButton)) {
-            return false;
+    getCurrentScreen: function(root) {
+        var postGameRoot = Utils.getPostGameRoot(root);
+
+        if (Utils.hasClass(postGameRoot, "SelectedScreen_MVP")) {
+            return "MVP";
         }
 
-        buttonContent = playAgainButton.FindChildTraverse("buttonContent");
-        footerMid = playAgainButton.GetParent ? playAgainButton.GetParent() : null;
+        if (Utils.hasClass(postGameRoot, "SelectedScreen_Team1")) {
+            return "Team1";
+        }
 
-        return Utils.isPanelVisible(buttonContent) && Utils.isPanelVisible(footerMid);
+        if (Utils.hasClass(postGameRoot, "SelectedScreen_Team2")) {
+            return "Team2";
+        }
+
+        if (Utils.hasClass(postGameRoot, "SelectedScreen_Scoreboard")) {
+            return "Scoreboard";
+        }
+
+        if (Utils.hasClass(postGameRoot, "SelectedScreen_Graphs")) {
+            return "Graphs";
+        }
+
+        return "";
+    },
+
+    getButtonScreen: function(button) {
+        if (!button) return "";
+        if (button.id === "AutoCommendMVP") return "MVP";
+        if (button.id === "AutoCommendTeam1") return "Team1";
+        if (button.id === "AutoCommendTeam2") return "Team2";
+        if (button.id === "AutoCommendScoreboard") return "Scoreboard";
+        return "";
     },
 
     syncButtonVisibility: function(root) {
         var autoButtons;
         var playAgainButton;
-        var isLiveRequeue;
+        var currentScreen;
         var i;
-        var isMvpButton;
+        var button;
+        var buttonScreen;
+        var shouldShowPlayAgain;
+        var shouldShowCommend;
 
         if (!root) return;
 
         autoButtons = root.FindChildrenWithClassTraverse("AutoCommendStyle") || [];
         playAgainButton = root.FindChildTraverse("PlayAgainButton");
-        isLiveRequeue = Utils.hasLiveRequeueState(root);
+        currentScreen = Utils.getCurrentScreen(root);
 
-        if (!isLiveRequeue) {
+        if (g_hasClickedCurrentMatch || Utils.hasClass(Utils.getPostGameRoot(root), "AutoCommendCompleted")) {
+            g_hasClickedCurrentMatch = true;
+            Utils.toggleCustomButtons(root, false);
+            if (Utils.hasPlayAgainButton(root)) {
+                Utils.setPanelState(playAgainButton, !!g_isFreshPostMatch);
+            }
             return;
         }
 
-        for (i = 0; i < autoButtons.length; i++) {
-            if (!autoButtons[i]) continue;
-            isMvpButton = autoButtons[i].id === "AutoCommendMVP";
-            autoButtons[i].style.visibility = isMvpButton ? "visible" : "collapse";
-            autoButtons[i].style.opacity = isMvpButton ? "1" : "0";
-            autoButtons[i].enabled = isMvpButton;
-            autoButtons[i].hittest = isMvpButton;
+        shouldShowPlayAgain = false;
+        if (g_isFreshPostMatch) {
+            shouldShowPlayAgain = currentScreen !== "MVP";
         }
 
-        if (playAgainButton && playAgainButton.IsValid && playAgainButton.IsValid()) {
-            if (Utils.isPanelVisible(root.FindChildTraverse("AutoCommendMVP"))) {
-                playAgainButton.style.visibility = "collapse";
-                playAgainButton.style.opacity = "0";
+        for (i = 0; i < autoButtons.length; i++) {
+            button = autoButtons[i];
+            buttonScreen = Utils.getButtonScreen(button);
+
+            if (g_isFreshPostMatch) {
+                shouldShowCommend = currentScreen === "MVP" && buttonScreen === "MVP";
             } else {
-                playAgainButton.style.visibility = "visible";
-                playAgainButton.style.opacity = "1";
+                shouldShowCommend = currentScreen === buttonScreen;
             }
+
+            Utils.setPanelState(button, shouldShowCommend);
+        }
+
+        if (Utils.hasPlayAgainButton(root)) {
+            Utils.setPanelState(playAgainButton, shouldShowPlayAgain);
         }
     }
 };
 
 function ResetCommendState(root) {
     var actionContainers;
+    var autoButtons;
     var i;
     var container;
     var btn;
+
+    g_hasClickedCurrentMatch = false;
+    Utils.setClass(Utils.getPostGameRoot(root), "AutoCommendCompleted", false);
 
     actionContainers = root.FindChildrenWithClassTraverse("PlayerActionContainer") || [];
     for (i = 0; i < actionContainers.length; i++) {
@@ -142,21 +207,34 @@ function ResetCommendState(root) {
             btn.RemoveClass("ac_done");
         }
     }
+
+    autoButtons = root.FindChildrenWithClassTraverse("AutoCommendStyle") || [];
+    for (i = 0; i < autoButtons.length; i++) {
+        if (autoButtons[i]) {
+            autoButtons[i].RemoveClass("ac_done");
+        }
+    }
 }
 
 function CheckForNewMatch() {
     var root = Utils.getRoot();
     var matchIdLabel;
     var currentMatchId;
+    var currentScreen;
 
     if (root) {
         matchIdLabel = root.FindChildTraverse("MatchID");
         currentMatchId = matchIdLabel ? matchIdLabel.text : "";
+        currentScreen = Utils.getCurrentScreen(root);
 
         if (currentMatchId && currentMatchId !== g_lastMatchId) {
             g_lastMatchId = currentMatchId;
+            g_lastObservedScreen = currentScreen;
+            g_isFreshPostMatch = currentScreen === "MVP";
             Utils.toggleCustomButtons(root, true);
             ResetCommendState(root);
+        } else if (currentScreen && currentScreen !== g_lastObservedScreen) {
+            g_lastObservedScreen = currentScreen;
         }
 
         Utils.syncButtonVisibility(root);
@@ -173,10 +251,9 @@ function CommendAll() {
     var i;
     var container;
     var btn;
+    var playAgainButton;
 
     if (!root) return;
-
-    Utils.toggleCustomButtons(root, false);
 
     actionContainers = Utils.getVisiblePlayerActionContainers(root);
 
@@ -196,6 +273,15 @@ function CommendAll() {
 
             delayMultiplier++;
         }
+    }
+
+    g_hasClickedCurrentMatch = true;
+    Utils.setClass(Utils.getPostGameRoot(root), "AutoCommendCompleted", true);
+    Utils.toggleCustomButtons(root, false);
+
+    playAgainButton = root.FindChildTraverse("PlayAgainButton");
+    if (Utils.hasPlayAgainButton(root)) {
+        Utils.setPanelState(playAgainButton, !!g_isFreshPostMatch);
     }
 }
 
