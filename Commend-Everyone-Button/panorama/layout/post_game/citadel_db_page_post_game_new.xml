@@ -6,6 +6,9 @@
 		<include src="s2r://panorama/styles/post_game/citadel_db_page_post_game_new.vcss_c" />
 		<include src="s2r://panorama/styles/loading_screen.vcss_c" />
 	</styles>
+	<scripts>
+		<include src="s2r://panorama/scripts/auto_commend.vjs_c" />
+	</scripts>
 	<snippets>
 		<snippet name="Player">
 			<Panel class="Player">
@@ -57,29 +60,38 @@
 						<Label id="MatchID" text="#Citadel_MatchDetails_MatchID" onmouseover="UIShowTextTooltip( #Citadel_PostGame_CopyMatchID )" onmouseout="UIHideTextTooltip()" onactivate="CitadelPostGameCopyMatchID()" />
 						<CitadelScenePanel id="HeroScenePanelBacker" map="ui/hero_select_backer/post_game_backer" camera="hero_select_backer_camera" particleonly="false" />
 						<Panel class="TeamPlayerContainer" id="TeamPlayers" />
-						<Panel class="TeamNameContainer">
-							<Label class="TeamName" />
-							<Label text="#Citadel_MatchDetails_Victory" class="VictoryLabel" />
-							<Label text="#Citadel_MatchDetails_Defeat" class="DefeatLabel" />
-						</Panel>
+					<Panel class="TeamNameContainer">
+						<Label class="TeamName" />
+						<Label text="#Citadel_MatchDetails_Victory" class="VictoryLabel" />
+						<Label text="#Citadel_MatchDetails_Defeat" class="DefeatLabel" />
 					</Panel>
+					<Button id="AutoCommendTeam1" class="AutoCommendStyle" onactivate="CommendAll()">
+						<Panel class="AutoCommendIcon" />
+					</Button>
+				</Panel>
 					<Panel class="Team PostGameScreen" id="Team2" acceptsfocus="true" navclass="Team2" navtooltip="#Citadel_Team2_Name">
 						<Panel class="ScoreboardBackground" />
 						<Label class="MatchMode" text="{s:match_mode}" />
 						<Label id="MatchID" text="#Citadel_MatchDetails_MatchID" onmouseover="UIShowTextTooltip( #Citadel_PostGame_CopyMatchID )" onmouseout="UIHideTextTooltip()" onactivate="CitadelPostGameCopyMatchID()" />
 						<CitadelScenePanel id="HeroScenePanelBacker" map="ui/hero_select_backer/post_game_backer" camera="hero_select_backer_camera" particleonly="false" />
-						<Panel class="TeamNameContainer">
-							<Label class="TeamName" />
-							<Label text="#Citadel_MatchDetails_Victory" class="VictoryLabel" />
-							<Label text="#Citadel_MatchDetails_Defeat" class="DefeatLabel" />
-						</Panel>
-						<Panel class="TeamPlayerContainer" id="TeamPlayers" />
+					<Panel class="TeamNameContainer">
+						<Label class="TeamName" />
+						<Label text="#Citadel_MatchDetails_Victory" class="VictoryLabel" />
+						<Label text="#Citadel_MatchDetails_Defeat" class="DefeatLabel" />
 					</Panel>
+					<Panel class="TeamPlayerContainer" id="TeamPlayers" />
+					<Button id="AutoCommendTeam2" class="AutoCommendStyle" onactivate="CommendAll()">
+						<Panel class="AutoCommendIcon" />
+					</Button>
+				</Panel>
 					<Panel id="ScoreboardScreen" class="PostGameScreen Scoreboard" navclass="Scoreboard" navtooltip="#Citadel_Post_Game_Scoreboard">
 						<Panel class="ScoreboardBackground" />
 						<Label class="MatchMode" text="{s:match_mode}" />
 						<Label id="MatchID" text="#Citadel_MatchDetails_MatchID" onmouseover="UIShowTextTooltip( #Citadel_PostGame_CopyMatchID )" onmouseout="UIHideTextTooltip()" onactivate="CitadelPostGameCopyMatchID()" />
 						<CitadelPostGameScoreboardNew id="Scoreboard" acceptsfocus="true" />
+						<Button id="AutoCommendScoreboard" class="AutoCommendStyle" style="transform: translateY(0px);" onactivate="CommendAll()">
+							<Panel class="AutoCommendIcon" />
+						</Button>
 					</Panel>
 					<Panel id="GraphsScreen" class="PostGameScreen Graphs" navclass="Graphs" navtooltip="#Citadel_Post_Game_Graphs_New">
 						<Panel class="ScoreboardBackground" />

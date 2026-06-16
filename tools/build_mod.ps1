@@ -118,8 +118,7 @@ function Show-SettingsMenu {
 }
 
 function Get-CompileKeyForFile($FileInfo) {
-    $hash = (Get-FileHash -Path $FileInfo.FullName -Algorithm MD5).Hash
-    return "{0}|{1}|{2}" -f $hash, $FileInfo.Length, $FileInfo.LastWriteTimeUtc.Ticks
+    return (Get-FileHash -Path $FileInfo.FullName -Algorithm MD5).Hash
 }
 
 # ==============================================================================
@@ -360,9 +359,22 @@ while ($true) {
         
         $Utf8NoBom = New-Object System.Text.UTF8Encoding $false
         $AllowedExts = @('.xml', '.css', '.js', '.vsndevts', '.wav', '.vtex', '.vsvg', '.vpcf', '.vmdl', '.vmat')
-        $StaleCompiledExts = @('.xml_c', '.vcss_c', '.vjs_c', '.vsndevts_c', '.vtex_c', '.vsvg_c', '.vpcf_c', '.vmdl_c', '.vmat_c')
+        $CompileOutputs = @{
+            '.xml'      = '.xml_c'
+            '.css'      = '.vcss_c'
+            '.js'       = '.vjs_c'
+            '.vsndevts' = '.vsndevts_c'
+            '.wav'      = '.vsnd_c'
+            '.vtex'     = '.vtex_c'
+            '.vsvg'     = '.vsvg_c'
+            '.vpcf'     = '.vpcf_c'
+            '.vmdl'     = '.vmdl_c'
+            '.vmat'     = '.vmat_c'
+        }
+        $StaleCompiledExts = @('.xml_c', '.vcss_c', '.vjs_c', '.vsndevts_c', '.vsnd_c', '.vtex_c', '.vsvg_c', '.vpcf_c', '.vmdl_c', '.vmat_c')
         
         $updatedCount = 0
+        $changedFiles = New-Object System.Collections.Generic.List[string]
 
         foreach ($file in $SourceFiles) {
             $relPath = $file.FullName.Substring($ModSourcePath.Length + 1)
@@ -371,15 +383,23 @@ while ($true) {
 
             $compileKey = Get-CompileKeyForFile -FileInfo $file
             $contentDest = Join-Path $TempContent $relPath
-
-            $needsUpdate = $Force
-            if (-not $needsUpdate) {
-                if (-not $BuildCache.Contains($cacheKey) -or $BuildCache[$cacheKey] -ne $compileKey -or -not (Test-Path $contentDest)) {
-                    $needsUpdate = $true
-                }
+            $compiledDest = $null
+            if ($CompileOutputs.ContainsKey($file.Extension)) {
+                $compiledDest = Join-Path $TempGame ($relPath + $CompileOutputs[$file.Extension])
             }
 
-            if ($needsUpdate) {
+            $cachedCompileKey = $null
+            if ($BuildCache.Contains($cacheKey)) {
+                $cachedCompileKey = [string]$BuildCache[$cacheKey]
+            }
+
+            $hashChanged = $Force -or $null -eq $cachedCompileKey -or $cachedCompileKey.Trim() -ne $compileKey
+            $contentMissing = -not (Test-Path $contentDest)
+            $compiledMissing = $compiledDest -and -not (Test-Path $compiledDest)
+            $needsCopy = $hashChanged -or $contentMissing
+            $needsCompile = $hashChanged -or $compiledMissing
+
+            if ($needsCopy) {
                 $dir = Split-Path $contentDest
                 if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
 
@@ -392,13 +412,16 @@ while ($true) {
                         [System.IO.File]::WriteAllText($contentDest, $content, $Utf8NoBom)
                     }
                 }
+            }
 
-                if ($AllowedExts -contains $file.Extension) {
-                    $FilesToCompile.Add($contentDest)
-                }
+            if ($AllowedExts -contains $file.Extension -and ($needsCopy -or $needsCompile)) {
+                $FilesToCompile.Add($contentDest)
+            }
 
+            if ($hashChanged) {
                 $BuildCache[$cacheKey] = $compileKey
                 $updatedCount++
+                $changedFiles.Add($relPath)
             }
         }
 
@@ -462,10 +485,10 @@ while ($true) {
 
         Write-Host "  Found $updatedCount new/modified files. Removed $($KeysToRemove.Count) deleted files." -ForegroundColor DarkGray
 
-        if ($updatedCount -gt 0) {
-            $pngUpdates = ($SourceFiles | Where-Object { $_.Extension -eq '.png' -and $BuildCache.Contains("${SelectedMod}|$($_.FullName.Substring($ModSourcePath.Length + 1))".ToLower()) }).Count
-            if ($pngUpdates -gt 0) {
-                Write-Host "  PNG source changes are tracked via hash + file size + timestamp." -ForegroundColor DarkGray
+        if ($changedFiles.Count -gt 0) {
+            Write-Host "  Changed files:" -ForegroundColor DarkGray
+            foreach ($changedFile in $changedFiles) {
+                Write-Host "    - $changedFile" -ForegroundColor DarkGray
             }
         }
 
