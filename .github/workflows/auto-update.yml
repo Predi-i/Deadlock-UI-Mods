@@ -104,6 +104,11 @@ jobs:
           New-Item -ItemType Directory -Force -Path $ContentDir | Out-Null
           Copy-Item -Path "$ModName\*" -Destination $ContentDir -Recurse -Force
 
+          $baseLayoutXmlDir = Join-Path $ContentDir "panorama\layout\base"
+          if (Test-Path $baseLayoutXmlDir) {
+              Get-ChildItem -Path $baseLayoutXmlDir -Filter "*.xml" -File | Remove-Item -Force
+          }
+
           $Files = Get-ChildItem -Path $ContentDir -Recurse -File | Where-Object { $_.Extension -in @('.css', '.xml', '.js') }
           foreach ($f in $Files) {
               & $Compiler -i $f.FullName -nop4 2>&1 | Out-Null
