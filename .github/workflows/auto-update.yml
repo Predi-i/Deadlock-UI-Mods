@@ -2,7 +2,7 @@ name: TopBar Mod Updater
 
 on:
   schedule:
-    - cron: '0 3 * * *'
+    - cron: '39 2 * * *'
   workflow_dispatch:
 
 jobs:
