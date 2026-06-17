@@ -29,12 +29,19 @@ jobs:
           Invoke-WebRequest -Uri "$layoutBaseURL/citadel_hud_top_bar_player.xml" -OutFile $baseXmlPath
 
           $xml = Get-Content $baseXmlPath -Raw
-          $needle = "        <Panel id=\"PlayerNameNWContainer\" onmouseover=\"CitadelTopDownScoreboardPlayerHovered();\">"
-          $injection = "`r`n        <Label class=\"AlwaysPlayerName\" text=\"{s:player_name}\" />`r`n`r`n        <Panel id=\"PlayerNameNWContainer\" onmouseover=\"CitadelTopDownScoreboardPlayerHovered();\">"
-          if ($xml.Contains($needle)) {
-              $xml = $xml.Replace($needle, $injection)
+          if ($xml -match 'AlwaysPlayerName') {
+              Write-Host "AlwaysPlayerName label already present in generated XML."
           } else {
-              throw "Could not find PlayerNameNWContainer anchor while rebuilding top bar XML override."
+              $anchorPattern = '^(\s*)<Panel id="PlayerNameNWContainer"\s+onmouseover="CitadelTopDownScoreboardPlayerHovered\(\);">'
+              $anchorMatch = [regex]::Match($xml, $anchorPattern, [System.Text.RegularExpressions.RegexOptions]::Multiline)
+
+              if (-not $anchorMatch.Success) {
+                  throw "Could not find PlayerNameNWContainer anchor while rebuilding top bar XML override."
+              }
+
+              $indent = $anchorMatch.Groups[1].Value
+              $replacement = $indent + '<Label class="AlwaysPlayerName" text="{s:player_name}" />' + "`r`n`r`n" + $anchorMatch.Value
+              $xml = [regex]::Replace($xml, $anchorPattern, [System.Text.RegularExpressions.MatchEvaluator]{ param($m) $replacement }, 1, [System.Text.RegularExpressions.RegexOptions]::Multiline)
           }
           [System.IO.File]::WriteAllText((Resolve-Path ".").Path + "\" + $overrideXmlPath, $xml, (New-Object System.Text.UTF8Encoding $false))
 
