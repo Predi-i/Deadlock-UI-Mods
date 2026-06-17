@@ -76,9 +76,7 @@
 				</Panel>
 			</Panel>
 		</Panel>
-				<Label class="AlwaysPlayerName" text="{s:player_name}" />
-
-<Panel id="PlayerNameNWContainer" onmouseover="CitadelTopDownScoreboardPlayerHovered();">
+		<Panel id="PlayerNameNWContainer" onmouseover="CitadelTopDownScoreboardPlayerHovered();">
 			<Panel id="BackgroundStrip" />
 			<Panel class="PlayerInfoContainer TopBottomFlow">
 				<Label class="PlayerName" text="{s:player_name}" />
