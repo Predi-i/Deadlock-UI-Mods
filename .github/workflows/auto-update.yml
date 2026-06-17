@@ -21,14 +21,15 @@ jobs:
           $stylesBaseURL = "https://raw.githubusercontent.com/SteamTracking/GameTracking-Deadlock/master/game/citadel/pak01_dir/panorama/styles"
           $layoutBaseURL = "https://raw.githubusercontent.com/SteamTracking/GameTracking-Deadlock/master/game/citadel/pak01_dir/panorama/layout"
           $baseCssPath = "Show-Nicknames-In-TopBar/panorama/styles/base/citadel_hud_top_bar.css"
-          $baseXmlPath = "Show-Nicknames-In-TopBar/panorama/layout/base/citadel_hud_top_bar_player.xml"
           $overrideXmlPath = "Show-Nicknames-In-TopBar/panorama/layout/citadel_hud_top_bar_player.xml"
+          
           New-Item -ItemType Directory -Force -Path "Show-Nicknames-In-TopBar/panorama/styles/base" | Out-Null
-          New-Item -ItemType Directory -Force -Path "Show-Nicknames-In-TopBar/panorama/layout/base" | Out-Null
+          New-Item -ItemType Directory -Force -Path "Show-Nicknames-In-TopBar/panorama/layout" | Out-Null
+          
           Invoke-WebRequest -Uri "$stylesBaseURL/citadel_hud_top_bar.css" -OutFile $baseCssPath
-          Invoke-WebRequest -Uri "$layoutBaseURL/citadel_hud_top_bar_player.xml" -OutFile $baseXmlPath
-
-          $xml = Get-Content $baseXmlPath -Raw
+          
+          $xml = Invoke-RestMethod -Uri "$layoutBaseURL/citadel_hud_top_bar_player.xml"
+          
           if ($xml.Contains('AlwaysPlayerName')) {
               Write-Host "AlwaysPlayerName label already present in generated XML."
           } else {
@@ -60,7 +61,6 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Show-Nicknames-In-TopBar/panorama/styles/base/citadel_hud_top_bar.css
-          git add Show-Nicknames-In-TopBar/panorama/layout/base/citadel_hud_top_bar_player.xml
           git add Show-Nicknames-In-TopBar/panorama/layout/citadel_hud_top_bar_player.xml
           
           if git diff --staged --quiet; then
@@ -103,11 +103,6 @@ jobs:
 
           New-Item -ItemType Directory -Force -Path $ContentDir | Out-Null
           Copy-Item -Path "$ModName\*" -Destination $ContentDir -Recurse -Force
-
-          $baseLayoutXmlDir = Join-Path $ContentDir "panorama\layout\base"
-          if (Test-Path $baseLayoutXmlDir) {
-              Get-ChildItem -Path $baseLayoutXmlDir -Filter "*.xml" -File | Remove-Item -Force
-          }
 
           $Files = Get-ChildItem -Path $ContentDir -Recurse -File | Where-Object { $_.Extension -in @('.css', '.xml', '.js') }
           foreach ($f in $Files) {
