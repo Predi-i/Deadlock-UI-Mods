@@ -29,19 +29,27 @@ jobs:
           Invoke-WebRequest -Uri "$layoutBaseURL/citadel_hud_top_bar_player.xml" -OutFile $baseXmlPath
 
           $xml = Get-Content $baseXmlPath -Raw
-          if ($xml -match 'AlwaysPlayerName') {
+          if ($xml.Contains('AlwaysPlayerName')) {
               Write-Host "AlwaysPlayerName label already present in generated XML."
           } else {
-              $anchorPattern = '^(\s*)<Panel id="PlayerNameNWContainer"\s+onmouseover="CitadelTopDownScoreboardPlayerHovered\(\);">'
-              $anchorMatch = [regex]::Match($xml, $anchorPattern, [System.Text.RegularExpressions.RegexOptions]::Multiline)
+              $anchor = '<Panel id="PlayerNameNWContainer" onmouseover="CitadelTopDownScoreboardPlayerHovered();">'
+              $anchorIndex = $xml.IndexOf($anchor)
 
-              if (-not $anchorMatch.Success) {
+              if ($anchorIndex -lt 0) {
                   throw "Could not find PlayerNameNWContainer anchor while rebuilding top bar XML override."
               }
 
-              $indent = $anchorMatch.Groups[1].Value
-              $replacement = $indent + '<Label class="AlwaysPlayerName" text="{s:player_name}" />' + "`r`n`r`n" + $anchorMatch.Value
-              $xml = [regex]::Replace($xml, $anchorPattern, [System.Text.RegularExpressions.MatchEvaluator]{ param($m) $replacement }, 1, [System.Text.RegularExpressions.RegexOptions]::Multiline)
+              $lineStart = $xml.LastIndexOf("`n", $anchorIndex)
+              if ($lineStart -lt 0) {
+                  $lineStart = 0
+              } else {
+                  $lineStart += 1
+              }
+
+              $linePrefix = $xml.Substring($lineStart, $anchorIndex - $lineStart)
+              $indent = ($linePrefix -replace '[^\s].*$', '')
+              $labelLine = $indent + '<Label class="AlwaysPlayerName" text="{s:player_name}" />' + "`r`n`r`n"
+              $xml = $xml.Insert($anchorIndex, $labelLine)
           }
           [System.IO.File]::WriteAllText((Resolve-Path ".").Path + "\" + $overrideXmlPath, $xml, (New-Object System.Text.UTF8Encoding $false))
 
