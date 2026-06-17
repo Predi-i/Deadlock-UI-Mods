@@ -121,6 +121,11 @@ function Get-CompileKeyForFile($FileInfo) {
     return (Get-FileHash -Path $FileInfo.FullName -Algorithm MD5).Hash
 }
 
+function Get-CompiledOutputPath($BaseDir, $RelativePath, $CompiledExtension) {
+    $compiledPath = [System.IO.Path]::ChangeExtension($RelativePath, $CompiledExtension.TrimStart('.'))
+    return Join-Path $BaseDir $compiledPath
+}
+
 # ==============================================================================
 # CONFIGURATION MANAGEMENT
 # ==============================================================================
@@ -385,7 +390,7 @@ while ($true) {
             $contentDest = Join-Path $TempContent $relPath
             $compiledDest = $null
             if ($CompileOutputs.ContainsKey($file.Extension)) {
-                $compiledDest = Join-Path $TempGame ($relPath + $CompileOutputs[$file.Extension])
+                $compiledDest = Get-CompiledOutputPath -BaseDir $TempGame -RelativePath $relPath -CompiledExtension $CompileOutputs[$file.Extension]
             }
 
             $cachedCompileKey = $null
@@ -437,9 +442,13 @@ while ($true) {
                     if (Test-Path $cPath) { Remove-Item $cPath -Recurse -Force }
 
                     $gPath = Join-Path $TempGame $relPath
-                    $gPathC = $gPath + "_c"
                     if (Test-Path $gPath) { Remove-Item $gPath -Recurse -Force }
-                    if (Test-Path $gPathC) { Remove-Item $gPathC -Recurse -Force }
+
+                    $sourceExt = [System.IO.Path]::GetExtension($relPath).ToLowerInvariant()
+                    if ($CompileOutputs.ContainsKey($sourceExt)) {
+                        $compiledPath = Get-CompiledOutputPath -BaseDir $TempGame -RelativePath $relPath -CompiledExtension $CompileOutputs[$sourceExt]
+                        if (Test-Path $compiledPath) { Remove-Item $compiledPath -Recurse -Force }
+                    }
                 }
             }
         }
@@ -455,9 +464,13 @@ while ($true) {
             if (-not $CurrentFiles.Contains($tempCacheKey)) {
                 Remove-Item -Path $tempFile.FullName -Force -ErrorAction SilentlyContinue
                 $tempGameFile = Join-Path $TempGame $tempRelPath
-                $tempGameCompiled = $tempGameFile + '_c'
                 if (Test-Path $tempGameFile) { Remove-Item -Path $tempGameFile -Recurse -Force -ErrorAction SilentlyContinue }
-                if (Test-Path $tempGameCompiled) { Remove-Item -Path $tempGameCompiled -Recurse -Force -ErrorAction SilentlyContinue }
+
+                $tempSourceExt = [System.IO.Path]::GetExtension($tempRelPath).ToLowerInvariant()
+                if ($CompileOutputs.ContainsKey($tempSourceExt)) {
+                    $tempCompiledPath = Get-CompiledOutputPath -BaseDir $TempGame -RelativePath $tempRelPath -CompiledExtension $CompileOutputs[$tempSourceExt]
+                    if (Test-Path $tempCompiledPath) { Remove-Item -Path $tempCompiledPath -Recurse -Force -ErrorAction SilentlyContinue }
+                }
             }
         }
 
@@ -505,7 +518,7 @@ while ($true) {
         if ($totalFiles -gt 0) {
             $batchSize = 25
             $batches = [math]::Ceiling($totalFiles / $batchSize)
-            
+
             for ($i = 0; $i -lt $batches; $i++) {
                 $batchFiles = $FilesToCompile | Select-Object -Skip ($i * $batchSize) -First $batchSize
                 $statusText = "  Compiling batch $($i + 1)/$batches ($($batchFiles.Count) files)..."
@@ -518,9 +531,9 @@ while ($true) {
                     $compilerArgs += $file
                 }
                 $compilerArgs += "-nop4"
-                
+
                 $CompileOutput = & $Compiler @compilerArgs 2>&1
-                
+
                 if ($LASTEXITCODE -ne 0) {
                     Write-Host "`n  [!] Error compiling batch $($i + 1)" -ForegroundColor Red
                     Write-Host "      Details: $CompileOutput" -ForegroundColor DarkRed
