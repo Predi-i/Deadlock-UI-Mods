@@ -28,7 +28,7 @@ jobs:
           
           Invoke-WebRequest -Uri "$stylesBaseURL/citadel_hud_top_bar.css" -OutFile $baseCssPath
           
-          $xml = Invoke-RestMethod -Uri "$layoutBaseURL/citadel_hud_top_bar_player.xml"
+          $xml = (Invoke-WebRequest -Uri "$layoutBaseURL/citadel_hud_top_bar_player.xml").Content
           
           if ($xml.Contains('AlwaysPlayerName')) {
               Write-Host "AlwaysPlayerName label already present in generated XML."
