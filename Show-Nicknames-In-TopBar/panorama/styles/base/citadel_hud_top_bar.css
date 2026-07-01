@@ -3,7 +3,7 @@
 @define playerDetailsWidth: 88px;
 @define playerContainerWidth: 120px;
 @define playerDetailsMargin: 0px;
-@define idolScoreResultDisplayTime: 5.1;
+@define kothScoreResultDisplayTime: 5.1;
 CitadelHudTopBar
 {
 	height: 100%;
@@ -1276,12 +1276,12 @@ ProgressBar
 	background-image: url("s2r://panorama/images/hud/icons/rebirth_and_rejuvenator.vsvg");
 }
 
-#IdolCashInMeter
+#KothCashInMeter
 {
-	width: 270px;
+	width: 320px;
 	height: 114px;
 	horizontal-align: middle;
-	margin-top: 95px;
+	margin-top: 110px;
 	ui-scale: 120%;
 	padding: 0px 8px;
 	visibility: collapse;
@@ -1292,225 +1292,395 @@ ProgressBar
 	transition-duration: 0.1s;
 }
 
-#IdolCashInMeter.captured,#IdolCashInMeter.capturing
+#KothCashInMeter .bg_backer
+{
+	width: 100%;
+	height: 100%;
+	background-image: url("s2r://panorama/images/hud/top_bar/koth_backer_png.vtex");
+	background-size: contain;
+	background-position: center;
+	background-repeat: no-repeat;
+	opacity: 0.9;
+}
+
+#KothCashInMeter.captured
 {
 	visibility: visible;
 }
 
-.gScoreboardOpen #IdolCashInMeter.captured,.gScoreboardOpen #IdolCashInMeter.capturing
+.gScoreboardOpen #KothCashInMeter.captured
 {
 	visibility: collapse;
 }
 
-#IdolCashInMeter.in_range.captured,#IdolCashInMeter.in_range.capturing
+#KothCashInMeter.in_range.captured,#KothCashInMeter.in_range.koth_enabled
 {
 	ui-scale: 100%;
 	margin-top: 120px;
+	visibility: visible;
 }
 
-#IdolCashInMeter.in_range.give_up_warning,#IdolCashInMeter.in_range.gave_up
+#KothCashInMeter.in_range.give_up_warning,#KothCashInMeter.in_range.gave_up
 {
-	border: 2px solid #f9ec7430;
-	border-radius: 10px;
-	background-color: #f9ec7410;
-	animation-name: Idol_Capture_Pulse;
+	animation-name: Koth_Capture_Pulse;
 	animation-duration: 0.5s;
 	animation-iteration-count: 1;
 }
 
-#IdolCashInMeter.captured
+#KothCashInMeter.captured
 {
 	opacity: 0;
-	animation-name: Idol_Captured;
+	animation-name: Koth_Captured;
 	animation-duration: 5s;
 	animation-iteration-count: 1;
 	animation-timing-function: ease-out;
 	visibility: visible;
 }
 
-#IdolCashInMeter.in_range.capturing
+#KothCashInMeter.captured .koth_gold
 {
-	animation-name: Idol_Capture_Pulse;
-	animation-duration: 1s;
-	animation-iteration-count: infinite;
-	animation-direction: alternate;
+	visibility: collapse;
 }
 
-#IdolCashInMeter.contested
+#KothCashInMeter.captured .koth_result
 {
+	visibility: visible;
+}
+
+#KothCashInMeter.contested.captured_neutral
+{
+	opacity: 0;
+	animation-name: Koth_Captured;
+	animation-duration: 5s;
+	animation-iteration-count: 1;
+	animation-timing-function: ease-out;
+	visibility: visible;
+}
+
+#KothCashInMeter.contested.captured_neutral #KothIndicator,#KothCashInMeter.contested.captured_neutral #KothParticipants,#KothCashInMeter.contested.captured_neutral .koth_result_label
+{
+	visibility: collapse;
+}
+
+#KothCashInMeter.contested.captured_neutral .bg_backer
+{
+	opacity: 0.5;
+}
+
+#KothCashInMeter.capturing
+{
+	visibility: visible;
+	animation-name: Koth_Capture_Enemy_Pulse;
 	animation-duration: 0.5s;
-	animation-name: Idol_Capture_Enemy_Pulse;
+	animation-iteration-count: 5;
 }
 
-#IdolCashInMeter.trigger_swap.capturing.enemy,#IdolCashInMeter.trigger_swap.capturing.friendly
+#KothCashInMeter.in_range.capturing
+{
+	animation-name: Koth_Capture_Pulse;
+	animation-duration: 0.5s;
+	animation-iteration-count: infinite;
+}
+
+#KothCashInMeter.in_range.capturing #KothIndicator
+{
+	animation-name: koth_vibrate_capture;
+	animation-duration: 0.2s;
+	animation-iteration-count: infinite;
+}
+
+#KothCashInMeter.contested
+{
+	animation-duration: 0.1s;
+	animation-name: Koth_Capture_Enemy_Pulse;
+}
+
+#KothCashInMeter.contested #KothIndicator
+{
+	animation-name: koth_vibrate_capture;
+	animation-duration: 0.2s;
+}
+
+#KothCashInMeter.trigger_swap.capturing.enemy,#KothCashInMeter.trigger_swap.capturing.friendly
 {
 	animation-name: swap_owner;
 	animation-duration: 0.2s;
 	animation-iteration-count: 1;
 }
 
-#IdolCashInMeter #IdolIndicator
+#KothCashInMeter #Koth_Center
 {
 	horizontal-align: center;
 	vertical-align: center;
 	width: 100%;
 	height: 100%;
+}
+
+#KothCashInMeter #Koth_Center .koth_gold .noGold
+{
+	visibility: collapse;
+}
+
+#KothCashInMeter #Koth_Center .koth_gold
+{
+	horizontal-align: center;
+	vertical-align: bottom;
+	margin-bottom: 10px;
+	height: 50px;
+	z-index: 10;
+	margin-right: 18px;
 	flow-children: right;
+}
+
+#KothCashInMeter #Koth_Center .koth_gold .soul_icon
+{
+	horizontal-align: right;
+	vertical-align: center;
+	height: 18px;
+	width: 18px;
+	background-position: center;
+	background-repeat: no-repeat;
+	background-size: contain;
+	background-image: url("s2r://panorama/images/hud/icons/icon_soul.vsvg");
+	wash-color: soulColor;
+}
+
+#KothCashInMeter #Koth_Center .koth_gold .koth_gold_text
+{
+	horizontal-align: left;
+	vertical-align: center;
+	font-size: 18px;
+	color: soulColor;
+	font-family: oracle;
+	font-weight: bold;
+	text-transform: uppercase;
+	text-shadow: 0px 0px 5.0 offBlack;
+	text-overflow: shrink;
+}
+
+#KothCashInMeter #Koth_Center .koth_result
+{
+	horizontal-align: center;
+	vertical-align: bottom;
+	margin-bottom: 20px;
+	visibility: collapse;
 	animation-name: TagGrooveSm;
-	animation-duration: 3s;
+	animation-duration: 1s;
 	animation-iteration-count: infinite;
 }
 
-.capturing #IdolCashInMeter #IdolIndicator
+#KothCashInMeter #Koth_Center .koth_result Label
+{
+	font-size: 20px;
+	font-family: oracle;
+	font-weight: bold;
+	text-transform: uppercase;
+	text-shadow: 0px 0px 0px 3.0 offBlack;
+	color: shardColor;
+}
+
+.captured_team_1 #KothCashInMeter #Koth_Center .koth_result Label
+{
+	color: team1Color;
+}
+
+#KothCashInMeter #Koth_Center .koth_result .koth_result_label_enemy
+{
+	visibility: collapse;
+	color: #e05a5a;
+}
+
+#KothCashInMeter #Koth_Center .koth_result .koth_result_label_timeout
+{
+	visibility: collapse;
+	color: offWhite;
+	margin-bottom: 20px;
+}
+
+#KothCashInMeter #KothIndicator
+{
+	horizontal-align: center;
+	vertical-align: center;
+	width: 100%;
+	height: 100%;
+	padding: 0px 18px;
+	flow-children: right;
+	animation-duration: 0.2s;
+	animation-iteration-count: infinite;
+}
+
+.capturing #KothCashInMeter #KothIndicator
 {
 	animation-name: TagGrooveSm;
-	animation-duration: 3s;
+	animation-duration: 0.01s;
 	animation-iteration-count: infinite;
 }
 
-.captured #IdolCashInMeter #IdolIndicator
+.contested #KothCashInMeter #KothIndicator
+{
+	animation-name: koth_vibrate_blocked;
+	animation-duration: 0.05s;
+}
+
+.captured #KothCashInMeter #KothIndicator
 {
 	animation-name: TagGroove1;
 	animation-duration: 2s;
 	animation-iteration-count: infinite;
 }
 
-#IdolCashInMeter #IdolIndicator .IdolCashInMeter
+.captured_neutral #KothCashInMeter #KothIndicator
 {
-	width: 45%;
-	height: 100%;
+	visibility: collapse;
 }
 
-#IdolCashInMeter #IdolIndicator .IdolTeamText
+#KothCashInMeter #KothIndicator .KothCashInMeter
+{
+	width: 50%;
+	vertical-align: middle;
+	margin-bottom: 10px;
+}
+
+#KothCashInMeter #KothIndicator .KothTeamText
 {
 	horizontal-align: center;
 	vertical-align: center;
 	opacity: 0.5;
-	font-size: 18px;
-	color: white;
-	font-family: block;
+	font-size: 22px;
+	color: rgb(255, 255, 255);
+	font-family: oracle;
 	padding: 5px;
+	font-weight: bold;
 	text-transform: uppercase;
 	text-shadow: 0px 0px 5.0 offBlack;
 	text-overflow: shrink;
 }
 
-#IdolCashInMeter #IdolIndicator .IdolProgressBar
+#KothCashInMeter #KothIndicator .KothProgressBar
 {
 	width: 100%;
-	height: 20px;
+	height: 10px;
 	vertical-align: center;
 	horizontal-align: center;
 	border-radius: 0px 50px 50px 0px;
 	background-color: rgba(0, 0, 0, 0.9);
+	border-top: 2px solid black;
+	border-left: 2px solid black;
+	border-bottom: 2px solid black;
 }
 
-#IdolCashInMeter #IdolIndicator .friendly .IdolProgressBar
+.enemy #KothCashInMeter #KothIndicator .KothProgressBar,.team_2 #KothCashInMeter #KothIndicator .KothProgressBar
+{
+	border-left: 0px solid black;
+	border-right: 2px solid black;
+}
+
+#KothCashInMeter #KothIndicator .enemy .KothTeamText
+{
+	color: #ffc3c3;
+}
+
+#KothCashInMeter #KothIndicator .friendly .KothProgressBar
 {
 	transform: scaleX(-1);
 }
 
-#IdolCashInMeter #IdolIndicator .team_1 .IdolProgressBar
+#KothCashInMeter #KothIndicator .team_1 .KothProgressBar
 {
 	transform: scaleX(-1);
 }
 
-#IdolCashInMeter #IdolIndicator .enemy .ProgressBarLeft
+#KothCashInMeter #KothIndicator .enemy .KothProgressBar
+{
+	border-left: 0px solid black;
+	border-right: 2px solid black;
+}
+
+#KothCashInMeter #KothIndicator .team_2 .KothProgressBar
+{
+	border-left: 0px solid black;
+	border-right: 2px solid black;
+}
+
+#KothCashInMeter #KothIndicator .enemy .ProgressBarLeft
 {
 	background-color: colorEnemy;
 	background-color: gradient( linear, 0% 0%, 100% 0%, from( #e05a5a ), to( #971c1c ) );
 }
 
-#IdolCashInMeter #IdolIndicator .friendly .ProgressBarLeft
+#KothCashInMeter #KothIndicator .friendly .ProgressBarLeft
 {
 	background-color: #49adb8;
-	background-color: gradient( linear, 0% 0%, 100% 0%, from( #5fc1cb ), to( #0b5685 ) );
+	background-color: gradient( linear, 0% 0%, 100% 0%, from( offWhite ), to( #b4b8a5 ) );
 }
 
-#IdolCashInMeter #IdolIndicator .team_1 .ProgressBarLeft
+#KothCashInMeter #KothIndicator .team_1 .ProgressBarLeft
 {
 	background-color: colorEnemy;
 	background-color: gradient( linear, 0% 0%, 100% 0%, from( team1Color ), to( team1ColorDark ) );
 }
 
-#IdolCashInMeter #IdolIndicator .team_2 .ProgressBarLeft
+#KothCashInMeter #KothIndicator .team_2 .ProgressBarLeft
 {
 	background-color: #49adb8;
 	background-color: gradient( linear, 0% 0%, 100% 0%, from( team2Color ), to( team2ColorDark ) );
 }
 
-#IdolCashInMeter #IdolIndicator .capturing .IdolTeamText
+#KothCashInMeter #KothIndicator .capturing .KothTeamText
 {
 	opacity: 1;
 }
 
-#IdolCashInMeter #IdolIndicator .capturing .IdolTeamText.in_range
+#KothCashInMeter #KothIndicator .capturing .KothTeamText.in_range
 {
-	animation-name: Idol_ProgressText_Capturing;
+	animation-name: Koth_ProgressText_Capturing;
 	animation-duration: 0.2s;
 	animation-iteration-count: infinite;
 	animation-direction: reverse;
 }
 
-#IdolCashInMeter #IdolIndicator .blocked .IdolTeamText
+#KothCashInMeter #KothIndicator .blocked .KothTeamText
 {
 	color: offBlack;
-	text-shadow: 0px 0px 0px 3.0 offWhite;
+	text-shadow: 0px 0px 0px 3.0 #a6ffec;
 	opacity: 1;
 }
 
-.in_range #IdolCashInMeter #IdolIndicator .blocked .IdolTeamText
+.in_range #KothCashInMeter #KothIndicator .blocked .KothTeamText
 {
-	animation-name: Idol_ProgressText_Blocked;
+	animation-name: Koth_ProgressText_Blocked;
 	animation-duration: 0.3s;
 	animation-iteration-count: infinite;
 }
 
-.captured #IdolCashInMeter #IdolIndicator .blocked .IdolTeamText
+#KothCashInMeter #KothIndicator .blocked.friendly .KothTeamText
 {
-	animation-name: none;
+	text-shadow: 0px 0px 0px 3.0 offWhite;
 }
 
-.friendly #IdolCashInMeter #IdolIndicator .blocked .IdolTeamText
+#KothCashInMeter #KothIndicator .blocked.enemy .KothTeamText
 {
-	text-shadow: 0px 0px 0px 3.0 red;
+	text-shadow: 0px 0px 0px 3.0 #ffc3c3;
 }
 
-#IdolCashInMeter #IdolIndicator #IdolCashInMeter_Timer
+#KothCashInMeter #KothIndicator .blocked.team_1 .KothTeamText
+{
+	text-shadow: 0px 0px 0px 3.0 team1Color;
+}
+
+#KothCashInMeter #KothIndicator .blocked.team_2 .KothTeamText
+{
+	text-shadow: 0px 0px 0px 3.0 team2Color;
+}
+
+#KothCashInMeter #KothIndicator #KothCashInMeter_Timer
 {
 	width: 100%;
 	height: 100%;
 	background-color: offWhite;
 }
 
-#IdolCashInMeter #IdolIndicator #Idol_Center
-{
-	width: 50px;
-	height: 50px;
-	margin: 0px -14px;
-	background-color: #49adb8;
-	background-color: gradient( linear, 0% 0%, 0% 100%, from( #9df3fd ), to( #2f81b4 ) );
-	horizontal-align: center;
-	vertical-align: center;
-	border-radius: 50%;
-	z-index: 10;
-	box-shadow: 0px 0px 20px offBlack&90;
-}
-
-#IdolCashInMeter #IdolIndicator .idol_icon
-{
-	width: 60px;
-	height: 60px;
-	horizontal-align: center;
-	vertical-align: center;
-	background-image: url("s2r://panorama/images/minimap/soul_jar_marker_psd.vtex");
-	background-repeat: no-repeat;
-	background-position: center;
-	background-size: contain;
-	z-index: 10;
-}
-
-#IdolCashInMeter #IdolTextureElement
+#KothCashInMeter #KothTextureElement
 {
 	width: 50px;
 	height: 50px;
@@ -1520,14 +1690,15 @@ ProgressBar
 	border: 3px solid shardColor;
 	border-radius: 50%;
 	opacity: 0.5;
+	visibility: collapse;
 }
 
-.captured_friendly #IdolCashInMeter #IdolTextureElement
+.captured_friendly #KothCashInMeter #KothTextureElement
 {
 	border: 3px solid shardColor&90;
 }
 
-.enemy #IdolCashInMeter #IdolTextureElement
+.enemy #KothCashInMeter #KothTextureElement
 {
 	border: 0px solid #ffffff00;
 	background-image: url("s2r://panorama/images/icons/icon_x.vsvg");
@@ -1536,63 +1707,108 @@ ProgressBar
 	background-repeat: no-repeat;
 	wash-color: colorEnemy;
 	opacity: 1;
+	visibility: visible;
 }
 
-.captured_team_1 #IdolCashInMeter #IdolTextureElement
+.captured_team_1 #KothCashInMeter #KothTextureElement
 {
 	border: 3px solid team1Color;
 }
 
-.captured_team_2 #IdolCashInMeter #IdolTextureElement
+.captured_team_2 #KothCashInMeter #KothTextureElement
 {
 	border: 3px solid team2Color;
 }
 
-#IdolCashInMeter.captured #IdolIndicator .blocked .IdolTeamText
+#KothCashInMeter.contested .KothIndicator
 {
-	animation-name: none;
-	text-shadow: 0px 0px 0px 3.0 offWhite&05;
-	color: offBlack;
+	animation-name: koth_vibrate_blocked;
+	animation-duration: 0.05s;
 }
 
-#IdolCashInMeter.captured #IdolIndicator .partial_progress
+#KothCashInMeter.captured #KothIndicator .blocked .KothTeamText
+{
+	animation-name: none;
+	text-shadow: 0px 0px 0px 3.0 offBlack;
+	color: offWhite;
+}
+
+#KothCashInMeter.captured #KothIndicator .partial_progress
 {
 	opacity: 0.6;
 }
 
-#IdolCashInMeter.captured #IdolIndicator .full_progress .IdolTeamText
+#KothCashInMeter.captured #KothIndicator .full_progress .KothTeamText
 {
 	opacity: 1;
 }
 
-#IdolCashInMeter.capturing #IdolTextureElement
+#KothCashInMeter.captured #Koth_Center .koth_result
+{
+	visibility: visible;
+}
+
+#KothCashInMeter.captured_team_1 #Koth_Center .koth_result_label
+{
+	color: team1Color;
+}
+
+#KothCashInMeter.captured_team_2 #Koth_Center .koth_result_label
+{
+	color: team2Color;
+}
+
+#KothCashInMeter.captured.captured_enemy #Koth_Center .koth_result_label
 {
 	visibility: collapse;
 }
 
-#IdolCashInMeter.captured #IdolTextureElement
+#KothCashInMeter.captured.captured_enemy #Koth_Center .koth_result_label_enemy
 {
-	animation-name: Idol_Captured_Texture_Success;
+	visibility: visible;
+}
+
+#KothCashInMeter.captured.captured_neutral #Koth_Center .koth_result_label_timeout
+{
+	visibility: visible;
+}
+
+#KothCashInMeter.captured.captured_neutral #KothIndicator
+{
+	visibility: collapse;
+}
+
+#KothCashInMeter.capturing #KothTextureElement
+{
+	visibility: collapse;
+}
+
+#KothCashInMeter.captured #KothTextureElement
+{
+	animation-name: Koth_Captured_Texture_Success;
 	animation-duration: 1s;
 	animation-iteration-count: 3;
 }
 
-#IdolCashInMeter.captured_friend #IdolTextureElement
+#KothCashInMeter.captured_friend #KothTextureElement
 {
 	border: 3px solid shardColor;
+	visibility: collapse;
 }
 
-#IdolCashInMeter.captured_team_1 #IdolTextureElement
+#KothCashInMeter.captured_team_1 #KothTextureElement
 {
 	border: 3px solid shardColor;
+	visibility: collapse;
 }
 
-#IdolCashInMeter.captured_team_2 #IdolTextureElement
+#KothCashInMeter.captured_team_2 #KothTextureElement
 {
 	border: 3px solid shardColor;
+	visibility: collapse;
 }
 
-#IdolCashInMeter.captured_enemy #IdolTextureElement
+#KothCashInMeter.captured_enemy #KothTextureElement
 {
 	border: 0px solid #ffffff00;
 	background-image: url("s2r://panorama/images/icons/icon_x.vsvg");
@@ -1600,99 +1816,81 @@ ProgressBar
 	background-position: center;
 	background-repeat: no-repeat;
 	opacity: 1;
-	animation-name: Idol_Captured_Texture_Failure;
+	animation-name: Koth_Captured_Texture_Failure;
 	wash-color: colorEnemy;
 }
 
-#IdolCashInMeter.captured_enemy #IdolIndicator #Idol_Center
+#KothCashInMeter.captured_enemy #KothIndicator #Koth_Center
 {
 	background-color: colorEnemy;
 	background-color: gradient( linear, 0% 0%, 0% 100%, from( #e05a5a ), to( #971c1c ) );
 }
 
-#IdolCashInMeter.captured_friendly #IdolIndicator #Idol_Center
+#KothCashInMeter.captured_friendly #KothIndicator #Koth_Center
 {
 	background-color: #49adb8;
 	background-color: gradient( linear, 0% 0%, 0% 100%, from( #5fc1cb ), to( #0b5685 ) );
 }
 
-#IdolCashInMeter.captured_team_1 #IdolIndicator #Idol_Center
+#KothCashInMeter.captured_team_1 #KothIndicator #Koth_Center
 {
 	background-color: colorEnemy;
 	background-color: gradient( linear, 0% 0%, 0% 100%, from( team1Color ), to( team1ColorDark ) );
 }
 
-#IdolCashInMeter.captured_team_2 #IdolIndicator #Idol_Center
+#KothCashInMeter.captured_team_2 #KothIndicator #Koth_Center
 {
 	background-color: #49adb8;
 	background-color: gradient( linear, 0% 0%, 0% 100%, from( team2Color ), to( team2ColorDark ) );
 }
 
-#IdolParticipants
+#KothParticipants
 {
 	height: 28px;
 	horizontal-align: middle;
 	vertical-align: bottom;
 	ignore-parent-flow: true;
-	margin-bottom: 10px;
-	width: 100%;
+	margin-bottom: 15px;
 	flow-children: right;
+	width: 100%;
 	visibility: collapse;
 }
 
-.in_range #IdolParticipants
+.in_range #KothParticipants
 {
 	visibility: visible;
 }
 
-#IdolParticipants .IdolParticipantsColumn
+#KothParticipants .KothParticipantsColumn
 {
-	width: 100px;
+	width: 50%;
 }
 
-#IdolParticipants #IdolParticipantsColumnRight
+#KothParticipants #KothParticipantsColumnRight
 {
 	horizontal-align: right;
 }
 
-#IdolParticipants .IdolParticipantsTeam
+#KothParticipants .KothParticipantsTeam
 {
-	border-radius: 50px;
 	max-width: 120px;
-	padding: 2px 8px;
+	padding: 0px;
+	horizontal-align: center;
 }
 
-#IdolParticipants .IdolParticipantsTeam.friendly
+#KothParticipants #KothParticipantsTeam1
 {
-	background-color: offWhite&10;
-}
-
-#IdolParticipants .IdolParticipantsTeam.enemy
-{
-	background-color: colorEnemy&30;
-}
-
-#IdolParticipants .IdolParticipantsTeam.team1
-{
-	background-color: team1Color&30;
-}
-
-#IdolParticipants .IdolParticipantsTeam.team2
-{
-	background-color: team2Color&30;
-}
-
-#IdolParticipants #IdolParticipantsTeam1
-{
+	margin-right: 10px;
 	flow-children: left;
 }
 
-#IdolParticipants #IdolParticipantsTeam2
+#KothParticipants #KothParticipantsTeam2
 {
 	flow-children: right;
+	margin-left: 10px;
 }
 
-#IdolParticipants .IdolParticipant
+#KothParticipants .KothParticipant
 {
 	width: 10px;
 	height: 10px;
@@ -1701,35 +1899,36 @@ ProgressBar
 	background-color: blue;
 }
 
-#IdolParticipants CitadelHeroImage
+#KothParticipants CitadelHeroImage
 {
 	width: 18px;
 	height: 18px;
 	width: fill-parent-flow(1.0);
+	max-width: 30px;
 	height: fill-parent-flow(1.0);
 }
 
-Label.idol_time_warning
+Label.koth_time_warning
 {
 	horizontal-align: center;
 	font-family: block;
-	font-size: 14px;
+	font-size: 16px;
 	text-transform: uppercase;
 	text-shadow: 0px 0px 0px 3.0 offBlack;
 	color: #f9ec74;
-	margin-top: 10px;
+	margin-top: 20px;
 	visibility: collapse;
 	animation-name: TagGrooveSm;
 	animation-duration: 2s;
 	animation-iteration-count: infinite;
 }
 
-.give_up_warning.in_range Label.idol_time_warning,.gave_up.in_range Label.idol_time_warning
+.give_up_warning.in_range Label.koth_time_warning,.gave_up.in_range Label.koth_time_warning
 {
 	visibility: visible;
 }
 
-@keyframes 'Idol_Capture_Pulse'
+@keyframes 'Koth_Capture_Pulse'
 {
 	0%
 	{
@@ -1751,7 +1950,7 @@ Label.idol_time_warning
 	
 }
 
-@keyframes 'Idol_ProgressText_Capturing'
+@keyframes 'Koth_ProgressText_Capturing'
 {
 	0%
 	{
@@ -1773,7 +1972,7 @@ Label.idol_time_warning
 	
 }
 
-@keyframes 'Idol_Capture_Left'
+@keyframes 'Koth_Capture_Left'
 {
 	0%
 	{
@@ -1817,7 +2016,7 @@ Label.idol_time_warning
 	
 }
 
-@keyframes 'Idol_Capture_Right'
+@keyframes 'Koth_Capture_Right'
 {
 	0%
 	{
@@ -1861,7 +2060,7 @@ Label.idol_time_warning
 	
 }
 
-@keyframes 'Idol_ProgressText_Blocked'
+@keyframes 'Koth_ProgressText_Blocked'
 {
 	0%
 	{
@@ -1880,7 +2079,7 @@ Label.idol_time_warning
 	
 }
 
-@keyframes 'Idol_Capture_Enemy_Pulse'
+@keyframes 'Koth_Capture_Enemy_Pulse'
 {
 	0%
 	{
@@ -1902,37 +2101,65 @@ Label.idol_time_warning
 	
 }
 
-@keyframes 'swap_owner'
+@keyframes 'koth_vibrate_capture'
 {
 	0%
 	{
-		pre-transform-scale2d: 1;
-		transform: translate3d(0px, 0px, 0px) rotateZ(0deg);
-		brightness: 1;
+		transform: rotateZ(0deg);
 	}
 	
-	33%
+	25%
 	{
-		pre-transform-scale2d: 3;
-		transform: translate3d(0px, 4px, 0px) rotateZ(-10deg);
+		transform: rotateZ(-0.8deg);
 	}
 	
-	66%
+	50%
 	{
-		pre-transform-scale2d: 3;
-		transform: translate3d(0px, 4px, 0px) rotateZ(10deg);
+		transform: rotateZ(0deg);
+	}
+	
+	75%
+	{
+		transform: rotateZ(0.8deg);
 	}
 	
 	100%
 	{
-		pre-transform-scale2d: 1;
-		transform: translate3d(0px, 0px, 0px) rotateZ(0deg);
-		brightness: 1;
+		transform: rotateZ(0deg);
 	}
 	
 }
 
-@keyframes 'Idol_Captured'
+@keyframes 'koth_vibrate_blocked'
+{
+	0%
+	{
+		transform: rotateZ(0deg);
+	}
+	
+	25%
+	{
+		transform: rotateZ(-2deg);
+	}
+	
+	50%
+	{
+		transform: rotateZ(0deg);
+	}
+	
+	75%
+	{
+		transform: rotateZ(2deg);
+	}
+	
+	100%
+	{
+		transform: rotateZ(0deg);
+	}
+	
+}
+
+@keyframes 'Koth_Captured'
 {
 	0%
 	{
@@ -1959,7 +2186,7 @@ Label.idol_time_warning
 	
 }
 
-@keyframes 'Idol_Captured_Texture_Success'
+@keyframes 'Koth_Captured_Texture_Success'
 {
 	0%
 	{
@@ -1976,7 +2203,7 @@ Label.idol_time_warning
 	
 }
 
-@keyframes 'Idol_Captured_Texture_Failure'
+@keyframes 'Koth_Captured_Texture_Failure'
 {
 	0%
 	{
