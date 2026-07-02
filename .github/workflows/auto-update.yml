@@ -22,14 +22,14 @@ jobs:
           $layoutBaseURL = "https://raw.githubusercontent.com/SteamTracking/GameTracking-Deadlock/master/game/citadel/pak01_dir/panorama/layout"
           $baseCssPath = "Show-Nicknames-In-TopBar/panorama/styles/base/citadel_hud_top_bar.css"
           $overrideXmlPath = "Show-Nicknames-In-TopBar/panorama/layout/citadel_hud_top_bar_player.xml"
-          
+
           New-Item -ItemType Directory -Force -Path "Show-Nicknames-In-TopBar/panorama/styles/base" | Out-Null
           New-Item -ItemType Directory -Force -Path "Show-Nicknames-In-TopBar/panorama/layout" | Out-Null
-          
+
           Invoke-WebRequest -Uri "$stylesBaseURL/citadel_hud_top_bar.css" -OutFile $baseCssPath
-          
+
           $xml = (Invoke-WebRequest -Uri "$layoutBaseURL/citadel_hud_top_bar_player.xml").Content
-          
+
           if ($xml.Contains('AlwaysPlayerName')) {
               Write-Host "AlwaysPlayerName label already present in generated XML."
           } else {
@@ -62,7 +62,7 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Show-Nicknames-In-TopBar/panorama/styles/base/citadel_hud_top_bar.css
           git add Show-Nicknames-In-TopBar/panorama/layout/citadel_hud_top_bar_player.xml
-          
+
           if git diff --staged --quiet; then
             echo "changed=false" >> $GITHUB_OUTPUT
           else
@@ -88,7 +88,7 @@ jobs:
         run: |
           $ModName = "Show-Nicknames-In-TopBar"
           $CsdkRoot = "C:\Reduced_CSDK_12"
-          
+
           if (-not (Test-Path "$CsdkRoot\game\bin_cs2\win64\resourcecompiler.exe")) {
               if (Test-Path "$CsdkRoot\Reduced_CSDK_12\game\bin_cs2\win64\resourcecompiler.exe") {
                   $CsdkRoot = "$CsdkRoot\Reduced_CSDK_12"
@@ -111,21 +111,33 @@ jobs:
 
           New-Item -ItemType Directory -Force -Path "builds" | Out-Null
           $OutVpk = "$PWD\builds\$ModName.vpk"
-          
+
           $PackerDir = Split-Path $Packer
           $Proc = Start-Process -FilePath $Packer -ArgumentList "`"$GameDir`"", "`"$OutVpk`"" -WorkingDirectory $PackerDir -PassThru
-          
+
           try {
               $Proc | Wait-Process -Timeout 30 -ErrorAction Stop
           } catch {
               $Proc | Stop-Process -Force -ErrorAction SilentlyContinue
           }
-          
+
           if (-not (Test-Path $OutVpk)) {
               Write-Error "VPK file was not found at $OutVpk"
               exit 1
           }
           exit 0
+
+      - name: Zip VPK for upload
+        if: steps.git_check.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        run: |
+          $ModName = "Show-Nicknames-In-TopBar"
+          $Version = (Get-Date -Format "yyyy.MM.dd")
+          $ZipPath = "builds\$ModName.zip"
+          Compress-Archive -Path "builds\$ModName.vpk" -DestinationPath $ZipPath -Force
+          # Export version for downstream steps
+          echo "MOD_VERSION=$Version" >> $env:GITHUB_ENV
+          echo "MOD_ZIP=$ZipPath" >> $env:GITHUB_ENV
 
       - name: Create GitHub Release
         if: steps.git_check.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
@@ -133,4 +145,23 @@ jobs:
         with:
           files: builds/Show-Nicknames-In-TopBar.vpk
           tag_name: "v${{ github.run_number }}"
-          name: "Show Nicknames In Top Bar"
+          name: "Show Nicknames In Top Bar v${{ env.MOD_VERSION }}"
+
+      - name: Set up Python
+        if: steps.git_check.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install uploader dependencies
+        if: steps.git_check.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: pip install requests beautifulsoup4
+
+      - name: Upload to GameBanana
+        if: steps.git_check.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
+        shell: bash
+        env:
+          GB_USERNAME: ${{ secrets.GB_USERNAME }}
+          GB_PASSWORD: ${{ secrets.GB_PASSWORD }}
+        run: python tools/gb_upload.py "${{ env.MOD_ZIP }}" "${{ env.MOD_VERSION }}"
