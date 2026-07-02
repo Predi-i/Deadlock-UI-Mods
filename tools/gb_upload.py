@@ -34,6 +34,14 @@ GB_UPLOAD_URL = f"{GB_BASE}/responders/jfuare"
 
 MOD_ID = 656390
 
+# GameBanana edit form requires the ownership/credits section on every submit,
+# even though the owner never changes. Omitting it makes the server reject the
+# POST and re-render the edit page (looks like a silent failure).
+OWNER_USER_ID = "5107678"
+OWNER_NAME = "Predi_i"
+OWNER_GROUP = "Author"
+OWNER_ROLE = ""
+
 
 class GameBananaUploader:
     def __init__(self, username: str, password: str, mod_id: int):
@@ -226,6 +234,26 @@ class GameBananaUploader:
         logger.info("Scraped %d form fields", len(fields))
         return fields
 
+    def _find_ownership_fields(self, html: str) -> list[tuple[str, str]]:
+        """Extract the JS-generated ownership/credits fields.
+
+        The prefix hash is emitted as `var g_sInputName = "<hash>"`. These fields
+        are required on every edit submit even though the owner never changes.
+        """
+        match = re.search(r'var\s+g_sInputName\s*=\s*"([a-f0-9]{32})"', html)
+        if not match:
+            logger.warning("Could not find g_sInputName for ownership fields")
+            return []
+        prefix = match.group(1)
+        logger.info("ownership_prefix=%s", prefix)
+        return [
+            (f"{prefix}[1][group_name]", OWNER_GROUP),
+            (f"{prefix}[1][author_userids][]", OWNER_USER_ID),
+            (f"{prefix}[1][author_names][]", OWNER_NAME),
+            (f"{prefix}[1][author_offsite_urls][]", ""),
+            (f"{prefix}[1][author_roles][]", OWNER_ROLE),
+        ]
+
     def _find_ticket_ids(self, html: str) -> list[str]:
         return re.findall(
             r'[Tt]icket[Ii]d["\']?\s*[:=,]\s*["\']([a-f0-9]{32})["\']', html
@@ -292,9 +320,16 @@ class GameBananaUploader:
             image_individual_fields.append(("_sTicketId", ""))
 
         js_template_fields = self._find_js_template_fields(html)
+        ownership_fields = self._find_ownership_fields(html)
 
         files_json_value = json.dumps(file_entries)
         image_json_value = json.dumps(image_json_entries) if image_json_entries else "[]"
+
+        # Ownership fields are inserted right after the first field whose value
+        # is "true" (matches browser field ordering).
+        first_true_index = next(
+            (i for i, (_, v) in enumerate(fields) if v == "true"), None,
+        )
 
         form_data: list[tuple[str, str]] = []
         for i, (name, value) in enumerate(fields):
@@ -313,6 +348,10 @@ class GameBananaUploader:
                     form_data.append((tname, tval))
             else:
                 form_data.append((name, value))
+
+            if first_true_index is not None and i == first_true_index:
+                for oname, ovalue in ownership_fields:
+                    form_data.append((oname, ovalue))
 
         edit_url = f"{GB_BASE}/mods/edit/{self.mod_id}"
         logger.info("Submitting edit form (%d fields)", len(form_data))
