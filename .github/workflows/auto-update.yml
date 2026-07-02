@@ -72,8 +72,18 @@ jobs:
             git push
           fi
 
-      - name: Download CSDK
+      # Cache the 2.4 GB CSDK zip so we only pull it from Drive once.
+      # Bump the key (csdk-zip-v2, ...) whenever the CSDK contents change.
+      - name: Cache CSDK
+        id: cache-csdk
         if: steps.git_check.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
+        uses: actions/cache@v4
+        with:
+          path: csdk.zip
+          key: csdk-zip-v1
+
+      - name: Download CSDK
+        if: (steps.git_check.outputs.changed == 'true' || github.event_name == 'workflow_dispatch') && steps.cache-csdk.outputs.cache-hit != 'true'
         shell: bash
         run: curl -L "${{ secrets.CSDK_DRIVE_URL }}" -o csdk.zip
 

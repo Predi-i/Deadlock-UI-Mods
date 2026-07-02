@@ -42,6 +42,22 @@ OWNER_NAME = "Predi_i"
 OWNER_GROUP = "Author"
 OWNER_ROLE = ""
 
+# Mod description (HTML) pushed on every publish so the GameBanana page stays
+# in sync with the repo.
+DESCRIPTION = (
+    "Shows player nicknames directly in the top bar, no need to press Tab<br><br>"
+    "Mod made mostly for tournament hosters. Or streamers maybe<br>"
+    "<ul>"
+    "<li>Names displayed above each hero portrait at all times</li>"
+    "<li>Long nicknames auto-shrink or get trimmed</li>"
+    "<li>Tab scoreboard works normally</li>"
+    "<li>Works in spectator/replay mode</li>"
+    "<li>Top bar slightly lowered to fit names cleanly</li>"
+    "</ul>"
+    "Note: if you couple this mod with another mod that changes the top bar, "
+    "either this or that mod will probably not work."
+)
+
 
 class GameBananaUploader:
     def __init__(self, username: str, password: str, mod_id: int):
@@ -286,6 +302,34 @@ class GameBananaUploader:
 
         return fields
 
+    def _find_description_field(self, soup: BeautifulSoup,
+                                fields: list[tuple[str, str]]) -> str | None:
+        """Locate the description textarea's field name.
+
+        Tries the #Description section first, then falls back to the
+        hash-named textarea that currently holds the most text.
+        """
+        for section_id in ("Description", "Text", "Body"):
+            section = soup.find(id=section_id)
+            if section:
+                ta = section.find("textarea")
+                if ta and ta.get("name"):
+                    return ta.get("name")
+
+        # Fallback: among scraped fields, the hash-named textarea with the
+        # longest value is almost certainly the description.
+        hash_re = re.compile(r"^[a-f0-9]{32}$")
+        textarea_names = {
+            ta.get("name")
+            for ta in soup.find_all("textarea")
+            if ta.get("name")
+        }
+        best_name, best_len = None, -1
+        for name, value in fields:
+            if name in textarea_names and hash_re.match(name) and len(value) > best_len:
+                best_name, best_len = name, len(value)
+        return best_name
+
     # ── Edit form submit ──────────────────────────────────────────────────
 
     def post_edit(self, upload: dict, version: str,
@@ -302,6 +346,9 @@ class GameBananaUploader:
             if version_input:
                 version_field_name = version_input.get("name")
         logger.info("version_field=%s", version_field_name)
+
+        description_field_name = self._find_description_field(soup, fields)
+        logger.info("description_field=%s", description_field_name)
 
         file_entries = [[
             {"name": "_sDescription", "value": ""},
@@ -335,6 +382,8 @@ class GameBananaUploader:
         for i, (name, value) in enumerate(fields):
             if version_field_name and name == version_field_name:
                 form_data.append((name, str(version)))
+            elif description_field_name and name == description_field_name:
+                form_data.append((name, DESCRIPTION))
             elif image_json_name and name == image_json_name:
                 for fname, fval in image_individual_fields:
                     form_data.append((fname, fval))
@@ -367,11 +416,48 @@ class GameBananaUploader:
             allow_redirects=True,
         )
         resp.raise_for_status()
-        logger.info("Edit POST: status=%d url=%s", resp.status_code, resp.url)
+        logger.info(
+            "Edit POST: status=%d url=%s history=%s content_type=%r body_len=%d",
+            resp.status_code, resp.url,
+            [r.status_code for r in resp.history],
+            resp.headers.get("Content-Type"), len(resp.text),
+        )
 
         if "edit" in resp.url:
+            self._log_edit_error(resp.text)
             raise RuntimeError(f"Edit form failed (still on edit URL: {resp.url})")
         logger.info("Edit submitted successfully: %s", resp.url)
+
+    def _log_edit_error(self, html: str):
+        """Surface why GameBanana rejected the edit form.
+
+        On rejection GB re-renders the edit page, usually with the validation
+        message in an alert/error element. Log any we can find, plus a body
+        snippet as a fallback.
+        """
+        soup = BeautifulSoup(html, "html.parser")
+        msgs: list[str] = []
+        for el in soup.find_all(
+            class_=re.compile(r"(error|alert|warning|invalid|Notice)", re.I)
+        ):
+            text = el.get_text(" ", strip=True)
+            if text:
+                msgs.append(text[:300])
+        for el in soup.find_all(attrs={"role": "alert"}):
+            text = el.get_text(" ", strip=True)
+            if text:
+                msgs.append(text[:300])
+        # JS-side validation strings GB sometimes embeds
+        for m in re.findall(r'(?:error|message)"\s*:\s*"([^"]{4,200})"', html, re.I):
+            msgs.append(m)
+
+        if msgs:
+            for m in dict.fromkeys(msgs):  # de-dupe, keep order
+                logger.error("GB validation message: %s", m)
+        else:
+            logger.error("No explicit error element found.")
+        # Always dump a body snippet so we can inspect the re-rendered page.
+        logger.error("Response body snippet (first 5000 chars): %r", html[:5000])
 
     # ── deadlockmods.app sync ─────────────────────────────────────────────
 
