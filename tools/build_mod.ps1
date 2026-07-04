@@ -166,6 +166,62 @@ function Get-CompiledOutputPath($BaseDir, $RelativePath, $CompiledExtension) {
     return Join-Path $BaseDir $compiledPath
 }
 
+# Generates a minimal .vtex descriptor (KV3) for a bare .png/.tga that ships
+# without one, so modders can just drop an image instead of hand-authoring a
+# .vtex. $RelFileName must be root-relative with forward slashes (e.g.
+# "panorama/images/heroes/archer_3d_psd.png") since that's how resourcecompiler
+# resolves m_fileName against the content tree.
+function Get-AutoVtexBody($RelFileName) {
+    return @"
+<!-- dmx encoding keyvalues2_noids 1 format vtex 1 -->
+"CDmeVtex"
+{
+    "m_inputTextureArray" "element_array"
+    [
+        "CDmeInputTexture"
+        {
+            "m_name" "string" "InputTexture0"
+            "m_fileName" "string" "$RelFileName"
+            "m_colorSpace" "string" "srgb"
+            "m_typeString" "string" "2D"
+            "m_imageProcessorArray" "element_array"
+            [
+                "CDmeImageProcessor"
+                {
+                    "m_algorithm" "string" ""
+                    "m_stringArg" "string" ""
+                    "m_vFloat4Arg" "vector4" "0 0 0 0"
+                }
+            ]
+        }
+    ]
+    "m_outputTypeString" "string" "2D"
+    "m_outputFormat" "string" "BGRA8888"
+    "m_outputClearColor" "vector4" "0 0 0 0"
+    "m_nOutputMinDimension" "int" "0"
+    "m_nOutputMaxDimension" "int" "0"
+    "m_textureOutputChannelArray" "element_array"
+    [
+        "CDmeTextureOutputChannel"
+        {
+            "m_inputTextureArray" "string_array" [ "InputTexture0" ]
+            "m_srcChannels" "string" "rgba"
+            "m_dstChannels" "string" "rgba"
+            "m_mipAlgorithm" "CDmeImageProcessor"
+            {
+                "m_algorithm" "string" "Box"
+                "m_stringArg" "string" ""
+                "m_vFloat4Arg" "vector4" "0 0 0 0"
+            }
+            "m_outputColorSpace" "string" "srgb"
+        }
+    ]
+    "m_vClamp" "vector3" "0 0 0"
+    "m_bNoLod" "bool" "0"
+}
+"@
+}
+
 # Parses a raw menu entry like "6 -Force", "6 f" or "6 -f" into the command
 # token plus the per-run Force flag. The flag is accepted with or without a
 # leading '-'/'/' and in both long and short form (force/f), so the same tag
@@ -496,7 +552,12 @@ while ($true) {
             '.vpcf'     = '.vpcf_c'
             '.vmdl'     = '.vmdl_c'
             '.vmat'     = '.vmat_c'
+            '.png'      = '.vtex_c'
+            '.tga'      = '.vtex_c'
         }
+        # Extensions that only exist to be auto-wrapped into a generated .vtex
+        # (see the auto-vtex block below) rather than compiled directly.
+        $AutoVtexSourceExts = @('.png', '.tga')
         $StaleCompiledExts = @('.vxml_c', '.vcss_c', '.vjs_c', '.vsndevts_c', '.vsnd_c', '.vtex_c', '.vsvg_c', '.vpcf_c', '.vmdl_c', '.vmat_c')
         
         $updatedCount = 0
@@ -542,6 +603,30 @@ while ($true) {
 
             if ($AllowedExts -contains $file.Extension -and ($needsCopy -or $needsCompile)) {
                 $FilesToCompile.Add($contentDest)
+            }
+
+            # Bare .png/.tga (no matching hand-authored .vtex next to it) get a
+            # minimal .vtex descriptor generated straight into the staging tree,
+            # so modders never have to touch vtex files themselves — dropping an
+            # image in is enough. If they DO ship their own <name>.vtex, it's
+            # picked up by the normal '.vtex' handling above and this is skipped.
+            if ($AutoVtexSourceExts -contains $file.Extension -and ($needsCopy -or $needsCompile)) {
+                $ownVtexPath = [System.IO.Path]::ChangeExtension($file.FullName, '.vtex')
+                if (Test-Path $ownVtexPath) {
+                    Write-Host "  Skipping auto-vtex for $relPath (custom .vtex present)" -ForegroundColor DarkGray
+                } else {
+                    $genVtexContentPath = [System.IO.Path]::ChangeExtension($contentDest, '.vtex')
+                    $relFileName = $relPath -replace '\\', '/'
+                    $vtexBody = Get-AutoVtexBody -RelFileName $relFileName
+                    [System.IO.File]::WriteAllText($genVtexContentPath, $vtexBody, $Utf8NoBom)
+                    $FilesToCompile.Add($genVtexContentPath)
+
+                    # Mark it "current" so the orphan-cleanup pass below (which runs
+                    # before compilation) doesn't delete it — it has no 1:1 source
+                    # file of its own, it's derived from the .png above.
+                    $genVtexRelPath = $genVtexContentPath.Substring($TempContent.Length + 1)
+                    $CurrentFiles["${SelectedMod}|${genVtexRelPath}".ToLower()] = $true
+                }
             }
 
             if ($hashChanged) {
