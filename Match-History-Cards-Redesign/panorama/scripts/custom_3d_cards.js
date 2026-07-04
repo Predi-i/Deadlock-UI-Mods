@@ -16,6 +16,13 @@
         "wraith": "wraith", "yamato": "yamato", "silver": "werewolf"
     };
 
+    // Hero internal names that have win_/lose_ prefixed vtex variants on disk.
+    // Add an entry here ONLY once both win_<name>_3d_psd.vtex and lose_<name>_3d_psd.vtex
+    // (and/or the _4d_psd small-card versions) exist, otherwise the resource system
+    // spams "File not found" trying to load the missing variant every frame.
+    var WIN_LOSE_VARIANTS = {
+    };
+
     function processBlocks(blocks) {
         if (!blocks) return;
         for (var i = 0; i < blocks.length; i++) {
@@ -66,21 +73,26 @@
                 custom3D.style.visibility = "visible";
                 vanillaImg.style.opacity = "0";
 
-                // win_/lose_ variant is drawn above the base image so a missing
-                // vtex just leaves this layer transparent and the base shows through
-                var statusPrefix = block.BHasClass("loss") ? "lose_" : "win_";
-                var statusUrl = "url('s2r://panorama/images/heroes/" + statusPrefix + baseFile + ".vtex')";
+                // win_/lose_ variant is drawn above the base image, but only attempted
+                // when we know the file exists (see WIN_LOSE_VARIANTS) to avoid spamming
+                // the resource system with "File not found" for missing variants
+                if (WIN_LOSE_VARIANTS[heroInternalName]) {
+                    var statusPrefix = block.BHasClass("loss") ? "lose_" : "win_";
+                    var statusUrl = "url('s2r://panorama/images/heroes/" + statusPrefix + baseFile + ".vtex')";
 
-                if (!statusOverlay || !statusOverlay.IsValid()) {
-                    statusOverlay = $.CreatePanel("Panel", parent, "Custom3D_StatusOverlay");
-                    statusOverlay.AddClass("heroImg");
-                    statusOverlay.style.zIndex = "1";
+                    if (!statusOverlay || !statusOverlay.IsValid()) {
+                        statusOverlay = $.CreatePanel("Panel", parent, "Custom3D_StatusOverlay");
+                        statusOverlay.AddClass("heroImg");
+                        statusOverlay.style.zIndex = "1";
+                    }
+
+                    statusOverlay.style.backgroundImage = statusUrl;
+                    statusOverlay.style.backgroundSize = "cover";
+                    statusOverlay.style.backgroundPosition = "50% 50%";
+                    statusOverlay.style.visibility = "visible";
+                } else if (statusOverlay) {
+                    statusOverlay.style.visibility = "collapse";
                 }
-
-                statusOverlay.style.backgroundImage = statusUrl;
-                statusOverlay.style.backgroundSize = "cover";
-                statusOverlay.style.backgroundPosition = "50% 50%";
-                statusOverlay.style.visibility = "visible";
             } else {
                 if (custom3D) custom3D.style.visibility = "collapse";
                 if (statusOverlay) statusOverlay.style.visibility = "collapse";
