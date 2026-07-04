@@ -583,6 +583,20 @@ while ($true) {
             $hashChanged = $Force -or $null -eq $cachedCompileKey -or $cachedCompileKey.Trim() -ne $compileKey
             $contentMissing = -not (Test-Path $contentDest)
             $compiledMissing = $compiledDest -and -not (Test-Path $compiledDest)
+
+            # For a bare .png/.tga there are two DIFFERENT compiled artifacts that
+            # something in the mod might be asking for (see the auto-vtex block
+            # below), so "is this file fully built" has to check both of them, not
+            # just the single $compiledDest path computed above.
+            if ($AutoVtexSourceExts -contains $file.Extension) {
+                $extNoDot = $file.Extension.TrimStart('.').ToLowerInvariant()
+                $relDir = Split-Path $relPath
+                $relBase = [System.IO.Path]::GetFileNameWithoutExtension($relPath)
+                $bareCompiled = Join-Path $TempGame (Join-Path $relDir "$relBase.vtex_c")
+                $implicitCompiled = Join-Path $TempGame (Join-Path $relDir "${relBase}_$extNoDot.vtex_c")
+                $compiledMissing = (-not (Test-Path $bareCompiled)) -or (-not (Test-Path $implicitCompiled))
+            }
+
             $needsCopy = $hashChanged -or $contentMissing
             $needsCompile = $hashChanged -or $compiledMissing
 
@@ -610,22 +624,54 @@ while ($true) {
             # so modders never have to touch vtex files themselves — dropping an
             # image in is enough. If they DO ship their own <name>.vtex, it's
             # picked up by the normal '.vtex' handling above and this is skipped.
+            #
+            # There are TWO naming conventions in use across the mod for how a
+            # bare image gets referenced, and both need a compiled artifact:
+            #   - CSS image-source/background-image urls point straight at the
+            #     .png and the engine compiles it to the SAME base name, e.g.
+            #     "border.png" -> "border.vtex_c".
+            #   - JS-side image assignments (e.g. the credits list iconSrc
+            #     entries, header logos) use Source 2's implicit-conversion
+            #     naming instead: basename + "_" + source extension, e.g.
+            #     "border.png" -> "border_png.vtex" -> "border_png.vtex_c".
+            # Generating only the first one is what silently broke every
+            # bare-png reference that used the second style (flags, logos) -
+            # ResourceSystem reported "border_png.vtex_c: File not found" even
+            # though "border.vtex_c" compiled fine. Generate both so a dropped-in
+            # image works regardless of which style references it, unless the
+            # modder shipped their own hand-authored .vtex under either name.
             if ($AutoVtexSourceExts -contains $file.Extension -and ($needsCopy -or $needsCompile)) {
-                $ownVtexPath = [System.IO.Path]::ChangeExtension($file.FullName, '.vtex')
-                if (Test-Path $ownVtexPath) {
-                    Write-Host "  Skipping auto-vtex for $relPath (custom .vtex present)" -ForegroundColor DarkGray
+                $relFileName = $relPath -replace '\\', '/'
+                $vtexBody = Get-AutoVtexBody -RelFileName $relFileName
+                $contentDir = Split-Path $contentDest
+                $contentBase = [System.IO.Path]::GetFileNameWithoutExtension($contentDest)
+                $extNoDot = $file.Extension.TrimStart('.').ToLowerInvariant()
+
+                $bareVtexSourcePath = [System.IO.Path]::ChangeExtension($file.FullName, '.vtex')
+                if (Test-Path $bareVtexSourcePath) {
+                    Write-Host "  Skipping bare auto-vtex for $relPath (custom .vtex present)" -ForegroundColor DarkGray
                 } else {
-                    $genVtexContentPath = [System.IO.Path]::ChangeExtension($contentDest, '.vtex')
-                    $relFileName = $relPath -replace '\\', '/'
-                    $vtexBody = Get-AutoVtexBody -RelFileName $relFileName
-                    [System.IO.File]::WriteAllText($genVtexContentPath, $vtexBody, $Utf8NoBom)
-                    $FilesToCompile.Add($genVtexContentPath)
+                    $genBareVtexPath = [System.IO.Path]::ChangeExtension($contentDest, '.vtex')
+                    [System.IO.File]::WriteAllText($genBareVtexPath, $vtexBody, $Utf8NoBom)
+                    $FilesToCompile.Add($genBareVtexPath)
 
                     # Mark it "current" so the orphan-cleanup pass below (which runs
                     # before compilation) doesn't delete it — it has no 1:1 source
                     # file of its own, it's derived from the .png above.
-                    $genVtexRelPath = $genVtexContentPath.Substring($TempContent.Length + 1)
-                    $CurrentFiles["${SelectedMod}|${genVtexRelPath}".ToLower()] = $true
+                    $genBareRelPath = $genBareVtexPath.Substring($TempContent.Length + 1)
+                    $CurrentFiles["${SelectedMod}|${genBareRelPath}".ToLower()] = $true
+                }
+
+                $implicitVtexSourcePath = Join-Path (Split-Path $file.FullName) "$([System.IO.Path]::GetFileNameWithoutExtension($file.FullName))_$extNoDot.vtex"
+                if (Test-Path $implicitVtexSourcePath) {
+                    Write-Host "  Skipping implicit auto-vtex for $relPath (custom _$extNoDot.vtex present)" -ForegroundColor DarkGray
+                } else {
+                    $genImplicitVtexPath = Join-Path $contentDir "${contentBase}_$extNoDot.vtex"
+                    [System.IO.File]::WriteAllText($genImplicitVtexPath, $vtexBody, $Utf8NoBom)
+                    $FilesToCompile.Add($genImplicitVtexPath)
+
+                    $genImplicitRelPath = $genImplicitVtexPath.Substring($TempContent.Length + 1)
+                    $CurrentFiles["${SelectedMod}|${genImplicitRelPath}".ToLower()] = $true
                 }
             }
 
