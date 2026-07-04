@@ -1,3 +1,5 @@
+--- START OF FILE Paste July 05, 2026 - 2:48AM ---
+
 [CmdletBinding()]
 param(
     [string]$ModFolderName,
@@ -110,8 +112,6 @@ function Show-SettingsMenu {
                 $ConfigObject.CsdkPath = Read-Host "Enter CSDK path"
             }
             '5' {
-                # Fully wipe the CSDK staging trees so the next build starts clean.
-                # Re-resolve from the current config in case the path was just edited.
                 $null = Resolve-BuildPaths
                 $csdk = $script:CsdkRoot
                 $targets = @(
@@ -136,9 +136,6 @@ function Show-SettingsMenu {
                         }
                     }
 
-                    # The build cache tracks files staged in those trees; invalidate
-                    # it so the next build re-stages everything instead of assuming
-                    # the now-deleted artifacts are still present.
                     if (Test-Path $CachePath) {
                         Remove-Item -Path $CachePath -Force -ErrorAction SilentlyContinue
                         Write-Host "  Build cache reset." -ForegroundColor Green
@@ -400,8 +397,6 @@ while ($true) {
         while (-not $validSelection) {
             $rawSelection = Read-Host "Enter the number of the mod to compile"
 
-            # Strip and apply the per-run Force flag (-Force/-f) typed alongside
-            # the menu choice, e.g. "6 -Force" or "6 f".
             $parsedRun = Parse-RunFlags -InputText $rawSelection
             $Force = $parsedRun.Force
             $selection = $parsedRun.Command
@@ -504,10 +499,6 @@ while ($true) {
 
         if ($Config.ExecutionMode -eq "BuildAndRestart") { Kill-Deadlock }
 
-        # A forced run is a full clean rebuild of this mod: wipe its temp build
-        # folders first so nothing stale survives (orphaned artifacts from a
-        # failed build, renamed extensions, etc.). The hashing pass below then
-        # re-stages and recompiles every source file from scratch.
         if ($Force) {
             Write-Host "Cleaning temp build folders for this mod..." -ForegroundColor Yellow
             if (Test-Path $TempContent) { Remove-Item -Path $TempContent -Recurse -Force }
@@ -530,8 +521,6 @@ while ($true) {
             Write-Host "  Force rebuild enabled for this run." -ForegroundColor Yellow
         }
         
-        # Skip dot-directories/dotfiles (.git, .claude, .vs, ...) so editor/tooling
-        # metadata never pollutes the cache or gets packed into the mod.
         $SourceFiles = Get-ChildItem -Path $ModSourcePath -Recurse -File | Where-Object {
             $rel = $_.FullName.Substring($ModSourcePath.Length + 1)
             -not (($rel -split '[\\/]') | Where-Object { $_.StartsWith('.') })
@@ -555,8 +544,6 @@ while ($true) {
             '.png'      = '.vtex_c'
             '.tga'      = '.vtex_c'
         }
-        # Extensions that only exist to be auto-wrapped into a generated .vtex
-        # (see the auto-vtex block below) rather than compiled directly.
         $AutoVtexSourceExts = @('.png', '.tga')
         $StaleCompiledExts = @('.vxml_c', '.vcss_c', '.vjs_c', '.vsndevts_c', '.vsnd_c', '.vtex_c', '.vsvg_c', '.vpcf_c', '.vmdl_c', '.vmat_c')
         
@@ -593,8 +580,7 @@ while ($true) {
                 $relDir = Split-Path $relPath
                 $relBase = [System.IO.Path]::GetFileNameWithoutExtension($relPath)
                 $bareCompiled = Join-Path $TempGame (Join-Path $relDir "$relBase.vtex_c")
-                $implicitCompiled = Join-Path $TempGame (Join-Path $relDir "${relBase}_$extNoDot.vtex_c")
-                $compiledMissing = (-not (Test-Path $bareCompiled)) -or (-not (Test-Path $implicitCompiled))
+                $compiledMissing = (-not (Test-Path $bareCompiled))
             }
 
             $needsCopy = $hashChanged -or $contentMissing
@@ -660,18 +646,6 @@ while ($true) {
                     # file of its own, it's derived from the .png above.
                     $genBareRelPath = $genBareVtexPath.Substring($TempContent.Length + 1)
                     $CurrentFiles["${SelectedMod}|${genBareRelPath}".ToLower()] = $true
-                }
-
-                $implicitVtexSourcePath = Join-Path (Split-Path $file.FullName) "$([System.IO.Path]::GetFileNameWithoutExtension($file.FullName))_$extNoDot.vtex"
-                if (Test-Path $implicitVtexSourcePath) {
-                    Write-Host "  Skipping implicit auto-vtex for $relPath (custom _$extNoDot.vtex present)" -ForegroundColor DarkGray
-                } else {
-                    $genImplicitVtexPath = Join-Path $contentDir "${contentBase}_$extNoDot.vtex"
-                    [System.IO.File]::WriteAllText($genImplicitVtexPath, $vtexBody, $Utf8NoBom)
-                    $FilesToCompile.Add($genImplicitVtexPath)
-
-                    $genImplicitRelPath = $genImplicitVtexPath.Substring($TempContent.Length + 1)
-                    $CurrentFiles["${SelectedMod}|${genImplicitRelPath}".ToLower()] = $true
                 }
             }
 
@@ -804,9 +778,6 @@ while ($true) {
         Write-Host "Step 3/3: Packing VPK..." -ForegroundColor Cyan
         if (Test-Path $OutputVpk) { Remove-Item -Path $OutputVpk -Force }
 
-        # A 'pakNN_dir.vpk' is paired with data archives (pakNN_000.vpk, ...).
-        # Remove stale ones first so a smaller rebuild can't leave orphaned data
-        # chunks that still ship removed assets to the game.
         $vpkDir  = Split-Path $OutputVpk
         $vpkLeaf = Split-Path $OutputVpk -Leaf
         if ($vpkLeaf -match '^(.*)_dir\.vpk$') {
