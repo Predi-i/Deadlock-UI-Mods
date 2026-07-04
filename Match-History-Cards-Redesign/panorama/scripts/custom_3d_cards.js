@@ -16,11 +16,6 @@
         "wraith": "wraith", "yamato": "yamato", "silver": "werewolf"
     };
 
-    // Per-hero win_/lose_ vtex availability is reported by scripts/hero_win_lose/<name>.js
-    // (one small file per hero, each flipping $.HeroWinLose[name] to true once that
-    // modder has actually dropped in win_<name>_*.vtex / lose_<name>_*.vtex). Checking
-    // this flag before touching background-image avoids spamming the resource system
-    // with "File not found" for heroes that don't have a status variant yet.
     $.HeroWinLose = $.HeroWinLose || {};
 
     function processBlocks(blocks) {
@@ -35,7 +30,11 @@
             var rawText = String(nameLabels[0].text || "").toLowerCase();
             if (!rawText) continue;
 
-            if (block._lastProcessedText === rawText) continue;
+            var isLoss = block.BHasClass("loss");
+            
+            var currentState = rawText + "_" + isLoss;
+
+            if (block._lastProcessedState === currentState) continue;
 
             var heroInternalName = "";
             for (var key in HERO_MAP) {
@@ -73,10 +72,8 @@
                 custom3D.style.visibility = "visible";
                 vanillaImg.style.opacity = "0";
 
-                // win_/lose_ variant is drawn above the base image, but only attempted
-                // when $.HeroWinLose confirms it exists (see scripts/hero_win_lose/)
                 if ($.HeroWinLose[heroInternalName]) {
-                    var statusPrefix = block.BHasClass("loss") ? "lose_" : "win_";
+                    var statusPrefix = isLoss ? "lose_" : "win_";
                     var statusUrl = "url('s2r://panorama/images/heroes/" + statusPrefix + baseFile + ".vtex')";
 
                     if (!statusOverlay || !statusOverlay.IsValid()) {
@@ -98,7 +95,7 @@
                 vanillaImg.style.opacity = "1";
             }
 
-            block._lastProcessedText = rawText;
+            block._lastProcessedState = currentState;
         }
     }
 
