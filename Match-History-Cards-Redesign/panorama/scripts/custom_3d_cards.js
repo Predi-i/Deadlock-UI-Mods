@@ -43,14 +43,16 @@
 
             var parent = vanillaImg.GetParent();
             var custom3D = parent.FindChild("Custom3D_Overlay");
+            var statusOverlay = parent.FindChild("Custom3D_StatusOverlay");
 
             if (heroInternalName) {
-                var isSmall = (block.paneltype === "CitadelMatchHistoryBlockSmall") || 
-                              block.BHasClass("gameMiniBlock") || 
+                var isSmall = (block.paneltype === "CitadelMatchHistoryBlockSmall") ||
+                              block.BHasClass("gameMiniBlock") ||
                               block.BHasClass("CitadelMatchHistoryBlockSmall");
 
-                var suffix = isSmall ? "_4d_psd.vtex" : "_3d_psd.vtex";
-                var targetUrl = "url('s2r://panorama/images/heroes/" + heroInternalName + suffix + "')";
+                var suffix = isSmall ? "_4d_psd" : "_3d_psd";
+                var baseFile = heroInternalName + suffix;
+                var baseUrl = "url('s2r://panorama/images/heroes/" + baseFile + ".vtex')";
 
                 if (!custom3D || !custom3D.IsValid()) {
                     custom3D = $.CreatePanel("Panel", parent, "Custom3D_Overlay");
@@ -58,13 +60,30 @@
                     custom3D.style.zIndex = "0";
                 }
 
-                custom3D.style.backgroundImage = targetUrl;
+                custom3D.style.backgroundImage = baseUrl;
                 custom3D.style.backgroundSize = "cover";
                 custom3D.style.backgroundPosition = "50% 50%";
                 custom3D.style.visibility = "visible";
                 vanillaImg.style.opacity = "0";
+
+                // win_/lose_ variant is drawn above the base image so a missing
+                // vtex just leaves this layer transparent and the base shows through
+                var statusPrefix = block.BHasClass("loss") ? "lose_" : "win_";
+                var statusUrl = "url('s2r://panorama/images/heroes/" + statusPrefix + baseFile + ".vtex')";
+
+                if (!statusOverlay || !statusOverlay.IsValid()) {
+                    statusOverlay = $.CreatePanel("Panel", parent, "Custom3D_StatusOverlay");
+                    statusOverlay.AddClass("heroImg");
+                    statusOverlay.style.zIndex = "1";
+                }
+
+                statusOverlay.style.backgroundImage = statusUrl;
+                statusOverlay.style.backgroundSize = "cover";
+                statusOverlay.style.backgroundPosition = "50% 50%";
+                statusOverlay.style.visibility = "visible";
             } else {
                 if (custom3D) custom3D.style.visibility = "collapse";
+                if (statusOverlay) statusOverlay.style.visibility = "collapse";
                 vanillaImg.style.opacity = "1";
             }
 
