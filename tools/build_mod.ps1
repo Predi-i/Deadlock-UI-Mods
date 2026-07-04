@@ -209,7 +209,7 @@ function Get-AutoVtexBody($RelFileName) {
             "m_dstChannels" "string" "rgba"
             "m_mipAlgorithm" "CDmeImageProcessor"
             {
-                "m_algorithm" "string" "Box"
+                "m_algorithm" "string" ""
                 "m_stringArg" "string" ""
                 "m_vFloat4Arg" "vector4" "0 0 0 0"
             }
@@ -217,7 +217,7 @@ function Get-AutoVtexBody($RelFileName) {
         }
     ]
     "m_vClamp" "vector3" "0 0 0"
-    "m_bNoLod" "bool" "1"
+    "m_bNoLod" "bool" "0"
 }
 "@
 }
