@@ -217,7 +217,7 @@ function Get-AutoVtexBody($RelFileName) {
         }
     ]
     "m_vClamp" "vector3" "0 0 0"
-    "m_bNoLod" "bool" "0"
+    "m_bNoLod" "bool" "1"
 }
 "@
 }
