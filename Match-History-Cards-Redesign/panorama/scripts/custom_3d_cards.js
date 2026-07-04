@@ -16,12 +16,12 @@
         "wraith": "wraith", "yamato": "yamato", "silver": "werewolf"
     };
 
-    // Hero internal names that have win_/lose_ prefixed vtex variants on disk.
-    // Add an entry here ONLY once both win_<name>_3d_psd.vtex and lose_<name>_3d_psd.vtex
-    // (and/or the _4d_psd small-card versions) exist, otherwise the resource system
-    // spams "File not found" trying to load the missing variant every frame.
-    var WIN_LOSE_VARIANTS = {
-    };
+    // Per-hero win_/lose_ vtex availability is reported by scripts/hero_win_lose/<name>.js
+    // (one small file per hero, each flipping $.HeroWinLose[name] to true once that
+    // modder has actually dropped in win_<name>_*.vtex / lose_<name>_*.vtex). Checking
+    // this flag before touching background-image avoids spamming the resource system
+    // with "File not found" for heroes that don't have a status variant yet.
+    $.HeroWinLose = $.HeroWinLose || {};
 
     function processBlocks(blocks) {
         if (!blocks) return;
@@ -74,9 +74,8 @@
                 vanillaImg.style.opacity = "0";
 
                 // win_/lose_ variant is drawn above the base image, but only attempted
-                // when we know the file exists (see WIN_LOSE_VARIANTS) to avoid spamming
-                // the resource system with "File not found" for missing variants
-                if (WIN_LOSE_VARIANTS[heroInternalName]) {
+                // when $.HeroWinLose confirms it exists (see scripts/hero_win_lose/)
+                if ($.HeroWinLose[heroInternalName]) {
                     var statusPrefix = block.BHasClass("loss") ? "lose_" : "win_";
                     var statusUrl = "url('s2r://panorama/images/heroes/" + statusPrefix + baseFile + ".vtex')";
 

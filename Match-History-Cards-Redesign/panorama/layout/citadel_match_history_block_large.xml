@@ -6,6 +6,44 @@
 		<include src="s2r://panorama/styles/citadel_match_history_block_shared.vcss_c" />
 	</styles>
 	<scripts>
+		<include src="s2r://panorama/scripts/hero_win_lose/astro.vjs_c" />
+		<include src="s2r://panorama/scripts/hero_win_lose/bebop.vjs_c" />
+		<include src="s2r://panorama/scripts/hero_win_lose/bull.vjs_c" />
+		<include src="s2r://panorama/scripts/hero_win_lose/digger.vjs_c" />
+		<include src="s2r://panorama/scripts/hero_win_lose/doorman.vjs_c" />
+		<include src="s2r://panorama/scripts/hero_win_lose/drifter.vjs_c" />
+		<include src="s2r://panorama/scripts/hero_win_lose/engineer.vjs_c" />
+		<include src="s2r://panorama/scripts/hero_win_lose/familiar.vjs_c" />
+		<include src="s2r://panorama/scripts/hero_win_lose/fencer.vjs_c" />
+		<include src="s2r://panorama/scripts/hero_win_lose/spectre.vjs_c" />
+		<include src="s2r://panorama/scripts/hero_win_lose/haze.vjs_c" />
+		<include src="s2r://panorama/scripts/hero_win_lose/inferno.vjs_c" />
+		<include src="s2r://panorama/scripts/hero_win_lose/kelvin.vjs_c" />
+		<include src="s2r://panorama/scripts/hero_win_lose/lash.vjs_c" />
+		<include src="s2r://panorama/scripts/hero_win_lose/magician.vjs_c" />
+		<include src="s2r://panorama/scripts/hero_win_lose/vampirebat.vjs_c" />
+		<include src="s2r://panorama/scripts/hero_win_lose/mirage.vjs_c" />
+		<include src="s2r://panorama/scripts/hero_win_lose/nano.vjs_c" />
+		<include src="s2r://panorama/scripts/hero_win_lose/necro.vjs_c" />
+		<include src="s2r://panorama/scripts/hero_win_lose/chrono.vjs_c" />
+		<include src="s2r://panorama/scripts/hero_win_lose/punkgoat.vjs_c" />
+		<include src="s2r://panorama/scripts/hero_win_lose/sumo.vjs_c" />
+		<include src="s2r://panorama/scripts/hero_win_lose/archer.vjs_c" />
+		<include src="s2r://panorama/scripts/hero_win_lose/tengu.vjs_c" />
+		<include src="s2r://panorama/scripts/hero_win_lose/warden.vjs_c" />
+		<include src="s2r://panorama/scripts/hero_win_lose/bookworm.vjs_c" />
+		<include src="s2r://panorama/scripts/hero_win_lose/gigawatt.vjs_c" />
+		<include src="s2r://panorama/scripts/hero_win_lose/shiv.vjs_c" />
+		<include src="s2r://panorama/scripts/hero_win_lose/synth.vjs_c" />
+		<include src="s2r://panorama/scripts/hero_win_lose/unicorn.vjs_c" />
+		<include src="s2r://panorama/scripts/hero_win_lose/priest.vjs_c" />
+		<include src="s2r://panorama/scripts/hero_win_lose/frank.vjs_c" />
+		<include src="s2r://panorama/scripts/hero_win_lose/hornet.vjs_c" />
+		<include src="s2r://panorama/scripts/hero_win_lose/viscous.vjs_c" />
+		<include src="s2r://panorama/scripts/hero_win_lose/kali.vjs_c" />
+		<include src="s2r://panorama/scripts/hero_win_lose/wraith.vjs_c" />
+		<include src="s2r://panorama/scripts/hero_win_lose/yamato.vjs_c" />
+		<include src="s2r://panorama/scripts/hero_win_lose/werewolf.vjs_c" />
 		<include src="s2r://panorama/scripts/custom_3d_cards.vjs_c" />
 	</scripts>
 	<CitadelMatchHistoryBlockLarge class="matchBlock">
