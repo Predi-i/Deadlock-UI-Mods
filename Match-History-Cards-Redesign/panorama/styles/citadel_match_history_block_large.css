@@ -60,6 +60,11 @@ CitadelMatchHistoryBlockLarge .heroImg
 	opacity-brush: gradient( linear, 0% 100%, 0% 0%, from( rgba(255, 255, 255, 0.15) ), color-stop( 0.45, #ffffffff ), to( #ffffffff ) );
 }
 
+CitadelMatchHistoryBlockLarge #HeroImage
+{
+	opacity: 0;
+}
+
 CitadelMatchHistoryBlockLarge .brawlAvgDuration,CitadelMatchHistoryBlockLarge .matchTime,CitadelMatchHistoryBlockLarge #BrawlAvg Label,CitadelMatchHistoryBlockLarge .gameDuration,CitadelMatchHistoryBlockLarge .gameDate,CitadelMatchHistoryBlockLarge .gameKDA,CitadelMatchHistoryBlockLarge .gameMode
 {
 	font-family: radiance;

@@ -65,6 +65,11 @@ CitadelMatchHistoryBlockSmall .heroImg
 	opacity-brush: gradient( linear, 0% 100%, 0% 0%, from( rgba(255, 255, 255, 0.15) ), color-stop( 0.45, #ffffffff ), to( #ffffffff ) );
 }
 
+CitadelMatchHistoryBlockSmall #HeroImage
+{
+	opacity: 0;
+}
+
 CitadelMatchHistoryBlockSmall #Overlay
 {
 	width: 100%;
