@@ -1,5 +1,3 @@
---- START OF FILE Paste July 05, 2026 - 2:48AM ---
-
 [CmdletBinding()]
 param(
     [string]$ModFolderName,
@@ -571,10 +569,6 @@ while ($true) {
             $contentMissing = -not (Test-Path $contentDest)
             $compiledMissing = $compiledDest -and -not (Test-Path $compiledDest)
 
-            # For a bare .png/.tga there are two DIFFERENT compiled artifacts that
-            # something in the mod might be asking for (see the auto-vtex block
-            # below), so "is this file fully built" has to check both of them, not
-            # just the single $compiledDest path computed above.
             if ($AutoVtexSourceExts -contains $file.Extension) {
                 $extNoDot = $file.Extension.TrimStart('.').ToLowerInvariant()
                 $relDir = Split-Path $relPath
@@ -605,27 +599,6 @@ while ($true) {
                 $FilesToCompile.Add($contentDest)
             }
 
-            # Bare .png/.tga (no matching hand-authored .vtex next to it) get a
-            # minimal .vtex descriptor generated straight into the staging tree,
-            # so modders never have to touch vtex files themselves — dropping an
-            # image in is enough. If they DO ship their own <name>.vtex, it's
-            # picked up by the normal '.vtex' handling above and this is skipped.
-            #
-            # There are TWO naming conventions in use across the mod for how a
-            # bare image gets referenced, and both need a compiled artifact:
-            #   - CSS image-source/background-image urls point straight at the
-            #     .png and the engine compiles it to the SAME base name, e.g.
-            #     "border.png" -> "border.vtex_c".
-            #   - JS-side image assignments (e.g. the credits list iconSrc
-            #     entries, header logos) use Source 2's implicit-conversion
-            #     naming instead: basename + "_" + source extension, e.g.
-            #     "border.png" -> "border_png.vtex" -> "border_png.vtex_c".
-            # Generating only the first one is what silently broke every
-            # bare-png reference that used the second style (flags, logos) -
-            # ResourceSystem reported "border_png.vtex_c: File not found" even
-            # though "border.vtex_c" compiled fine. Generate both so a dropped-in
-            # image works regardless of which style references it, unless the
-            # modder shipped their own hand-authored .vtex under either name.
             if ($AutoVtexSourceExts -contains $file.Extension -and ($needsCopy -or $needsCompile)) {
                 $relFileName = $relPath -replace '\\', '/'
                 $vtexBody = Get-AutoVtexBody -RelFileName $relFileName
@@ -641,9 +614,6 @@ while ($true) {
                     [System.IO.File]::WriteAllText($genBareVtexPath, $vtexBody, $Utf8NoBom)
                     $FilesToCompile.Add($genBareVtexPath)
 
-                    # Mark it "current" so the orphan-cleanup pass below (which runs
-                    # before compilation) doesn't delete it — it has no 1:1 source
-                    # file of its own, it's derived from the .png above.
                     $genBareRelPath = $genBareVtexPath.Substring($TempContent.Length + 1)
                     $CurrentFiles["${SelectedMod}|${genBareRelPath}".ToLower()] = $true
                 }
