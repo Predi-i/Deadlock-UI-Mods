@@ -66,13 +66,17 @@
                     custom3D.style.zIndex = "0";
                 }
 
+                var useStatus = !!$.HeroWinLose[heroInternalName];
+
                 custom3D.style.backgroundImage = baseUrl;
                 custom3D.style.backgroundSize = "cover";
                 custom3D.style.backgroundPosition = "50% 50%";
-                custom3D.style.visibility = "visible";
+                // When win/lose art is active it fully replaces the static base,
+                // so the base must be hidden — otherwise both show through at once.
+                custom3D.style.visibility = useStatus ? "collapse" : "visible";
                 vanillaImg.style.opacity = "0";
 
-                if ($.HeroWinLose[heroInternalName]) {
+                if (useStatus) {
                     var statusPrefix = isLoss ? "lose_" : "win_";
                     var statusUrl = "url('s2r://panorama/images/heroes/" + statusPrefix + baseFile + ".vtex')";
 
