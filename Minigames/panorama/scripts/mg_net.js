@@ -30,26 +30,66 @@
     // ─────────────────────────────────────────────────────────────────────────
     // CONFIG: after `npx wrangler deploy`, paste your workers.dev URL here.
     // e.g. "https://deadlock-minigames.yourname.workers.dev"
-    var BASE_URL = "https://deadlock-minigames.CHANGEME.workers.dev";
+    var BASE_URL = "https://deadlock-minigames.predi.workers.dev";
     // ─────────────────────────────────────────────────────────────────────────
 
     var REQ_TIMEOUT_MS = 8000;
     var POLL_STEP = 0.05;   // seconds between dimension checks
 
-    function log(msg) { try { $.Msg("[MG.Net] " + msg); } catch (e) {} }
+    // Flip to false to silence the on-screen debug console once things work.
+    var DEBUG = true;
 
-    // Off-screen host that still participates in layout, so image dims resolve.
-    // (A collapsed/hidden panel would report size 0 and break everything.)
+    // ── on-screen debug console ─────────────────────────────────────────────
+    // Deadlock's dev console isn't visible to us and Cloudflare shows nothing when
+    // the engine never fires the request, so we surface every step on screen.
+    var dbgPanel = null, dbgLabel = null, dbgLines = [];
+    function ensureDebug() {
+        if (!DEBUG) return;
+        if (dbgPanel && dbgPanel.IsValid && dbgPanel.IsValid()) return;
+        var ctx = $.GetContextPanel();
+        dbgPanel = $.CreatePanel("Panel", ctx, "MG_Debug");
+        dbgPanel.style.position = "20px 20px 0px";
+        dbgPanel.style.width = "760px";
+        dbgPanel.style.height = "420px";
+        dbgPanel.style.backgroundColor = "#000000dd";
+        dbgPanel.style.border = "2px solid #ffaa00";
+        dbgPanel.style.padding = "10px";
+        dbgPanel.style.zIndex = "100000";
+        try { dbgPanel.SetAttributeString("hittest", "false"); } catch (e) {}
+        dbgLabel = $.CreatePanel("Label", dbgPanel, "");
+        dbgLabel.style.color = "#00ff66";
+        dbgLabel.style.fontSize = "17px";
+        dbgLabel.style.fontFamily = "monospace";
+        dbgLabel.text = "MG debug ready";
+    }
+    function debug(msg) {
+        dbgLines.push(msg);
+        if (dbgLines.length > 20) dbgLines.shift();
+        ensureDebug();
+        if (dbgLabel) dbgLabel.text = dbgLines.join("\n");
+    }
+
+    function log(msg) {
+        try { $.Msg("[MG.Net] " + msg); } catch (e) {}
+        debug(msg);
+    }
+    MG.debug = debug; // shared: mg_ui.js routes its logs here too
+
+    // Host that carries the request images. It MUST be on-screen and not culled —
+    // an off-screen / zero-opacity / occluded panel makes Panorama skip the image
+    // load entirely (which is why nothing reached the server before). We keep it
+    // tiny and near-transparent in a corner instead.
     var host = null;
     function ensureHost() {
         if (host && host.IsValid && host.IsValid()) return host;
         var ctx = $.GetContextPanel();
         host = $.CreatePanel("Panel", ctx, "MG_NetHost");
-        host.style.position = "9000px 9000px 0px"; // pushed off any real screen
-        host.style.width = "400px";
-        host.style.height = "400px";
-        host.style.opacity = "0.01";
-        host.style.zIndex = "-1";
+        host.style.position = "2px 2px 0px";
+        host.style.width = "64px";
+        host.style.height = "64px";
+        host.style.opacity = "0.02";
+        host.style.zIndex = "99999";
+        host.style.overflow = "noclip noclip";
         try { host.SetAttributeString("hittest", "false"); } catch (e) {}
         return host;
     }
@@ -73,7 +113,11 @@
                 }
             }
         }
-        img.SetImage(BASE_URL + path + "?" + qs);
+        // NOTE: Panorama's image loader keys off the URL extension — it will silently
+        // refuse a URL that doesn't look like an image. So every path ends in ".png".
+        var fullUrl = BASE_URL + path + ".png?" + qs;
+        img.SetImage(fullUrl);
+        log("→ GET " + path + ".png");
 
         var elapsed = 0;
         var finished = false;
@@ -85,6 +129,7 @@
             if (w > 0 && hh > 0) {
                 finished = true;
                 cleanup();
+                log("← " + path + " = " + w + "x" + hh + " (" + Math.round(elapsed) + "ms)");
                 onDone(w, hh);
                 return;
             }
@@ -92,7 +137,7 @@
             if (elapsed >= REQ_TIMEOUT_MS) {
                 finished = true;
                 cleanup();
-                log("timeout on " + path);
+                log("✗ TIMEOUT " + path + " (dims stayed 0 for " + REQ_TIMEOUT_MS + "ms)");
                 if (onError) onError("timeout");
                 return;
             }

@@ -15,7 +15,10 @@
     var MG = ($.MG = $.MG || {});
     if (MG.UI) return;
 
-    function log(m) { try { $.Msg("[MG.UI] " + m); } catch (e) {} }
+    function log(m) {
+        try { $.Msg("[MG.UI] " + m); } catch (e) {}
+        try { if (MG.debug) MG.debug("[ui] " + m); } catch (e) {}
+    }
 
     var overlay = null, modalBody = null, statusLabel = null, titleLabel = null;
     var view = "menu";
@@ -231,11 +234,16 @@
         var g = MG.Games.byId(selectedGameId);
         if (!g || !g.enabled) { setStatus("Выберите доступную игру."); return; }
         setStatus("Создаём лобби…");
+        log("startCreate game=" + selectedGameId + " base=" + MG.Net.getBaseUrl());
         MG.Api.create(selectedGameId, function (code) {
+            log("create ok, code=" + code);
             currentCode = code;
             renderWaiting(code);
             waitForJoiner(code);
-        }, function () { setStatus("Не удалось создать лобби. Проверьте сервер."); });
+        }, function () {
+            log("create FAILED (request errored)");
+            setStatus("Не удалось создать лобби. Проверьте сервер.");
+        });
     }
 
     function waitForJoiner(code) {
