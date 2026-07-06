@@ -56,7 +56,9 @@ export class Hub {
 
   async fetch(request) {
     const url = new URL(request.url);
-    const p = url.pathname;
+    // Panorama's <Image> loader only fetches URLs that look like an image, so the
+    // client appends ".png" to every route. Strip it here before routing.
+    const p = url.pathname.replace(/\.png$/, "");
     const q = url.searchParams;
     const code = q.get("code");
 
