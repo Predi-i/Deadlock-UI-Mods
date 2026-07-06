@@ -57,6 +57,15 @@
         }
         return false;
     }
+    // #EscapeBackground is a full-screen click-catcher with onactivate=CitadelResumePlaying().
+    // Our overlay lives in a separate HUD tree and can't reliably sit above it for input,
+    // so a misclick over the game area closed the menu. Disable its hit-testing while our
+    // modal is open, restore it when we're done.
+    function setEscapeBackgroundActive(active) {
+        var root = topRoot();
+        var bg = root && root.FindChildTraverse ? root.FindChildTraverse("EscapeBackground") : null;
+        if (bg) { try { bg.SetAttributeString("hittest", active ? "true" : "false"); } catch (e) {} }
+    }
 
     function ensureEscapeButton() {
         var anchor = findAnchor();
@@ -86,22 +95,20 @@
     // ── overlay construction ────────────────────────────────────────────────
     function buildOverlay() {
         if (overlay && overlay.IsValid && overlay.IsValid()) return;
-        // Parent the overlay INTO the escape menu, above its EscapeBackground panel.
-        // EscapeBackground has onactivate="CitadelResumePlaying()" — a full-screen click
-        // catcher that closes the menu. Living in a separate HUD tree, our old overlay
-        // let misclicks fall through to it (menu closed on a near-miss) and never closed
-        // when the menu did. As a later child of #EscapeMenu our dim paints over
-        // EscapeBackground and absorbs those clicks; a fallback keeps things working if
-        // the menu can't be found.
-        var parent = findEscapeMenu() || $.GetContextPanel();
-        overlay = $.CreatePanel("Panel", parent, "MG_Overlay");
+        // Must stay in OUR panel context: mg.css is loaded via base_hud.xml, so panels
+        // created under the native #EscapeMenu (a different XML context) render unstyled.
+        var ctx = $.GetContextPanel();
+        overlay = $.CreatePanel("Panel", ctx, "MG_Overlay");
         overlay.AddClass("mg-overlay");
         overlay.style.visibility = "collapse";
 
         // Backdrop: blocks clicks from reaching the game behind, but does NOT close
-        // on click — a misclick (e.g. missing a checker) must not kick you out.
+        // on click — a misclick (e.g. missing a checker) must not kick you out. The
+        // no-op onactivate makes the panel explicitly consume the click so it can't
+        // fall through to the menu's EscapeBackground (which would resume/close).
         var dim = $.CreatePanel("Panel", overlay, "MG_Dim");
         dim.AddClass("mg-dim");
+        dim.SetPanelEvent("onactivate", function () { });
 
         var modal = $.CreatePanel("Panel", overlay, "MG_Modal");
         modal.AddClass("mg-modal");
@@ -506,6 +513,7 @@
         buildOverlay();
         overlay.style.visibility = "visible";
         overlayShown = true;
+        setEscapeBackgroundActive(false); // stop the menu's backdrop from closing on a misclick
         renderMenu();
     }
 
@@ -514,6 +522,7 @@
         clearBody();
         if (overlay) overlay.style.visibility = "collapse";
         overlayShown = false;
+        setEscapeBackgroundActive(true);  // restore normal click-to-resume behavior
         view = "menu";
     }
 
