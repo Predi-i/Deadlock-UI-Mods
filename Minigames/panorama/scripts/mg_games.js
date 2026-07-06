@@ -3,9 +3,9 @@
 /*
  * mg_games.js — game logic + rendering for the Deadlock Minigames mod.
  *
- * Currently ships online Checkers (Russian draughts rules: men move forward but
- * capture in any diagonal direction, flying kings, forced capture, multi-jump).
- * Tic-Tac-Toe and Durak are registered as disabled placeholders in the picker.
+ * Ships online Checkers (Russian draughts: men move forward but capture in any
+ * diagonal direction, flying kings, forced capture, multi-jump) and Tic-Tac-Toe.
+ * Durak is registered as a disabled placeholder in the picker.
  *
  * Networking is client-authoritative: each player validates and applies moves locally,
  * then relays each hop through $.MG.Api (see mg_net.js). Squares are 0..63 on a fixed
@@ -252,6 +252,55 @@
         return pick;
     }
 
+    // ── tic-tac-toe pure rules ────────────────────────────────────────────────
+    // Board is a flat length-9 array: 0 empty, 1 = X, 2 = O. Cells index left→right,
+    // top→bottom (0..8). These are UI-free so tools/mg_rules_test.js can slice them.
+    var TTT_LINES = [
+        [0, 1, 2], [3, 4, 5], [6, 7, 8],   // rows
+        [0, 3, 6], [1, 4, 7], [2, 5, 8],   // cols
+        [0, 4, 8], [2, 4, 6]               // diagonals
+    ];
+
+    // Returns { mark, line } for the first completed line, or null.
+    function tttWinner(b) {
+        for (var i = 0; i < TTT_LINES.length; i++) {
+            var L = TTT_LINES[i], v = b[L[0]];
+            if (v && v === b[L[1]] && v === b[L[2]]) return { mark: v, line: L };
+        }
+        return null;
+    }
+
+    function tttFull(b) {
+        for (var i = 0; i < 9; i++) if (!b[i]) return false;
+        return true;
+    }
+
+    // If `mark` has a one-move win available, return that cell; else -1.
+    function tttFindWin(b, mark) {
+        for (var i = 0; i < 9; i++) {
+            if (b[i]) continue;
+            b[i] = mark;
+            var w = tttWinner(b);
+            b[i] = 0;                      // restore — this must not mutate the board
+            if (w && w.mark === mark) return i;
+        }
+        return -1;
+    }
+
+    // Heuristic bot: win > block > center > corner > side. Strong but not a full
+    // minimax, so a sharp human can still fork it — deliberately beatable.
+    function tttBotMove(b, mark) {
+        var opp = mark === 1 ? 2 : 1;
+        var pick = tttFindWin(b, mark); if (pick >= 0) return pick;   // 1) take the win
+        pick = tttFindWin(b, opp);      if (pick >= 0) return pick;   // 2) block theirs
+        if (!b[4]) return 4;                                          // 3) center
+        var corners = [0, 2, 6, 8];
+        for (var i = 0; i < 4; i++) if (!b[corners[i]]) return corners[i]; // 4) corner
+        var sides = [1, 3, 5, 7];
+        for (var j = 0; j < 4; j++) if (!b[sides[j]]) return sides[j];     // 5) side
+        return -1;                                                    // board full
+    }
+
     // ── checkers controller ─────────────────────────────────────────────────
     function createCheckers(container, session) {
         var Api = MG.Api;
@@ -462,6 +511,11 @@
                 }
             }, function () {
                 $.Schedule(0.6, function () { pollOnce(myToken); });
+            }, function (from, to) {
+                // A real hop is always a diagonal between two board squares; anything
+                // else is a mis-scaled read and must never reach applyHop.
+                var fr = (from / 8) | 0, fc = from % 8, tr = (to / 8) | 0, tc = to % 8;
+                return Math.abs(tr - fr) === Math.abs(tc - fc);
             });
         }
 
@@ -494,6 +548,165 @@
         };
     }
 
+    // ── tic-tac-toe controller ───────────────────────────────────────────────
+    // Wire format reuses the checkers move transport: a placement in cell 0..8 is sent
+    // as move(code, cell, 9, end=1). `to`=9 is a fixed non-cell marker so from!=to
+    // always holds (from==to is the "nothing new" sentinel) and validation is trivial.
+    function createTicTacToe(container, session) {
+        var Api = MG.Api;
+        var code = session.code;
+        var X = 1, O = 2;
+        var myMark = session.isHost ? X : O;   // host plays X and moves first
+        var board = new Array(9);
+        for (var q = 0; q < 9; q++) board[q] = 0;
+        var turn = X;                  // X always starts
+        var appliedSeq = 0;            // placements consumed from the shared server list
+        var pollToken = 0;
+        var destroyed = false;
+        var gameOver = false;
+
+        function status(t) { if (session.onStatus) session.onStatus(t); }
+        function myTurn() { return turn === myMark && !gameOver; }
+        function markClass(v) { return v === X ? "mg-x" : "mg-o"; }
+        function markChar(v) { return v === X ? "✕" : "◯"; }
+
+        var root = $.CreatePanel("Panel", container, "MG_TttRoot");
+        root.AddClass("mg-ttt");
+        var boardPanel = $.CreatePanel("Panel", root, "MG_TttBoard");
+        boardPanel.AddClass("mg-ttt-board");
+
+        var cells = [];
+        (function buildCells() {
+            for (var r = 0; r < 3; r++) {
+                var rowPanel = $.CreatePanel("Panel", boardPanel, "ttt_row_" + r);
+                rowPanel.AddClass("mg-ttt-row");
+                for (var c = 0; c < 3; c++) {
+                    var i = r * 3 + c;
+                    var cell = $.CreatePanel("Panel", rowPanel, "ttt_cell_" + i);
+                    cell.AddClass("mg-ttt-cell");
+                    (function (square) {
+                        cell.SetPanelEvent("onactivate", function () { onCellClick(square); });
+                    })(i);
+                    cells[i] = cell;
+                }
+            }
+        })();
+
+        function render(winLine) {
+            for (var i = 0; i < 9; i++) {
+                var cell = cells[i];
+                cell.RemoveClass("mg-ttt-win");
+                cell.RemoveAndDeleteChildren();
+                if (board[i]) {
+                    var mark = $.CreatePanel("Label", cell, "");
+                    mark.AddClass("mg-ttt-mark");
+                    mark.AddClass(markClass(board[i]));
+                    mark.text = markChar(board[i]);
+                }
+            }
+            if (winLine) for (var k = 0; k < winLine.length; k++) cells[winLine[k]].AddClass("mg-ttt-win");
+        }
+
+        function place(i, mark) { board[i] = mark; }
+
+        // Evaluate terminal state; announce and freeze if the game is decided.
+        function checkEnd() {
+            var w = tttWinner(board);
+            if (w) {
+                gameOver = true;
+                render(w.line);
+                status(w.mark === myMark ? "🏆 You win!" : "You lose.");
+                return true;
+            }
+            if (tttFull(board)) {
+                gameOver = true;
+                render(null);
+                status("Draw.");
+                return true;
+            }
+            return false;
+        }
+
+        function onCellClick(i) {
+            if (destroyed || !myTurn() || board[i]) return;
+            place(i, myMark);
+            turn = (myMark === X ? O : X);   // hand off locally
+            render(null);
+
+            if (session.bot) {
+                if (checkEnd()) return;
+                status("Bot is thinking…");
+                $.Schedule(0.4, botTurn);
+                return;
+            }
+            if (checkEnd()) { sendMove(i, 0); return; } // still relay the winning move
+            status("Move sent. Waiting for opponent…");
+            sendMove(i, 0);
+        }
+
+        // ── bot (offline) ────────────────────────────────────────────────────
+        function botTurn() {
+            if (destroyed || gameOver) return;
+            var botMark = (myMark === X ? O : X);
+            var mv = tttBotMove(board, botMark);
+            if (mv < 0) { checkEnd(); return; }
+            place(mv, botMark);
+            turn = myMark;
+            render(null);
+            if (checkEnd()) return;
+            status("Your turn.");
+        }
+
+        // ── relay + polling ──────────────────────────────────────────────────
+        function sendMove(cell, attempt) {
+            if (destroyed) return;
+            Api.move(code, cell, 9, 1, function () {
+                appliedSeq++;              // our own placement is now in the shared list
+                if (!gameOver) startPolling();
+            }, function () {
+                $.Schedule(0.6, function () { sendMove(cell, (attempt || 0) + 1); }); // retry
+            });
+        }
+
+        function startPolling() {
+            pollToken++;
+            pollOnce(pollToken);
+        }
+
+        function pollOnce(myToken) {
+            if (destroyed || myToken !== pollToken || gameOver) return;
+            if (turn === myMark) return; // our move; nothing to poll
+            Api.poll(code, appliedSeq, function (mv) {
+                if (destroyed || myToken !== pollToken) return;
+                if (mv) {
+                    var oppMark = (myMark === X ? O : X);
+                    if (!board[mv.from]) place(mv.from, oppMark); // from = the cell played
+                    appliedSeq++;
+                    turn = myMark;
+                    render(null);
+                    if (checkEnd()) return;
+                    status("Your turn.");
+                } else {
+                    $.Schedule(0.4, function () { pollOnce(myToken); });
+                }
+            }, function () {
+                $.Schedule(0.6, function () { pollOnce(myToken); });
+            }, function (from, to) {
+                // A placement is a single cell 0..8 with the fixed marker to=9.
+                return from >= 0 && from <= 8 && to === 9;
+            });
+        }
+
+        // ── boot ─────────────────────────────────────────────────────────────
+        render(null);
+        if (myTurn()) status("Your turn. You play " + (myMark === X ? "✕ (X)." : "◯ (O)."));
+        else { status("Opponent's turn…"); startPolling(); }
+
+        return {
+            destroy: function () { destroyed = true; pollToken++; try { root.DeleteAsync(0); } catch (e) {} }
+        };
+    }
+
     // ── placeholder for not-yet-built games ─────────────────────────────────
     function createStub(container, session, name) {
         var root = $.CreatePanel("Panel", container, "MG_Stub");
@@ -507,7 +720,7 @@
     MG.Games = {
         list: [
             { id: 1, key: "checkers", name: "Checkers", enabled: true },
-            { id: 2, key: "tictactoe", name: "Tic-Tac-Toe", enabled: false },
+            { id: 2, key: "tictactoe", name: "Tic-Tac-Toe", enabled: true },
             { id: 3, key: "durak", name: "Durak", enabled: false }
         ],
         byId: function (id) {
@@ -517,6 +730,7 @@
         },
         mount: function (gameId, container, session) {
             if (gameId === 1) return createCheckers(container, session);
+            if (gameId === 2) return createTicTacToe(container, session);
             var g = this.byId(gameId);
             return createStub(container, session, g ? g.name : null);
         }

@@ -11,7 +11,8 @@ const body = src.slice(start, end);
 const factory = new Function(
     body +
     "; return { initialBoard, simpleMoves, captureMoves, applyHop, legalSequences, chooseBotMove," +
-    " colorOf, isKing, idx, rowOf, colOf, anyCaptureFor, hasAnyMove, WHITE, BLACK };"
+    " colorOf, isKing, idx, rowOf, colOf, anyCaptureFor, hasAnyMove, WHITE, BLACK," +
+    " tttWinner, tttFull, tttBotMove };"
 );
 const M = factory();
 
@@ -94,6 +95,47 @@ function empty() { return new Array(64).fill(0); }
     ok(allLegal, "bot only played legal moves");
     ok(moves < 300, "game terminated in " + moves + " moves (not the safety cap)");
     console.log("    (white=" + wc + " black=" + bc + " moves=" + moves + " time=" + ms + "ms)");
+})();
+
+// ── tic-tac-toe ──────────────────────────────────────────────────────────────
+// X=1, O=2, empty=0; cells 0..8 left→right, top→bottom.
+(function () {
+    // 7) detect a row / column / diagonal win
+    ok(M.tttWinner([1, 1, 1, 0, 2, 0, 2, 0, 0]).mark === 1, "top row is an X win");
+    ok(M.tttWinner([2, 0, 0, 2, 1, 1, 2, 0, 1]).mark === 2, "left column is an O win");
+    ok(M.tttWinner([1, 2, 0, 0, 1, 2, 0, 0, 1]).mark === 1, "main diagonal is an X win");
+    ok(M.tttWinner([0, 0, 0, 0, 0, 0, 0, 0, 0]) === null, "empty board has no winner");
+
+    // 8) full board / draw
+    ok(M.tttFull([1, 2, 1, 1, 2, 2, 2, 1, 1]) === true, "no empty cells => full");
+    ok(M.tttFull([1, 2, 1, 1, 0, 2, 2, 1, 1]) === false, "an empty cell => not full");
+    ok(M.tttWinner([1, 2, 1, 1, 2, 2, 2, 1, 1]) === null, "that full board is a draw (no line)");
+
+    // 9) bot takes an immediate win over blocking
+    ok(M.tttBotMove([1, 1, 0, 2, 2, 0, 0, 0, 0], 1) === 2, "bot completes its own row to win");
+    // 10) bot blocks the opponent's imminent win
+    ok(M.tttBotMove([2, 2, 0, 1, 0, 0, 0, 0, 0], 1) === 2, "bot blocks O's top-row threat");
+    // 11) bot must not mutate the board it evaluates
+    (function () {
+        const before = [1, 1, 0, 2, 2, 0, 0, 0, 0];
+        const snap = before.slice();
+        M.tttBotMove(before, 1);
+        ok(before.join() === snap.join(), "bot move leaves the board unmutated");
+    })();
+    // 12) a heuristic bot never loses to itself: self-play always ends in a draw
+    (function () {
+        let b = new Array(9).fill(0), mark = 1, safety = 0, decided = null;
+        while (safety++ < 9) {
+            const mv = M.tttBotMove(b, mark);
+            if (mv < 0) break;
+            b[mv] = mark;
+            const w = M.tttWinner(b);
+            if (w) { decided = w.mark; break; }
+            if (M.tttFull(b)) break;
+            mark = mark === 1 ? 2 : 1;
+        }
+        ok(decided === null, "bot-vs-bot ends in a draw (optimal heuristic never loses to itself)");
+    })();
 })();
 
 console.log(failures === 0 ? "\nALL RULES TESTS PASSED" : "\n" + failures + " FAILURE(S)");

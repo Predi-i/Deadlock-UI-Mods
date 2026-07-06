@@ -241,6 +241,36 @@
     border-color: #ffd76e;
 }
 
+/* ── tic-tac-toe ───────────────────────────────────────────────────────────── */
+.mg-ttt { horizontal-align: center; flow-children: down; }
+.mg-ttt-board {
+    flow-children: down;              /* rows stacked, same robust grid as checkers */
+    border: 3px solid #0a0d12;
+    background-color: #0a0d12;         /* shows through as grid lines between cells */
+    horizontal-align: center;
+}
+.mg-ttt-row {
+    flow-children: right;
+    height: 104px;
+}
+.mg-ttt-cell {
+    width: 104px;
+    height: 104px;
+    margin: 3px;
+    background-color: #2c3a4d;
+}
+.mg-ttt-cell:hover { background-color: #35475e; }
+.mg-ttt-cell.mg-ttt-win { background-color: #4b8f5a; }
+.mg-ttt-mark {
+    horizontal-align: center;      /* size-to-glyph + center; a full-size Label would
+                                      draw the text top-left instead of centered */
+    vertical-align: center;
+    font-size: 74px;
+    font-weight: bold;
+}
+.mg-ttt-mark.mg-x { color: #6ea8ff; }
+.mg-ttt-mark.mg-o { color: #ff7b7b; }
+
 /* ── stub ────────────────────────────────────────────────────────────────── */
 .mg-stub { width: 100%; height: 200px; }
 .mg-stub-label { color: #9fb3c8; font-size: 22px; horizontal-align: center; vertical-align: center; }

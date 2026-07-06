@@ -428,7 +428,14 @@
                 function (w, h) { if (cb) cb(w < 9); }, err);
         },
 
-        poll: function (code, since, cb, err) {
+        // `validate(from,to)` is an optional game-specific sanity check on the decoded
+        // move. It exists because a mis-scaled read yields plausible-but-wrong squares
+        // that, acted upon, corrupt the board (phantom moves that eat pieces). Each game
+        // knows what a legal (from,to) looks like — checkers passes a diagonal test,
+        // tic-tac-toe passes its cell-placement shape — so the transport stays generic
+        // and every caller keeps its own guard. Omitting it applies only the 0..63 range
+        // check. A failed check trips suspectDecode (stale scale → recalibrate).
+        poll: function (code, since, cb, err, validate) {
             request("/api/poll", { code: code, since: since }, function (w, h) {
                 if (w === 9 && h === 9) {
                     log("opponent disconnected (9x9 received)");
@@ -439,12 +446,8 @@
                 var from = (end ? w - 100 : w) - 1;
                 var to = h - 1;
                 if (from === to) { cb(null); return; }   // (1,1) => nothing new
-                // A real hop is always a diagonal between two board squares. Anything
-                // else (server error markers, mis-scaled reads) must never reach
-                // applyHop — it would clear pieces along an arbitrary line.
-                var fr = (from / 8) | 0, fc = from % 8, tr = (to / 8) | 0, tc = to % 8;
-                if (from < 0 || from > 63 || to < 0 || to > 63 ||
-                    Math.abs(tr - fr) !== Math.abs(tc - fc)) {
+                var inRange = from >= 0 && from <= 63 && to >= 0 && to <= 63;
+                if (!inRange || (validate && !validate(from, to))) {
                     suspectDecode("poll w=" + w + " h=" + h);
                     if (err) err("decode");
                     return;
