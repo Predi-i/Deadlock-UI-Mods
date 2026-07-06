@@ -111,7 +111,12 @@
             host.style.opacity = "0.02";
             host.style.zIndex = "99999";
         } catch (e) { log("✗ host style exc: " + (e && e.message ? e.message : e)); }
+        // hittest=false alone still lets the child <Image> panels intercept hover,
+        // which broke every escape-menu setting's hover once the host grew to
+        // 640x1020 and sat over the menu. hittestchildren=false makes the whole
+        // subtree transparent to input so hover passes through to the menu below.
         try { host.SetAttributeString("hittest", "false"); } catch (e) {}
+        try { host.SetAttributeString("hittestchildren", "false"); } catch (e) {}
         return host;
     }
 
@@ -140,6 +145,17 @@
             try { if (job.onDone) job.onDone(w, h); } finally { $.Schedule(0.05, drainQueue); }
         }, function (e) {
             reqActive = false;
+            // The Panorama image loader is intermittently flaky (a URL that loads
+            // instantly in a browser sometimes stalls to a timeout here). One silent
+            // re-queue at the front of the line recovers most of those. This is a
+            // mitigation, not a proven fix — it can't be verified without in-game runs.
+            job.tries = (job.tries || 0) + 1;
+            if (job.tries < 2) {
+                log("↻ retry " + job.path + " (attempt " + (job.tries + 1) + ")");
+                reqQueue.unshift(job);
+                $.Schedule(0.05, drainQueue);
+                return;
+            }
             try { if (job.onError) job.onError(e); } finally { $.Schedule(0.05, drainQueue); }
         });
     }

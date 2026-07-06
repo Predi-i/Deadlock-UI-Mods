@@ -567,8 +567,21 @@
 
         function status(t) { if (session.onStatus) session.onStatus(t); }
         function myTurn() { return turn === myMark && !gameOver; }
-        function markClass(v) { return v === X ? "mg-x" : "mg-o"; }
-        function markChar(v) { return v === X ? "✕" : "◯"; }
+
+        // Marks are drawn with panels, NOT font glyphs: the game font has neither
+        // ✕ nor ◯ (that's why X was invisible and O sat off-centre). X = two bars
+        // crossed via rotateZ; O = a ring (bordered circle with a transparent hole).
+        function drawMark(cell, v) {
+            if (v === X) {
+                var x = $.CreatePanel("Panel", cell, "");
+                x.AddClass("mg-ttt-mark"); x.AddClass("mg-x");
+                var b1 = $.CreatePanel("Panel", x, ""); b1.AddClass("mg-x-bar"); b1.AddClass("mg-x-bar-a");
+                var b2 = $.CreatePanel("Panel", x, ""); b2.AddClass("mg-x-bar"); b2.AddClass("mg-x-bar-b");
+            } else {
+                var o = $.CreatePanel("Panel", cell, "");
+                o.AddClass("mg-ttt-mark"); o.AddClass("mg-o");
+            }
+        }
 
         var root = $.CreatePanel("Panel", container, "MG_TttRoot");
         root.AddClass("mg-ttt");
@@ -597,12 +610,7 @@
                 var cell = cells[i];
                 cell.RemoveClass("mg-ttt-win");
                 cell.RemoveAndDeleteChildren();
-                if (board[i]) {
-                    var mark = $.CreatePanel("Label", cell, "");
-                    mark.AddClass("mg-ttt-mark");
-                    mark.AddClass(markClass(board[i]));
-                    mark.text = markChar(board[i]);
-                }
+                if (board[i]) drawMark(cell, board[i]);
             }
             if (winLine) for (var k = 0; k < winLine.length; k++) cells[winLine[k]].AddClass("mg-ttt-win");
         }
@@ -721,7 +729,9 @@
         list: [
             { id: 1, key: "checkers", name: "Checkers", enabled: true },
             { id: 2, key: "tictactoe", name: "Tic-Tac-Toe", enabled: true },
-            { id: 3, key: "durak", name: "Durak", enabled: false }
+            { id: 3, key: "durak", name: "Durak", enabled: false },
+            { id: 4, key: "chess", name: "Chess", enabled: false },
+            { id: 5, key: "connectfour", name: "Connect Four", enabled: false }
         ],
         byId: function (id) {
             var l = this.list;
