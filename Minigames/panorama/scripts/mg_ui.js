@@ -21,6 +21,7 @@
     }
 
     var overlay = null, modalBody = null, statusLabel = null, titleLabel = null;
+    var overlayShown = false;     // our modal is up (independent of the menu's own state)
     var view = "menu";
     var selectedGameId = 1;
     var activeGame = null;        // { destroy }
@@ -29,13 +30,32 @@
     var selfTestToken = 0;
 
     // ── escape-menu button injection ────────────────────────────────────────
-    function findAnchor() {
+    function topRoot() {
         var root = $.GetContextPanel();
         // climb to the very top so FindChildTraverse can reach the escape-menu subtree
         for (var i = 0; i < 40 && root && root.GetParent && root.GetParent(); i++) root = root.GetParent();
+        return root;
+    }
+    function findAnchor() {
+        var root = topRoot();
         if (!root || !root.FindChildTraverse) return null;
         // SubOptions holds Settings/Quit; fall back to the Menu container.
         return root.FindChildTraverse("SubOptions") || root.FindChildTraverse("Menu");
+    }
+
+    // The native escape menu panel (id="EscapeMenu", type CitadelHudEscapeMenu). It
+    // always exists in hud.xml; ".ShowEscapeMenu" is toggled on an ancestor to open it.
+    function findEscapeMenu() {
+        var root = topRoot();
+        return root && root.FindChildTraverse ? root.FindChildTraverse("EscapeMenu") : null;
+    }
+    function isEscapeOpen() {
+        var p = findEscapeMenu();
+        for (var i = 0; i < 40 && p; i++) {
+            if (p.BHasClass && p.BHasClass("ShowEscapeMenu")) return true;
+            p = p.GetParent ? p.GetParent() : null;
+        }
+        return false;
     }
 
     function ensureEscapeButton() {
@@ -66,8 +86,15 @@
     // ── overlay construction ────────────────────────────────────────────────
     function buildOverlay() {
         if (overlay && overlay.IsValid && overlay.IsValid()) return;
-        var ctx = $.GetContextPanel();
-        overlay = $.CreatePanel("Panel", ctx, "MG_Overlay");
+        // Parent the overlay INTO the escape menu, above its EscapeBackground panel.
+        // EscapeBackground has onactivate="CitadelResumePlaying()" — a full-screen click
+        // catcher that closes the menu. Living in a separate HUD tree, our old overlay
+        // let misclicks fall through to it (menu closed on a near-miss) and never closed
+        // when the menu did. As a later child of #EscapeMenu our dim paints over
+        // EscapeBackground and absorbs those clicks; a fallback keeps things working if
+        // the menu can't be found.
+        var parent = findEscapeMenu() || $.GetContextPanel();
+        overlay = $.CreatePanel("Panel", parent, "MG_Overlay");
         overlay.AddClass("mg-overlay");
         overlay.style.visibility = "collapse";
 
@@ -478,6 +505,7 @@
     function showOverlay() {
         buildOverlay();
         overlay.style.visibility = "visible";
+        overlayShown = true;
         renderMenu();
     }
 
@@ -485,7 +513,20 @@
         cleanupCurrentView(true);
         clearBody();
         if (overlay) overlay.style.visibility = "collapse";
+        overlayShown = false;
         view = "menu";
+    }
+
+    // The escape menu can close under us (Esc / Resume / clicking a native item).
+    // Nothing notifies us, and our overlay — now a child of #EscapeMenu — would
+    // otherwise linger (hittest-active, only faded by opacity) over the game. Poll the
+    // menu's open state and tear our modal down the moment the menu is gone.
+    function watchEscape() {
+        if (overlayShown && !isEscapeOpen()) {
+            log("escape menu closed — hiding overlay");
+            hideOverlay();
+        }
+        $.Schedule(0.3, watchEscape);
     }
 
     function kickToMenu(reason) {
@@ -500,5 +541,6 @@
 
     // boot
     $.Schedule(1.0, startInjectionLoop);
+    $.Schedule(1.0, watchEscape);
     log("loaded");
 })();

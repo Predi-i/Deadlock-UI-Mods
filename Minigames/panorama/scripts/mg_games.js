@@ -327,10 +327,22 @@
         var boardPanel = $.CreatePanel("Panel", root, "MG_Board");
         boardPanel.AddClass("mg-board");
 
+        // ── board geometry (must match mg.css: 60px cells, 46px pieces) ──────
+        var SQ = 60, PIECE_SZ = 46, INSET = (SQ - PIECE_SZ) / 2;
+        function transformFor(realIdx) {
+            var d = toDisplay(realIdx);
+            var dr = (d / 8) | 0, dc = d % 8;
+            return "translate3d(" + (dc * SQ + INSET) + "px, " + (dr * SQ + INSET) + "px, 0px)";
+        }
+
         var cells = [];
+        var piecesLayer = null;
+        var pieceEls = {};     // realSquare -> piece panel (its current visual position)
+
         function buildCells() {
             boardPanel.RemoveAndDeleteChildren();
             cells = [];
+            pieceEls = {};
             // Build 8 explicit rows of 8 cells. Row layout can't mis-wrap the grid the
             // way flow:right-wrap does when a border shaves a pixel off the width.
             for (var dr = 0; dr < 8; dr++) {
@@ -349,28 +361,80 @@
                     cells[i] = cell;
                 }
             }
+            // Pieces live in an absolute overlay ABOVE the cells so they can slide across
+            // squares (transform transition). It ignores input — clicks fall through to
+            // the cells beneath, which own selection + '.mg-target' highlighting.
+            piecesLayer = $.CreatePanel("Panel", boardPanel, "MG_PiecesLayer");
+            piecesLayer.AddClass("mg-pieces-layer");
+            try { piecesLayer.SetAttributeString("hittest", "false"); } catch (e) {}
+            try { piecesLayer.SetAttributeString("hittestchildren", "false"); } catch (e) {}
         }
 
-        function render() {
+        function makePiece(realIdx, v) {
+            var piece = $.CreatePanel("Panel", piecesLayer, "");
+            piece.AddClass("mg-piece");
+            piece.AddClass(colorOf(v) === WHITE ? "mg-white" : "mg-black");
+            if (isKing(v)) piece.AddClass("mg-king");
+            piece.style.transform = transformFor(realIdx);
+            pieceEls[realIdx] = piece;
+            return piece;
+        }
+
+        // Full rebuild of the piece layer (initial deal, board flip, game end). No slide.
+        function layoutPieces() {
+            if (!piecesLayer) return;
+            piecesLayer.RemoveAndDeleteChildren();
+            pieceEls = {};
+            for (var i = 0; i < 64; i++) { if (board[i]) makePiece(i, board[i]); }
+        }
+
+        // Selection + legal-target highlighting only (cheap; touches no pieces).
+        function refreshHighlights() {
             for (var i = 0; i < 64; i++) {
                 var cell = cells[i];
                 if (!cell) continue;
                 cell.RemoveClass("mg-sel");
                 cell.RemoveClass("mg-target");
-                cell.RemoveAndDeleteChildren();
-                var v = board[i];
-                if (v) {
-                    var piece = $.CreatePanel("Panel", cell, "");
-                    piece.AddClass("mg-piece");
-                    piece.AddClass(colorOf(v) === WHITE ? "mg-white" : "mg-black");
-                    if (isKing(v)) piece.AddClass("mg-king");
-                }
             }
-            if (selected >= 0) cells[selected].AddClass("mg-sel");
+            if (selected >= 0 && cells[selected]) cells[selected].AddClass("mg-sel");
             for (var t = 0; t < legalTargets.length; t++) {
                 var tc = cells[legalTargets[t].to];
                 if (tc) tc.AddClass("mg-target");
             }
+        }
+
+        // Apply a hop to the model AND report the captured square (for the fade fx).
+        function applyHopFx(from, to) {
+            var before = board.slice();
+            var res = applyHop(board, from, to);
+            var capIdx = -1;
+            if (res.captured) {
+                for (var i = 0; i < 64; i++) {
+                    if (before[i] && !board[i] && i !== from && i !== to) { capIdx = i; break; }
+                }
+            }
+            return { captured: res.captured, promoted: res.promoted, capIdx: capIdx };
+        }
+
+        // Slide the piece from->to; shrink-fade a captured piece; crown on promotion.
+        function animateHop(from, to, capIdx, promoted) {
+            if (capIdx >= 0 && pieceEls[capIdx]) {
+                var dead = pieceEls[capIdx];
+                delete pieceEls[capIdx];
+                dead.AddClass("mg-captured");
+                dead.style.transform = transformFor(capIdx) + " scale3d(0.2, 0.2, 1.0)";
+                (function (d) { $.Schedule(0.22, function () { try { d.DeleteAsync(0); } catch (e) {} }); })(dead);
+            }
+            var piece = pieceEls[from];
+            delete pieceEls[from];
+            if (!piece || !piece.IsValid || !piece.IsValid()) {
+                if (board[to]) makePiece(to, board[to]); // visual desync guard: rebuild from model
+                return;
+            }
+            piece.AddClass("mg-sliding");
+            if (promoted) piece.AddClass("mg-king");
+            piece.style.transform = transformFor(to);
+            pieceEls[to] = piece;
         }
 
         function myTurn() { return turn === myColor && !gameOver; }
@@ -401,14 +465,15 @@
                 if (tg.length === 0) { status("That piece has no legal move."); return; }
                 selected = i;
                 legalTargets = tg;
-                render();
+                refreshHighlights();
             }
         }
 
         var pendingHops = [];
 
         function doLocalHop(from, mv) {
-            var res = applyHop(board, from, mv.to);
+            var res = applyHopFx(from, mv.to);
+            animateHop(from, mv.to, res.capIdx, res.promoted);
             pendingHops.push({ from: from, to: mv.to });
 
             // Can the same piece keep jumping? (only after a capture, and not if just crowned)
@@ -417,7 +482,7 @@
                 chaining = true;
                 selected = mv.to;
                 legalTargets = captureMoves(board, mv.to);
-                render();
+                refreshHighlights();
                 status("Keep jumping!");
                 return;
             }
@@ -425,7 +490,7 @@
             // Turn complete — mark last hop as turn-ending and relay the whole sequence.
             chaining = false;
             clearSelection();
-            render();
+            refreshHighlights();
             var hops = pendingHops.slice();
             pendingHops = [];
             for (var h = 0; h < hops.length; h++) hops[h].end = (h === hops.length - 1) ? 1 : 0;
@@ -460,8 +525,8 @@
                 if (!gameOver) status("Your turn.");
                 return;
             }
-            applyHop(board, seq[h].from, seq[h].to);
-            render();
+            var res = applyHopFx(seq[h].from, seq[h].to);
+            animateHop(seq[h].from, seq[h].to, res.capIdx, res.promoted);
             $.Schedule(0.35, function () { applyBotSeq(seq, h + 1); }); // step hops for visibility
         }
 
@@ -496,9 +561,9 @@
             Api.poll(code, appliedSeq, function (mv) {
                 if (destroyed || myToken !== pollToken) return;
                 if (mv) {
-                    applyHop(board, mv.from, mv.to);
+                    var res = applyHopFx(mv.from, mv.to);
                     appliedSeq++;
-                    render();
+                    animateHop(mv.from, mv.to, res.capIdx, res.promoted);
                     if (mv.end) {
                         turn = myColor;
                         checkEnd();
@@ -533,13 +598,14 @@
         function finish(winner) {
             gameOver = true;
             clearSelection();
-            render();
+            refreshHighlights();
             status(winner === myColor ? "🏆 You win!" : "You lose.");
         }
 
         // ── boot ────────────────────────────────────────────────────────────
         buildCells();
-        render();
+        layoutPieces();
+        refreshHighlights();
         if (myTurn()) status("Your turn. You play " + (myColor === WHITE ? "white (bottom)." : "black (bottom)."));
         else { status("Opponent's turn…"); startPolling(); }
 

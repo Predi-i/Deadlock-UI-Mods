@@ -120,6 +120,16 @@
         return host;
     }
 
+    // Tear the host down whenever no request needs it. Left alive, its 640x1020
+    // invisible footprint lingered over the escape menu and killed hover on every
+    // setting. Calibration state (swap/scaleX/scaleY) lives in vars, not the panel,
+    // so dropping it costs nothing — the next request recreates it via ensureHost.
+    function releaseHost() {
+        if (!host) return;
+        try { host.DeleteAsync(0); } catch (e) {}
+        host = null;
+    }
+
     var reqCounter = 0;
 
     // ── request serialization ───────────────────────────────────────────────
@@ -137,7 +147,7 @@
     function drainQueue() {
         if (reqActive) return;
         var job = reqQueue.shift();
-        if (!job) return;
+        if (!job) { releaseHost(); return; } // idle: drop the host so it stops covering the menu
         reqActive = true;
         rawRequestNow(job.path, job.params, function (w, h) {
             reqActive = false;

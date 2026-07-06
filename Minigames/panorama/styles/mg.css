@@ -226,14 +226,22 @@
 .mg-cell.mg-target { background-color: #4b8f5a; }
 .mg-cell.mg-sel { background-color: #8a7d3f; }
 
+/* Pieces sit in an absolute overlay above the cells and are placed by JS via
+   `transform: translate3d(...)`, so a move animates as a slide. */
+.mg-pieces-layer {
+    width: 480px;                    /* 8 * 60px cells */
+    height: 480px;
+    position: absolute;
+}
 .mg-piece {
     width: 46px;
     height: 46px;
-    horizontal-align: center;
-    vertical-align: center;
+    position: absolute;
     border-radius: 50%;
     box-shadow: 0px 3px 5px 0px #00000099;
 }
+.mg-sliding { transition: transform 0.18s ease-in-out; }
+.mg-captured { opacity: 0.0; transition: opacity 0.2s ease-out, transform 0.2s ease-out; }
 .mg-white { background-color: gradient(radial, 50% 35%, 0% 0%, 70% 70%, from(#ffffff), to(#c9cdd4)); border: 2px solid #9aa0a8; }
 .mg-black { background-color: gradient(radial, 50% 35%, 0% 0%, 70% 70%, from(#4a4f57), to(#1c1f24)); border: 2px solid #0a0c0f; }
 .mg-king {
