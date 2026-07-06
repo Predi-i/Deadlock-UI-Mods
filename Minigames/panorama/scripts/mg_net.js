@@ -84,12 +84,13 @@
         if (host && host.IsValid && host.IsValid()) return host;
         var ctx = $.GetContextPanel();
         host = $.CreatePanel("Panel", ctx, "MG_NetHost");
-        host.style.position = "2px 2px 0px";
-        host.style.width = "64px";
-        host.style.height = "64px";
-        host.style.opacity = "0.02";
-        host.style.zIndex = "99999";
-        host.style.overflow = "noclip noclip";
+        try {
+            host.style.position = "2px 2px 0px";
+            host.style.width = "64px";
+            host.style.height = "64px";
+            host.style.opacity = "0.02";
+            host.style.zIndex = "99999";
+        } catch (e) { log("✗ host style exc: " + (e && e.message ? e.message : e)); }
         try { host.SetAttributeString("hittest", "false"); } catch (e) {}
         return host;
     }
@@ -98,26 +99,33 @@
 
     // Fire one request; call onDone(rawW, rawH) with the image's pixel dimensions.
     function rawRequest(path, params, onDone, onError) {
-        var h = ensureHost();
-        var img = $.CreatePanel("Image", h, "mgreq_" + (reqCounter++));
-        try { img.SetAttributeString("scaling", "none"); } catch (e) {}
-        img.style.width = "auto";
-        img.style.height = "auto";
-        img.style.position = "0px 0px 0px";
+        var img;
+        try {
+            var h = ensureHost();
+            img = $.CreatePanel("Image", h, "mgreq_" + (reqCounter++));
+            try { img.SetAttributeString("scaling", "none"); } catch (e) {}
+            img.style.width = "auto";
+            img.style.height = "auto";
+            img.style.position = "0px 0px 0px";
 
-        var qs = "rnd=" + Math.random() + "x" + reqCounter;
-        if (params) {
-            for (var k in params) {
-                if (params.hasOwnProperty(k)) {
-                    qs += "&" + k + "=" + encodeURIComponent(params[k]);
+            var qs = "rnd=" + Math.random() + "x" + reqCounter;
+            if (params) {
+                for (var k in params) {
+                    if (params.hasOwnProperty(k)) {
+                        qs += "&" + k + "=" + encodeURIComponent(params[k]);
+                    }
                 }
             }
+            // NOTE: Panorama's image loader keys off the URL extension — it will
+            // silently refuse a URL that doesn't look like an image, so paths end ".png".
+            var fullUrl = BASE_URL + path + ".png?" + qs;
+            log("→ GET " + path + ".png");
+            img.SetImage(fullUrl);
+        } catch (e) {
+            log("✗ EXC sending " + path + ": " + (e && e.message ? e.message : e));
+            if (onError) onError("exception");
+            return;
         }
-        // NOTE: Panorama's image loader keys off the URL extension — it will silently
-        // refuse a URL that doesn't look like an image. So every path ends in ".png".
-        var fullUrl = BASE_URL + path + ".png?" + qs;
-        img.SetImage(fullUrl);
-        log("→ GET " + path + ".png");
 
         var elapsed = 0;
         var finished = false;
