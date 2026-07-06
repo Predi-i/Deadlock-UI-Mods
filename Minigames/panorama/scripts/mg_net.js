@@ -38,9 +38,10 @@
     var REQ_TIMEOUT_MS = 8000;
     var POLL_STEP = 0.05;   // seconds between dimension checks
 
-    // Flip to true to show the on-screen debug console when diagnosing networking.
-    // (Every request logs its decoded w/h, so create/join issues are visible at a glance.)
-    var DEBUG = true;
+    // On-screen debug console. Ships OFF so players don't see an orange log box,
+    // but it can be toggled at runtime from the overlay (tools → Debug Log). Log
+    // lines are collected either way, so turning it on shows recent history too.
+    var DEBUG = false;
 
     // ── on-screen debug console ─────────────────────────────────────────────
     // Deadlock's dev console isn't visible to us and Cloudflare shows nothing when
@@ -72,6 +73,18 @@
         if (dbgLabel) dbgLabel.text = dbgLines.join("\n");
     }
 
+    function setDebug(on) {
+        DEBUG = !!on;
+        if (DEBUG) {
+            ensureDebug();
+            if (dbgLabel) dbgLabel.text = dbgLines.join("\n");
+        } else if (dbgPanel) {
+            try { dbgPanel.DeleteAsync(0); } catch (e) {}
+            dbgPanel = null;
+            dbgLabel = null;
+        }
+    }
+
     function log(msg) {
         try { $.Msg("[MG.Net] " + msg); } catch (e) {}
         debug(msg);
@@ -80,8 +93,12 @@
 
     // Host that carries the request images. It MUST be on-screen and not culled —
     // an off-screen / zero-opacity / occluded panel makes Panorama skip the image
-    // load entirely (which is why nothing reached the server before). We keep it
-    // tiny and near-transparent in a corner instead.
+    // load entirely (which is why nothing reached the server before). It also MUST
+    // be larger than the biggest response image (the 600x1000 probe): Panorama
+    // clamps a child image to the parent's bounds, and a clamped probe reads as the
+    // host's size, mis-calibrating the scale and corrupting every decode after it.
+    // The panel itself has no background and images render at 2% opacity, so the
+    // large footprint stays invisible.
     var host = null;
     function ensureHost() {
         if (host && host.IsValid && host.IsValid()) return host;
@@ -89,8 +106,8 @@
         host = $.CreatePanel("Panel", ctx, "MG_NetHost");
         try {
             host.style.position = "2px 2px 0px";
-            host.style.width = "200px";
-            host.style.height = "200px";
+            host.style.width = "640px";
+            host.style.height = "1020px";
             host.style.opacity = "0.02";
             host.style.zIndex = "99999";
         } catch (e) { log("✗ host style exc: " + (e && e.message ? e.message : e)); }
@@ -119,14 +136,20 @@
         reqActive = true;
         rawRequestNow(job.path, job.params, function (w, h) {
             reqActive = false;
-            try { if (job.onDone) job.onDone(w, h); } finally { drainQueue(); }
+            // Schedule gives the engine 1 frame to release memory before the next load
+            try { if (job.onDone) job.onDone(w, h); } finally { $.Schedule(0.05, drainQueue); }
         }, function (e) {
             reqActive = false;
-            try { if (job.onError) job.onError(e); } finally { drainQueue(); }
+            try { if (job.onError) job.onError(e); } finally { $.Schedule(0.05, drainQueue); }
         });
     }
 
     // Fire one request; call onDone(rawW, rawH) with the image's pixel dimensions.
+    // Once started, a request ALWAYS runs to completion (response or timeout) — there
+    // is deliberately no abort. Aborting an in-flight request silently (without firing
+    // a callback) once left `calibrating` latched true forever, deadlocking all
+    // networking. Requests are short, so the worst case is one 8s timeout; stale
+    // responses are discarded by the callers' poll tokens.
     function rawRequestNow(path, params, onDone, onError) {
         var img;
         try {
@@ -201,26 +224,81 @@
         calibrated = true;
         calibrating = false;
         var ws = calibWaiters; calibWaiters = [];
-        for (var i = 0; i < ws.length; i++) { try { ws[i](); } catch (e) {} }
+        for (var i = 0; i < ws.length; i++) { try { ws[i].go(); } catch (e) {} }
     }
 
-    function calibrate(cb) {
-        if (cb) calibWaiters.push(cb);
+    function failCalib() {
+        calibrating = false;
+        var ws = calibWaiters; calibWaiters = [];
+        for (var i = 0; i < ws.length; i++) {
+            try { if (ws[i].fail) ws[i].fail("calibration"); } catch (e) {}
+        }
+    }
+
+    // The engine's very first image load can take longer than one request timeout
+    // (~9s cold has been observed), so a single probe attempt isn't enough. Retry a
+    // few times; only if ALL attempts fail is the server treated as unreachable and
+    // pending requests get their error callback. NEVER fall back to scale=1: on a
+    // scaled UI that decodes garbage — wrong lobby codes, phantom second players,
+    // corrupted moves that eat pieces.
+    var PROBE_ATTEMPTS = 3;
+
+    function calibrate(cb, fail) {
+        if (cb) calibWaiters.push({ go: cb, fail: fail });
         if (calibrating) return;
         calibrating = true;
+        probeOnce(1);
+    }
+
+    function probeOnce(attempt) {
+        function retryOrFail(why) {
+            if (attempt < PROBE_ATTEMPTS) {
+                log("probe attempt " + attempt + " " + why + "; retrying");
+                probeOnce(attempt + 1);
+                return;
+            }
+            log("✗ probe " + why + " " + PROBE_ATTEMPTS + " times; giving up");
+            failCalib();
+        }
         rawRequest("/api/probe", null, function (w, hh) {
             // Unswapped ~ (600s, 1000s); swapped ~ (1000s, 600s). 600 < 1000, so
             // width > height means the engine swapped the two dimensions.
-            if (w > hh) { swap = true; var t = w; w = hh; hh = t; }
-            scaleX = w / PROBE_W; scaleY = hh / PROBE_H;
-            if (!(scaleX > 0.1)) scaleX = 1;
-            if (!(scaleY > 0.1)) scaleY = 1;
+            var sw = false;
+            if (w > hh) { sw = true; var t = w; w = hh; hh = t; }
+            var sx = w / PROBE_W, sy = hh / PROBE_H;
+            // Clamp detector. Panorama scales the whole UI by ONE uniform factor, so a
+            // faithfully-read probe always yields sx ≈ sy. If they diverge, the probe
+            // image was squeezed to fit a container of a different aspect ratio — the
+            // exact failure that read a 600x1000 probe as a 200x200 host and latched a
+            // bogus scale (sx=0.333, sy=0.200) that corrupted every later decode. Reject
+            // it and retry rather than calibrate to garbage. (A too-small host is the
+            // usual cause; the host is sized > probe precisely to prevent this.)
+            var lo = Math.min(sx, sy), hi = Math.max(sx, sy);
+            if (!(lo > 0.05) || (hi - lo) / hi > 0.15) {
+                log("⚠ probe distorted: raw " + w + "x" + hh + " => sx=" + sx.toFixed(3) + " sy=" + sy.toFixed(3));
+                retryOrFail("distorted");
+                return;
+            }
+            swap = sw; scaleX = sx; scaleY = sy;
             log("calibrated swap=" + swap + " scaleX=" + scaleX.toFixed(3) + " scaleY=" + scaleY.toFixed(3));
             finishCalib();
         }, function () {
-            log("probe failed; assuming swap=false scale=1");
-            finishCalib();
+            retryOrFail("failed");
         });
+    }
+
+    // Called when a response decodes to something the protocol can never produce
+    // (out-of-range code, >2 players, a non-diagonal "move"). That means the scale
+    // is stale — bad probe or a resolution change — so re-run it, throttled so a
+    // burst of bad reads doesn't stack recalibrations.
+    var lastSuspect = 0;
+    function suspectDecode(why) {
+        log("⚠ suspicious decode: " + why);
+        var now = Date.now();
+        if (now - lastSuspect < 5000) return;
+        lastSuspect = now;
+        calibrated = false;
+        calibrate();
     }
 
     function decode(w, hh) {
@@ -235,22 +313,59 @@
                 onDone(d.w, d.h);
             }, onError);
         }
-        if (calibrated) go(); else calibrate(go);
+        if (calibrated) go(); else calibrate(go, onError);
     }
 
     MG.Net = {
         request: request,
+        clearQueue: function () {
+            // Drop pending UI traffic (stale status/poll ticks from a view we just
+            // left) — their callers are token-guarded, so silence is fine. Two things
+            // are deliberately NOT touched:
+            //  - the calibration probe: dropping it would strand `calibrating` at
+            //    true and deadlock every future request;
+            //  - the active in-flight request: it finishes naturally (see
+            //    rawRequestNow), keeping loads strictly one-at-a-time.
+            var kept = [];
+            for (var i = 0; i < reqQueue.length; i++) {
+                if (reqQueue[i].path === "/api/probe") kept.push(reqQueue[i]);
+            }
+            reqQueue = kept;
+        },
         recalibrate: function (cb) { calibrated = false; calibrate(cb); },
+        setDebug: setDebug,
+        isDebug: function () { return DEBUG; },
         isConfigured: function () { return BASE_URL.indexOf("CHANGEME") < 0; },
         getBaseUrl: function () { return BASE_URL; }
     };
 
     // ── Typed protocol layer ────────────────────────────────────────────────
+    // Every decode is range-checked against what the protocol can actually produce.
+    // An impossible value means the scale calibration is stale — reject it, trigger
+    // a recalibration, and let the caller's normal error/retry path handle it.
+    // Acting on a garbage decode is what caused phantom opponents and eaten pieces.
     MG.Api = {
+        // Round-trip latency check. The FIRST request after boot pays for the
+        // engine's cold image-loader start (and calibration) — many seconds that
+        // say nothing about the server. Warm up with one request, time the second.
+        ping: function (cb, err) {
+            request("/api/ping", null, function () {
+                var start = Date.now();
+                request("/api/ping", null, function () {
+                    cb(Date.now() - start);
+                }, err);
+            }, err);
+        },
+
         create: function (game, cb, err) {
             request("/api/create", { game: game }, function (w, h) {
                 var code = w * 100 + (h - 1); // CODE = hi*100 + lo
                 log("create decoded w=" + w + " h=" + h + " => code=" + code);
+                if (code < 1000 || code > 9999) {
+                    suspectDecode("create w=" + w + " h=" + h);
+                    if (err) err("decode");
+                    return;
+                }
                 cb(code);
             }, err);
         },
@@ -259,8 +374,14 @@
         // black) or hosts a fresh public lobby and waits (HOST, +100 on the width flags it).
         quick: function (game, cb, err) {
             request("/api/quick", { game: game }, function (w, h) {
-                if (w >= 100) cb({ role: "host", code: (w - 100) * 100 + (h - 1) });
-                else cb({ role: "joiner", code: w * 100 + (h - 1) });
+                var isHost = w >= 100;
+                var code = (isHost ? w - 100 : w) * 100 + (h - 1);
+                if (code < 1000 || code > 9999) {
+                    suspectDecode("quick w=" + w + " h=" + h);
+                    if (err) err("decode");
+                    return;
+                }
+                cb({ role: isHost ? "host" : "joiner", code: code });
             }, err);
         },
 
@@ -275,15 +396,30 @@
                 if (w >= 1 && w <= 9) cb({ ok: true, game: w });
                 else if (w === 20) cb({ ok: false, reason: "missing" });
                 else if (w === 21) cb({ ok: false, reason: "full" });
-                else cb({ ok: false, reason: "error" });
+                else {
+                    suspectDecode("join w=" + w + " h=" + h);
+                    cb({ ok: false, reason: "error" });
+                }
             }, err);
         },
 
         status: function (code, cb, err) {
             request("/api/status", { code: code }, function (w, h) {
                 log("status(" + code + ") decoded w=" + w + " h=" + h);
-                if (w === 9) cb({ gone: true, players: 0 });
-                else cb({ gone: false, players: w });
+                if (w === 9) {
+                    // status is only polled while a host waits for a joiner, so a
+                    // "gone" here means the lobby was swept/closed, not that an
+                    // opponent dropped (nobody had joined yet).
+                    if (MG.UI && MG.UI.kickToMenu) MG.UI.kickToMenu("Lobby closed.");
+                    cb({ gone: true, players: 0 });
+                    return;
+                }
+                if (w !== 1 && w !== 2) {
+                    suspectDecode("status w=" + w + " h=" + h);
+                    if (err) err("decode");
+                    return;
+                }
+                cb({ gone: false, players: w });
             }, err);
         },
 
@@ -294,10 +430,25 @@
 
         poll: function (code, since, cb, err) {
             request("/api/poll", { code: code, since: since }, function (w, h) {
+                if (w === 9 && h === 9) {
+                    log("opponent disconnected (9x9 received)");
+                    if (MG.UI && MG.UI.kickToMenu) MG.UI.kickToMenu("Opponent disconnected.");
+                    return;
+                }
                 var end = w > 100 ? 1 : 0;
                 var from = (end ? w - 100 : w) - 1;
                 var to = h - 1;
                 if (from === to) { cb(null); return; }   // (1,1) => nothing new
+                // A real hop is always a diagonal between two board squares. Anything
+                // else (server error markers, mis-scaled reads) must never reach
+                // applyHop — it would clear pieces along an arbitrary line.
+                var fr = (from / 8) | 0, fc = from % 8, tr = (to / 8) | 0, tc = to % 8;
+                if (from < 0 || from > 63 || to < 0 || to > 63 ||
+                    Math.abs(tr - fr) !== Math.abs(tc - fc)) {
+                    suspectDecode("poll w=" + w + " h=" + h);
+                    if (err) err("decode");
+                    return;
+                }
                 cb({ from: from, to: to, end: end, seq: since + 1 });
             }, err);
         },
@@ -307,6 +458,13 @@
                 function (w, h) { if (cb) cb(w < 9); }, err);
         }
     };
+
+    // Kick calibration off early: it absorbs the engine's slow first image load and
+    // the probe round-trip while the player is still in menus, instead of adding
+    // seconds (or a mis-calibration) to their first Create/Join/Quick click.
+    if (MG.Net.isConfigured()) {
+        $.Schedule(5.0, function () { if (!calibrated && !calibrating) calibrate(); });
+    }
 
     log("loaded (configured=" + MG.Net.isConfigured() + ")");
 })();

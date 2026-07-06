@@ -26,6 +26,7 @@
     var activeGame = null;        // { destroy }
     var currentCode = 0;
     var statusPollToken = 0;
+    var selfTestToken = 0;
 
     // ── escape-menu button injection ────────────────────────────────────────
     function findAnchor() {
@@ -100,13 +101,31 @@
     function setStatus(t) { if (statusLabel) statusLabel.text = t || ""; }
     function setTitle(t) { if (titleLabel) titleLabel.text = t; }
 
+    function cleanupCurrentView(cancelServer) {
+        // Stop any background polling and drop pending requests from the queue
+        statusPollToken++;
+        selfTestToken++;
+        if (MG.Net && MG.Net.clearQueue) try { MG.Net.clearQueue(); } catch (e) {}
+        
+        // Only cancel the server lobby if the player explicitly left or closed the menu
+        if (cancelServer && currentCode && (view === "waiting" || view === "game")) {
+            try { MG.Api.cancel(currentCode); } catch (e) {}
+        }
+        
+        // Destroy active game if any
+        if (activeGame) { 
+            try { activeGame.destroy(); } catch (e) {} 
+            activeGame = null; 
+        }
+    }
+
     function clearBody() {
-        if (activeGame) { try { activeGame.destroy(); } catch (e) {} activeGame = null; }
         if (modalBody) modalBody.RemoveAndDeleteChildren();
     }
 
     // ── views ───────────────────────────────────────────────────────────────
     function renderMenu() {
+        cleanupCurrentView(true);
         view = "menu";
         setTitle("Minigames");
         clearBody();
@@ -189,6 +208,97 @@
         botBtn.AddClass("mg-btn-bot");
         var bl = $.CreatePanel("Label", botBtn, ""); bl.text = "Play vs Bot";
         botBtn.SetPanelEvent("onactivate", function () { startBotGame(); });
+
+        // ── Tools: connection tester, online self-test, debug log toggle ──
+        var toolsDiv = $.CreatePanel("Label", modalBody, "");
+        toolsDiv.AddClass("mg-divider");
+        toolsDiv.text = "— tools —";
+
+        var toolsRow = $.CreatePanel("Panel", modalBody, "");
+        toolsRow.AddClass("mg-actions");
+
+        var pingBtn = $.CreatePanel("Button", toolsRow, "");
+        pingBtn.AddClass("mg-btn");
+        pingBtn.AddClass("mg-btn-bot"); // Reuse the dark green bot styling for tools
+        var plbl = $.CreatePanel("Label", pingBtn, "");
+        plbl.text = "Test Connection";
+        pingBtn.SetPanelEvent("onactivate", function () {
+            if (!MG.Net.isConfigured()) { setStatus("⚠ Configure the server first."); return; }
+            setStatus("Pinging server…");
+            MG.Api.ping(function (ms) {
+                setStatus("✅ Ping: " + ms + "ms. Connection is working!");
+            }, function () {
+                setStatus("❌ Ping failed — server unreachable.");
+            });
+        });
+
+        var stBtn = $.CreatePanel("Button", toolsRow, "");
+        stBtn.AddClass("mg-btn");
+        stBtn.AddClass("mg-btn-bot");
+        var stlbl = $.CreatePanel("Label", stBtn, "");
+        stlbl.text = "Self-Test";
+        stBtn.SetPanelEvent("onactivate", function () { runSelfTest(); });
+
+        var dbgBtn = $.CreatePanel("Button", toolsRow, "");
+        dbgBtn.AddClass("mg-btn");
+        dbgBtn.AddClass("mg-btn-bot");
+        var dbglbl = $.CreatePanel("Label", dbgBtn, "");
+        function dbgText() { return MG.Net.isDebug && MG.Net.isDebug() ? "Hide Debug Log" : "Debug Log"; }
+        dbglbl.text = dbgText();
+        dbgBtn.SetPanelEvent("onactivate", function () {
+            if (!MG.Net.setDebug) return;
+            MG.Net.setDebug(!MG.Net.isDebug());
+            dbglbl.text = dbgText();
+        });
+    }
+
+    // ── online self-test ──────────────────────────────────────────────────────
+    // Exercises the full lobby protocol against the REAL server from one client:
+    // ping → create → status → join own lobby → move → poll the move back → cancel.
+    // Verifies exactly the paths a two-player game uses, no second person needed.
+    // (Actual gameplay can be tested offline via Play vs Bot.)
+    function runSelfTest() {
+        if (!MG.Net.isConfigured()) { setStatus("⚠ Configure the server first."); return; }
+        var t = ++selfTestToken;
+        function alive() { return t === selfTestToken; }
+        function fail(what) { if (alive()) setStatus("❌ Self-test failed at: " + what); }
+        function step(n, what) { if (alive()) setStatus("Self-test " + n + "/6: " + what); }
+
+        step(1, "ping…");
+        MG.Api.ping(function (ms) {
+            if (!alive()) return;
+            step(2, "creating a test lobby…");
+            MG.Api.create(1, function (code) {
+                if (!alive()) return;
+                // Always tidy up the test lobby, pass or fail.
+                function cleanup() { try { MG.Api.cancel(code); } catch (e) {} }
+                step(3, "reading lobby status…");
+                MG.Api.status(code, function (st) {
+                    if (!alive()) return;
+                    if (st.gone || st.players !== 1) { cleanup(); fail("status (got " + st.players + " players, expected 1)"); return; }
+                    step(4, "joining own lobby…");
+                    MG.Api.join(code, function (res) {
+                        if (!alive()) return;
+                        if (!res.ok || res.game !== 1) { cleanup(); fail("join (" + (res.reason || "game=" + res.game) + ")"); return; }
+                        step(5, "relaying a test move…");
+                        MG.Api.move(code, 8, 17, 1, function (ok) {
+                            if (!alive()) return;
+                            if (!ok) { cleanup(); fail("move (rejected)"); return; }
+                            step(6, "polling the move back…");
+                            MG.Api.poll(code, 0, function (mv) {
+                                cleanup();
+                                if (!alive()) return;
+                                if (mv && mv.from === 8 && mv.to === 17 && mv.end === 1) {
+                                    setStatus("✅ Self-test passed — lobby, join, move & poll all work. Ping " + ms + "ms.");
+                                } else {
+                                    fail("poll (move came back wrong)");
+                                }
+                            }, function () { cleanup(); fail("poll (no response)"); });
+                        }, function () { cleanup(); fail("move (no response)"); });
+                    }, function () { cleanup(); fail("join (no response)"); });
+                }, function () { cleanup(); fail("status (no response)"); });
+            }, function () { fail("create (server unreachable or bad decode)"); });
+        }, function () { fail("ping (server unreachable)"); });
     }
 
     function startBotGame() {
@@ -200,6 +310,7 @@
     }
 
     function renderJoin() {
+        cleanupCurrentView(true);
         view = "join";
         setTitle("Join Game");
         clearBody();
@@ -232,6 +343,7 @@
     }
 
     function renderWaiting(code, isPublic) {
+        cleanupCurrentView(false);
         view = "waiting";
         setTitle(isPublic ? "Finding a Match" : "Waiting for Opponent");
         clearBody();
@@ -256,8 +368,7 @@
         cancel.AddClass("mg-btn");
         var cl = $.CreatePanel("Label", cancel, ""); cl.text = "Cancel";
         cancel.SetPanelEvent("onactivate", function () {
-            statusPollToken++;
-            try { MG.Api.cancel(code); } catch (e) {} // free the still-waiting lobby
+            // cleanupCurrentView() inside renderMenu() will handle the cancellation
             renderMenu();
         });
 
@@ -265,6 +376,7 @@
     }
 
     function renderGame(gameId, code, isHost, bot) {
+        cleanupCurrentView(false);
         view = "game";
         var g = MG.Games.byId(gameId);
         setTitle((g ? g.name : "Game") + (bot ? " (bot)" : ""));
@@ -313,7 +425,7 @@
             if (token !== statusPollToken) return;
             MG.Api.status(code, function (st) {
                 if (token !== statusPollToken) return;
-                if (st.players >= 2) { renderGame(selectedGameId, code, true); return; }
+                if (st.players === 2) { renderGame(selectedGameId, code, true); return; }
                 $.Schedule(1.5, tick);
             }, function () { $.Schedule(2.0, tick); });
         }
@@ -347,7 +459,15 @@
         if (!MG.Net.isConfigured()) { setStatus("⚠ Configure the server first (BASE_URL in mg_net.js)."); return; }
         setStatus("Connecting to " + code + "…");
         MG.Api.join(code, function (res) {
-            if (res.ok) { currentCode = code; renderGame(res.game, code, false); return; }
+            if (res.ok) {
+                // The game id must decode to a real, playable game — mounting a
+                // disabled stub would leave the host playing against a ghost.
+                var g = MG.Games.byId(res.game);
+                if (!g || !g.enabled) { setStatus("Couldn't read the lobby — please try again."); return; }
+                currentCode = code;
+                renderGame(res.game, code, false);
+                return;
+            }
             if (res.reason === "missing") setStatus("Lobby " + code + " not found.");
             else if (res.reason === "full") setStatus("Lobby is already full.");
             else setStatus("Connection error.");
@@ -362,13 +482,21 @@
     }
 
     function hideOverlay() {
-        statusPollToken++;
+        cleanupCurrentView(true);
         clearBody();
         if (overlay) overlay.style.visibility = "collapse";
         view = "menu";
     }
 
-    MG.UI = { show: showOverlay, hide: hideOverlay };
+    function kickToMenu(reason) {
+        if (view !== "game" && view !== "waiting") return;
+        log("kicked to menu: " + reason);
+        currentCode = 0; // Prevent sending cancel back to the server
+        renderMenu();
+        if (reason) setStatus("⚠ " + reason);
+    }
+
+    MG.UI = { show: showOverlay, hide: hideOverlay, kickToMenu: kickToMenu };
 
     // boot
     $.Schedule(1.0, startInjectionLoop);

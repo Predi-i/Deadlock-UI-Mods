@@ -23,6 +23,7 @@
  *
  * Routes (all GET, all return a PNG; pass &rnd=<random> to defeat engine caching):
  *   /api/probe                             -> (600, 1000)               swap + scale calibration
+ *   /api/ping                              -> (1, 1)                    UI tester route
  *   /api/create?game=G                     -> (CODE_HI, CODE_LO+1)      new PRIVATE lobby, host is player 0
  *   /api/quick?game=G                      -> JOINER (CODE_HI, CODE_LO+1) · HOST (CODE_HI+100, CODE_LO+1)
  *   /api/cancel?code=C                     -> (1,1)                     drop a still-waiting lobby
@@ -74,6 +75,7 @@ export class Hub {
 
     try {
       if (p === "/api/probe") return png(600, 1000);
+      if (p === "/api/ping") return png(1, 1);
 
       if (p === "/api/create") {
         await this.maybeSweep();
@@ -109,7 +111,7 @@ export class Hub {
 
       if (p === "/api/cancel") {
         const lobby = code ? await this.storage.get("l:" + code) : null;
-        if (lobby && lobby.players < 2) {
+        if (lobby) {
           await this.storage.delete("l:" + code);
           const waitCode = await this.storage.get("pubq:" + lobby.game);
           if (waitCode != null && Number(waitCode) === Number(code)) {
@@ -147,7 +149,7 @@ export class Hub {
 
       if (p === "/api/poll") {
         const lobby = code ? await this.storage.get("l:" + code) : null;
-        if (!lobby) return png(1, 1);              // treat gone as "nothing new"
+        if (!lobby) return png(9, 9);              // 9x9 signals lobby destroyed / opponent left
         const since = clampInt(q.get("since"), 0, 0, 100000);
         const mv = lobby.moves[since]; // 0-based; this move is seq = since+1
         if (!mv) return png(1, 1);                 // nothing new

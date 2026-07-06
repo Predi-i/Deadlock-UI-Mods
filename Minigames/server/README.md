@@ -43,7 +43,7 @@ That's it. Redeploys later are just `npx wrangler deploy` again.
 
 ## Verify it works (in a normal browser)
 
-- `<URL>/api/probe` → a **4×8** pixel PNG (the client uses it to calibrate swap+scale).
+- `<URL>/api/probe` → a **600×1000** pixel PNG (the client uses it to calibrate swap+scale).
 - `<URL>/api/create?game=1` → a small PNG like **45×92** — that encodes lobby code
   `4591` (`width*100 + (height-1)` = `45*100 + 91`).
 - `<URL>/api/status?code=4591` → **1×1** (1 player so far).
