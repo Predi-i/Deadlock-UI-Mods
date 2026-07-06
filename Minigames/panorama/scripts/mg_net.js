@@ -40,7 +40,7 @@
 
     // Flip to true to show the on-screen debug console when diagnosing networking.
     // (Every request logs its decoded w/h, so create/join issues are visible at a glance.)
-    var DEBUG = false;
+    var DEBUG = true;
 
     // ── on-screen debug console ─────────────────────────────────────────────
     // Deadlock's dev console isn't visible to us and Cloudflare shows nothing when
@@ -100,8 +100,34 @@
 
     var reqCounter = 0;
 
-    // Fire one request; call onDone(rawW, rawH) with the image's pixel dimensions.
+    // ── request serialization ───────────────────────────────────────────────
+    // Panorama's image loader wedges when several <Image> loads are in flight at once
+    // (the connections from prior requests don't free up before new ones fire, and every
+    // pending load then stalls at dims 0 until it times out). So we run requests strictly
+    // ONE AT A TIME through a FIFO queue — the poll loop + user actions can never overlap.
+    var reqQueue = [];
+    var reqActive = false;
+
     function rawRequest(path, params, onDone, onError) {
+        reqQueue.push({ path: path, params: params, onDone: onDone, onError: onError });
+        drainQueue();
+    }
+    function drainQueue() {
+        if (reqActive) return;
+        var job = reqQueue.shift();
+        if (!job) return;
+        reqActive = true;
+        rawRequestNow(job.path, job.params, function (w, h) {
+            reqActive = false;
+            try { if (job.onDone) job.onDone(w, h); } finally { drainQueue(); }
+        }, function (e) {
+            reqActive = false;
+            try { if (job.onError) job.onError(e); } finally { drainQueue(); }
+        });
+    }
+
+    // Fire one request; call onDone(rawW, rawH) with the image's pixel dimensions.
+    function rawRequestNow(path, params, onDone, onError) {
         var img;
         try {
             var h = ensureHost();
@@ -133,7 +159,12 @@
 
         var elapsed = 0;
         var finished = false;
-        function cleanup() { try { img.DeleteAsync(0); } catch (e) {} }
+        // Clear the src before deleting so the engine releases the load/connection
+        // promptly instead of holding it until the panel is garbage-collected.
+        function cleanup() {
+            try { img.SetImage(""); } catch (e) {}
+            try { img.DeleteAsync(0); } catch (e) {}
+        }
         function check() {
             if (finished) return;
             var w = img.actuallayoutwidth;
