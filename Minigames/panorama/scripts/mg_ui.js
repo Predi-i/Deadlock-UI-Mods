@@ -70,9 +70,10 @@
         overlay.AddClass("mg-overlay");
         overlay.style.visibility = "collapse";
 
+        // Backdrop: blocks clicks from reaching the game behind, but does NOT close
+        // on click — a misclick (e.g. missing a checker) must not kick you out.
         var dim = $.CreatePanel("Panel", overlay, "MG_Dim");
         dim.AddClass("mg-dim");
-        dim.SetPanelEvent("onactivate", function () { hideOverlay(); });
 
         var modal = $.CreatePanel("Panel", overlay, "MG_Modal");
         modal.AddClass("mg-modal");
@@ -85,7 +86,7 @@
         var close = $.CreatePanel("Button", header, "");
         close.AddClass("mg-close");
         var closeLbl = $.CreatePanel("Label", close, "");
-        closeLbl.text = "✕";
+        closeLbl.text = "X"; // plain ASCII: the ✕ glyph isn't in the game font
         close.SetPanelEvent("onactivate", function () { hideOverlay(); });
 
         modalBody = $.CreatePanel("Panel", modal, "MG_Body");
@@ -149,6 +150,19 @@
         joinBtn.AddClass("mg-btn");
         var jl = $.CreatePanel("Label", joinBtn, ""); jl.text = "Присоединиться";
         joinBtn.SetPanelEvent("onactivate", function () { renderJoin(); });
+
+        var botBtn = $.CreatePanel("Button", actions, "");
+        botBtn.AddClass("mg-btn");
+        var bl = $.CreatePanel("Label", botBtn, ""); bl.text = "Игра с ботом";
+        botBtn.SetPanelEvent("onactivate", function () { startBotGame(); });
+    }
+
+    function startBotGame() {
+        var g = MG.Games.byId(selectedGameId);
+        if (!g || !g.enabled) { setStatus("Выберите доступную игру."); return; }
+        // Offline: no lobby, no server. You are white (host); the bot plays black.
+        log("startBotGame game=" + selectedGameId);
+        renderGame(selectedGameId, 0, true, true);
     }
 
     function renderJoin() {
@@ -205,10 +219,10 @@
         setStatus("Ожидание игрока…");
     }
 
-    function renderGame(gameId, code, isHost) {
+    function renderGame(gameId, code, isHost, bot) {
         view = "game";
         var g = MG.Games.byId(gameId);
-        setTitle(g ? g.name : "Игра");
+        setTitle((g ? g.name : "Игра") + (bot ? " (бот)" : ""));
         clearBody();
 
         var host = $.CreatePanel("Panel", modalBody, "");
@@ -217,6 +231,7 @@
         activeGame = MG.Games.mount(gameId, host, {
             code: code,
             isHost: isHost,
+            bot: !!bot,
             onStatus: setStatus
         });
 

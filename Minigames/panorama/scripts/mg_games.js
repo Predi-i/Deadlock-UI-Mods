@@ -111,6 +111,107 @@
         return false;
     }
 
+    // ── AI (bot mode) ────────────────────────────────────────────────────────
+    // A "sequence" is a full legal turn: an array of hops [{from,to}, ...]. Multi-
+    // jumps are expanded into their full chains so the bot evaluates whole turns.
+    function captureSequencesFrom(b, i) {
+        var caps = captureMoves(b, i);
+        if (caps.length === 0) return [];
+        var seqs = [];
+        for (var k = 0; k < caps.length; k++) {
+            var mv = caps[k];
+            var nb = b.slice();
+            var res = applyHop(nb, i, mv.to);
+            if (!res.promoted && captureMoves(nb, mv.to).length > 0) {
+                var tails = captureSequencesFrom(nb, mv.to);
+                for (var t = 0; t < tails.length; t++) {
+                    seqs.push([{ from: i, to: mv.to }].concat(tails[t]));
+                }
+            } else {
+                seqs.push([{ from: i, to: mv.to }]);
+            }
+        }
+        return seqs;
+    }
+
+    function legalSequences(b, color) {
+        var i, k, seqs = [], hasCap = false;
+        for (i = 0; i < 64; i++) {
+            if (colorOf(b[i]) === color && captureMoves(b, i).length) { hasCap = true; break; }
+        }
+        if (hasCap) { // forced capture: only capture chains are legal
+            for (i = 0; i < 64; i++) {
+                if (colorOf(b[i]) !== color) continue;
+                var cs = captureSequencesFrom(b, i);
+                for (k = 0; k < cs.length; k++) seqs.push(cs[k]);
+            }
+            return seqs;
+        }
+        for (i = 0; i < 64; i++) {
+            if (colorOf(b[i]) !== color) continue;
+            var sm = simpleMoves(b, i);
+            for (k = 0; k < sm.length; k++) seqs.push([{ from: i, to: sm[k].to }]);
+        }
+        return seqs;
+    }
+
+    function applySequence(b, seq) {
+        for (var h = 0; h < seq.length; h++) applyHop(b, seq[h].from, seq[h].to);
+    }
+
+    function evalBoard(b, me) {
+        var score = 0;
+        for (var i = 0; i < 64; i++) {
+            var v = b[i]; if (!v) continue;
+            var val = isKing(v) ? 18 : 10;
+            if (v === 1) val += (7 - rowOf(i));   // white man: advance toward row 0
+            else if (v === 3) val += rowOf(i);    // black man: advance toward row 7
+            score += (colorOf(v) === me ? val : -val);
+        }
+        return score;
+    }
+
+    function minimax(b, color, me, depth, alpha, beta) {
+        var seqs = legalSequences(b, color);
+        if (seqs.length === 0) return color === me ? -100000 + depth : 100000 - depth;
+        if (depth === 0) return evalBoard(b, me);
+        var opp = color === WHITE ? BLACK : WHITE, k, nb, sc;
+        if (color === me) {
+            var best = -1e9;
+            for (k = 0; k < seqs.length; k++) {
+                nb = b.slice(); applySequence(nb, seqs[k]);
+                sc = minimax(nb, opp, me, depth - 1, alpha, beta);
+                if (sc > best) best = sc;
+                if (best > alpha) alpha = best;
+                if (alpha >= beta) break;
+            }
+            return best;
+        }
+        var worst = 1e9;
+        for (k = 0; k < seqs.length; k++) {
+            nb = b.slice(); applySequence(nb, seqs[k]);
+            sc = minimax(nb, opp, me, depth - 1, alpha, beta);
+            if (sc < worst) worst = sc;
+            if (worst < beta) beta = worst;
+            if (alpha >= beta) break;
+        }
+        return worst;
+    }
+
+    function chooseBotMove(b, color) {
+        var seqs = legalSequences(b, color);
+        if (seqs.length === 0) return null;
+        var opp = color === WHITE ? BLACK : WHITE;
+        var DEPTH = 5, best = -1e9, pick = seqs[0];
+        for (var k = 0; k < seqs.length; k++) {
+            var nb = b.slice(); applySequence(nb, seqs[k]);
+            // small random tie-break so the bot isn't perfectly repetitive
+            var sc = minimax(nb, opp, color, DEPTH - 1, -1e9, 1e9) + Math.random() * 0.5;
+            if (sc > best) { best = sc; pick = seqs[k]; }
+        }
+        return pick;
+    }
+
     // ── checkers controller ─────────────────────────────────────────────────
     function createCheckers(container, session) {
         var Api = MG.Api;
@@ -141,16 +242,23 @@
         function buildCells() {
             boardPanel.RemoveAndDeleteChildren();
             cells = [];
-            for (var d = 0; d < 64; d++) {
-                var i = fromDisplay(d);
-                var r = rowOf(i), c = colOf(i);
-                var cell = $.CreatePanel("Panel", boardPanel, "cell_" + i);
-                cell.AddClass("mg-cell");
-                cell.AddClass(isDark(r, c) ? "mg-cell-dark" : "mg-cell-light");
-                (function (square) {
-                    cell.SetPanelEvent("onactivate", function () { onCellClick(square); });
-                })(i);
-                cells[i] = cell;
+            // Build 8 explicit rows of 8 cells. Row layout can't mis-wrap the grid the
+            // way flow:right-wrap does when a border shaves a pixel off the width.
+            for (var dr = 0; dr < 8; dr++) {
+                var rowPanel = $.CreatePanel("Panel", boardPanel, "row_" + dr);
+                rowPanel.AddClass("mg-board-row");
+                for (var dc = 0; dc < 8; dc++) {
+                    var d = dr * 8 + dc;
+                    var i = fromDisplay(d);
+                    var r = rowOf(i), c = colOf(i);
+                    var cell = $.CreatePanel("Panel", rowPanel, "cell_" + i);
+                    cell.AddClass("mg-cell");
+                    cell.AddClass(isDark(r, c) ? "mg-cell-dark" : "mg-cell-light");
+                    (function (square) {
+                        cell.SetPanelEvent("onactivate", function () { onCellClick(square); });
+                    })(i);
+                    cells[i] = cell;
+                }
             }
         }
 
@@ -234,8 +342,38 @@
             for (var h = 0; h < hops.length; h++) hops[h].end = (h === hops.length - 1) ? 1 : 0;
 
             turn = (myColor === WHITE ? BLACK : WHITE); // hand off locally right away
+
+            if (session.bot) {
+                checkEnd();
+                if (!gameOver) { status("Ход бота…"); scheduleBotTurn(); }
+                return;
+            }
             status("Ход отправлен. Ждём соперника…");
             sendHops(hops, 0);
+        }
+
+        // ── bot turn (offline mode) ─────────────────────────────────────────
+        function scheduleBotTurn() { $.Schedule(0.45, botTurn); }
+
+        function botTurn() {
+            if (destroyed || gameOver) return;
+            var botColor = (myColor === WHITE ? BLACK : WHITE);
+            var seq = chooseBotMove(board, botColor);
+            if (!seq) { checkEnd(); return; } // no legal move → checkEnd declares winner
+            applyBotSeq(seq, 0);
+        }
+
+        function applyBotSeq(seq, h) {
+            if (destroyed) return;
+            if (h >= seq.length) {
+                turn = myColor;
+                checkEnd();
+                if (!gameOver) status("Ваш ход.");
+                return;
+            }
+            applyHop(board, seq[h].from, seq[h].to);
+            render();
+            $.Schedule(0.35, function () { applyBotSeq(seq, h + 1); }); // step hops for visibility
         }
 
         function sendHops(hops, i) {
@@ -280,10 +418,10 @@
                     }
                     $.Schedule(0.05, function () { pollOnce(myToken); }); // drain chain fast
                 } else {
-                    $.Schedule(1.2, function () { pollOnce(myToken); });
+                    $.Schedule(0.4, function () { pollOnce(myToken); });
                 }
             }, function () {
-                $.Schedule(1.5, function () { pollOnce(myToken); });
+                $.Schedule(0.6, function () { pollOnce(myToken); });
             });
         }
 

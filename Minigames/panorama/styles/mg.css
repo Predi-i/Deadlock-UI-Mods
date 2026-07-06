@@ -19,8 +19,8 @@
 }
 .mg-modal {
     width: 760px;
-    min-height: 520px;
-    max-height: 90%;
+    min-height: 300px;
+    max-height: 92%;
     background-color: gradient(linear, 0% 0%, 0% 100%, from(#1b2028f2), to(#12151bf7));
     border: 2px solid #3a4a5f;
     box-shadow: 0px 0px 40px 6px #000000cc;
@@ -106,15 +106,15 @@
 /* ── buttons / actions ───────────────────────────────────────────────────── */
 .mg-actions {
     width: 100%;
-    flow-children: right;
+    flow-children: right-wrap;
     horizontal-align: center;
-    margin-top: 10px;
+    margin-top: 14px;
 }
 .mg-btn {
     height: 46px;
-    min-width: 180px;
-    padding-left: 20px;
-    padding-right: 20px;
+    min-width: 160px;
+    padding-left: 18px;
+    padding-right: 18px;
     margin: 6px;
     background-color: #2a333f;
     border: 2px solid #3a4a5f;
@@ -162,11 +162,13 @@
 .mg-game-host { width: 100%; horizontal-align: center; }
 .mg-checkers { horizontal-align: center; flow-children: down; }
 .mg-board {
-    width: 480px;
-    height: 480px;
-    flow-children: right-wrap;
+    flow-children: down;              /* rows stacked; robust 8x8 grid */
     border: 3px solid #0a0d12;
     horizontal-align: center;
+}
+.mg-board-row {
+    flow-children: right;
+    height: 60px;
 }
 .mg-cell {
     width: 60px;
