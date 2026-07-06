@@ -16,6 +16,8 @@
  *   $.MG.Net.isConfigured()                     -> false until BASE_URL is set
  *   $.MG.Net.request(path, params, onDone, onErr)  raw (w,h) after swap+scale decode
  *   $.MG.Api.create(game, cb(code), err)
+ *   $.MG.Api.quick(game, cb({role,code}), err)   role = "host" | "joiner"
+ *   $.MG.Api.cancel(code, cb(ok), err)
  *   $.MG.Api.join(code, cb({ok,game,reason}), err)
  *   $.MG.Api.status(code, cb({gone,players}), err)
  *   $.MG.Api.move(code, from, to, end, cb(ok), err)
@@ -37,6 +39,7 @@
     var POLL_STEP = 0.05;   // seconds between dimension checks
 
     // Flip to true to show the on-screen debug console when diagnosing networking.
+    // (Every request logs its decoded w/h, so create/join issues are visible at a glance.)
     var DEBUG = false;
 
     // ── on-screen debug console ─────────────────────────────────────────────
@@ -155,8 +158,11 @@
         $.Schedule(POLL_STEP, check);
     }
 
-    // Calibration from /api/probe, which returns a known (4, 8) image. This tells us
-    // whether the engine reports width/height swapped, and the UI scale factor.
+    // Calibration from /api/probe, which returns a known (600, 1000) image. A LARGE
+    // reference makes the derived scale precise, so small returned values (code halves,
+    // squares 0..63) decode without rounding drift. This also tells us whether the
+    // engine reports width/height swapped.
+    var PROBE_W = 600, PROBE_H = 1000;
     var swap = false, scaleX = 1, scaleY = 1, calibrated = false, calibrating = false;
     var calibWaiters = [];
 
@@ -172,9 +178,10 @@
         if (calibrating) return;
         calibrating = true;
         rawRequest("/api/probe", null, function (w, hh) {
-            // Unswapped ~ (4s, 8s); swapped ~ (8s, 4s). 4 < 8, so width>height => swapped.
+            // Unswapped ~ (600s, 1000s); swapped ~ (1000s, 600s). 600 < 1000, so
+            // width > height means the engine swapped the two dimensions.
             if (w > hh) { swap = true; var t = w; w = hh; hh = t; }
-            scaleX = w / 4; scaleY = hh / 8;
+            scaleX = w / PROBE_W; scaleY = hh / PROBE_H;
             if (!(scaleX > 0.1)) scaleX = 1;
             if (!(scaleY > 0.1)) scaleY = 1;
             log("calibrated swap=" + swap + " scaleX=" + scaleX.toFixed(3) + " scaleY=" + scaleY.toFixed(3));
@@ -211,12 +218,29 @@
     MG.Api = {
         create: function (game, cb, err) {
             request("/api/create", { game: game }, function (w, h) {
-                cb(w * 100 + (h - 1)); // CODE = hi*100 + lo
+                var code = w * 100 + (h - 1); // CODE = hi*100 + lo
+                log("create decoded w=" + w + " h=" + h + " => code=" + code);
+                cb(code);
             }, err);
+        },
+
+        // Public quickmatch. Server either seats us into a waiting lobby (JOINER, we play
+        // black) or hosts a fresh public lobby and waits (HOST, +100 on the width flags it).
+        quick: function (game, cb, err) {
+            request("/api/quick", { game: game }, function (w, h) {
+                if (w >= 100) cb({ role: "host", code: (w - 100) * 100 + (h - 1) });
+                else cb({ role: "joiner", code: w * 100 + (h - 1) });
+            }, err);
+        },
+
+        // Drop a lobby we created but nobody joined yet (host pressed Cancel).
+        cancel: function (code, cb, err) {
+            request("/api/cancel", { code: code }, function (w, h) { if (cb) cb(true); }, err);
         },
 
         join: function (code, cb, err) {
             request("/api/join", { code: code }, function (w, h) {
+                log("join decoded w=" + w + " h=" + h);
                 if (w >= 1 && w <= 9) cb({ ok: true, game: w });
                 else if (w === 20) cb({ ok: false, reason: "missing" });
                 else if (w === 21) cb({ ok: false, reason: "full" });
@@ -226,6 +250,7 @@
 
         status: function (code, cb, err) {
             request("/api/status", { code: code }, function (w, h) {
+                log("status(" + code + ") decoded w=" + w + " h=" + h);
                 if (w === 9) cb({ gone: true, players: 0 });
                 else cb({ gone: false, players: w });
             }, err);

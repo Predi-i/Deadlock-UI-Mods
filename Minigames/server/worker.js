@@ -22,13 +22,23 @@
  * back. Every sentinel below is therefore a non-zero value.
  *
  * Routes (all GET, all return a PNG; pass &rnd=<random> to defeat engine caching):
- *   /api/probe                             -> (4, 8)                    swap + scale calibration
- *   /api/create?game=G                     -> (CODE_HI, CODE_LO+1)      new lobby, host is player 0
+ *   /api/probe                             -> (600, 1000)               swap + scale calibration
+ *   /api/create?game=G                     -> (CODE_HI, CODE_LO+1)      new PRIVATE lobby, host is player 0
+ *   /api/quick?game=G                      -> JOINER (CODE_HI, CODE_LO+1) · HOST (CODE_HI+100, CODE_LO+1)
+ *   /api/cancel?code=C                     -> (1,1)                     drop a still-waiting lobby
  *   /api/join?code=C                       -> (G,1) ok · (20,1) missing · (21,1) full
  *   /api/status?code=C                     -> (players,1) · (9,1) gone
  *   /api/move?code=C&from=F&to=T&end=E     -> (1,1) ok · (9,9) fail
  *   /api/poll?code=C&since=S               -> (from+1[+100 if end], to+1) · (1,1) nothing new
  *   /api/reset?code=C&game=G               -> (1,1)
+ *
+ * The probe returns a LARGE known image on purpose: the client derives the UI scale
+ * from it, and a big reference makes that scale precise, so every small returned value
+ * (code halves <=99, squares 0..63, the +100 flags) decodes without rounding drift.
+ *
+ * Public quickmatch keeps a single waiting slot per game under "pubq:<game>". A caller
+ * either joins the waiting lobby (becomes player 1, black) or hosts a fresh public lobby
+ * and waits. The +100 gap on the HOST width encodes the role, immune to +/-1 rounding.
  *
  * CODE = CODE_HI*100 + CODE_LO (4-digit). Squares are 0..63; from != to always, so a
  * real poll move can never decode to (1,1) — that's why (1,1) is a safe "nothing" marker.
@@ -63,15 +73,50 @@ export class Hub {
     const code = q.get("code");
 
     try {
-      if (p === "/api/probe") return png(4, 8);
+      if (p === "/api/probe") return png(600, 1000);
 
       if (p === "/api/create") {
+        await this.maybeSweep();
         const game = clampInt(q.get("game"), 1, 1, 9);
         const newCode = await this.freshCode();
-        const lobby = { game, players: 1, moves: [], t: nowSeq() };
+        const lobby = { game, players: 1, moves: [], pub: 0, t: nowSeq() };
         await this.storage.put("l:" + newCode, lobby);
         // Split the 4-digit code across both dimensions to keep them small.
         return png(Math.floor(newCode / 100), (newCode % 100) + 1);
+      }
+
+      if (p === "/api/quick") {
+        await this.maybeSweep();
+        const game = clampInt(q.get("game"), 1, 1, 9);
+        const waitCode = await this.storage.get("pubq:" + game);
+        if (waitCode) {
+          const w = await this.storage.get("l:" + waitCode);
+          if (w && w.pub && w.players < 2) {
+            w.players = 2;
+            await this.storage.put("l:" + waitCode, w);
+            await this.storage.delete("pubq:" + game);
+            return png(Math.floor(waitCode / 100), (waitCode % 100) + 1); // JOINER (black)
+          }
+          // stale/closed slot — fall through and host a fresh lobby.
+        }
+        const newCode = await this.freshCode();
+        const lobby = { game, players: 1, moves: [], pub: 1, t: nowSeq() };
+        await this.storage.put("l:" + newCode, lobby);
+        await this.storage.put("pubq:" + game, newCode);
+        // HOST (white): +100 on the width flags the role without a fragile extra value.
+        return png(Math.floor(newCode / 100) + 100, (newCode % 100) + 1);
+      }
+
+      if (p === "/api/cancel") {
+        const lobby = code ? await this.storage.get("l:" + code) : null;
+        if (lobby && lobby.players < 2) {
+          await this.storage.delete("l:" + code);
+          const waitCode = await this.storage.get("pubq:" + lobby.game);
+          if (waitCode != null && Number(waitCode) === Number(code)) {
+            await this.storage.delete("pubq:" + lobby.game);
+          }
+        }
+        return png(1, 1);
       }
 
       if (p === "/api/join") {
@@ -135,6 +180,22 @@ export class Hub {
       if (!existing) return c;
     }
     return 1000 + Math.floor(Math.random() * 9000);
+  }
+
+  // Opportunistic cleanup so a public relay's storage stays bounded. Runs at most
+  // once a minute (guarded by a stored timestamp) and only off write paths
+  // (create/quick), never on the hot poll loop. Drops lobbies idle for > 30 min.
+  async maybeSweep() {
+    const now = Date.now();
+    const last = (await this.storage.get("lastSweep")) || 0;
+    if (now - last < 60000) return;
+    await this.storage.put("lastSweep", now);
+    const all = await this.storage.list({ prefix: "l:" });
+    for (const [key, lobby] of all) {
+      if (lobby && lobby.t && now - lobby.t > 30 * 60000) {
+        await this.storage.delete(key);
+      }
+    }
   }
 }
 

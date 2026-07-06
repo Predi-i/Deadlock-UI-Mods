@@ -52,8 +52,8 @@
         lbl.AddClass("menuButtonLabel");
         lbl.text = "Minigames";
         btn.SetPanelEvent("onactivate", function () { showOverlay(); });
-        // Put it near the top of the sub-options if we can.
-        try { anchor.MoveChildBefore(btn, anchor.GetChild(0)); } catch (e) {}
+        // Leave it appended (bottom of the list); CSS lifts it up and out of the way of
+        // the native items — forcing it to the top made it overlap "Swap Hero".
         log("escape button injected");
     }
 
@@ -145,13 +145,30 @@
             })(games[i]);
         }
 
-        // Online actions grouped on one centered row.
+        // ── Public: one-button quick match against anyone. ──
+        var pubRow = $.CreatePanel("Panel", modalBody, "");
+        pubRow.AddClass("mg-actions");
+        var quickBtn = $.CreatePanel("Button", pubRow, "");
+        quickBtn.AddClass("mg-btn");
+        quickBtn.AddClass("mg-btn-primary");
+        quickBtn.AddClass("mg-btn-quick");
+        var ql = $.CreatePanel("Label", quickBtn, ""); ql.text = "Quick Match";
+        quickBtn.SetPanelEvent("onactivate", function () { startQuickMatch(); });
+
+        var pubCap = $.CreatePanel("Label", modalBody, "");
+        pubCap.AddClass("mg-caption");
+        pubCap.text = "public — get matched with anyone online";
+
+        // ── Private: play with a friend using a shared code. ──
+        var friendDiv = $.CreatePanel("Label", modalBody, "");
+        friendDiv.AddClass("mg-divider");
+        friendDiv.text = "— or play with a friend —";
+
         var actions = $.CreatePanel("Panel", modalBody, "");
         actions.AddClass("mg-actions");
 
         var createBtn = $.CreatePanel("Button", actions, "");
         createBtn.AddClass("mg-btn");
-        createBtn.AddClass("mg-btn-primary");
         var cl = $.CreatePanel("Label", createBtn, ""); cl.text = "Create Game";
         createBtn.SetPanelEvent("onactivate", function () { startCreate(); });
 
@@ -160,7 +177,7 @@
         var jl = $.CreatePanel("Label", joinBtn, ""); jl.text = "Join";
         joinBtn.SetPanelEvent("onactivate", function () { renderJoin(); });
 
-        // Offline play, visually separated below.
+        // ── Offline: vs bot. ──
         var divider = $.CreatePanel("Label", modalBody, "");
         divider.AddClass("mg-divider");
         divider.text = "— offline —";
@@ -214,26 +231,37 @@
         back.SetPanelEvent("onactivate", function () { renderMenu(); });
     }
 
-    function renderWaiting(code) {
+    function renderWaiting(code, isPublic) {
         view = "waiting";
-        setTitle("Waiting for Opponent");
+        setTitle(isPublic ? "Finding a Match" : "Waiting for Opponent");
         clearBody();
 
-        var box = $.CreatePanel("Panel", modalBody, "");
-        box.AddClass("mg-code-box");
-        var cap = $.CreatePanel("Label", box, ""); cap.AddClass("mg-code-cap"); cap.text = "Lobby code:";
-        var big = $.CreatePanel("Label", box, ""); big.AddClass("mg-code-big"); big.text = String(code);
-        var hint = $.CreatePanel("Label", box, ""); hint.AddClass("mg-code-hint");
-        hint.text = "Share this code with your friend — they click \"Join\".";
+        if (isPublic) {
+            // Public: no code to share — the server pairs us with whoever comes next.
+            var searching = $.CreatePanel("Label", modalBody, "");
+            searching.AddClass("mg-searching");
+            searching.text = "Looking for an opponent…";
+        } else {
+            var box = $.CreatePanel("Panel", modalBody, "");
+            box.AddClass("mg-code-box");
+            var cap = $.CreatePanel("Label", box, ""); cap.AddClass("mg-code-cap"); cap.text = "Lobby code:";
+            var big = $.CreatePanel("Label", box, ""); big.AddClass("mg-code-big"); big.text = String(code);
+            var hint = $.CreatePanel("Label", box, ""); hint.AddClass("mg-code-hint");
+            hint.text = "Share this code with your friend — they click \"Join\".";
+        }
 
         var row = $.CreatePanel("Panel", modalBody, "");
         row.AddClass("mg-actions");
         var cancel = $.CreatePanel("Button", row, "");
         cancel.AddClass("mg-btn");
         var cl = $.CreatePanel("Label", cancel, ""); cl.text = "Cancel";
-        cancel.SetPanelEvent("onactivate", function () { statusPollToken++; renderMenu(); });
+        cancel.SetPanelEvent("onactivate", function () {
+            statusPollToken++;
+            try { MG.Api.cancel(code); } catch (e) {} // free the still-waiting lobby
+            renderMenu();
+        });
 
-        setStatus("Waiting for a player…");
+        setStatus(isPublic ? "Searching for an opponent…" : "Waiting for a player…");
     }
 
     function renderGame(gameId, code, isHost, bot) {
@@ -290,6 +318,29 @@
             }, function () { $.Schedule(2.0, tick); });
         }
         tick();
+    }
+
+    function startQuickMatch() {
+        if (!MG.Net.isConfigured()) { setStatus("⚠ Configure the server first (BASE_URL in mg_net.js)."); return; }
+        var g = MG.Games.byId(selectedGameId);
+        if (!g || !g.enabled) { setStatus("Pick an available game."); return; }
+        setStatus("Finding a match…");
+        log("startQuickMatch game=" + selectedGameId);
+        MG.Api.quick(selectedGameId, function (res) {
+            if (res.role === "joiner") {
+                log("quick joined, code=" + res.code);
+                currentCode = res.code;
+                renderGame(selectedGameId, res.code, false); // seated by the server; we play black
+            } else {
+                log("quick hosting, code=" + res.code);
+                currentCode = res.code;
+                renderWaiting(res.code, true);
+                waitForJoiner(res.code);
+            }
+        }, function () {
+            log("quick FAILED (request errored)");
+            setStatus("Couldn't reach matchmaking. Check the server.");
+        });
     }
 
     function doJoin(code) {

@@ -1,8 +1,13 @@
 /* mg.css — styling for the Deadlock Minigames overlay + checkers board. */
 
 .mg-escape-button {
-    /* inherits nav_menu_item look; nudged down so it doesn't crowd the item above */
-    margin-top: 15px;
+    /* Lifted well above the native sub-options so it never overlaps "Swap Hero". */
+    margin-top: -450px;
+}
+.mg-escape-button Label {
+    /* Bigger, white, using the inherited in-game menu font. */
+    font-size: 24px;
+    color: #ffffff;
 }
 
 /* ── overlay + modal ─────────────────────────────────────────────────────── */
@@ -152,6 +157,26 @@
 .mg-btn-primary:hover { background-color: #4278cc; }
 .mg-btn-bot { background-color: #33463b; border-color: #4f8a63; }
 .mg-btn-bot:hover { background-color: #3c5446; border-color: #6fc487; }
+.mg-btn-quick { min-width: 240px; height: 52px; }
+.mg-btn-quick Label { font-size: 20px; font-weight: bold; }
+
+/* caption under the Quick Match button */
+.mg-caption {
+    color: #7f93a8;
+    font-size: 14px;
+    width: 100%;
+    text-align: center;
+    margin-top: 4px;
+}
+/* public-match "searching" line */
+.mg-searching {
+    color: #9fb3c8;
+    font-size: 22px;
+    width: 100%;
+    text-align: center;
+    margin-top: 24px;
+    margin-bottom: 8px;
+}
 
 /* ── join / code ─────────────────────────────────────────────────────────── */
 .mg-join-wrap { width: 100%; horizontal-align: center; margin-top: 10px; margin-bottom: 10px; }
