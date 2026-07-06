@@ -208,10 +208,18 @@
 /* ── checkers board ──────────────────────────────────────────────────────── */
 .mg-game-host { width: 100%; horizontal-align: center; }
 .mg-checkers { horizontal-align: center; flow-children: down; }
+/* The board grid and the pieces overlay are stacked siblings here. `flow-children: none`
+   parks both at the wrap's top-left so they occupy the same space (Panorama has no
+   `position: absolute`). Size = 8*60 cells + 2*3 board border = 486px. */
+.mg-board-wrap {
+    flow-children: none;
+    width: 486px;
+    height: 486px;
+    horizontal-align: center;
+}
 .mg-board {
     flow-children: down;              /* rows stacked; robust 8x8 grid */
     border: 3px solid #0a0d12;
-    horizontal-align: center;
 }
 .mg-board-row {
     flow-children: right;
@@ -226,17 +234,19 @@
 .mg-cell.mg-target { background-color: #4b8f5a; }
 .mg-cell.mg-sel { background-color: #8a7d3f; }
 
-/* Pieces sit in an absolute overlay above the cells and are placed by JS via
-   `transform: translate3d(...)`, so a move animates as a slide. */
+/* Pieces sit in an overlay above the cells and are placed by JS via
+   `transform: translate3d(...)`, so a move animates as a slide. The 3px margin lines
+   the layer up inside the board's 3px border. Its own children use flow:none so each
+   piece parks at top-left and is then moved purely by its transform. */
 .mg-pieces-layer {
     width: 480px;                    /* 8 * 60px cells */
     height: 480px;
-    position: absolute;
+    margin: 3px;
+    flow-children: none;
 }
 .mg-piece {
     width: 46px;
     height: 46px;
-    position: absolute;
     border-radius: 50%;
     box-shadow: 0px 3px 5px 0px #00000099;
 }

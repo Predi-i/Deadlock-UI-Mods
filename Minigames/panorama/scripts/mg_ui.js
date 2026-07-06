@@ -335,12 +335,17 @@
         }, function () { fail("ping (server unreachable)"); });
     }
 
+    // Bot games alternate your side each time so you don't always open as white/X.
+    // Even count → you're host (white/X, move first); odd → joiner (black/O, bot opens).
+    var botGamesStarted = 0;
+
     function startBotGame() {
         var g = MG.Games.byId(selectedGameId);
         if (!g || !g.enabled) { setStatus("Pick an available game."); return; }
-        // Offline: no lobby, no server. You are white (host); the bot plays black.
-        log("startBotGame game=" + selectedGameId);
-        renderGame(selectedGameId, 0, true, true);
+        var iAmHost = (botGamesStarted % 2) === 0;
+        botGamesStarted++;
+        log("startBotGame game=" + selectedGameId + " iAmHost=" + iAmHost);
+        renderGame(selectedGameId, 0, iAmHost, true);
     }
 
     function renderJoin() {

@@ -324,7 +324,12 @@
 
         var root = $.CreatePanel("Panel", container, "MG_CheckersRoot");
         root.AddClass("mg-checkers");
-        var boardPanel = $.CreatePanel("Panel", root, "MG_Board");
+        // The board grid and the pieces overlay must OCCUPY THE SAME SPACE. Panorama has
+        // no `position: absolute`; instead the wrap uses `flow-children: none` so both its
+        // children stack at the top-left, and the pieces layer (added last) paints on top.
+        var boardWrap = $.CreatePanel("Panel", root, "MG_BoardWrap");
+        boardWrap.AddClass("mg-board-wrap");
+        var boardPanel = $.CreatePanel("Panel", boardWrap, "MG_Board");
         boardPanel.AddClass("mg-board");
 
         // ── board geometry (must match mg.css: 60px cells, 46px pieces) ──────
@@ -361,10 +366,13 @@
                     cells[i] = cell;
                 }
             }
-            // Pieces live in an absolute overlay ABOVE the cells so they can slide across
-            // squares (transform transition). It ignores input — clicks fall through to
-            // the cells beneath, which own selection + '.mg-target' highlighting.
-            piecesLayer = $.CreatePanel("Panel", boardPanel, "MG_PiecesLayer");
+            // Pieces live in an overlay ABOVE the cells so they can slide across squares
+            // (transform transition). It is a SIBLING of the board inside the flow:none
+            // wrap — NOT a child of boardPanel (whose flow:down would push it below the
+            // rows). CSS positions it inside the board's 3px border so it aligns to cells.
+            // It ignores input — clicks fall through to the cells beneath, which own
+            // selection + '.mg-target' highlighting.
+            piecesLayer = $.CreatePanel("Panel", boardWrap, "MG_PiecesLayer");
             piecesLayer.AddClass("mg-pieces-layer");
             try { piecesLayer.SetAttributeString("hittest", "false"); } catch (e) {}
             try { piecesLayer.SetAttributeString("hittestchildren", "false"); } catch (e) {}
@@ -606,8 +614,16 @@
         buildCells();
         layoutPieces();
         refreshHighlights();
-        if (myTurn()) status("Your turn. You play " + (myColor === WHITE ? "white (bottom)." : "black (bottom)."));
-        else { status("Opponent's turn…"); startPolling(); }
+        if (myTurn()) {
+            status("Your turn. You play " + (myColor === WHITE ? "white (bottom)." : "black (bottom)."));
+        } else if (session.bot) {
+            // Offline and it's white's turn but I'm black → the bot (white) opens.
+            status("Bot is thinking…");
+            scheduleBotTurn();
+        } else {
+            status("Opponent's turn…");
+            startPolling();
+        }
 
         return {
             destroy: function () { destroyed = true; pollToken++; try { root.DeleteAsync(0); } catch (e) {} }
@@ -773,8 +789,16 @@
 
         // ── boot ─────────────────────────────────────────────────────────────
         render(null);
-        if (myTurn()) status("Your turn. You play " + (myMark === X ? "✕ (X)." : "◯ (O)."));
-        else { status("Opponent's turn…"); startPolling(); }
+        if (myTurn()) {
+            status("Your turn. You play " + (myMark === X ? "✕ (X)." : "◯ (O)."));
+        } else if (session.bot) {
+            // Offline and it's X's turn but I'm O → the bot (X) opens.
+            status("Bot is thinking…");
+            $.Schedule(0.4, botTurn);
+        } else {
+            status("Opponent's turn…");
+            startPolling();
+        }
 
         return {
             destroy: function () { destroyed = true; pollToken++; try { root.DeleteAsync(0); } catch (e) {} }
