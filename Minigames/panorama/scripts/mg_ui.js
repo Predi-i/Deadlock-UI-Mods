@@ -3,7 +3,7 @@
 /*
  * mg_ui.js — menu shell for the Deadlock Minigames mod.
  *
- *  - Injects a "Мини-игры" button into the in-game escape menu (Esc), styled like the
+ *  - Injects a "Minigames" button into the in-game escape menu (Esc), styled like the
  *    native menu items. The escape menu is created lazily, so we poll for its anchor.
  *  - Owns a full-screen overlay with the lobby flow: pick a game, Create (get a code)
  *    or Join (enter a code), then mount the game from $.MG.Games.
@@ -50,7 +50,7 @@
         btn.AddClass("mg-escape-button");
         var lbl = $.CreatePanel("Label", btn, "");
         lbl.AddClass("menuButtonLabel");
-        lbl.text = "Мини-игры";
+        lbl.text = "Minigames";
         btn.SetPanelEvent("onactivate", function () { showOverlay(); });
         // Put it near the top of the sub-options if we can.
         try { anchor.MoveChildBefore(btn, anchor.GetChild(0)); } catch (e) {}
@@ -82,7 +82,7 @@
         header.AddClass("mg-header");
         titleLabel = $.CreatePanel("Label", header, "");
         titleLabel.AddClass("mg-title");
-        titleLabel.text = "Мини-игры";
+        titleLabel.text = "Minigames";
         var close = $.CreatePanel("Button", header, "");
         close.AddClass("mg-close");
         var closeLbl = $.CreatePanel("Label", close, "");
@@ -108,9 +108,13 @@
     // ── views ───────────────────────────────────────────────────────────────
     function renderMenu() {
         view = "menu";
-        setTitle("Мини-игры");
+        setTitle("Minigames");
         clearBody();
-        setStatus(MG.Net.isConfigured() ? "" : "⚠ Сервер не настроен: впишите URL в mg_net.js (BASE_URL).");
+        setStatus(MG.Net.isConfigured() ? "" : "⚠ Server not configured: set BASE_URL in mg_net.js.");
+
+        var subtitle = $.CreatePanel("Label", modalBody, "");
+        subtitle.AddClass("mg-subtitle");
+        subtitle.text = "Play a quick game without leaving the match.";
 
         var picker = $.CreatePanel("Panel", modalBody, "");
         picker.AddClass("mg-picker");
@@ -121,45 +125,58 @@
                 card.AddClass("mg-game-card");
                 if (!g.enabled) card.AddClass("mg-disabled");
                 if (g.id === selectedGameId) card.AddClass("mg-selected");
-                var nm = $.CreatePanel("Label", card, "");
+                // Inner wrapper is vertically centered, so the name (and optional "soon"
+                // sublabel) stay centered whether or not the sublabel is present.
+                var inner = $.CreatePanel("Panel", card, "");
+                inner.AddClass("mg-game-card-inner");
+                var nm = $.CreatePanel("Label", inner, "");
                 nm.AddClass("mg-game-name");
                 nm.text = g.name;
                 if (!g.enabled) {
-                    var soon = $.CreatePanel("Label", card, "");
+                    var soon = $.CreatePanel("Label", inner, "");
                     soon.AddClass("mg-game-soon");
-                    soon.text = "скоро";
+                    soon.text = "soon";
                 }
                 card.SetPanelEvent("onactivate", function () {
-                    if (!g.enabled) { setStatus("«" + g.name + "» пока в разработке."); return; }
+                    if (!g.enabled) { setStatus("\"" + g.name + "\" is not available yet."); return; }
                     selectedGameId = g.id;
                     renderMenu();
                 });
             })(games[i]);
         }
 
+        // Online actions grouped on one centered row.
         var actions = $.CreatePanel("Panel", modalBody, "");
         actions.AddClass("mg-actions");
 
         var createBtn = $.CreatePanel("Button", actions, "");
         createBtn.AddClass("mg-btn");
         createBtn.AddClass("mg-btn-primary");
-        var cl = $.CreatePanel("Label", createBtn, ""); cl.text = "Создать игру";
+        var cl = $.CreatePanel("Label", createBtn, ""); cl.text = "Create Game";
         createBtn.SetPanelEvent("onactivate", function () { startCreate(); });
 
         var joinBtn = $.CreatePanel("Button", actions, "");
         joinBtn.AddClass("mg-btn");
-        var jl = $.CreatePanel("Label", joinBtn, ""); jl.text = "Присоединиться";
+        var jl = $.CreatePanel("Label", joinBtn, ""); jl.text = "Join";
         joinBtn.SetPanelEvent("onactivate", function () { renderJoin(); });
 
-        var botBtn = $.CreatePanel("Button", actions, "");
+        // Offline play, visually separated below.
+        var divider = $.CreatePanel("Label", modalBody, "");
+        divider.AddClass("mg-divider");
+        divider.text = "— offline —";
+
+        var actions2 = $.CreatePanel("Panel", modalBody, "");
+        actions2.AddClass("mg-actions");
+        var botBtn = $.CreatePanel("Button", actions2, "");
         botBtn.AddClass("mg-btn");
-        var bl = $.CreatePanel("Label", botBtn, ""); bl.text = "Игра с ботом";
+        botBtn.AddClass("mg-btn-bot");
+        var bl = $.CreatePanel("Label", botBtn, ""); bl.text = "Play vs Bot";
         botBtn.SetPanelEvent("onactivate", function () { startBotGame(); });
     }
 
     function startBotGame() {
         var g = MG.Games.byId(selectedGameId);
-        if (!g || !g.enabled) { setStatus("Выберите доступную игру."); return; }
+        if (!g || !g.enabled) { setStatus("Pick an available game."); return; }
         // Offline: no lobby, no server. You are white (host); the bot plays black.
         log("startBotGame game=" + selectedGameId);
         renderGame(selectedGameId, 0, true, true);
@@ -167,9 +184,9 @@
 
     function renderJoin() {
         view = "join";
-        setTitle("Присоединиться");
+        setTitle("Join Game");
         clearBody();
-        setStatus("Введите код лобби от друга.");
+        setStatus("Enter your friend's lobby code.");
 
         var wrap = $.CreatePanel("Panel", modalBody, "");
         wrap.AddClass("mg-join-wrap");
@@ -184,45 +201,45 @@
 
         var go = $.CreatePanel("Button", row, "");
         go.AddClass("mg-btn"); go.AddClass("mg-btn-primary");
-        var gl = $.CreatePanel("Label", go, ""); gl.text = "Войти";
+        var gl = $.CreatePanel("Label", go, ""); gl.text = "Join";
         go.SetPanelEvent("onactivate", function () {
             var code = parseInt(String(entry.text || "").replace(/[^0-9]/g, ""), 10);
-            if (!code || code < 1000 || code > 9999) { setStatus("Код — это 4 цифры."); return; }
+            if (!code || code < 1000 || code > 9999) { setStatus("The code is 4 digits."); return; }
             doJoin(code);
         });
 
         var back = $.CreatePanel("Button", row, "");
         back.AddClass("mg-btn");
-        var bl = $.CreatePanel("Label", back, ""); bl.text = "Назад";
+        var bl = $.CreatePanel("Label", back, ""); bl.text = "Back";
         back.SetPanelEvent("onactivate", function () { renderMenu(); });
     }
 
     function renderWaiting(code) {
         view = "waiting";
-        setTitle("Ожидание соперника");
+        setTitle("Waiting for Opponent");
         clearBody();
 
         var box = $.CreatePanel("Panel", modalBody, "");
         box.AddClass("mg-code-box");
-        var cap = $.CreatePanel("Label", box, ""); cap.AddClass("mg-code-cap"); cap.text = "Код лобби:";
+        var cap = $.CreatePanel("Label", box, ""); cap.AddClass("mg-code-cap"); cap.text = "Lobby code:";
         var big = $.CreatePanel("Label", box, ""); big.AddClass("mg-code-big"); big.text = String(code);
         var hint = $.CreatePanel("Label", box, ""); hint.AddClass("mg-code-hint");
-        hint.text = "Передайте этот код другу — пусть нажмёт «Присоединиться».";
+        hint.text = "Share this code with your friend — they click \"Join\".";
 
         var row = $.CreatePanel("Panel", modalBody, "");
         row.AddClass("mg-actions");
         var cancel = $.CreatePanel("Button", row, "");
         cancel.AddClass("mg-btn");
-        var cl = $.CreatePanel("Label", cancel, ""); cl.text = "Отмена";
+        var cl = $.CreatePanel("Label", cancel, ""); cl.text = "Cancel";
         cancel.SetPanelEvent("onactivate", function () { statusPollToken++; renderMenu(); });
 
-        setStatus("Ожидание игрока…");
+        setStatus("Waiting for a player…");
     }
 
     function renderGame(gameId, code, isHost, bot) {
         view = "game";
         var g = MG.Games.byId(gameId);
-        setTitle((g ? g.name : "Игра") + (bot ? " (бот)" : ""));
+        setTitle((g ? g.name : "Game") + (bot ? " (bot)" : ""));
         clearBody();
 
         var host = $.CreatePanel("Panel", modalBody, "");
@@ -239,16 +256,16 @@
         row.AddClass("mg-actions");
         var leave = $.CreatePanel("Button", row, "");
         leave.AddClass("mg-btn");
-        var ll = $.CreatePanel("Label", leave, ""); ll.text = "Выйти";
+        var ll = $.CreatePanel("Label", leave, ""); ll.text = "Leave";
         leave.SetPanelEvent("onactivate", function () { renderMenu(); });
     }
 
     // ── lobby flow ────────────────────────────────────────────────────────────
     function startCreate() {
-        if (!MG.Net.isConfigured()) { setStatus("⚠ Сначала настройте сервер (BASE_URL в mg_net.js)."); return; }
+        if (!MG.Net.isConfigured()) { setStatus("⚠ Configure the server first (BASE_URL in mg_net.js)."); return; }
         var g = MG.Games.byId(selectedGameId);
-        if (!g || !g.enabled) { setStatus("Выберите доступную игру."); return; }
-        setStatus("Создаём лобби…");
+        if (!g || !g.enabled) { setStatus("Pick an available game."); return; }
+        setStatus("Creating lobby…");
         log("startCreate game=" + selectedGameId + " base=" + MG.Net.getBaseUrl());
         MG.Api.create(selectedGameId, function (code) {
             log("create ok, code=" + code);
@@ -257,7 +274,7 @@
             waitForJoiner(code);
         }, function () {
             log("create FAILED (request errored)");
-            setStatus("Не удалось создать лобби. Проверьте сервер.");
+            setStatus("Couldn't create lobby. Check the server.");
         });
     }
 
@@ -276,14 +293,14 @@
     }
 
     function doJoin(code) {
-        if (!MG.Net.isConfigured()) { setStatus("⚠ Сначала настройте сервер (BASE_URL в mg_net.js)."); return; }
-        setStatus("Подключаемся к " + code + "…");
+        if (!MG.Net.isConfigured()) { setStatus("⚠ Configure the server first (BASE_URL in mg_net.js)."); return; }
+        setStatus("Connecting to " + code + "…");
         MG.Api.join(code, function (res) {
             if (res.ok) { currentCode = code; renderGame(res.game, code, false); return; }
-            if (res.reason === "missing") setStatus("Лобби " + code + " не найдено.");
-            else if (res.reason === "full") setStatus("Лобби уже заполнено.");
-            else setStatus("Ошибка подключения.");
-        }, function () { setStatus("Сервер недоступен."); });
+            if (res.reason === "missing") setStatus("Lobby " + code + " not found.");
+            else if (res.reason === "full") setStatus("Lobby is already full.");
+            else setStatus("Connection error.");
+        }, function () { setStatus("Server unavailable."); });
     }
 
     // ── show / hide ───────────────────────────────────────────────────────────

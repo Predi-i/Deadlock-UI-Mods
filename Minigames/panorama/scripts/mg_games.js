@@ -3,9 +3,9 @@
 /*
  * mg_games.js — game logic + rendering for the Deadlock Minigames mod.
  *
- * Currently ships online Checkers (English draughts rules: men move/capture forward
- * only, non-flying kings, forced capture, multi-jump). Tic-tac-toe and Durak are
- * registered as disabled placeholders in the picker.
+ * Currently ships online Checkers (Russian draughts rules: men move forward but
+ * capture in any diagonal direction, flying kings, forced capture, multi-jump).
+ * Tic-Tac-Toe and Durak are registered as disabled placeholders in the picker.
  *
  * Networking is client-authoritative: each player validates and applies moves locally,
  * then relays each hop through $.MG.Api (see mg_net.js). Squares are 0..63 on a fixed
@@ -49,32 +49,63 @@
         return b;
     }
 
-    // Movement directions for a piece value: men forward only, kings all four.
+    // Men move forward only; kings slide any distance along a diagonal ("flying").
+    var ALL_DIRS = [[-1, -1], [-1, 1], [1, -1], [1, 1]];
     function moveDirs(v) {
-        if (v === 1) return [[-1, -1], [-1, 1]];             // white man up
-        if (v === 3) return [[1, -1], [1, 1]];              // black man down
-        return [[-1, -1], [-1, 1], [1, -1], [1, 1]];        // king
+        if (v === 1) return [[-1, -1], [-1, 1]]; // white man: up
+        if (v === 3) return [[1, -1], [1, 1]];   // black man: down
+        return ALL_DIRS;                          // king: all four
     }
 
     function simpleMoves(b, i) {
         var v = b[i]; if (!v) return [];
-        var r = rowOf(i), c = colOf(i), dirs = moveDirs(v), out = [];
-        for (var k = 0; k < dirs.length; k++) {
-            var nr = r + dirs[k][0], nc = c + dirs[k][1];
-            if (inBounds(nr, nc) && b[idx(nr, nc)] === 0) out.push({ to: idx(nr, nc) });
+        var r = rowOf(i), c = colOf(i), out = [];
+        if (isKing(v)) {
+            // Flying king: any number of empty squares along each diagonal.
+            for (var k = 0; k < 4; k++) {
+                var dr = ALL_DIRS[k][0], dc = ALL_DIRS[k][1];
+                var nr = r + dr, nc = c + dc;
+                while (inBounds(nr, nc) && b[idx(nr, nc)] === 0) {
+                    out.push({ to: idx(nr, nc) });
+                    nr += dr; nc += dc;
+                }
+            }
+            return out;
+        }
+        var dirs = moveDirs(v); // forward only for men
+        for (var m = 0; m < dirs.length; m++) {
+            var pr = r + dirs[m][0], pc = c + dirs[m][1];
+            if (inBounds(pr, pc) && b[idx(pr, pc)] === 0) out.push({ to: idx(pr, pc) });
         }
         return out;
     }
 
+    // Men capture in ANY diagonal direction (forward or backward), one square over.
+    // A flying king slides over empties, takes exactly one enemy, and may land on
+    // any empty square beyond it.
     function captureMoves(b, i) {
         var v = b[i]; if (!v) return [];
-        var color = colorOf(v), r = rowOf(i), c = colOf(i), dirs = moveDirs(v), out = [];
-        for (var k = 0; k < dirs.length; k++) {
-            var mr = r + dirs[k][0], mc = c + dirs[k][1];       // enemy square
-            var lr = r + 2 * dirs[k][0], lc = c + 2 * dirs[k][1]; // landing square
-            if (!inBounds(lr, lc)) continue;
-            if (b[idx(lr, lc)] !== 0) continue;
-            if (isEnemy(b[idx(mr, mc)], color)) out.push({ to: idx(lr, lc), cap: idx(mr, mc) });
+        var color = colorOf(v), r = rowOf(i), c = colOf(i), out = [];
+        if (isKing(v)) {
+            for (var k = 0; k < 4; k++) {
+                var dr = ALL_DIRS[k][0], dc = ALL_DIRS[k][1];
+                var nr = r + dr, nc = c + dc;
+                while (inBounds(nr, nc) && b[idx(nr, nc)] === 0) { nr += dr; nc += dc; }
+                if (!inBounds(nr, nc) || !isEnemy(b[idx(nr, nc)], color)) continue;
+                var cap = idx(nr, nc);
+                var lr = nr + dr, lc = nc + dc;
+                while (inBounds(lr, lc) && b[idx(lr, lc)] === 0) {
+                    out.push({ to: idx(lr, lc), cap: cap });
+                    lr += dr; lc += dc;
+                }
+            }
+            return out;
+        }
+        for (var k2 = 0; k2 < 4; k2++) {
+            var mr = r + ALL_DIRS[k2][0], mc = c + ALL_DIRS[k2][1];         // enemy square
+            var lr2 = r + 2 * ALL_DIRS[k2][0], lc2 = c + 2 * ALL_DIRS[k2][1]; // landing
+            if (!inBounds(lr2, lc2) || b[idx(lr2, lc2)] !== 0) continue;
+            if (isEnemy(b[idx(mr, mc)], color)) out.push({ to: idx(lr2, lc2), cap: idx(mr, mc) });
         }
         return out;
     }
@@ -86,19 +117,25 @@
         return false;
     }
 
-    // Apply a single hop in place. Returns {captured, promoted}.
+    // Apply a single hop in place. Any piece on the diagonal between `from` and `to`
+    // is captured — this covers both a man's 1-over jump and a flying king's ranged
+    // capture without needing the captured square passed in (keeps the net protocol
+    // just {from,to,end}). Returns {captured, promoted}.
     function applyHop(b, from, to) {
         var v = b[from];
         b[from] = 0;
+        var fr = rowOf(from), fc = colOf(from), tr = rowOf(to), tc = colOf(to);
+        var dr = tr > fr ? 1 : -1, dc = tc > fc ? 1 : -1;
         var captured = false;
-        if (Math.abs(rowOf(to) - rowOf(from)) === 2) {
-            var mid = idx((rowOf(from) + rowOf(to)) / 2, (colOf(from) + colOf(to)) / 2);
-            b[mid] = 0;
-            captured = true;
+        var r = fr + dr, c = fc + dc;
+        while (r !== tr || c !== tc) {
+            var j = idx(r, c);
+            if (b[j] !== 0) { b[j] = 0; captured = true; }
+            r += dr; c += dc;
         }
         var promoted = false;
-        if (v === 1 && rowOf(to) === 0) { v = 2; promoted = true; }
-        else if (v === 3 && rowOf(to) === 7) { v = 4; promoted = true; }
+        if (v === 1 && tr === 0) { v = 2; promoted = true; }
+        else if (v === 3 && tr === 7) { v = 4; promoted = true; }
         b[to] = v;
         return { captured: captured, promoted: promoted };
     }
@@ -163,7 +200,7 @@
         var score = 0;
         for (var i = 0; i < 64; i++) {
             var v = b[i]; if (!v) continue;
-            var val = isKing(v) ? 18 : 10;
+            var val = isKing(v) ? 25 : 10; // flying kings are worth far more than a man
             if (v === 1) val += (7 - rowOf(i));   // white man: advance toward row 0
             else if (v === 3) val += rowOf(i);    // black man: advance toward row 7
             score += (colorOf(v) === me ? val : -val);
@@ -309,7 +346,7 @@
             // Otherwise (re)select one of my pieces that actually has a legal move.
             if (colorOf(board[i]) === myColor) {
                 var tg = targetsFor(i);
-                if (tg.length === 0) { status("Эта шашка не может ходить."); return; }
+                if (tg.length === 0) { status("That piece has no legal move."); return; }
                 selected = i;
                 legalTargets = tg;
                 render();
@@ -329,7 +366,7 @@
                 selected = mv.to;
                 legalTargets = captureMoves(board, mv.to);
                 render();
-                status("Продолжайте взятие!");
+                status("Keep jumping!");
                 return;
             }
 
@@ -345,10 +382,10 @@
 
             if (session.bot) {
                 checkEnd();
-                if (!gameOver) { status("Ход бота…"); scheduleBotTurn(); }
+                if (!gameOver) { status("Bot is thinking…"); scheduleBotTurn(); }
                 return;
             }
-            status("Ход отправлен. Ждём соперника…");
+            status("Move sent. Waiting for opponent…");
             sendHops(hops, 0);
         }
 
@@ -368,7 +405,7 @@
             if (h >= seq.length) {
                 turn = myColor;
                 checkEnd();
-                if (!gameOver) status("Ваш ход.");
+                if (!gameOver) status("Your turn.");
                 return;
             }
             applyHop(board, seq[h].from, seq[h].to);
@@ -413,7 +450,7 @@
                     if (mv.end) {
                         turn = myColor;
                         checkEnd();
-                        if (!gameOver) status("Ваш ход.");
+                        if (!gameOver) status("Your turn.");
                         return; // stop polling; wait for player input
                     }
                     $.Schedule(0.05, function () { pollOnce(myToken); }); // drain chain fast
@@ -440,14 +477,14 @@
             gameOver = true;
             clearSelection();
             render();
-            status(winner === myColor ? "🏆 Вы победили!" : "Вы проиграли.");
+            status(winner === myColor ? "🏆 You win!" : "You lose.");
         }
 
         // ── boot ────────────────────────────────────────────────────────────
         buildCells();
         render();
-        if (myTurn()) status("Ваш ход. Вы играете " + (myColor === WHITE ? "белыми (снизу)." : "чёрными (снизу)."));
-        else { status("Ход соперника…"); startPolling(); }
+        if (myTurn()) status("Your turn. You play " + (myColor === WHITE ? "white (bottom)." : "black (bottom)."));
+        else { status("Opponent's turn…"); startPolling(); }
 
         return {
             destroy: function () { destroyed = true; pollToken++; try { root.DeleteAsync(0); } catch (e) {} }
@@ -460,15 +497,15 @@
         root.AddClass("mg-stub");
         var l = $.CreatePanel("Label", root, "");
         l.AddClass("mg-stub-label");
-        l.text = (name || "Эта игра") + " — скоро.";
+        l.text = (name || "This game") + " — coming soon.";
         return { destroy: function () { try { root.DeleteAsync(0); } catch (e) {} } };
     }
 
     MG.Games = {
         list: [
-            { id: 1, key: "checkers", name: "Шашки", enabled: true },
-            { id: 2, key: "tictactoe", name: "Крестики-нолики", enabled: false },
-            { id: 3, key: "durak", name: "Дурак", enabled: false }
+            { id: 1, key: "checkers", name: "Checkers", enabled: true },
+            { id: 2, key: "tictactoe", name: "Tic-Tac-Toe", enabled: false },
+            { id: 3, key: "durak", name: "Durak", enabled: false }
         ],
         byId: function (id) {
             var l = this.list;

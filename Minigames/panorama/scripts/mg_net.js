@@ -36,8 +36,8 @@
     var REQ_TIMEOUT_MS = 8000;
     var POLL_STEP = 0.05;   // seconds between dimension checks
 
-    // Flip to false to silence the on-screen debug console once things work.
-    var DEBUG = true;
+    // Flip to true to show the on-screen debug console when diagnosing networking.
+    var DEBUG = false;
 
     // ── on-screen debug console ─────────────────────────────────────────────
     // Deadlock's dev console isn't visible to us and Cloudflare shows nothing when

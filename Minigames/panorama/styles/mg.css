@@ -33,13 +33,32 @@
 .mg-header {
     width: 100%;
     flow-children: right;
-    margin-bottom: 14px;
+    margin-bottom: 16px;
+    padding-bottom: 12px;
+    border-bottom: 2px solid #2b3644;
 }
 .mg-title {
     color: #e7eef7;
     font-size: 28px;
     font-weight: bold;
     width: fill-parent-flow(1.0);
+    text-shadow: 0px 2px 6px #000000aa;
+}
+.mg-subtitle {
+    color: #8aa0b6;
+    font-size: 16px;
+    width: 100%;
+    text-align: center;
+    margin-bottom: 18px;
+}
+.mg-divider {
+    color: #6b7d90;
+    font-size: 14px;
+    width: 100%;
+    text-align: center;
+    margin-top: 18px;
+    margin-bottom: 2px;
+    letter-spacing: 2px;
 }
 .mg-close {
     width: 34px;
@@ -71,30 +90,35 @@
 
 /* ── game picker ─────────────────────────────────────────────────────────── */
 .mg-picker {
-    width: 100%;
+    width: fit-children;
     flow-children: right;
     horizontal-align: center;
-    margin-bottom: 22px;
+    margin-bottom: 20px;
 }
 .mg-game-card {
-    width: 210px;
-    height: 120px;
+    width: 200px;
+    height: 116px;
     margin: 8px;
-    background-color: #232b36;
+    background-color: gradient(linear, 0% 0%, 0% 100%, from(#28313d), to(#1d242e));
     border: 2px solid #33404f;
-    border-radius: 6px;
+    border-top: 3px solid #46566a;
+    border-radius: 8px;
     flow-children: down;
-    horizontal-align: center;
+    transition: border-color 0.12s ease-in-out, background-color 0.12s ease-in-out;
 }
-.mg-game-card:hover { border-color: #5a86c9; background-color: #29323f; }
-.mg-selected { border-color: #6ea8ff; box-shadow: 0px 0px 16px 2px #6ea8ff66; }
+.mg-game-card:hover { border-color: #5a86c9; border-top-color: #7fb0ff; }
+.mg-selected { border-color: #6ea8ff; border-top-color: #6ea8ff; box-shadow: 0px 0px 16px 2px #6ea8ff66; }
 .mg-disabled { saturation: 0.2; opacity: 0.5; }
+.mg-game-card-inner {
+    width: 100%;
+    flow-children: down;
+    vertical-align: center;
+}
 .mg-game-name {
     color: #e7eef7;
     font-size: 20px;
     font-weight: bold;
     horizontal-align: center;
-    vertical-align: center;
 }
 .mg-game-soon {
     color: #ffcf6e;
@@ -105,10 +129,10 @@
 
 /* ── buttons / actions ───────────────────────────────────────────────────── */
 .mg-actions {
-    width: 100%;
-    flow-children: right-wrap;
+    width: fit-children;
+    flow-children: right;
     horizontal-align: center;
-    margin-top: 14px;
+    margin-top: 12px;
 }
 .mg-btn {
     height: 46px;
@@ -119,7 +143,7 @@
     background-color: #2a333f;
     border: 2px solid #3a4a5f;
     border-radius: 5px;
-    horizontal-align: center;
+    transition: background-color 0.12s ease-in-out, border-color 0.12s ease-in-out;
 }
 .mg-btn Label {
     color: #e7eef7;
@@ -130,6 +154,8 @@
 .mg-btn:hover { background-color: #34404e; border-color: #5a86c9; }
 .mg-btn-primary { background-color: #3767b0; border-color: #5a86c9; }
 .mg-btn-primary:hover { background-color: #4278cc; }
+.mg-btn-bot { background-color: #33463b; border-color: #4f8a63; }
+.mg-btn-bot:hover { background-color: #3c5446; border-color: #6fc487; }
 
 /* ── join / code ─────────────────────────────────────────────────────────── */
 .mg-join-wrap { width: 100%; horizontal-align: center; margin-top: 10px; margin-bottom: 10px; }
