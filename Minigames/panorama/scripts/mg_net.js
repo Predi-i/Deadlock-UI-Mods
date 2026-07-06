@@ -86,8 +86,8 @@
         host = $.CreatePanel("Panel", ctx, "MG_NetHost");
         try {
             host.style.position = "2px 2px 0px";
-            host.style.width = "64px";
-            host.style.height = "64px";
+            host.style.width = "200px";
+            host.style.height = "200px";
             host.style.opacity = "0.02";
             host.style.zIndex = "99999";
         } catch (e) { log("✗ host style exc: " + (e && e.message ? e.message : e)); }
@@ -103,9 +103,10 @@
         try {
             var h = ensureHost();
             img = $.CreatePanel("Image", h, "mgreq_" + (reqCounter++));
-            try { img.SetAttributeString("scaling", "none"); } catch (e) {}
-            img.style.width = "auto";
-            img.style.height = "auto";
+            // Do NOT set width/height/scaling: Panorama rejects width:auto and any
+            // explicit size would override the intrinsic pixel size we need to read.
+            // Left unset, the Image lays out at the PNG's real dimensions (proven by
+            // the dummyimage test that reported 123x456 correctly).
             img.style.position = "0px 0px 0px";
 
             var qs = "rnd=" + Math.random() + "x" + reqCounter;
