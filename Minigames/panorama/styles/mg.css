@@ -1,7 +1,8 @@
 /* mg.css — styling for the Deadlock Minigames overlay + checkers board. */
 
 .mg-escape-button {
-    /* inherits nav_menu_item look; a subtle accent so it stands out */
+    /* inherits nav_menu_item look; nudged down so it doesn't crowd the item above */
+    margin-top: 15px;
 }
 
 /* ── overlay + modal ─────────────────────────────────────────────────────── */
@@ -35,14 +36,12 @@
     flow-children: right;
     margin-bottom: 16px;
     padding-bottom: 12px;
-    border-bottom: 2px solid #2b3644;
 }
 .mg-title {
     color: #e7eef7;
     font-size: 28px;
     font-weight: bold;
     width: fill-parent-flow(1.0);
-    text-shadow: 0px 2px 6px #000000aa;
 }
 .mg-subtitle {
     color: #8aa0b6;
@@ -101,13 +100,11 @@
     margin: 8px;
     background-color: gradient(linear, 0% 0%, 0% 100%, from(#28313d), to(#1d242e));
     border: 2px solid #33404f;
-    border-top: 3px solid #46566a;
     border-radius: 8px;
     flow-children: down;
-    transition: border-color 0.12s ease-in-out, background-color 0.12s ease-in-out;
 }
-.mg-game-card:hover { border-color: #5a86c9; border-top-color: #7fb0ff; }
-.mg-selected { border-color: #6ea8ff; border-top-color: #6ea8ff; box-shadow: 0px 0px 16px 2px #6ea8ff66; }
+.mg-game-card:hover { border-color: #5a86c9; }
+.mg-selected { border-color: #6ea8ff; box-shadow: 0px 0px 16px 2px #6ea8ff66; }
 .mg-disabled { saturation: 0.2; opacity: 0.5; }
 .mg-game-card-inner {
     width: 100%;
@@ -143,7 +140,6 @@
     background-color: #2a333f;
     border: 2px solid #3a4a5f;
     border-radius: 5px;
-    transition: background-color 0.12s ease-in-out, border-color 0.12s ease-in-out;
 }
 .mg-btn Label {
     color: #e7eef7;

@@ -127,8 +127,11 @@
         var fr = rowOf(from), fc = colOf(from), tr = rowOf(to), tc = colOf(to);
         var dr = tr > fr ? 1 : -1, dc = tc > fc ? 1 : -1;
         var captured = false;
-        var r = fr + dr, c = fc + dc;
-        while (r !== tr || c !== tc) {
+        // Walk the diagonal, bounded to the board (max 7 steps). The guard is pure
+        // insurance: a legal move is always diagonal so it reaches (tr,tc) within 7
+        // steps — but a corrupt/desynced hop must never spin the loop forever.
+        var r = fr + dr, c = fc + dc, guard = 0;
+        while ((r !== tr || c !== tc) && guard++ < 8 && inBounds(r, c)) {
             var j = idx(r, c);
             if (b[j] !== 0) { b[j] = 0; captured = true; }
             r += dr; c += dc;
