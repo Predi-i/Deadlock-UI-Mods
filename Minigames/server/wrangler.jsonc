@@ -1,0 +1,19 @@
+{
+  // Cloudflare Worker config for the Deadlock Minigames relay.
+  // Deploy with:  npx wrangler deploy
+  "name": "deadlock-minigames",
+  "main": "worker.js",
+  "compatibility_date": "2025-01-01",
+
+  // Single strongly-consistent Durable Object holds all lobby state.
+  "durable_objects": {
+    "bindings": [
+      { "name": "HUB", "class_name": "Hub" }
+    ]
+  },
+
+  // SQLite-backed Durable Objects are available on the FREE Workers plan.
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["Hub"] }
+  ]
+}

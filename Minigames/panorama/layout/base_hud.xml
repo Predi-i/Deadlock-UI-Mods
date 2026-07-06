@@ -1,0 +1,16 @@
+<!-- Deadlock Minigames — base_hud override. Injects the mod's scripts + styles.
+     Load order matters: net (defines $.MG.Net/Api) -> games (defines $.MG.Games) -> ui. -->
+<root>
+	<styles>
+		<include src="s2r://panorama/styles/base.vcss_c" />
+		<include src="s2r://panorama/styles/mg.vcss_c" />
+	</styles>
+	<scripts>
+		<include src="s2r://panorama/scripts/mg_net.vjs_c" />
+		<include src="s2r://panorama/scripts/mg_games.vjs_c" />
+		<include src="s2r://panorama/scripts/mg_ui.vjs_c" />
+	</scripts>
+	<Panel class="WindowRoot" hittest="false" disallowedstyleflags="hover,descendantfocus">
+		<CitadelHud id="Hud" hittest="false" />
+	</Panel>
+</root>
