@@ -123,7 +123,7 @@
     border-color: #6ea8ff;
     box-shadow: 0px 0px 9px 1px #6ea8ff44;   /* gentle glow, not a harsh bloom */
 }
-.mg-disabled { saturation: 0.5; opacity: 0.62; } /* muted but the motif still reads */
+.mg-disabled { saturation: 0.85; opacity: 0.6; } /* only slightly muted, so the motif's colours still read */
 .mg-disabled:hover { pre-transform-scale2d: 1.0; border-color: #33404f; } /* no lift for soon */
 
 /* motif layer — centred, nudged up so the name plate never covers it */
@@ -214,9 +214,12 @@
     border-radius: 6px;
     box-shadow: 0px 2px 6px 0px #00000088;
 }
-.mg-c4-slot { width: 22px; height: 22px; margin: 2px; border-radius: 50%; background-color: #16233a; }
-.mg-c4-r { background-color: gradient(radial, 50% 35%, 0% 0%, 70% 70%, from(#ff8a8a), to(#d23b3b)); }
-.mg-c4-y { background-color: gradient(radial, 50% 35%, 0% 0%, 70% 70%, from(#ffe08a), to(#e0a52a)); }
+/* Empty slot = clearly dark hole; discs = FLAT, saturated red/yellow. Flat (not radial)
+   so the six discs read as one consistent colour each — the muted gradients looked like
+   "random shades of white" once the disabled-card filter washed them out. */
+.mg-c4-slot { width: 22px; height: 22px; margin: 2px; border-radius: 50%; background-color: #0c1626; }
+.mg-c4-r { background-color: #e23b3b; }
+.mg-c4-y { background-color: #f2c230; }
 
 /* name plate pinned to the bottom, dark gradient keeps text legible over the art */
 .mg-card-namebar {
