@@ -261,27 +261,32 @@ Because the click now lands on the piece (not the cell beneath), each piece forw
     real piece is dimmed via `.mg-drag-source`. The piece's legal targets are lit up as
     drop hints (by calling `onCellClick` to select it), guarded to my turn / chaining piece.
     The ghost is `hittest:false` so it doesn't intercept its own drop.
-  - **Commit by geometry, on `DragEnd`.** In-game, `DragDrop`/`DragEnter` never reliably
-    reach the empty target cells, so the drop is NOT event-driven. On `DragEnd`,
-    `dropSquareFromGhost()` reads the ghost's `actualxoffset`/`actualyoffset` — post-layout
-    pixels relative to its parent, the 480×480 pieces layer, i.e. the *same* coordinate
-    space as `transformFor()`. Ghost-centre ÷ `SQ` → display col/row → `fromDisplay()` →
-    real square, then `onCellDrop(square)` plays the hop if it's a legal target. Off-board
-    (or reparented → screen-space coords far outside 0..480) returns `-1` and snaps back.
-    This mirrors QOLLOCK's `ql_hero_testing` `ReadPanelPosition`, which reads position on
-    drop rather than trusting a drop event to arrive.
-  - **Belt-and-suspenders:** cells still register `DragEnter` (returns `true`, records
-    `dragOverSq`) + `DragDrop` → `onCellDrop`. If the engine *does* deliver them, great;
-    if not, the geometry path covers it. `onCellDrop` is idempotent (after a commit the
-    square is no longer a legal target), so double-firing is harmless.
-  - `DragEnd` on the piece: commit (geometry, then `dragOverSq` fallback), then delete the
-    ghost, clear the dim, reset `dragActive`/`dragOverSq`.
+  - **Commit MULTI-METHOD, on `DragEnd`.** No single drop signal proved reliable in-game,
+    so `commitDropMultimethod(droppedPanel)` gathers every candidate square it can and
+    commits the FIRST that is a legal target (`isLegalTarget`). Order:
+    1. **`squareFromPanel(droppedPanel)`** — `DragEnd`'s 2nd arg is the panel released
+       onto; our cells are `id="cell_<square>"`, so parse the id (walking up to 6 ancestors
+       in case a child is reported). This is the native authoritative channel — how
+       QOLLOCK's `ql_hero_testing` reads a drop.
+    2. **`dragOverSq`** — last cell hovered, set from BOTH `DragEnter` *and* a plain
+       `onmouseover` on each cell (two independent hover sources; whichever the engine
+       actually fires mid-drag keeps it current).
+    3. **`squareFromGhost()`** — geometry fallback: reparent the ghost back under the
+       pieces layer (the engine moves `displayPanel` into its own drag overlay), then read
+       `actualxoffset`/`actualyoffset` (board-space once reparented), centre ÷ `SQ` → cell.
+       Rejects an exact `(0,0)` (the classic reparented/uninitialised reading).
+  - A garbage candidate is simply not in `legalTargets`, so it's skipped; if none match,
+    the piece snaps back. **A false move is impossible, and nothing here touches the
+    server** — the same `doLocalHop` path a click uses.
+  - ⚠ **`GameUI.GetCursorPosition` is CONFIRMED ABSENT in Deadlock** (QOLLOCK
+    `ql_settings.js` / `ql_core.js`). Do NOT reintroduce a cursor-reading drop method — it
+    silently returns nothing. Panel-signal methods only.
   - **First deal doesn't slide in.** The base `.mg-piece` has NO transition; the animating
     `.mg-anim` class is added one frame later (`$.Schedule(0.0)`), after the start transform
     is committed — so pieces snap onto their squares at start but every later move animates.
-  - ⚠ **Geometry path unverified in-game** (can't render). If a drop lands on the wrong
-    square, the suspect is `actualxoffset`'s parent-relativity while the engine owns the
-    ghost — check whether the ghost stays parented to the pieces layer through the drag.
+  - ⚠ **Unverified in-game** (can't render). If a drop still won't land, add a temporary
+    `$.Msg` of all three candidates in `commitDropMultimethod` to see which channel the
+    engine actually populates, then keep that one.
 - **Bot color alternates** each `Play vs Bot` (`botGamesStarted % 2`) so you don't always
   open as white. When you're black/O, the boot path calls the bot to open (offline has no
   server to poll).

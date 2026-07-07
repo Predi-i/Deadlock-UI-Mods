@@ -321,7 +321,7 @@
         // "ghost" panel follows the cursor and the real piece is dimmed in place.
         var dragActive = false;        // a real grab is in flight (ghost exists)
         var dragGhost = null;          // panel that follows the cursor
-        var dragOverSq = -1;           // square the cursor is currently over (from DragEnter)
+        var dragOverSq = -1;           // square the cursor is currently over (DragEnter / mouseover)
 
         function status(t) { if (session.onStatus) session.onStatus(t); }
 
@@ -382,6 +382,10 @@
                             if (dragActive && dragOverSq === square) dragOverSq = -1;
                         });
                         $.RegisterEventHandler("DragDrop", cell, function () { onCellDrop(square); });
+                        // Second, independent source for the hovered square: plain mouse-over.
+                        // If the engine suppresses DragEnter mid-drag but still updates hover,
+                        // this keeps dragOverSq current so DragEnd can commit from it.
+                        cell.SetPanelEvent("onmouseover", function () { if (dragActive) dragOverSq = square; });
                     })(i);
                     cells[i] = cell;
                 }
@@ -459,6 +463,7 @@
                 ghost.style.align = "left top";
 
                 dragActive = true;
+                dragOverSq = -1;
                 piece.AddClass("mg-drag-source"); // dim the real piece while it's "lifted"
 
                 // Light up this piece's legal targets as drop hints — but only when it may
@@ -469,17 +474,15 @@
                 }
             });
 
-            $.RegisterEventHandler("DragEnd", piece, function () {
-                // Fires after (a possibly-missing) DragDrop. COMMIT BY GEOMETRY: on this
-                // board DragDrop/DragEnter never reliably reach the empty target cells, so
-                // instead of waiting for an event we read WHERE the ghost was released and
-                // map that point to a square ourselves. The ghost is a child of the pieces
-                // layer, so its actualxoffset/actualyoffset are in the very same coordinate
-                // space as transformFor() (0..480). This is the proven QOLLOCK pattern
-                // (ql_hero_testing reads actualxoffset on drop rather than trusting DragDrop).
-                var target = dropSquareFromGhost();
-                if (target >= 0) onCellDrop(target);
-                else if (dragOverSq >= 0) onCellDrop(dragOverSq); // fallback if a DragEnter did land
+            $.RegisterEventHandler("DragEnd", piece, function (_p, droppedPanel) {
+                // THE hard part. Every single-channel drop scheme we tried failed in-game.
+                // Don't trust any ONE signal — gather EVERY candidate square we can and
+                // commit the first that is a legal target. A wrong/garbage candidate simply
+                // isn't in legalTargets, so it's ignored; if none match, the piece snaps
+                // back. No false move is possible, and nothing here touches the server.
+                // `droppedPanel` is DragEnd's 2nd arg: the panel released onto (native,
+                // authoritative when present — this is how QOLLOCK's ql_hero_testing works).
+                commitDropMultimethod(droppedPanel);
 
                 // Tear down the ghost + dim regardless of outcome.
                 if (dragGhost) { try { dragGhost.DeleteAsync(0); } catch (e) {} dragGhost = null; }
@@ -491,20 +494,64 @@
             });
         }
 
-        // Map the ghost's released position (its centre, in pieces-layer space) to a real
-        // square, or -1 if it's off the board. actualxoffset/actualyoffset are post-layout
-        // pixels relative to the parent's content box — for the ghost that's the 480x480
-        // pieces layer, whose (0,0) is display-cell (0,0). Same units as SQ/PIECE_SZ.
-        function dropSquareFromGhost() {
+        // ── drop resolution: try many mappings, commit the first legal one ─────
+        // NOTE: GameUI.GetCursorPosition is CONFIRMED ABSENT in Deadlock (see QOLLOCK
+        // ql_settings.js / ql_core.js), so no method here may depend on reading the OS
+        // cursor. Everything below works from panel signals only.
+
+        // Is `sq` currently a legal target of the selected piece?
+        function isLegalTarget(sq) {
+            for (var t = 0; t < legalTargets.length; t++) if (legalTargets[t].to === sq) return true;
+            return false;
+        }
+
+        // Our cells are named "cell_<realSquare>". Recover the square from a panel id (or
+        // from an ancestor's, since a drop may report a child). -1 if it isn't one of ours.
+        function squareFromPanel(p) {
+            for (var hops = 0; p && hops < 6; hops++) {
+                var id = null;
+                try { id = p.id; } catch (e) {}
+                if (id && id.indexOf("cell_") === 0) {
+                    var n = parseInt(id.substring(5), 10);
+                    if (isFinite(n) && n >= 0 && n < 64) return n;
+                }
+                try { p = p.GetParent ? p.GetParent() : null; } catch (e2) { p = null; }
+            }
+            return -1;
+        }
+
+        // Ghost geometry. The engine may have reparented the ghost into a drag overlay;
+        // pull it back under the pieces layer first (QOLLOCK's ql_hero_testing reparents
+        // before reading position) so actualxoffset is board-space again. Reject an exact
+        // (0,0), the classic "reparented/uninitialised" reading.
+        function squareFromGhost() {
             var g = dragGhost;
             if (!g || (g.IsValid && !g.IsValid())) return -1;
+            try { if (g.GetParent && g.GetParent() !== piecesLayer) g.SetParent(piecesLayer); } catch (e) {}
             var gx = (typeof g.actualxoffset === "number") ? g.actualxoffset : null;
             var gy = (typeof g.actualyoffset === "number") ? g.actualyoffset : null;
             if (gx === null || gy === null || !isFinite(gx) || !isFinite(gy)) return -1;
-            var cx = gx + PIECE_SZ / 2, cy = gy + PIECE_SZ / 2; // ghost centre
+            if (gx === 0 && gy === 0) return -1; // suspicious origin → skip, let other methods try
+            var cx = gx + PIECE_SZ / 2, cy = gy + PIECE_SZ / 2;
             var dcol = Math.floor(cx / SQ), drow = Math.floor(cy / SQ);
             if (dcol < 0 || dcol > 7 || drow < 0 || drow > 7) return -1;
             return fromDisplay(drow * 8 + dcol);
+        }
+
+        // Try each candidate in priority order; commit the first that is a legal target.
+        // `droppedPanel` is DragEnd's authoritative 2nd arg (the panel released onto).
+        function commitDropMultimethod(droppedPanel) {
+            if (destroyed || !myTurn() || selected < 0) return;
+            var candidates = [
+                squareFromPanel(droppedPanel), // A: native drop panel (best when present)
+                dragOverSq,                    // B: last cell hovered (DragEnter/mouseover)
+                squareFromGhost()              // C: ghost geometry (after reparent)
+            ];
+            for (var k = 0; k < candidates.length; k++) {
+                var sq = candidates[k];
+                if (sq >= 0 && isLegalTarget(sq)) { onCellDrop(sq); return; }
+            }
+            // Nothing matched → snap back (selection stays so the hints remain for a click).
         }
 
         // Full rebuild of the piece layer (initial deal, board flip, game end). No slide.
