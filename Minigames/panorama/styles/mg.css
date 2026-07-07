@@ -238,95 +238,18 @@
 }
 
 /* motif layer — centred, nudged up so the name plate never covers it */
+/* Card motif is now a custom compiled image (PNG→.vtex, drawn by the maintainer) filling the
+   card behind the name plate. Path: s2r://panorama/images/cards/<key>.vtex, set inline in
+   renderMenu. Until a .vtex exists the fallback background-color shows (a plain dark card). */
 .mg-card-art {
     width: 100%;
     height: 100%;
     flow-children: none;
+    background-color: #0c121b;           /* fallback while the .vtex art isn't compiled yet */
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
 }
-/* motif is centred over the FREE zone above the name plate, not the whole card. The plate
-   eats the bottom ~30px, so vertical-align:center + margin-bottom (≈ plate height) lifts the
-   motif by margin/2 to sit centred in the space that's actually visible above it (п5). */
-.mg-mini {
-    horizontal-align: center;
-    vertical-align: center;
-    margin-bottom: 30px;
-}
-/* shared mini board (checkers 4x4, chess 3x3) */
-.mg-mini-board {
-    flow-children: down;
-    border: 2px solid #0a0d12;
-    border-radius: 2px;
-}
-.mg-mini-row { flow-children: right; height: 22px; }
-.mg-mini-cell { width: 22px; height: 22px; }
-.mg-mini-light { background-color: #d8c6a8; }
-.mg-mini-dark { background-color: #6e5138; }
-.mg-mini-disc {
-    width: 14px; height: 14px;
-    border-radius: 50%;
-    horizontal-align: center; vertical-align: center;
-}
-/* flat discs — at 14px a gradient is just noise the disabled-wash muddies */
-.mg-mini-disc-w { background-color: #e9edf2; border: 1px solid #b4bac2; }
-.mg-mini-disc-b { background-color: #3a3f47; border: 1px solid #12151a; }
-.mg-mini-king {
-    width: 15px; height: 15px;
-    border-radius: 50%;
-    background-color: #e3ad3a;
-    border: 2px solid #8a6410;          /* gold ring conveys "king" — no glow */
-    horizontal-align: center; vertical-align: center;
-}
-/* mini tic-tac-toe grid */
-.mg-mini-ttt {
-    flow-children: right-wrap;
-    width: 90px;
-    background-color: #0a0d12;
-    border-radius: 2px;
-}
-.mg-mini-ttt-cell { width: 26px; height: 26px; margin: 2px; background-color: #223142; }
-.mg-mini-x { width: 22px; height: 22px; horizontal-align: center; vertical-align: center; flow-children: none; }
-.mg-mini-x-bar {
-    width: 22px; height: 4px;
-    border-radius: 2px;
-    background-color: #6ea8ff;
-    horizontal-align: center; vertical-align: center;
-}
-.mg-mini-x-a { transform: rotateZ(45deg); }
-.mg-mini-x-b { transform: rotateZ(-45deg); }
-.mg-mini-o {
-    width: 18px; height: 18px;
-    border: 4px solid #ff7b7b;
-    border-radius: 50%;
-    horizontal-align: center; vertical-align: center;
-}
-/* durak — two fanned playing cards with a red pip */
-.mg-emblem { flow-children: none; width: 90px; height: 84px; }
-.mg-card-back {
-    width: 46px; height: 64px;
-    border-radius: 4px;
-    border: 2px solid #cdd6e2;
-    horizontal-align: center; vertical-align: center;
-    box-shadow: 0px 2px 5px 0px #000000aa;
-}
-.mg-card-back-2 { background-color: #7d8794; transform: rotateZ(-12deg) translateX(-11px); }
-.mg-card-front { background-color: #f2f4f8; transform: rotateZ(9deg) translateX(9px); flow-children: none; }
-.mg-suit-pip {
-    width: 16px; height: 16px;
-    background-color: #cc3b3b;
-    transform: rotateZ(45deg);
-    horizontal-align: center; vertical-align: center;
-}
-/* connect four — flat blue frame with stacked red/yellow discs */
-.mg-c4-frame {
-    flow-children: right-wrap;
-    width: 86px;
-    padding: 4px;
-    background-color: #24457f;
-    border-radius: 3px;
-}
-.mg-c4-slot { width: 22px; height: 22px; margin: 2px; border-radius: 50%; background-color: #0c1626; }
-.mg-c4-r { background-color: #e23b3b; }
-.mg-c4-y { background-color: #f2c230; }
 
 /* name plate pinned to the bottom — solid dark bar keeps the name legible over the art */
 .mg-card-namebar {
