@@ -255,11 +255,24 @@
     height: 46px;
     border-radius: 50%;
     box-shadow: 0px 3px 5px 0px #00000099;
-    transition-property: transform, opacity;
-    transition-duration: 0.18s, 0.2s;
-    transition-timing-function: ease-in-out, ease-out;
+    pre-transform-scale2d: 1.0;
+    transition-property: transform, opacity, pre-transform-scale2d;
+    transition-duration: 0.18s, 0.2s, 0.2s;
+    transition-timing-function: ease-in-out, ease-out, ease-out;
 }
-.mg-captured { opacity: 0.0; }   /* transform-scale set inline; both animate via base */
+/* Captured: fade out while shrinking in place (scale set inline in JS). Both animate
+   via the base transition above. */
+.mg-captured { opacity: 0.0; }
+/* The cursor-following ghost while dragging: lifted a touch so it reads as "picked up". */
+.mg-piece.mg-dragging {
+    pre-transform-scale2d: 1.15;
+    box-shadow: 0px 6px 12px 2px #000000cc;
+}
+/* The real piece left behind on its square during a drag — dimmed so the ghost reads
+   as the one being moved. Cleared on DragEnd. */
+.mg-piece.mg-drag-source {
+    opacity: 0.35;
+}
 .mg-white { background-color: gradient(radial, 50% 35%, 0% 0%, 70% 70%, from(#ffffff), to(#c9cdd4)); border: 2px solid #9aa0a8; }
 .mg-black { background-color: gradient(radial, 50% 35%, 0% 0%, 70% 70%, from(#4a4f57), to(#1c1f24)); border: 2px solid #0a0c0f; }
 .mg-king {

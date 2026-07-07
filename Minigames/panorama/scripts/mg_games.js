@@ -316,6 +316,12 @@
         var destroyed = false;
         var gameOver = false;
 
+        // Drag-and-drop state (native Panorama drag; recipe proven in QOLLOCK):
+        // a piece is a drag SOURCE, each cell a drop TARGET. While dragging, a throwaway
+        // "ghost" panel follows the cursor and the real piece is dimmed in place.
+        var dragActive = false;        // a real grab is in flight (ghost exists)
+        var dragGhost = null;          // panel that follows the cursor
+
         function status(t) { if (session.onStatus) session.onStatus(t); }
 
         // Display transform: black sees the board rotated 180° so its pieces sit at the bottom.
@@ -362,6 +368,10 @@
                     cell.AddClass(isDark(r, c) ? "mg-cell-dark" : "mg-cell-light");
                     (function (square) {
                         cell.SetPanelEvent("onactivate", function () { onCellClick(square); });
+                        // Drop target for drag-and-drop. DragDrop fires on the panel under
+                        // the cursor at release; the empty target cell is hittestable (the
+                        // pieces layer above it is hittest:false), so it receives the drop.
+                        $.RegisterEventHandler("DragDrop", cell, function () { onCellDrop(square); });
                     })(i);
                     cells[i] = cell;
                 }
@@ -370,12 +380,15 @@
             // (transform transition). It is a SIBLING of the board inside the flow:none
             // wrap — NOT a child of boardPanel (whose flow:down would push it below the
             // rows). CSS positions it inside the board's 3px border so it aligns to cells.
-            // It ignores input — clicks fall through to the cells beneath, which own
-            // selection + '.mg-target' highlighting.
+            //
+            // hittest=false makes the LAYER itself transparent to input, so a click on an
+            // empty square passes through to the cell beneath (which owns destination
+            // clicks + '.mg-target' highlighting). hittestchildren stays default (true) so
+            // the PIECES do receive input — required for drag-and-drop and click-to-select.
+            // Destination squares are always empty, so no piece ever blocks a target cell.
             piecesLayer = $.CreatePanel("Panel", boardWrap, "MG_PiecesLayer");
             piecesLayer.AddClass("mg-pieces-layer");
             try { piecesLayer.SetAttributeString("hittest", "false"); } catch (e) {}
-            try { piecesLayer.SetAttributeString("hittestchildren", "false"); } catch (e) {}
         }
 
         function makePiece(realIdx, v) {
@@ -384,8 +397,68 @@
             piece.AddClass(colorOf(v) === WHITE ? "mg-white" : "mg-black");
             if (isKing(v)) piece.AddClass("mg-king");
             piece.style.transform = transformFor(realIdx);
+            piece._sq = realIdx;          // live square this piece sits on (updated on slide)
             pieceEls[realIdx] = piece;
+            setupPieceInput(piece);
             return piece;
+        }
+
+        // Wire one piece for BOTH interaction styles the user asked for:
+        //  • click-to-select  (onactivate → onCellClick on its own square)
+        //  • drag-and-drop     (native SetDraggable + DragStart/DragEnd — QOLLOCK recipe)
+        // Because the pieces layer now lets pieces receive input (hittest passes through
+        // only on empty squares), the click that used to fall through to the cell beneath
+        // is delivered to the PIECE — so the piece must forward it to the same handler.
+        function setupPieceInput(piece) {
+            // A tap on a piece selects it (or, if it's already a legal target square of
+            // the current selection, plays the hop) — identical to clicking its cell.
+            piece.SetPanelEvent("onactivate", function () {
+                if (piece._sq === undefined) return;
+                onCellClick(piece._sq);
+            });
+
+            // Only my own pieces are ever grabbable; opponent pieces stay non-draggable.
+            if (colorOf(board[piece._sq]) !== myColor) return;
+            piece.SetDraggable(true);
+
+            $.RegisterEventHandler("DragStart", piece, function (_p, dragEvent) {
+                var sq = piece._sq;
+                // ALWAYS provide a ghost as the drag visual so the engine never drags the
+                // real piece around (QOLLOCK sets dragEvent.displayPanel for exactly this).
+                var ghost = $.CreatePanel("Panel", piecesLayer, "");
+                ghost.AddClass("mg-piece");
+                ghost.AddClass(colorOf(board[sq]) === WHITE ? "mg-white" : "mg-black");
+                if (isKing(board[sq])) ghost.AddClass("mg-king");
+                ghost.AddClass("mg-dragging");
+                // Ghost sits under the cursor; make it transparent to input so the DragDrop
+                // lands on the cell beneath, not on the ghost itself.
+                try { ghost.SetAttributeString("hittest", "false"); } catch (e) {}
+                dragGhost = ghost;
+                dragEvent.displayPanel = ghost;
+                dragEvent.removePositionBeforeDrop = false;
+                // No transform on the ghost: the engine positions the displayPanel under the
+                // cursor itself (QOLLOCK pattern). A transform here would offset it off-cursor.
+                ghost.style.align = "left top";
+
+                dragActive = true;
+                piece.AddClass("mg-drag-source"); // dim the real piece while it's "lifted"
+
+                // Light up this piece's legal targets as drop hints — but only when it may
+                // actually move now (my turn, and mid-chain only the chaining piece). If it
+                // can't, we leave no selection, so any drop is a harmless snap-back.
+                if (!destroyed && myTurn() && !(chaining && sq !== selected)) {
+                    if (selected !== sq) onCellClick(sq);
+                }
+            });
+
+            $.RegisterEventHandler("DragEnd", piece, function () {
+                // Fires after DragDrop. Tear down the ghost + dim regardless of outcome.
+                if (dragGhost) { try { dragGhost.DeleteAsync(0); } catch (e) {} dragGhost = null; }
+                piece.RemoveClass("mg-drag-source");
+                dragActive = false;
+                // A drop on empty space (no legal target) just snaps back — the real piece
+                // never moved, so there is nothing to restore.
+            });
         }
 
         // Full rebuild of the piece layer (initial deal, board flip, game end). No slide.
@@ -429,8 +502,13 @@
             if (capIdx >= 0 && pieceEls[capIdx]) {
                 var dead = pieceEls[capIdx];
                 delete pieceEls[capIdx];
+                // Keep the translate3d that holds the piece on its square, and shrink it
+                // IN PLACE with pre-transform-scale2d (the game's idiom — it scales before
+                // the translate, so the piece stays put). scale3d INSIDE the transform
+                // multiplied the translate offset and hurled the piece toward (0,0) — that
+                // was the "flies up-left" artifact. opacity + scale animate via .mg-piece.
                 dead.AddClass("mg-captured");
-                dead.style.transform = transformFor(capIdx) + " scale3d(0.2, 0.2, 1.0)";
+                dead.style.preTransformScale2d = "0.2";
                 (function (d) { $.Schedule(0.22, function () { try { d.DeleteAsync(0); } catch (e) {} }); })(dead);
             }
             var piece = pieceEls[from];
@@ -443,6 +521,7 @@
             // changing the transform animates the slide.
             if (promoted) piece.AddClass("mg-king");
             piece.style.transform = transformFor(to);
+            piece._sq = to;               // keep the piece's live square in sync (click/drag)
             pieceEls[to] = piece;
         }
 
@@ -476,6 +555,19 @@
                 legalTargets = tg;
                 refreshHighlights();
             }
+        }
+
+        // A piece was dropped onto square `i`. Play the hop if `i` is a legal target of
+        // the piece we're dragging; otherwise it's a no-op and the ghost just snaps back.
+        function onCellDrop(i) {
+            if (destroyed || !myTurn() || !dragActive || selected < 0) return;
+            for (var t = 0; t < legalTargets.length; t++) {
+                if (legalTargets[t].to === i) {
+                    doLocalHop(selected, legalTargets[t]);
+                    return;
+                }
+            }
+            // Dropped on a non-target: keep the selection so its hints stay up for a click.
         }
 
         var pendingHops = [];
