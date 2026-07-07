@@ -94,11 +94,13 @@
     letter-spacing: 3px;
     text-transform: uppercase;
     vertical-align: center;
+    margin-top: 2px;                     /* nudge the whole "MINIGAMES by Predi_i" line +2px down */
 }
 /* the credit — smaller than the title, right beside it, clickable → Boosty */
 .mg-header-credit {
     vertical-align: center;
     margin-left: 9px;                    /* pulled in toward the title (п7) */
+    margin-top: 2px;                     /* keep the credit level with the +2px title */
 }
 .mg-header-credit Label {
     font-family: radiance !important;
@@ -460,6 +462,13 @@
 }
 .mg-btn-row .mg-btn { width: fill-parent-flow(1.0); }
 .mg-btn-row .mg-btn-2nd { margin-left: 10px; }
+/* A SOLO button (QUICK MATCH / PLAY VS BOT) must span the full row. A LONE fill-parent-flow(1.0)
+   child underfills by ~28px in Panorama — the flex ratio only forces full width with ≥2 children
+   (confirmed in-game: solo buttons landed 28px short of the CREATE/JOIN span). So pin width:100%
+   — deterministic full-row width that matches the CREATE/JOIN right edge exactly. Declared after
+   the fill-parent-flow rule so it wins at equal specificity; the right border survives because
+   .mg-col-right reserves padding-right:5px. */
+.mg-btn-row .mg-btn-solo { width: 100%; }
 
 /* caption under the Quick Match button */
 .mg-caption {
@@ -489,13 +498,15 @@
     border-top: 1px solid #ffffff10;
     vertical-align: center;
 }
-/* status text living inline on the LEFT of the footer, level with the dev tools (п2). */
+/* status text (e.g. "Pinging server…") CENTERED in the footer and a bit larger. It's an
+   align-override child (like the header's close button) so it centers over the whole footer
+   while the spacer + dev tools still flow to the right edge. */
 .mg-footer-status {
     font-family: radiance !important;
     color: #aebfd2 !important;
-    font-size: 15px !important;
+    font-size: 18px !important;          /* bigger per maintainer (15→18) */
+    horizontal-align: center;            /* centered, not hugging the left */
     vertical-align: center;
-    margin-right: 12px;
 }
 /* spacer takes the slack so the dev tools sit at the right edge */
 .mg-footer-spacer {
@@ -508,6 +519,7 @@
     height: 32px;                        /* +4px taller (2 top / 2 bottom) */
     width: fit-children;                 /* hug icon+label → kills the dead zone right of the text */
     margin-left: 14px;
+    margin-top: 1px;                     /* drop the pill +1px to sit better on the header line */
     padding-left: 11px;
     padding-right: 12px;                 /* +1 over left to visually balance the left-side icon */
     background-color: #16233a;
@@ -538,7 +550,7 @@
     font-family: radiance !important;
     font-weight: semi-bold;
     color: #9cc3ff !important;
-    font-size: 16px !important;          /* bigger (14→16) — fills the button, no dead space */
+    font-size: 17px !important;          /* a touch bigger again (16→17) per maintainer */
     letter-spacing: 1.5px;
     text-transform: uppercase;
     vertical-align: center;
@@ -549,6 +561,7 @@
     width: fit-children;
     flow-children: right;
     vertical-align: center;
+    margin-top: -3px;                    /* lift the dev-tools row 3px per maintainer */
 }
 .mg-tool {
     height: 22px;                        /* B: from 26 — trims the footer strip height */

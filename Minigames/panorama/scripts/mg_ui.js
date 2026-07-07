@@ -406,7 +406,7 @@
         var quickRow = $.CreatePanel("Panel", detailPanel, "");
         quickRow.AddClass("mg-btn-row");
         var quickBtn = $.CreatePanel("Button", quickRow, "");
-        quickBtn.AddClass("mg-btn"); quickBtn.AddClass("mg-btn-primary"); quickBtn.AddClass("mg-btn-quick");
+        quickBtn.AddClass("mg-btn"); quickBtn.AddClass("mg-btn-primary"); quickBtn.AddClass("mg-btn-quick"); quickBtn.AddClass("mg-btn-solo");
         var ql = $.CreatePanel("Label", quickBtn, ""); ql.text = "QUICK MATCH";
         quickBtn.SetPanelEvent("onactivate", function () { startQuickMatch(); });
         var quickCap = $.CreatePanel("Label", detailPanel, "");
@@ -436,7 +436,7 @@
         var botRow = $.CreatePanel("Panel", detailPanel, "");
         botRow.AddClass("mg-btn-row");
         var botBtn = $.CreatePanel("Button", botRow, "");
-        botBtn.AddClass("mg-btn");
+        botBtn.AddClass("mg-btn"); botBtn.AddClass("mg-btn-solo");
         var bl = $.CreatePanel("Label", botBtn, ""); bl.text = "PLAY VS BOT";
         botBtn.SetPanelEvent("onactivate", function () { startBotGame(); });
 

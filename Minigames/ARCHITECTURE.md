@@ -209,6 +209,21 @@ These are the mistakes to NOT repeat. Every one was confirmed against the game's
    + wrap mis-wraps when a border shaves a pixel off the width. Build **8 explicit row
    panels** of 8 cells each (`.mg-board-row`, `flow-children: right`).
 
+9. **A LONE `fill-parent-flow(1.0)` child underfills its row (~28px short).** The flex ratio
+   only forces a child to the row's full width when there are **≥ 2** flex children sharing it
+   (e.g. CREATE + JOIN each `fill-parent-flow(1.0)` → together they fill). A single such child
+   (QUICK MATCH / PLAY VS BOT alone in a `.mg-btn-row`) lays out ~28px short on the right —
+   **confirmed in-game** by the maintainer's screenshot. Fix: give a solo full-width button a
+   plain `width: 100%` (deterministic, matches the 2-child row's right edge exactly), NOT
+   `fill-parent-flow`. Two dead ends that look right but aren't: a negative `margin-right` hack
+   to "stretch" it, and assuming one flex child behaves like `width:100%`. See `.mg-btn-solo`.
+
+10. **`width: 100%` flush to the box edge clips a 1px right border — reserve column padding.**
+   A right-column child at `width:100%` sits flush against the column's inner edge and Panorama
+   shaves the button's 1px right border. Keep `.mg-col-right { padding-right: 5px }` (> 0) so the
+   border always has room. This is the recurring "PLAY VS BOT has no right border" bug (п4);
+   `padding-right: 0` reintroduces it.
+
 ---
 
 ## 7. Checkers internals (mg_games.js)
