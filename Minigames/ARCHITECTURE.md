@@ -261,14 +261,27 @@ Because the click now lands on the piece (not the cell beneath), each piece forw
     real piece is dimmed via `.mg-drag-source`. The piece's legal targets are lit up as
     drop hints (by calling `onCellClick` to select it), guarded to my turn / chaining piece.
     The ghost is `hittest:false` so it doesn't intercept its own drop.
-  - **Each cell registers `DragDrop`** → `onCellDrop(square)`: if `square` is a legal target
-    of the selected piece, play the hop; else no-op (ghost snaps back).
-  - `DragEnd` on the piece: delete the ghost, clear the dim, reset `dragActive`.
-  - ⚠ **Unverified in-game.** The API vocabulary (`SetDraggable`, `DragStart/DragEnd/
-    DragDrop`, `dragEvent.displayPanel`, `removePositionBeforeDrop`) is copied from working
-    QOLLOCK code, but this specific source→target wiring for a board hasn't been rendered.
-    Likely tuning points: ghost cursor offset, whether `DragDrop` lands on the cell vs the
-    dimmed source piece, snap-back feel.
+  - **Commit by geometry, on `DragEnd`.** In-game, `DragDrop`/`DragEnter` never reliably
+    reach the empty target cells, so the drop is NOT event-driven. On `DragEnd`,
+    `dropSquareFromGhost()` reads the ghost's `actualxoffset`/`actualyoffset` — post-layout
+    pixels relative to its parent, the 480×480 pieces layer, i.e. the *same* coordinate
+    space as `transformFor()`. Ghost-centre ÷ `SQ` → display col/row → `fromDisplay()` →
+    real square, then `onCellDrop(square)` plays the hop if it's a legal target. Off-board
+    (or reparented → screen-space coords far outside 0..480) returns `-1` and snaps back.
+    This mirrors QOLLOCK's `ql_hero_testing` `ReadPanelPosition`, which reads position on
+    drop rather than trusting a drop event to arrive.
+  - **Belt-and-suspenders:** cells still register `DragEnter` (returns `true`, records
+    `dragOverSq`) + `DragDrop` → `onCellDrop`. If the engine *does* deliver them, great;
+    if not, the geometry path covers it. `onCellDrop` is idempotent (after a commit the
+    square is no longer a legal target), so double-firing is harmless.
+  - `DragEnd` on the piece: commit (geometry, then `dragOverSq` fallback), then delete the
+    ghost, clear the dim, reset `dragActive`/`dragOverSq`.
+  - **First deal doesn't slide in.** The base `.mg-piece` has NO transition; the animating
+    `.mg-anim` class is added one frame later (`$.Schedule(0.0)`), after the start transform
+    is committed — so pieces snap onto their squares at start but every later move animates.
+  - ⚠ **Geometry path unverified in-game** (can't render). If a drop lands on the wrong
+    square, the suspect is `actualxoffset`'s parent-relativity while the engine owns the
+    ghost — check whether the ghost stays parented to the pieces layer through the drag.
 - **Bot color alternates** each `Play vs Bot` (`botGamesStarted % 2`) so you don't always
   open as white. When you're black/O, the boot path calls the bot to open (offline has no
   server to poll).

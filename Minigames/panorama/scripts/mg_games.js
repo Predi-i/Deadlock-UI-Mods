@@ -470,14 +470,16 @@
             });
 
             $.RegisterEventHandler("DragEnd", piece, function () {
-                // Fires after DragDrop. FALLBACK COMMIT: DragDrop on the cell proved
-                // unreliable (grab worked, release didn't land the move), so commit here
-                // from the square the cursor was last over (tracked via DragEnter). This
-                // runs while dragActive/selected/legalTargets are still valid — the teardown
-                // below must come AFTER, or onCellDrop's guards would reject it. If DragDrop
-                // already committed, this is a harmless no-op: that square is no longer a
-                // legal target (turn ended → selected<0, or chain advanced → new targets).
-                if (dragOverSq >= 0) onCellDrop(dragOverSq);
+                // Fires after (a possibly-missing) DragDrop. COMMIT BY GEOMETRY: on this
+                // board DragDrop/DragEnter never reliably reach the empty target cells, so
+                // instead of waiting for an event we read WHERE the ghost was released and
+                // map that point to a square ourselves. The ghost is a child of the pieces
+                // layer, so its actualxoffset/actualyoffset are in the very same coordinate
+                // space as transformFor() (0..480). This is the proven QOLLOCK pattern
+                // (ql_hero_testing reads actualxoffset on drop rather than trusting DragDrop).
+                var target = dropSquareFromGhost();
+                if (target >= 0) onCellDrop(target);
+                else if (dragOverSq >= 0) onCellDrop(dragOverSq); // fallback if a DragEnter did land
 
                 // Tear down the ghost + dim regardless of outcome.
                 if (dragGhost) { try { dragGhost.DeleteAsync(0); } catch (e) {} dragGhost = null; }
@@ -487,6 +489,22 @@
                 // A drop on empty space (no legal target) just snaps back — the real piece
                 // never moved, so there is nothing to restore.
             });
+        }
+
+        // Map the ghost's released position (its centre, in pieces-layer space) to a real
+        // square, or -1 if it's off the board. actualxoffset/actualyoffset are post-layout
+        // pixels relative to the parent's content box — for the ghost that's the 480x480
+        // pieces layer, whose (0,0) is display-cell (0,0). Same units as SQ/PIECE_SZ.
+        function dropSquareFromGhost() {
+            var g = dragGhost;
+            if (!g || (g.IsValid && !g.IsValid())) return -1;
+            var gx = (typeof g.actualxoffset === "number") ? g.actualxoffset : null;
+            var gy = (typeof g.actualyoffset === "number") ? g.actualyoffset : null;
+            if (gx === null || gy === null || !isFinite(gx) || !isFinite(gy)) return -1;
+            var cx = gx + PIECE_SZ / 2, cy = gy + PIECE_SZ / 2; // ghost centre
+            var dcol = Math.floor(cx / SQ), drow = Math.floor(cy / SQ);
+            if (dcol < 0 || dcol > 7 || drow < 0 || drow > 7) return -1;
+            return fromDisplay(drow * 8 + dcol);
         }
 
         // Full rebuild of the piece layer (initial deal, board flip, game end). No slide.
