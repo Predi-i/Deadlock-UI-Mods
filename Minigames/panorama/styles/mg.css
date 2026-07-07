@@ -92,7 +92,7 @@
 /* the credit — smaller than the title, right beside it, clickable → Boosty */
 .mg-header-credit {
     vertical-align: center;
-    margin-left: 14px;
+    margin-left: 9px;                    /* pulled in toward the title (п7) */
 }
 .mg-header-credit Label {
     font-family: radiance !important;
@@ -126,8 +126,8 @@
     font-size: 18px !important;
     horizontal-align: center;
     vertical-align: center;
-    margin-left: 1px;                    /* +1px right */
-    margin-top: 3px;                     /* +3px down */
+    margin-left: 2px;                    /* +2px right — glyph reads left-of-centre in the box (п6) */
+    margin-top: 2px;                     /* +2px down */
 }
 .mg-close:hover { background-color: #3a1c1a; border-color: #cf4a42; }
 .mg-close:hover Label { color: #f0c7c4 !important; }
@@ -140,9 +140,9 @@
 }
 .mg-status {
     font-family: radiance !important;
-    color: #9db0c6 !important;
+    color: #aebfd2 !important;           /* lifted off the muddy grey — reads on the dark modal (C) */
     font-size: 17px !important;
-    margin-top: 18px;
+    margin-top: 10px;                    /* pulled up under the footer (B: kill the floating gap) */
     width: 100%;
     text-align: center;
 }
@@ -152,23 +152,32 @@
     width: 100%;
     flow-children: right;
 }
+/* Columns sum to 55+44 = 99% (+1px divider border) so they fit INSIDE the 844px inner zone
+   with ~7px slack — the old 56%+44%+1px overflowed by 1px, bulging the right column and
+   pinning its buttons to the modal edge. ⚠ Do NOT use fill-parent-flow here: mixing it with a
+   %-width sibling makes Panorama miscompute the remainder and the right column overflows the
+   modal (buttons + blurb clipped off the right). Explicit percentages are the safe idiom. */
 .mg-col-left {
-    width: 56%;
-    padding-right: 20px;
+    width: 55%;
+    padding-right: 22px;                 /* gap from picker to the divider */
 }
 .mg-col-right {
     width: 44%;
-    padding-left: 24px;
-    padding-right: 2px;
+    padding-left: 22px;
+    padding-right: 0px;                  /* buttons flush to the column's inner edge; the ~7px
+                                            column slack + 28px modal padding is the right margin */
     border-left: 1px solid #ffffff10;
     flow-children: down;
     overflow: noclip;                   /* default `squish` clipped the button's right border (п4) */
 }
 
 /* ── game picker — scrolls vertically (9 games, 3 per row) ─────────────────── */
+/* max-height matches the right column's min-height (380) so the divider spans the same
+   height as the picker grid (no stub tail). Card row = 148 + 2*5 margin = 158px, so 380
+   shows 2 full rows (316) + a 64px peek of row 3 → a clear "scroll for more" affordance. */
 .mg-picker {
     width: 100%;
-    max-height: 330px;                  /* ~2 rows visible; the rest scrolls */
+    max-height: 380px;
     flow-children: right-wrap;
     overflow: clip scroll;              /* NATIVE Panorama vertical-scroll idiom */
 }
@@ -211,7 +220,7 @@
 .mg-lock-badge Label {
     font-family: radiance !important;
     font-weight: semi-bold;
-    color: #8ba1ba !important;
+    color: #a2b5cb !important;           /* C: readable over the dimmed art */
     font-size: 12px !important;
     letter-spacing: 2px;
     text-transform: uppercase;
@@ -224,10 +233,13 @@
     height: 100%;
     flow-children: none;
 }
+/* motif is centred over the FREE zone above the name plate, not the whole card. The plate
+   eats the bottom ~30px, so vertical-align:center + margin-bottom (≈ plate height) lifts the
+   motif by margin/2 to sit centred in the space that's actually visible above it (п5). */
 .mg-mini {
     horizontal-align: center;
     vertical-align: center;
-    margin-bottom: 22px;
+    margin-bottom: 30px;
 }
 /* shared mini board (checkers 4x4, chess 3x3) */
 .mg-mini-board {
@@ -351,8 +363,8 @@
    between games with different description lengths. */
 .mg-detail-desc {
     font-family: radiance !important;
-    color: #9db0c6 !important;
-    font-size: 16px !important;
+    color: #bcc9db !important;           /* C: lifted from #9db0c6 — the blurb read "soft/washed" */
+    font-size: 17px !important;          /* C: 16→17, the main reading block */
     line-height: 24px;
     height: 52px;
     width: 100%;
@@ -379,7 +391,7 @@
 .mg-section-label {
     font-family: radiance !important;
     font-weight: semi-bold;
-    color: #64798f !important;
+    color: #7a8ea6 !important;           /* C: lifted from #64798f — section labels were near-invisible */
     font-size: 13px !important;
     letter-spacing: 2px;
     text-transform: uppercase;
@@ -443,7 +455,7 @@
 /* caption under the Quick Match button */
 .mg-caption {
     font-family: radiance !important;
-    color: #6b7f96 !important;
+    color: #8093a9 !important;           /* C: lifted from #6b7f96 */
     font-size: 14px !important;
     width: 100%;
     margin-top: 8px;
@@ -463,8 +475,8 @@
 .mg-footer {
     width: 100%;
     flow-children: right;
-    margin-top: 24px;
-    padding-top: 14px;
+    margin-top: 14px;                    /* B: tightened from 24 — the dev-tools strip was oversized */
+    padding-top: 10px;                   /* B: from 14 */
     border-top: 1px solid #ffffff10;
     vertical-align: center;
 }
@@ -521,7 +533,7 @@
     vertical-align: center;
 }
 .mg-tool {
-    height: 26px;
+    height: 22px;                        /* B: from 26 — trims the footer strip height */
     padding-left: 8px;
     padding-right: 8px;
     margin-left: 6px;
@@ -531,7 +543,7 @@
 }
 .mg-tool Label {
     font-family: radiance !important;
-    color: #55697e !important;
+    color: #66798f !important;           /* C: nudged up but kept discreet (dev-only strip) */
     font-size: 13px !important;
     vertical-align: center;
     transition-property: color;
