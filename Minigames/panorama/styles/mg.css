@@ -10,6 +10,11 @@
     color: #ffffff;
 }
 
+/* ── palette (deep-blue "noir" theme; no CSS vars in Panorama, so hexes are inline) ──
+   bg/panel   #0a0f18 → #16202f      border      #26384f / hi #3a5f88
+   text       #e2eaf3   muted #7e91a8  accent (azure) #2e6db0 → #3f83cc, glow #4a90e2
+   danger     #c0433f   warn/support amber #cf9b4e                                    */
+
 /* ── overlay + modal ─────────────────────────────────────────────────────── */
 .mg-overlay {
     width: 100%;
@@ -21,65 +26,58 @@
 .mg-dim {
     width: 100%;
     height: 100%;
-    background-color: #000000cc;
+    background-color: #05080dd9;
 }
 .mg-modal {
-    width: 760px;
+    width: 900px;
     min-height: 300px;
     max-height: 92%;
-    background-color: gradient(linear, 0% 0%, 0% 100%, from(#1b2028f2), to(#12151bf7));
-    border: 2px solid #3a4a5f;
-    box-shadow: 0px 0px 40px 6px #000000cc;
-    padding: 22px;
+    background-color: gradient(linear, 0% 0%, 0% 100%, from(#132030f7), to(#0a0f18fb));
+    border: 1px solid #2c455f;
+    box-shadow: 0px 0px 44px 6px #000000d9;
+    padding: 24px;
     flow-children: down;
     horizontal-align: center;
     vertical-align: center;
-    border-radius: 6px;
+    border-radius: 2px;                  /* sharp, "AAA" corners instead of the soft 6px */
 }
 .mg-header {
     width: 100%;
     flow-children: right;
-    margin-bottom: 16px;
-    padding-bottom: 12px;
-    border-bottom: 2px solid #2a3644;   /* accent rule separating the title from the body */
+    margin-bottom: 18px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid #ffffff14;   /* thin translucent rule, not a heavy accent bar */
 }
 .mg-title {
-    color: #e7eef7;
-    font-size: 28px;
+    color: #e6eef8;
+    font-size: 26px;
     font-weight: bold;
+    letter-spacing: 3px;
+    text-transform: uppercase;
     width: fill-parent-flow(1.0);
+    vertical-align: center;
     text-shadow: 0px 1px 4px #000000cc;
 }
-.mg-subtitle {
-    color: #8aa0b6;
-    font-size: 16px;
-    width: 100%;
-    text-align: center;
-    margin-bottom: 18px;
-}
-.mg-divider {
-    color: #6b7d90;
-    font-size: 14px;
-    width: 100%;
-    text-align: center;
-    margin-top: 18px;
-    margin-bottom: 2px;
-    letter-spacing: 2px;
-}
 .mg-close {
-    width: 34px;
-    height: 34px;
-    background-color: #2a323d;
-    border-radius: 4px;
+    width: 32px;
+    height: 32px;
+    background-color: #16212e;
+    border: 1px solid #2c4258;
+    border-radius: 2px;
     horizontal-align: right;
+    vertical-align: center;
+    transition-property: background-color, border-color;
+    transition-duration: 0.1s;
+    transition-timing-function: ease-out;
 }
 .mg-close Label {
-    color: #cbd6e2;
-    font-size: 20px;
+    color: #9fb3c8;
+    font-size: 17px;
+    font-weight: bold;
     horizontal-align: center;
     vertical-align: center;
 }
-.mg-close:hover { background-color: #b23b3b; }
+.mg-close:hover { background-color: #7a2420; border-color: #c0433f; }
 
 .mg-body {
     width: 100%;
@@ -88,43 +86,72 @@
 }
 .mg-status {
     color: #9fb3c8;
-    font-size: 17px;
+    font-size: 16px;
     margin-top: 16px;
     width: 100%;
     text-align: center;
 }
 
+/* ── two-column shell: LEFT picker grid (56%), RIGHT detail/actions (44%) ──── */
+.mg-columns {
+    width: 100%;
+    flow-children: right;
+}
+.mg-col-left {
+    width: 56%;
+    padding-right: 24px;
+}
+.mg-col-right {
+    width: 44%;
+    padding-left: 24px;
+    border-left: 1px solid #ffffff12;   /* faint divider between the columns */
+    flow-children: down;
+}
+
 /* ── game picker ─────────────────────────────────────────────────────────── */
 .mg-picker {
-    width: 678px;                    /* exactly 3 cards (210 + 2*8 margin); rest wrap */
-    flow-children: right-wrap;
-    horizontal-align: center;
-    margin-bottom: 20px;
+    width: 100%;
+    flow-children: right-wrap;          /* 3 cards per row; the 5 games wrap to 2 rows */
 }
 .mg-game-card {
-    width: 210px;
-    height: 140px;
-    margin: 8px;
-    flow-children: none;             /* art layer fills; name plate overlays the bottom */
-    background-color: gradient(linear, 0% 0%, 0% 100%, from(#28313d), to(#161c24));
-    border: 2px solid #33404f;
-    border-radius: 8px;
-    box-shadow: 0px 3px 8px 0px #00000066;
+    width: 144px;
+    height: 150px;
+    margin: 4px;
+    flow-children: none;                /* art layer fills; name plate overlays the bottom */
+    background-color: gradient(linear, 0% 0%, 0% 100%, from(#17222f), to(#0c1420));
+    border: 1px solid #274056;
+    border-radius: 2px;
+    box-shadow: 0px 2px 6px 0px #00000066;
     pre-transform-scale2d: 1.0;
     transition-property: border-color, box-shadow, pre-transform-scale2d;
     transition-duration: 0.12s;
     transition-timing-function: ease-out;
 }
 .mg-game-card:hover {
-    border-color: #5a86c9;
-    pre-transform-scale2d: 1.03;     /* subtle lift so the hovered game pops */
+    border-color: #3f6f9f;
+    pre-transform-scale2d: 1.03;        /* subtle lift so the hovered game pops */
 }
 .mg-selected {
-    border-color: #6ea8ff;
-    box-shadow: 0px 0px 9px 1px #6ea8ff44;   /* gentle glow, not a harsh bloom */
+    border-color: #5aa0f0;
+    box-shadow: 0px 0px 14px 2px #4a90e24d;   /* soft azure glow, not a neon border */
 }
-.mg-disabled { saturation: 0.85; opacity: 0.6; } /* only slightly muted, so the motif's colours still read */
-.mg-disabled:hover { pre-transform-scale2d: 1.0; border-color: #33404f; } /* no lift for soon */
+.mg-disabled { saturation: 0.55; opacity: 0.5; }
+.mg-disabled:hover { pre-transform-scale2d: 1.0; border-color: #274056; } /* no lift for locked */
+/* centred "IN DEVELOPMENT" plate over the dimmed art */
+.mg-lock-badge {
+    background-color: #0a1019ee;
+    border: 1px solid #35506f;
+    border-radius: 2px;
+    padding: 3px 9px;
+    horizontal-align: center;
+    vertical-align: center;
+}
+.mg-lock-badge Label {
+    color: #a6c0dd;
+    font-size: 11px;
+    letter-spacing: 2px;
+    horizontal-align: center;
+}
 
 /* motif layer — centred, nudged up so the name plate never covers it */
 .mg-card-art {
@@ -228,25 +255,67 @@
     flow-children: down;
     padding-top: 5px;
     padding-bottom: 7px;
-    background-color: gradient(linear, 0% 0%, 0% 100%, from(#0b0f15cc), to(#0b0f15f5));
-    border-radius: 0px 0px 6px 6px;
+    background-color: gradient(linear, 0% 0%, 0% 100%, from(#080c12cc), to(#080c12f7));
+    border-radius: 0px 0px 2px 2px;
 }
 .mg-game-name {
     color: #eef4fb;
-    font-size: 19px;
+    font-size: 17px;
     font-weight: bold;
+    letter-spacing: 1px;
     horizontal-align: center;
     text-shadow: 0px 1px 3px #000000ee;
 }
-.mg-game-soon {
-    color: #ffcf6e;
-    font-size: 11px;
-    letter-spacing: 1px;
-    horizontal-align: center;
-    margin-top: 1px;
+
+/* ── right column: detail + actions ──────────────────────────────────────── */
+.mg-detail {
+    width: 100%;
+    flow-children: down;
+    transition-property: opacity;         /* fades in on each game switch (fadeInDetail) */
+    transition-duration: 0.14s;
+    transition-timing-function: ease-out;
+}
+.mg-detail-title {
+    color: #e6eef8;
+    font-size: 28px;
+    font-weight: bold;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    text-shadow: 0px 1px 4px #000000cc;
+    margin-bottom: 6px;
+}
+.mg-detail-desc {
+    color: #8ea3bb;
+    font-size: 15px;
+    width: 100%;
+    margin-bottom: 20px;
+}
+.mg-detail-locked {
+    color: #cf9b4e;
+    font-size: 17px;
+    font-weight: bold;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    margin-top: 12px;
+}
+.mg-detail-locked-sub {
+    color: #7e91a8;
+    font-size: 14px;
+    width: 100%;
+    margin-top: 6px;
+}
+/* small ALL-CAPS section labels replacing the old "— text —" dividers */
+.mg-section-label {
+    color: #647d99;
+    font-size: 12px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    margin-top: 20px;
+    margin-bottom: 8px;
 }
 
 /* ── buttons / actions ───────────────────────────────────────────────────── */
+/* .mg-actions is still used by the join / waiting / game views (centred row). */
 .mg-actions {
     width: fit-children;
     flow-children: right;
@@ -254,36 +323,54 @@
     margin-top: 12px;
 }
 .mg-btn {
-    height: 46px;
-    min-width: 160px;
-    padding-left: 18px;
-    padding-right: 18px;
+    height: 44px;
+    min-width: 120px;
+    padding-left: 16px;
+    padding-right: 16px;
     margin: 6px;
-    background-color: #2a333f;
-    border: 2px solid #3a4a5f;
-    border-radius: 5px;
+    background-color: #16212e;
+    border: 1px solid #2c4258;
+    border-radius: 2px;
+    transition-property: background-color, border-color;
+    transition-duration: 0.1s;
+    transition-timing-function: ease-out;
 }
 .mg-btn Label {
-    color: #e7eef7;
-    font-size: 18px;
+    color: #d7e2ef;
+    font-size: 17px;
+    letter-spacing: 1px;
     horizontal-align: center;
     vertical-align: center;
 }
-.mg-btn:hover { background-color: #34404e; border-color: #5a86c9; }
-.mg-btn-primary { background-color: #3767b0; border-color: #5a86c9; }
-.mg-btn-primary:hover { background-color: #4278cc; }
-.mg-btn-bot { background-color: #33463b; border-color: #4f8a63; }
-.mg-btn-bot:hover { background-color: #3c5446; border-color: #6fc487; }
-.mg-btn-quick { min-width: 240px; height: 52px; }
-.mg-btn-quick Label { font-size: 20px; font-weight: bold; }
+.mg-btn:hover { background-color: #1c2b3c; border-color: #3f6f9f; }
+/* Primary CTA — the only filled, azure button so it clearly owns the eye. */
+.mg-btn-primary {
+    background-color: gradient(linear, 0% 0%, 0% 100%, from(#2f74be), to(#245e9e));
+    border: 1px solid #4b8fd6;
+}
+.mg-btn-primary:hover {
+    background-color: gradient(linear, 0% 0%, 0% 100%, from(#3a86d6), to(#2b6cb0));
+    border-color: #6aa6e8;
+}
+.mg-btn-quick { height: 56px; }
+.mg-btn-quick Label { font-size: 20px; font-weight: bold; letter-spacing: 2px; }
+
+/* full-width buttons inside the right detail column */
+.mg-detail .mg-btn { width: 100%; margin: 0px; }
+/* Create / Join sit side by side, splitting the column width evenly. */
+.mg-btn-row {
+    width: 100%;
+    flow-children: right;
+}
+.mg-btn-row .mg-btn { width: fill-parent-flow(1.0); }
+.mg-btn-row .mg-btn-2nd { margin-left: 10px; }
 
 /* caption under the Quick Match button */
 .mg-caption {
     color: #7f93a8;
-    font-size: 14px;
+    font-size: 13px;
     width: 100%;
-    text-align: center;
-    margin-top: 4px;
+    margin-top: 6px;
 }
 /* public-match "searching" line */
 .mg-searching {
@@ -294,6 +381,56 @@
     margin-top: 24px;
     margin-bottom: 8px;
 }
+
+/* ── footer: discreet dev tools (left) + Support link (right) ─────────────── */
+.mg-footer {
+    width: 100%;
+    flow-children: right;
+    margin-top: 20px;
+    padding-top: 12px;
+    border-top: 1px solid #ffffff10;
+}
+.mg-tools {
+    width: fill-parent-flow(1.0);
+    flow-children: right;
+    vertical-align: center;
+}
+.mg-tool {
+    height: 24px;
+    padding-left: 8px;
+    padding-right: 8px;
+    margin-right: 6px;
+    background-color: #00000000;
+    border: 0px solid #00000000;
+    vertical-align: center;
+}
+.mg-tool Label {
+    color: #5f7288;
+    font-size: 12px;
+    vertical-align: center;
+    transition-property: color;
+    transition-duration: 0.1s;
+}
+.mg-tool:hover Label { color: #9fb8d6; }
+.mg-support {
+    height: 28px;
+    padding-left: 14px;
+    padding-right: 14px;
+    background-color: #16212e;
+    border: 1px solid #2c4258;
+    border-radius: 2px;
+    horizontal-align: right;
+    vertical-align: center;
+    transition-property: border-color;
+    transition-duration: 0.1s;
+}
+.mg-support Label {
+    color: #cf9b4e;
+    font-size: 13px;
+    letter-spacing: 1px;
+    vertical-align: center;
+}
+.mg-support:hover { border-color: #cf9b4e; }
 
 /* ── join / code ─────────────────────────────────────────────────────────── */
 .mg-join-wrap { width: 100%; horizontal-align: center; margin-top: 10px; margin-bottom: 10px; }

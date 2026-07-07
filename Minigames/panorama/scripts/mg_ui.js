@@ -28,6 +28,24 @@
     var currentCode = 0;
     var statusPollToken = 0;
     var selfTestToken = 0;
+    var cardEls = [];        // [{ id, panel }] — picker cards, so selection can re-skin them without a full rebuild
+    var detailPanel = null;  // right-column detail container (title + description + action buttons)
+
+    // Short blurb shown in the right-hand detail column for each game.
+    var GAME_DESC = {
+        checkers:    "Russian draughts. Capture every enemy piece — flying kings, forced jumps.",
+        tictactoe:   "Classic 3×3 duel. Line up three marks in a row to win.",
+        durak:       "Russia's favourite card game. Don't be the last one holding cards.",
+        chess:       "The timeless game of kings. Full rules, online or versus a bot.",
+        connectfour: "Drop your discs and connect four in a row before your opponent."
+    };
+
+    // Opens the maintainer's Boosty donate page in the external browser. Proven Panorama
+    // channel (same call QOLLOCK uses for its Ko-fi / Discord links) — no fetch needed.
+    function openSupport() {
+        try { $.DispatchEvent("ExternalBrowserGoToURL", "https://boosty.to/predi_1/donate"); }
+        catch (e) { setStatus("Couldn't open the browser."); }
+    }
 
     // ── escape-menu button injection ────────────────────────────────────────
     function topRoot() {
@@ -240,6 +258,10 @@
     }
 
     // ── views ───────────────────────────────────────────────────────────────
+    // The lobby is a two-column layout: LEFT is the game picker grid, RIGHT is the
+    // detail + action panel for whichever card is selected. Selecting a card only
+    // re-skins the cards and rebuilds the right column (renderDetail) — no full
+    // teardown — so the pick feels instant and the right side can fade between games.
     function renderMenu() {
         cleanupCurrentView(true);
         view = "menu";
@@ -247,12 +269,16 @@
         clearBody();
         setStatus(MG.Net.isConfigured() ? "" : "⚠ Server not configured: set BASE_URL in mg_net.js.");
 
-        var subtitle = $.CreatePanel("Label", modalBody, "");
-        subtitle.AddClass("mg-subtitle");
-        subtitle.text = "Play a quick game without leaving the match.";
+        var cols = $.CreatePanel("Panel", modalBody, "");
+        cols.AddClass("mg-columns");
 
-        var picker = $.CreatePanel("Panel", modalBody, "");
+        // ── LEFT: picker grid ──
+        var left = $.CreatePanel("Panel", cols, "");
+        left.AddClass("mg-col-left");
+        var picker = $.CreatePanel("Panel", left, "");
         picker.AddClass("mg-picker");
+
+        cardEls = [];
         var games = MG.Games.list;
         for (var i = 0; i < games.length; i++) {
             (function (g) {
@@ -273,77 +299,133 @@
                 nm.AddClass("mg-game-name");
                 nm.text = g.name;
                 if (!g.enabled) {
-                    var soon = $.CreatePanel("Label", bar, "");
-                    soon.AddClass("mg-game-soon");
-                    soon.text = "COMING SOON";
+                    // A centred plate over the dimmed art reads as "locked" far better
+                    // than the old tiny yellow "coming soon" line under the name.
+                    var lock = $.CreatePanel("Panel", card, "");
+                    lock.AddClass("mg-lock-badge");
+                    var ll = $.CreatePanel("Label", lock, "");
+                    ll.text = "IN DEVELOPMENT";
                 }
-                card.SetPanelEvent("onactivate", function () {
-                    if (!g.enabled) { setStatus("\"" + g.name + "\" is not available yet."); return; }
-                    selectedGameId = g.id;
-                    renderMenu();
-                });
+                card.SetPanelEvent("onactivate", function () { selectGame(g.id); });
+                cardEls.push({ id: g.id, panel: card });
             })(games[i]);
         }
 
-        // ── Public: one-button quick match against anyone. ──
-        var pubRow = $.CreatePanel("Panel", modalBody, "");
-        pubRow.AddClass("mg-actions");
-        var quickBtn = $.CreatePanel("Button", pubRow, "");
-        quickBtn.AddClass("mg-btn");
-        quickBtn.AddClass("mg-btn-primary");
-        quickBtn.AddClass("mg-btn-quick");
-        var ql = $.CreatePanel("Label", quickBtn, ""); ql.text = "Quick Match";
+        // ── RIGHT: detail + actions for the selected game ──
+        var right = $.CreatePanel("Panel", cols, "");
+        right.AddClass("mg-col-right");
+        detailPanel = $.CreatePanel("Panel", right, "");
+        detailPanel.AddClass("mg-detail");
+        renderDetail();
+
+        // ── FOOTER: discreet tools (left) + Support link (right) ──
+        buildFooter();
+    }
+
+    // Re-skin the cards for the new selection and rebuild the right column. No full
+    // renderMenu() so the left grid doesn't flicker on every pick.
+    function selectGame(id) {
+        if (id === selectedGameId) return;
+        selectedGameId = id;
+        for (var i = 0; i < cardEls.length; i++) {
+            if (cardEls[i].id === id) cardEls[i].panel.AddClass("mg-selected");
+            else cardEls[i].panel.RemoveClass("mg-selected");
+        }
+        renderDetail();
+    }
+
+    // Right column: game title + blurb, then either the action buttons (enabled
+    // game) or a "locked" notice (disabled placeholder). Fades in on each switch.
+    function renderDetail() {
+        if (!detailPanel) return;
+        detailPanel.RemoveAndDeleteChildren();
+        var g = MG.Games.byId(selectedGameId);
+        if (!g) return;
+
+        var title = $.CreatePanel("Label", detailPanel, "");
+        title.AddClass("mg-detail-title");
+        title.text = g.name;
+
+        var desc = $.CreatePanel("Label", detailPanel, "");
+        desc.AddClass("mg-detail-desc");
+        desc.text = GAME_DESC[g.key] || "";
+
+        if (!g.enabled) {
+            var locked = $.CreatePanel("Label", detailPanel, "");
+            locked.AddClass("mg-detail-locked");
+            locked.text = "IN DEVELOPMENT";
+            var lockedSub = $.CreatePanel("Label", detailPanel, "");
+            lockedSub.AddClass("mg-detail-locked-sub");
+            lockedSub.text = "This game isn't playable yet — pick another to start.";
+            fadeInDetail();
+            return;
+        }
+
+        // Primary: one-button public matchmaking.
+        var quickBtn = $.CreatePanel("Button", detailPanel, "");
+        quickBtn.AddClass("mg-btn"); quickBtn.AddClass("mg-btn-primary"); quickBtn.AddClass("mg-btn-quick");
+        var ql = $.CreatePanel("Label", quickBtn, ""); ql.text = "QUICK MATCH";
         quickBtn.SetPanelEvent("onactivate", function () { startQuickMatch(); });
+        var quickCap = $.CreatePanel("Label", detailPanel, "");
+        quickCap.AddClass("mg-caption");
+        quickCap.text = "Public — matched with anyone online.";
 
-        var pubCap = $.CreatePanel("Label", modalBody, "");
-        pubCap.AddClass("mg-caption");
-        pubCap.text = "public — get matched with anyone online";
-
-        // ── Private: play with a friend using a shared code. ──
-        var friendDiv = $.CreatePanel("Label", modalBody, "");
-        friendDiv.AddClass("mg-divider");
-        friendDiv.text = "— or play with a friend —";
-
-        var actions = $.CreatePanel("Panel", modalBody, "");
-        actions.AddClass("mg-actions");
-
-        var createBtn = $.CreatePanel("Button", actions, "");
+        // Secondary: private match with a friend via a shared code.
+        var friendLbl = $.CreatePanel("Label", detailPanel, "");
+        friendLbl.AddClass("mg-section-label");
+        friendLbl.text = "Play with a friend";
+        var friendRow = $.CreatePanel("Panel", detailPanel, "");
+        friendRow.AddClass("mg-btn-row");
+        var createBtn = $.CreatePanel("Button", friendRow, "");
         createBtn.AddClass("mg-btn");
-        var cl = $.CreatePanel("Label", createBtn, ""); cl.text = "Create Game";
+        var cl = $.CreatePanel("Label", createBtn, ""); cl.text = "CREATE";
         createBtn.SetPanelEvent("onactivate", function () { startCreate(); });
-
-        var joinBtn = $.CreatePanel("Button", actions, "");
-        joinBtn.AddClass("mg-btn");
-        var jl = $.CreatePanel("Label", joinBtn, ""); jl.text = "Join";
+        var joinBtn = $.CreatePanel("Button", friendRow, "");
+        joinBtn.AddClass("mg-btn"); joinBtn.AddClass("mg-btn-2nd");
+        var jl = $.CreatePanel("Label", joinBtn, ""); jl.text = "JOIN";
         joinBtn.SetPanelEvent("onactivate", function () { renderJoin(); });
 
-        // ── Offline: vs bot. ──
-        var divider = $.CreatePanel("Label", modalBody, "");
-        divider.AddClass("mg-divider");
-        divider.text = "— offline —";
-
-        var actions2 = $.CreatePanel("Panel", modalBody, "");
-        actions2.AddClass("mg-actions");
-        var botBtn = $.CreatePanel("Button", actions2, "");
+        // Offline practice vs the bot.
+        var practiceLbl = $.CreatePanel("Label", detailPanel, "");
+        practiceLbl.AddClass("mg-section-label");
+        practiceLbl.text = "Practice";
+        var botBtn = $.CreatePanel("Button", detailPanel, "");
         botBtn.AddClass("mg-btn");
-        botBtn.AddClass("mg-btn-bot");
-        var bl = $.CreatePanel("Label", botBtn, ""); bl.text = "Play vs Bot";
+        var bl = $.CreatePanel("Label", botBtn, ""); bl.text = "PLAY VS BOT";
         botBtn.SetPanelEvent("onactivate", function () { startBotGame(); });
 
-        // ── Tools: connection tester, online self-test, debug log toggle ──
-        var toolsDiv = $.CreatePanel("Label", modalBody, "");
-        toolsDiv.AddClass("mg-divider");
-        toolsDiv.text = "— tools —";
+        fadeInDetail();
+    }
 
-        var toolsRow = $.CreatePanel("Panel", modalBody, "");
-        toolsRow.AddClass("mg-actions");
+    // Nudge opacity 0→1 one frame after the rebuild so the column fades in on each
+    // pick. Same one-frame-delay trick the pieces use to arm their transition.
+    function fadeInDetail() {
+        if (!detailPanel) return;
+        detailPanel.style.opacity = "0.0";
+        $.Schedule(0.0, function () {
+            if (detailPanel && detailPanel.IsValid && detailPanel.IsValid()) detailPanel.style.opacity = "1.0";
+        });
+    }
 
-        var pingBtn = $.CreatePanel("Button", toolsRow, "");
-        pingBtn.AddClass("mg-btn");
-        pingBtn.AddClass("mg-btn-bot"); // Reuse the dark green bot styling for tools
-        var plbl = $.CreatePanel("Label", pingBtn, "");
-        plbl.text = "Test Connection";
-        pingBtn.SetPanelEvent("onactivate", function () {
+    // Footer: the dev tools (connection test / self-test / debug log) live here as
+    // small, low-contrast text links so they no longer compete with the play buttons.
+    // A Support link sits at the far right. (Tools get hidden wholesale near release.)
+    function buildFooter() {
+        var footer = $.CreatePanel("Panel", modalBody, "");
+        footer.AddClass("mg-footer");
+
+        var tools = $.CreatePanel("Panel", footer, "");
+        tools.AddClass("mg-tools");
+
+        function mkTool(text, onClick) {
+            var b = $.CreatePanel("Button", tools, "");
+            b.AddClass("mg-tool");
+            var l = $.CreatePanel("Label", b, ""); l.text = text;
+            b.SetPanelEvent("onactivate", onClick);
+            return l;
+        }
+
+        mkTool("Test Connection", function () {
             if (!MG.Net.isConfigured()) { setStatus("⚠ Configure the server first."); return; }
             setStatus("Pinging server…");
             MG.Api.ping(function (ms) {
@@ -352,25 +434,18 @@
                 setStatus("❌ Ping failed — server unreachable.");
             });
         });
-
-        var stBtn = $.CreatePanel("Button", toolsRow, "");
-        stBtn.AddClass("mg-btn");
-        stBtn.AddClass("mg-btn-bot");
-        var stlbl = $.CreatePanel("Label", stBtn, "");
-        stlbl.text = "Self-Test";
-        stBtn.SetPanelEvent("onactivate", function () { runSelfTest(); });
-
-        var dbgBtn = $.CreatePanel("Button", toolsRow, "");
-        dbgBtn.AddClass("mg-btn");
-        dbgBtn.AddClass("mg-btn-bot");
-        var dbglbl = $.CreatePanel("Label", dbgBtn, "");
+        mkTool("Self-Test", function () { runSelfTest(); });
         function dbgText() { return MG.Net.isDebug && MG.Net.isDebug() ? "Hide Debug Log" : "Debug Log"; }
-        dbglbl.text = dbgText();
-        dbgBtn.SetPanelEvent("onactivate", function () {
+        var dbgLbl = mkTool(dbgText(), function () {
             if (!MG.Net.setDebug) return;
             MG.Net.setDebug(!MG.Net.isDebug());
-            dbglbl.text = dbgText();
+            dbgLbl.text = dbgText();
         });
+
+        var support = $.CreatePanel("Button", footer, "");
+        support.AddClass("mg-support");
+        var sl = $.CreatePanel("Label", support, ""); sl.text = "Support";
+        support.SetPanelEvent("onactivate", function () { openSupport(); });
     }
 
     // ── online self-test ──────────────────────────────────────────────────────
