@@ -271,10 +271,12 @@ Because the click now lands on the piece (not the cell beneath), each piece forw
     2. **`dragOverSq`** — last cell hovered, set from BOTH `DragEnter` *and* a plain
        `onmouseover` on each cell (two independent hover sources; whichever the engine
        actually fires mid-drag keeps it current).
-    3. **`squareFromGhost()`** — geometry fallback: reparent the ghost back under the
-       pieces layer (the engine moves `displayPanel` into its own drag overlay), then read
-       `actualxoffset`/`actualyoffset` (board-space once reparented), centre ÷ `SQ` → cell.
-       Rejects an exact `(0,0)` (the classic reparented/uninitialised reading).
+    3. **`squareFromGhost()`** — geometry, via `ghostPos()`: reparent the ghost back under
+       the pieces layer (the engine moves `displayPanel` into its own drag overlay), then
+       read position. **PRIMARY = `ghost.style.x` / `ghost.style.y`** — with
+       `removePositionBeforeDrop=false` the engine writes the drop position THERE, and that
+       is the channel QOLLOCK's `ReadPanelPosition` reads FIRST (we previously read only
+       `actualxoffset`, its fallback). Centre ÷ `SQ` → cell. Rejects an exact `(0,0)`.
   - A garbage candidate is simply not in `legalTargets`, so it's skipped; if none match,
     the piece snaps back. **A false move is impossible, and nothing here touches the
     server** — the same `doLocalHop` path a click uses.
@@ -284,9 +286,12 @@ Because the click now lands on the piece (not the cell beneath), each piece forw
   - **First deal doesn't slide in.** The base `.mg-piece` has NO transition; the animating
     `.mg-anim` class is added one frame later (`$.Schedule(0.0)`), after the start transform
     is committed — so pieces snap onto their squares at start but every later move animates.
-  - ⚠ **Unverified in-game** (can't render). If a drop still won't land, add a temporary
-    `$.Msg` of all three candidates in `commitDropMultimethod` to see which channel the
-    engine actually populates, then keep that one.
+  - 🔎 **`DRAG_DEBUG` diagnostic (currently ON).** After 4 blind single-channel attempts all
+    failed, `commitDropMultimethod` now writes what EVERY channel produced to the on-screen
+    status line on each `DragEnd`: `DROP OK via <ch>→<sq>` or `DROP MISS | panel=<id>→<sq>
+    over=<sq>(<n>e) ghost=<sq> [sx=.. sy=.. ax=.. ay=..] | targets=[..]`. This gives ground
+    truth in ONE in-game test — read which channel actually populated, lock it in, then set
+    `DRAG_DEBUG=false`. `<n>e` = how many `DragEnter` events fired (0 ⇒ that channel is dead).
 - **Bot color alternates** each `Play vs Bot` (`botGamesStarted % 2`) so you don't always
   open as white. When you're black/O, the boot path calls the bot to open (offline has no
   server to poll).

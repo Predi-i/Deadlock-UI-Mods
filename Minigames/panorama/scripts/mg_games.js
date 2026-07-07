@@ -322,8 +322,22 @@
         var dragActive = false;        // a real grab is in flight (ghost exists)
         var dragGhost = null;          // panel that follows the cursor
         var dragOverSq = -1;           // square the cursor is currently over (DragEnter / mouseover)
+        var dragEnterCount = 0;        // how many DragEnter events landed this drag (is that channel alive?)
+
+        // TEMP diagnostic. When true, every DragEnd writes what each drop channel actually
+        // produced to the on-screen status line — so ONE in-game test reveals which signal
+        // the engine really populates, instead of guessing a 5th time. Flip to false (or
+        // delete the status() call in commitDropMultimethod) once drag is confirmed working.
+        var DRAG_DEBUG = true;
 
         function status(t) { if (session.onStatus) session.onStatus(t); }
+
+        // Parse a Panorama px-like style value ("123px", "123.0px") to a number, else null.
+        function parsePx(v) {
+            if (typeof v !== "string" || !v.length) return null;
+            var m = v.match(/-?\d+(\.\d+)?/);
+            return m ? parseFloat(m[0]) : null;
+        }
 
         // Display transform: black sees the board rotated 180° so its pieces sit at the bottom.
         function toDisplay(i) { return myColor === WHITE ? i : 63 - i; }
@@ -375,7 +389,7 @@
                         // land). DragEnter also lets us remember which square the cursor is
                         // over, so DragEnd can commit the move even if DragDrop is flaky.
                         $.RegisterEventHandler("DragEnter", cell, function () {
-                            if (dragActive) dragOverSq = square;
+                            if (dragActive) { dragOverSq = square; dragEnterCount++; }
                             return true; // accept the drop
                         });
                         $.RegisterEventHandler("DragLeave", cell, function () {
@@ -464,6 +478,7 @@
 
                 dragActive = true;
                 dragOverSq = -1;
+                dragEnterCount = 0;
                 piece.AddClass("mg-drag-source"); // dim the real piece while it's "lifted"
 
                 // Light up this piece's legal targets as drop hints — but only when it may
@@ -520,19 +535,35 @@
             return -1;
         }
 
-        // Ghost geometry. The engine may have reparented the ghost into a drag overlay;
-        // pull it back under the pieces layer first (QOLLOCK's ql_hero_testing reparents
-        // before reading position) so actualxoffset is board-space again. Reject an exact
-        // (0,0), the classic "reparented/uninitialised" reading.
-        function squareFromGhost() {
+        // Read the ghost's released position in pieces-layer space. The engine may have
+        // reparented the ghost into its own drag overlay; pull it back under the pieces
+        // layer first (QOLLOCK's ql_hero_testing reparents before reading) so the numbers are
+        // board-space again. Returns {x,y} of the ghost's top-left plus the raw channels for
+        // diagnostics, or null.
+        //
+        // PRIMARY channel = style.x / style.y. With removePositionBeforeDrop=false the engine
+        // writes the drop position into the display panel's style.x/style.y — this is exactly
+        // what QOLLOCK's ReadPanelPosition reads FIRST, and it's the channel we had never used.
+        // actualxoffset is only the fallback.
+        function ghostPos() {
             var g = dragGhost;
-            if (!g || (g.IsValid && !g.IsValid())) return -1;
+            if (!g || (g.IsValid && !g.IsValid())) return null;
             try { if (g.GetParent && g.GetParent() !== piecesLayer) g.SetParent(piecesLayer); } catch (e) {}
-            var gx = (typeof g.actualxoffset === "number") ? g.actualxoffset : null;
-            var gy = (typeof g.actualyoffset === "number") ? g.actualyoffset : null;
-            if (gx === null || gy === null || !isFinite(gx) || !isFinite(gy)) return -1;
-            if (gx === 0 && gy === 0) return -1; // suspicious origin → skip, let other methods try
-            var cx = gx + PIECE_SZ / 2, cy = gy + PIECE_SZ / 2;
+            var sx = parsePx(g.style ? g.style.x : null);
+            var sy = parsePx(g.style ? g.style.y : null);
+            var ax = (typeof g.actualxoffset === "number" && isFinite(g.actualxoffset)) ? g.actualxoffset : null;
+            var ay = (typeof g.actualyoffset === "number" && isFinite(g.actualyoffset)) ? g.actualyoffset : null;
+            var x = (sx !== null) ? sx : ax;
+            var y = (sy !== null) ? sy : ay;
+            if (x === null || y === null) return null;
+            return { x: x, y: y, sx: sx, sy: sy, ax: ax, ay: ay };
+        }
+
+        function squareFromGhost() {
+            var p = ghostPos();
+            if (!p) return -1;
+            if (p.x === 0 && p.y === 0) return -1; // suspicious origin → let other methods try
+            var cx = p.x + PIECE_SZ / 2, cy = p.y + PIECE_SZ / 2;
             var dcol = Math.floor(cx / SQ), drow = Math.floor(cy / SQ);
             if (dcol < 0 || dcol > 7 || drow < 0 || drow > 7) return -1;
             return fromDisplay(drow * 8 + dcol);
@@ -541,16 +572,37 @@
         // Try each candidate in priority order; commit the first that is a legal target.
         // `droppedPanel` is DragEnd's authoritative 2nd arg (the panel released onto).
         function commitDropMultimethod(droppedPanel) {
-            if (destroyed || !myTurn() || selected < 0) return;
-            var candidates = [
-                squareFromPanel(droppedPanel), // A: native drop panel (best when present)
-                dragOverSq,                    // B: last cell hovered (DragEnter/mouseover)
-                squareFromGhost()              // C: ghost geometry (after reparent)
-            ];
-            for (var k = 0; k < candidates.length; k++) {
-                var sq = candidates[k];
-                if (sq >= 0 && isLegalTarget(sq)) { onCellDrop(sq); return; }
+            if (destroyed || !myTurn() || selected < 0) {
+                if (DRAG_DEBUG) status("drop ignored: myTurn=" + myTurn() + " selected=" + selected);
+                return;
             }
+            var aPanel = squareFromPanel(droppedPanel); // A: native drop panel (best when present)
+            var bOver = dragOverSq;                     // B: last cell hovered (DragEnter/mouseover)
+            var cGhost = squareFromGhost();             // C: ghost geometry (style.x/y, then actual)
+            var candidates = [aPanel, bOver, cGhost];
+            var names = ["panel", "over", "ghost"];
+            var matched = -1, via = "none";
+            for (var k = 0; k < candidates.length; k++) {
+                if (candidates[k] >= 0 && isLegalTarget(candidates[k])) { matched = candidates[k]; via = names[k]; break; }
+            }
+
+            if (DRAG_DEBUG) {
+                var gp = ghostPos();
+                var dpid = "null";
+                try { dpid = droppedPanel ? (droppedPanel.id || "noid") : "null"; } catch (e) { dpid = "err"; }
+                var tg = [];
+                for (var t = 0; t < legalTargets.length; t++) tg.push(legalTargets[t].to);
+                var g = gp
+                    ? ("sx=" + gp.sx + " sy=" + gp.sy + " ax=" + (gp.ax === null ? "-" : Math.round(gp.ax)) + " ay=" + (gp.ay === null ? "-" : Math.round(gp.ay)))
+                    : "no-ghost";
+                status("DROP " + (matched >= 0 ? ("OK via " + via + "→" + matched) : "MISS")
+                    + " | panel=" + dpid + "→" + aPanel
+                    + " over=" + bOver + "(" + dragEnterCount + "e)"
+                    + " ghost=" + cGhost + " [" + g + "]"
+                    + " | targets=[" + tg.join(",") + "]");
+            }
+
+            if (matched >= 0) { onCellDrop(matched); return; }
             // Nothing matched → snap back (selection stays so the hints remain for a click).
         }
 
