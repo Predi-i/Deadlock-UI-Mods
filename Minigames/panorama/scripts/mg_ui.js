@@ -21,6 +21,10 @@
     }
 
     var overlay = null, modalBody = null, statusLabel = null, titleLabel = null;
+    // In the MENU view the status text lives on the LEFT of the footer row (same line as the
+    // dev tools) instead of on its own line below — shorter panel, and the message sits level
+    // with Test Connection / Self-Test. Other views keep the centred bottom statusLabel.
+    var footerStatus = null;
     var overlayShown = false;     // our modal is up (independent of the menu's own state)
     var view = "menu";
     var selectedGameId = 1;
@@ -32,12 +36,14 @@
     var detailPanel = null;  // right-column detail container (title + description + action buttons)
 
     // Short blurb shown in the right-hand detail column for each game.
+    // Keep each ≤ ~80 chars: .mg-detail-desc is a fixed 2-line (52px) box, so a longer blurb
+    // spills onto a clipped 3rd line. The original 80-char lines are the proven envelope.
     var GAME_DESC = {
-        checkers:    "Russian draughts. Capture every enemy piece, with flying kings and forced jumps.",
-        tictactoe:   "Classic 3×3 duel. Line up three marks in a row to win.",
-        durak:       "Russia's favourite card game. Don't be the last one holding cards.",
-        chess:       "The timeless game of kings. Full rules, online or versus a bot.",
-        connectfour: "Drop your discs and connect four in a row before your opponent."
+        checkers:    "Draughts with flying kings and forced jumps. Capture every enemy piece to win.",
+        tictactoe:   "The classic 3×3 duel. Line up three of your marks in a row to win.",
+        durak:       "The beloved Eastern European card game. Be the first to shed all your cards.",
+        chess:       "The timeless game of strategy. Full rules, against a friend or the bot.",
+        connectfour: "Drop your discs down the grid and be the first to line up four in a row."
     };
 
     // Opens the maintainer's Boosty donate page in the external browser. Proven Panorama
@@ -165,7 +171,20 @@
         statusLabel.text = "";
     }
 
-    function setStatus(t) { if (statusLabel) statusLabel.text = t || ""; }
+    function setStatus(t) {
+        // In the menu, the footer carries the status inline (left of the dev tools); keep the
+        // separate bottom line empty AND collapsed so it reserves no height. Elsewhere the
+        // centred bottom line is used and shown.
+        if (footerStatus && footerStatus.IsValid && footerStatus.IsValid()) {
+            footerStatus.text = t || "";
+            if (statusLabel) { statusLabel.text = ""; statusLabel.style.visibility = "collapse"; }
+            return;
+        }
+        if (statusLabel) {
+            statusLabel.text = t || "";
+            statusLabel.style.visibility = (t ? "visible" : "collapse");
+        }
+    }
     function setTitle(t) { if (titleLabel) titleLabel.text = t; }
 
     function cleanupCurrentView(cancelServer) {
@@ -187,6 +206,9 @@
     }
 
     function clearBody() {
+        // footerStatus is a child of modalBody's footer, so it's about to be deleted — drop the
+        // reference so setStatus falls back to the centred bottom line until the menu rebuilds it.
+        footerStatus = null;
         if (modalBody) modalBody.RemoveAndDeleteChildren();
     }
 
@@ -282,7 +304,6 @@
         view = "menu";
         setTitle("Minigames");
         clearBody();
-        setStatus(MG.Net.isConfigured() ? "" : "⚠ Server not configured: set BASE_URL in mg_net.js.");
 
         var cols = $.CreatePanel("Panel", modalBody, "");
         cols.AddClass("mg-columns");
@@ -333,8 +354,10 @@
         detailPanel.AddClass("mg-detail");
         renderDetail();
 
-        // ── FOOTER: discreet tools (left) + Support link (right) ──
+        // ── FOOTER: status (left) + discreet tools (right) ──
         buildFooter();
+        // Now that footerStatus exists, route the initial message into it (or clear it).
+        setStatus(MG.Net.isConfigured() ? "" : "⚠ Server not configured: set BASE_URL in mg_net.js.");
     }
 
     // Re-skin the cards for the new selection and rebuild the right column. No full
@@ -430,6 +453,12 @@
     function buildFooter() {
         var footer = $.CreatePanel("Panel", modalBody, "");
         footer.AddClass("mg-footer");
+
+        // Status text on the LEFT of the footer, level with the dev tools (п2). Replaces the
+        // old separate line under the footer, so the bottom strip is one row shorter.
+        footerStatus = $.CreatePanel("Label", footer, "");
+        footerStatus.AddClass("mg-footer-status");
+        footerStatus.text = "";
 
         // spacer takes the slack so the tools sit at the right edge
         var spacer = $.CreatePanel("Panel", footer, "");

@@ -84,7 +84,7 @@
     font-family: oracle !important;
     font-weight: bold;
     color: #eef3fa !important;
-    font-size: 26px !important;
+    font-size: 30px !important;          /* bigger — the header row had free vertical space */
     letter-spacing: 3px;
     text-transform: uppercase;
     vertical-align: center;
@@ -96,8 +96,8 @@
 }
 .mg-header-credit Label {
     font-family: radiance !important;
-    color: #5f7893 !important;
-    font-size: 15px !important;
+    color: #6a83a0 !important;           /* +contrast to match the larger title */
+    font-size: 17px !important;          /* scaled with the title (15→17) */
     letter-spacing: 0.5px;
     vertical-align: center;
     transition-property: color;
@@ -126,7 +126,7 @@
     font-size: 18px !important;
     horizontal-align: center;
     vertical-align: center;
-    margin-left: 2px;                    /* +2px right — glyph reads left-of-centre in the box (п6) */
+    margin-left: 4px;                    /* +4px right — glyph reads left-of-centre in the box (п6) */
     margin-top: 2px;                     /* +2px down */
 }
 .mg-close:hover { background-color: #3a1c1a; border-color: #cf4a42; }
@@ -164,11 +164,13 @@
 .mg-col-right {
     width: 44%;
     padding-left: 22px;
-    padding-right: 0px;                  /* buttons flush to the column's inner edge; the ~7px
-                                            column slack + 28px modal padding is the right margin */
+    padding-right: 5px;                  /* ⚠ MUST stay > 0: with 0, Panorama clips the button's
+                                            1px right border when it sits flush at the box edge
+                                            (the PLAY VS BOT "no right border" bug, п4). 5px keeps
+                                            the border visible AND gives a small right gap. */
     border-left: 1px solid #ffffff10;
     flow-children: down;
-    overflow: noclip;                   /* default `squish` clipped the button's right border (п4) */
+    overflow: noclip;
 }
 
 /* ── game picker — scrolls vertically (9 games, 3 per row) ─────────────────── */
@@ -479,6 +481,14 @@
     padding-top: 10px;                   /* B: from 14 */
     border-top: 1px solid #ffffff10;
     vertical-align: center;
+}
+/* status text living inline on the LEFT of the footer, level with the dev tools (п2). */
+.mg-footer-status {
+    font-family: radiance !important;
+    color: #aebfd2 !important;
+    font-size: 15px !important;
+    vertical-align: center;
+    margin-right: 12px;
 }
 /* spacer takes the slack so the dev tools sit at the right edge */
 .mg-footer-spacer {
