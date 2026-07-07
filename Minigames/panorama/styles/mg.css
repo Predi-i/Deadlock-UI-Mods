@@ -41,12 +41,14 @@
     flow-children: right;
     margin-bottom: 16px;
     padding-bottom: 12px;
+    border-bottom: 2px solid #2a3644;   /* accent rule separating the title from the body */
 }
 .mg-title {
     color: #e7eef7;
     font-size: 28px;
     font-weight: bold;
     width: fill-parent-flow(1.0);
+    text-shadow: 0px 1px 4px #000000cc;
 }
 .mg-subtitle {
     color: #8aa0b6;
@@ -94,39 +96,151 @@
 
 /* ── game picker ─────────────────────────────────────────────────────────── */
 .mg-picker {
-    width: 648px;                    /* exactly 3 cards (200 + 2*8 margin); rest wrap */
+    width: 678px;                    /* exactly 3 cards (210 + 2*8 margin); rest wrap */
     flow-children: right-wrap;
     horizontal-align: center;
     margin-bottom: 20px;
 }
 .mg-game-card {
-    width: 200px;
-    height: 116px;
+    width: 210px;
+    height: 140px;
     margin: 8px;
-    background-color: gradient(linear, 0% 0%, 0% 100%, from(#28313d), to(#1d242e));
+    flow-children: none;             /* art layer fills; name plate overlays the bottom */
+    background-color: gradient(linear, 0% 0%, 0% 100%, from(#28313d), to(#161c24));
     border: 2px solid #33404f;
     border-radius: 8px;
-    flow-children: down;
+    box-shadow: 0px 3px 8px 0px #00000066;
+    pre-transform-scale2d: 1.0;
+    transition-property: border-color, box-shadow, pre-transform-scale2d;
+    transition-duration: 0.12s;
+    transition-timing-function: ease-out;
 }
-.mg-game-card:hover { border-color: #5a86c9; }
-.mg-selected { border-color: #6ea8ff; box-shadow: 0px 0px 16px 2px #6ea8ff66; }
-.mg-disabled { saturation: 0.2; opacity: 0.5; }
-.mg-game-card-inner {
+.mg-game-card:hover {
+    border-color: #5a86c9;
+    pre-transform-scale2d: 1.03;     /* subtle lift so the hovered game pops */
+}
+.mg-selected {
+    border-color: #6ea8ff;
+    box-shadow: 0px 0px 18px 2px #6ea8ff77;
+}
+.mg-disabled { saturation: 0.25; opacity: 0.55; }
+.mg-disabled:hover { pre-transform-scale2d: 1.0; border-color: #33404f; } /* no lift for soon */
+
+/* motif layer — centred, nudged up so the name plate never covers it */
+.mg-card-art {
     width: 100%;
-    flow-children: down;
+    height: 100%;
+    flow-children: none;
+}
+.mg-mini {
+    horizontal-align: center;
     vertical-align: center;
+    margin-bottom: 22px;             /* clear the name plate at the bottom */
+}
+/* shared mini board (checkers 4x4, chess 3x3) */
+.mg-mini-board {
+    flow-children: down;
+    border: 2px solid #0a0d12;
+    border-radius: 3px;
+    box-shadow: 0px 2px 6px 0px #00000088;
+}
+.mg-mini-row { flow-children: right; height: 22px; }
+.mg-mini-cell { width: 22px; height: 22px; }
+.mg-mini-light { background-color: #d8c6a8; }
+.mg-mini-dark { background-color: #6e5138; }
+.mg-mini-disc {
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    horizontal-align: center; vertical-align: center;
+    box-shadow: 0px 1px 2px 0px #000000aa;
+}
+.mg-mini-disc-w { background-color: gradient(radial, 50% 35%, 0% 0%, 70% 70%, from(#ffffff), to(#c9cdd4)); border: 1px solid #9aa0a8; }
+.mg-mini-disc-b { background-color: gradient(radial, 50% 35%, 0% 0%, 70% 70%, from(#4a4f57), to(#1c1f24)); border: 1px solid #0a0c0f; }
+.mg-mini-king {
+    width: 15px; height: 15px;
+    border-radius: 50%;
+    background-color: gradient(radial, 50% 35%, 0% 0%, 70% 70%, from(#ffe7a0), to(#d29a2a));
+    border: 1px solid #8a6410;
+    horizontal-align: center; vertical-align: center;
+    box-shadow: 0px 0px 6px 1px #ffd76eaa;
+}
+/* mini tic-tac-toe grid */
+.mg-mini-ttt {
+    flow-children: right-wrap;
+    width: 90px;                     /* 3 * (26 + 2*2 margin) */
+    background-color: #0a0d12;
+    border-radius: 3px;
+    box-shadow: 0px 2px 6px 0px #00000088;
+}
+.mg-mini-ttt-cell { width: 26px; height: 26px; margin: 2px; background-color: #223142; }
+.mg-mini-x { width: 22px; height: 22px; horizontal-align: center; vertical-align: center; flow-children: none; }
+.mg-mini-x-bar {
+    width: 22px; height: 4px;
+    border-radius: 2px;
+    background-color: #6ea8ff;
+    horizontal-align: center; vertical-align: center;
+}
+.mg-mini-x-a { transform: rotateZ(45deg); }
+.mg-mini-x-b { transform: rotateZ(-45deg); }
+.mg-mini-o {
+    width: 18px; height: 18px;
+    border: 4px solid #ff7b7b;
+    border-radius: 50%;
+    horizontal-align: center; vertical-align: center;
+}
+/* durak — two fanned playing cards with a red pip */
+.mg-emblem { flow-children: none; width: 90px; height: 84px; }
+.mg-card-back {
+    width: 46px; height: 64px;
+    border-radius: 5px;
+    border: 2px solid #cdd6e2;
+    horizontal-align: center; vertical-align: center;
+    box-shadow: 0px 2px 5px 0px #000000aa;
+}
+.mg-card-back-2 { background-color: #7d8794; transform: rotateZ(-12deg) translateX(-11px); }
+.mg-card-front { background-color: #f2f4f8; transform: rotateZ(9deg) translateX(9px); flow-children: none; }
+.mg-suit-pip {
+    width: 16px; height: 16px;
+    background-color: #cc3b3b;
+    transform: rotateZ(45deg);
+    horizontal-align: center; vertical-align: center;
+}
+/* connect four — blue frame with stacked red/yellow discs */
+.mg-c4-frame {
+    flow-children: right-wrap;
+    width: 78px;                     /* 3 * (22 + 2*2 margin) */
+    padding: 4px;
+    background-color: gradient(linear, 0% 0%, 0% 100%, from(#2a5bb0), to(#1c3f7d));
+    border-radius: 6px;
+    box-shadow: 0px 2px 6px 0px #00000088;
+}
+.mg-c4-slot { width: 22px; height: 22px; margin: 2px; border-radius: 50%; background-color: #16233a; }
+.mg-c4-r { background-color: gradient(radial, 50% 35%, 0% 0%, 70% 70%, from(#ff8a8a), to(#d23b3b)); }
+.mg-c4-y { background-color: gradient(radial, 50% 35%, 0% 0%, 70% 70%, from(#ffe08a), to(#e0a52a)); }
+
+/* name plate pinned to the bottom, dark gradient keeps text legible over the art */
+.mg-card-namebar {
+    width: 100%;
+    vertical-align: bottom;
+    flow-children: down;
+    padding-top: 5px;
+    padding-bottom: 7px;
+    background-color: gradient(linear, 0% 0%, 0% 100%, from(#0b0f15cc), to(#0b0f15f5));
+    border-radius: 0px 0px 6px 6px;
 }
 .mg-game-name {
-    color: #e7eef7;
-    font-size: 20px;
+    color: #eef4fb;
+    font-size: 19px;
     font-weight: bold;
     horizontal-align: center;
+    text-shadow: 0px 1px 3px #000000ee;
 }
 .mg-game-soon {
     color: #ffcf6e;
-    font-size: 13px;
+    font-size: 11px;
+    letter-spacing: 1px;
     horizontal-align: center;
-    margin-top: 6px;
+    margin-top: 1px;
 }
 
 /* ── buttons / actions ───────────────────────────────────────────────────── */

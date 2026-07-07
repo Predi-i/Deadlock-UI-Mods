@@ -157,6 +157,88 @@
         if (modalBody) modalBody.RemoveAndDeleteChildren();
     }
 
+    // ── card art ────────────────────────────────────────────────────────────
+    // Each picker card shows a small motif of its game BEHIND the name, so the eye
+    // recognises it at a glance (psychology of visual anchoring — a mini draughts
+    // board reads as "checkers" far faster than the word does). Everything is pure
+    // panels: the game font carries none of the glyphs these games would need.
+    function el(parent, cls) {
+        var p = $.CreatePanel("Panel", parent, "");
+        if (cls) {
+            // AddClass takes ONE token, so split space-separated class lists ourselves —
+            // otherwise "mg-mini mg-mini-board" becomes a single literal (unstyled) class.
+            var parts = cls.split(" ");
+            for (var i = 0; i < parts.length; i++) if (parts[i]) p.AddClass(parts[i]);
+        }
+        return p;
+    }
+
+    function artCheckers(art) {
+        var b = el(art, "mg-mini mg-mini-board");
+        for (var r = 0; r < 4; r++) {
+            var row = el(b, "mg-mini-row");
+            for (var c = 0; c < 4; c++) {
+                var cell = el(row, "mg-mini-cell");
+                var dark = ((r + c) & 1) === 1;
+                cell.AddClass(dark ? "mg-mini-dark" : "mg-mini-light");
+                if (dark && r === 3) el(cell, "mg-mini-disc mg-mini-disc-b");   // two black at bottom
+                else if (dark && r === 0) el(cell, "mg-mini-disc mg-mini-disc-w"); // two white at top
+            }
+        }
+    }
+
+    function artTtt(art) {
+        var g = el(art, "mg-mini mg-mini-ttt");
+        var marks = { 0: "x", 2: "o", 4: "x", 6: "o", 8: "x" }; // a filled diagonal + corners
+        for (var i = 0; i < 9; i++) {
+            var cell = el(g, "mg-mini-ttt-cell");
+            if (marks[i] === "x") {
+                var x = el(cell, "mg-mini-x");
+                el(x, "mg-mini-x-bar mg-mini-x-a");
+                el(x, "mg-mini-x-bar mg-mini-x-b");
+            } else if (marks[i] === "o") {
+                el(cell, "mg-mini-o");
+            }
+        }
+    }
+
+    function artChess(art) {
+        var b = el(art, "mg-mini mg-mini-board");
+        for (var r = 0; r < 3; r++) {
+            var row = el(b, "mg-mini-row");
+            for (var c = 0; c < 3; c++) {
+                var cell = el(row, "mg-mini-cell");
+                cell.AddClass(((r + c) & 1) === 1 ? "mg-mini-dark" : "mg-mini-light");
+                if (r === 1 && c === 1) el(cell, "mg-mini-king"); // a lone gold "royal" piece
+            }
+        }
+    }
+
+    function artDurak(art) {
+        var w = el(art, "mg-mini mg-emblem");
+        el(w, "mg-card-back mg-card-back-2");         // rear card, fanned left
+        var front = el(w, "mg-card-back mg-card-front"); // front card, fanned right
+        el(front, "mg-suit-pip");                     // a red diamond pip
+    }
+
+    function artC4(art) {
+        var f = el(art, "mg-mini mg-c4-frame");
+        var fill = { 3: "y", 4: "r", 5: "y", 6: "r", 7: "y", 8: "r" }; // stacked bottom rows
+        for (var i = 0; i < 9; i++) {
+            var slot = el(f, "mg-c4-slot");
+            if (fill[i] === "r") slot.AddClass("mg-c4-r");
+            else if (fill[i] === "y") slot.AddClass("mg-c4-y");
+        }
+    }
+
+    function buildCardArt(art, key) {
+        if (key === "checkers") artCheckers(art);
+        else if (key === "tictactoe") artTtt(art);
+        else if (key === "chess") artChess(art);
+        else if (key === "durak") artDurak(art);
+        else if (key === "connectfour") artC4(art);
+    }
+
     // ── views ───────────────────────────────────────────────────────────────
     function renderMenu() {
         cleanupCurrentView(true);
@@ -178,17 +260,22 @@
                 card.AddClass("mg-game-card");
                 if (!g.enabled) card.AddClass("mg-disabled");
                 if (g.id === selectedGameId) card.AddClass("mg-selected");
-                // Inner wrapper is vertically centered, so the name (and optional "soon"
-                // sublabel) stay centered whether or not the sublabel is present.
-                var inner = $.CreatePanel("Panel", card, "");
-                inner.AddClass("mg-game-card-inner");
-                var nm = $.CreatePanel("Label", inner, "");
+                // Card = motif art layer (fills the card) with a name plate overlaid at the
+                // bottom. flow-children:none stacks them; the plate's bottom gradient keeps
+                // the name legible over the art.
+                var art = $.CreatePanel("Panel", card, "");
+                art.AddClass("mg-card-art");
+                buildCardArt(art, g.key);
+
+                var bar = $.CreatePanel("Panel", card, "");
+                bar.AddClass("mg-card-namebar");
+                var nm = $.CreatePanel("Label", bar, "");
                 nm.AddClass("mg-game-name");
                 nm.text = g.name;
                 if (!g.enabled) {
-                    var soon = $.CreatePanel("Label", inner, "");
+                    var soon = $.CreatePanel("Label", bar, "");
                     soon.AddClass("mg-game-soon");
-                    soon.text = "soon";
+                    soon.text = "COMING SOON";
                 }
                 card.SetPanelEvent("onactivate", function () {
                     if (!g.enabled) { setStatus("\"" + g.name + "\" is not available yet."); return; }
