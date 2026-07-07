@@ -488,12 +488,15 @@
         }
     };
 
-    // Kick calibration off early: it absorbs the engine's slow first image load and
-    // the probe round-trip while the player is still in menus, instead of adding
-    // seconds (or a mis-calibration) to their first Create/Join/Quick click.
-    if (MG.Net.isConfigured()) {
-        $.Schedule(5.0, function () { if (!calibrated && !calibrating) calibrate(); });
-    }
+    // We deliberately DO NOT calibrate at boot. Calibration spawns the on-screen host
+    // panel, and runtime hittest=false does NOT actually pass input through (hittest is
+    // an XML-construction attribute, not a live style), so a host sitting over the bare
+    // escape menu swallows hover on every native setting until it's torn down. Instead
+    // calibration runs lazily on the first real online request (Create/Join/Quick) —
+    // which always fires from inside our overlay, where the full-screen dim already
+    // covers the menu. Bot games make no requests at all, so they never spawn a host.
+    // Cost: the first online action pays the engine's cold image-load once, spent under
+    // the "waiting for opponent" view — a fair trade for never breaking menu hover.
 
     log("loaded (configured=" + MG.Net.isConfigured() + ")");
 })();

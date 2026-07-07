@@ -244,14 +244,22 @@
     margin: 3px;
     flow-children: none;
 }
+/* The transition lives on the BASE class (the game's own pattern — see element_gun.css),
+   NOT on a class toggled at move time. Two reasons this matters in Panorama:
+   1. The `transition:` shorthand is not parsed for transform, so it must be longhand.
+   2. A transition established in the same frame the value changes can be skipped; with
+      it always active, any later transform/opacity change animates cleanly. The initial
+      deal doesn't animate because a panel's first committed value is its baseline. */
 .mg-piece {
     width: 46px;
     height: 46px;
     border-radius: 50%;
     box-shadow: 0px 3px 5px 0px #00000099;
+    transition-property: transform, opacity;
+    transition-duration: 0.18s, 0.2s;
+    transition-timing-function: ease-in-out, ease-out;
 }
-.mg-sliding { transition: transform 0.18s ease-in-out; }
-.mg-captured { opacity: 0.0; transition: opacity 0.2s ease-out, transform 0.2s ease-out; }
+.mg-captured { opacity: 0.0; }   /* transform-scale set inline; both animate via base */
 .mg-white { background-color: gradient(radial, 50% 35%, 0% 0%, 70% 70%, from(#ffffff), to(#c9cdd4)); border: 2px solid #9aa0a8; }
 .mg-black { background-color: gradient(radial, 50% 35%, 0% 0%, 70% 70%, from(#4a4f57), to(#1c1f24)); border: 2px solid #0a0c0f; }
 .mg-king {

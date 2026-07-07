@@ -439,7 +439,8 @@
                 if (board[to]) makePiece(to, board[to]); // visual desync guard: rebuild from model
                 return;
             }
-            piece.AddClass("mg-sliding");
+            // No class toggle needed: the transition lives on .mg-piece, so simply
+            // changing the transform animates the slide.
             if (promoted) piece.AddClass("mg-king");
             piece.style.transform = transformFor(to);
             pieceEls[to] = piece;
