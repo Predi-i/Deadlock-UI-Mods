@@ -399,8 +399,13 @@
             return;
         }
 
-        // Primary: one-button public matchmaking.
-        var quickBtn = $.CreatePanel("Button", detailPanel, "");
+        // Primary: one-button public matchmaking. Wrapped in a .mg-btn-row so it uses
+        // fill-parent-flow width, NOT width:100% — the latter makes Panorama clip the button's
+        // right border (the PLAY VS BOT / QUICK MATCH "no right border" bug). Same structure as
+        // the working CREATE/JOIN row.
+        var quickRow = $.CreatePanel("Panel", detailPanel, "");
+        quickRow.AddClass("mg-btn-row");
+        var quickBtn = $.CreatePanel("Button", quickRow, "");
         quickBtn.AddClass("mg-btn"); quickBtn.AddClass("mg-btn-primary"); quickBtn.AddClass("mg-btn-quick");
         var ql = $.CreatePanel("Label", quickBtn, ""); ql.text = "QUICK MATCH";
         quickBtn.SetPanelEvent("onactivate", function () { startQuickMatch(); });
@@ -427,7 +432,10 @@
         var practiceLbl = $.CreatePanel("Label", detailPanel, "");
         practiceLbl.AddClass("mg-section-label");
         practiceLbl.text = "Practice";
-        var botBtn = $.CreatePanel("Button", detailPanel, "");
+        // Wrapped in a row for the same fill-parent-flow-vs-width:100% reason as QUICK MATCH.
+        var botRow = $.CreatePanel("Panel", detailPanel, "");
+        botRow.AddClass("mg-btn-row");
+        var botBtn = $.CreatePanel("Button", botRow, "");
         botBtn.AddClass("mg-btn");
         var bl = $.CreatePanel("Label", botBtn, ""); bl.text = "PLAY VS BOT";
         botBtn.SetPanelEvent("onactivate", function () { startBotGame(); });

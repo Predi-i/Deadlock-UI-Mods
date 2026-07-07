@@ -60,7 +60,13 @@
     background-color: #0f141c;
     border: 1px solid #232f3e;
     box-shadow: 0px 22px 60px 0px #00000099;   /* soft elevation (R10), not a glow */
-    padding: 28px;
+    /* asymmetric padding: top trimmed 28→15 (−13px) so the gap above the title matches the gap
+       below it (~21px each); bottom trimmed 28→3 (−25px) to remove the dead strip under the
+       footer status. */
+    padding-top: 15px;
+    padding-right: 28px;
+    padding-bottom: 3px;
+    padding-left: 28px;
     flow-children: down;
     horizontal-align: center;
     vertical-align: center;
@@ -425,7 +431,8 @@
     font-family: radiance !important;
     font-weight: semi-bold;
     color: #cdd9e7 !important;
-    font-size: 16px !important;
+    font-size: 18px !important;          /* CREATE / JOIN / PLAY VS BOT bumped 16→18; QUICK MATCH
+                                            keeps 19 via .mg-btn-quick (declared later, wins) */
     letter-spacing: 1.5px;
     text-transform: uppercase;
     horizontal-align: center;
@@ -498,10 +505,11 @@
 /* Support pill — sits in the HEADER, just right of "by Predi_i". Native-QOLLOCK styling
    (dark fill, hairline, brightness hover). NO yellow. thumbsup icon wash-tinted to accent. */
 .mg-support-btn {
-    height: 28px;
+    height: 32px;                        /* +4px taller (2 top / 2 bottom) */
+    width: fit-children;                 /* hug icon+label → kills the dead zone right of the text */
     margin-left: 14px;
-    padding-left: 10px;
-    padding-right: 12px;
+    padding-left: 11px;
+    padding-right: 12px;                 /* +1 over left to visually balance the left-side icon */
     background-color: #16233a;
     border: 1px solid #34557f;
     border-radius: 2px;
@@ -514,8 +522,8 @@
 .mg-support-btn:hover { background-color: #1b2c47; border-color: #4f86d4; brightness: 1.08; }
 .mg-support-btn:active { brightness: 0.97; }
 .mg-support-icon {
-    width: 15px;
-    height: 15px;
+    width: 17px;                         /* scaled up with the taller button */
+    height: 17px;
     margin-right: 7px;
     vertical-align: center;
     background-image: url("s2r://panorama/images/icons/icon_thumbsup.vsvg");
@@ -530,7 +538,7 @@
     font-family: radiance !important;
     font-weight: semi-bold;
     color: #9cc3ff !important;
-    font-size: 14px !important;
+    font-size: 16px !important;          /* bigger (14→16) — fills the button, no dead space */
     letter-spacing: 1.5px;
     text-transform: uppercase;
     vertical-align: center;
