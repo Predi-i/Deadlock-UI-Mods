@@ -321,6 +321,7 @@
         // "ghost" panel follows the cursor and the real piece is dimmed in place.
         var dragActive = false;        // a real grab is in flight (ghost exists)
         var dragGhost = null;          // panel that follows the cursor
+        var dragOverSq = -1;           // square the cursor is currently over (from DragEnter)
 
         function status(t) { if (session.onStatus) session.onStatus(t); }
 
@@ -368,9 +369,18 @@
                     cell.AddClass(isDark(r, c) ? "mg-cell-dark" : "mg-cell-light");
                     (function (square) {
                         cell.SetPanelEvent("onactivate", function () { onCellClick(square); });
-                        // Drop target for drag-and-drop. DragDrop fires on the panel under
-                        // the cursor at release; the empty target cell is hittestable (the
-                        // pieces layer above it is hittest:false), so it receives the drop.
+                        // Drop target for drag-and-drop. In Panorama a panel only becomes a
+                        // valid drop target when its DragEnter handler returns true — without
+                        // it, DragDrop never fires on the cell (that was why the drop didn't
+                        // land). DragEnter also lets us remember which square the cursor is
+                        // over, so DragEnd can commit the move even if DragDrop is flaky.
+                        $.RegisterEventHandler("DragEnter", cell, function () {
+                            if (dragActive) dragOverSq = square;
+                            return true; // accept the drop
+                        });
+                        $.RegisterEventHandler("DragLeave", cell, function () {
+                            if (dragActive && dragOverSq === square) dragOverSq = -1;
+                        });
                         $.RegisterEventHandler("DragDrop", cell, function () { onCellDrop(square); });
                     })(i);
                     cells[i] = cell;
@@ -396,7 +406,15 @@
             piece.AddClass("mg-piece");
             piece.AddClass(colorOf(v) === WHITE ? "mg-white" : "mg-black");
             if (isKing(v)) piece.AddClass("mg-king");
+            // Set the start position WITHOUT the transition (base .mg-piece has none), so a
+            // fresh piece snaps onto its square instead of sliding in from the corner. Add
+            // the animating class one frame later, once this position is committed — from
+            // then on every transform/opacity/scale change animates. This is the same idiom
+            // the game uses (transition on a class, toggled after the value is set).
             piece.style.transform = transformFor(realIdx);
+            $.Schedule(0.0, function () {
+                if (piece && piece.IsValid && piece.IsValid()) piece.AddClass("mg-anim");
+            });
             piece._sq = realIdx;          // live square this piece sits on (updated on slide)
             pieceEls[realIdx] = piece;
             setupPieceInput(piece);
@@ -452,10 +470,20 @@
             });
 
             $.RegisterEventHandler("DragEnd", piece, function () {
-                // Fires after DragDrop. Tear down the ghost + dim regardless of outcome.
+                // Fires after DragDrop. FALLBACK COMMIT: DragDrop on the cell proved
+                // unreliable (grab worked, release didn't land the move), so commit here
+                // from the square the cursor was last over (tracked via DragEnter). This
+                // runs while dragActive/selected/legalTargets are still valid — the teardown
+                // below must come AFTER, or onCellDrop's guards would reject it. If DragDrop
+                // already committed, this is a harmless no-op: that square is no longer a
+                // legal target (turn ended → selected<0, or chain advanced → new targets).
+                if (dragOverSq >= 0) onCellDrop(dragOverSq);
+
+                // Tear down the ghost + dim regardless of outcome.
                 if (dragGhost) { try { dragGhost.DeleteAsync(0); } catch (e) {} dragGhost = null; }
                 piece.RemoveClass("mg-drag-source");
                 dragActive = false;
+                dragOverSq = -1;
                 // A drop on empty space (no legal target) just snaps back — the real piece
                 // never moved, so there is nothing to restore.
             });

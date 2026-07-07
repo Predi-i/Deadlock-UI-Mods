@@ -244,29 +244,31 @@
     margin: 3px;
     flow-children: none;
 }
-/* The transition lives on the BASE class (the game's own pattern — see element_gun.css),
-   NOT on a class toggled at move time. Two reasons this matters in Panorama:
-   1. The `transition:` shorthand is not parsed for transform, so it must be longhand.
-   2. A transition established in the same frame the value changes can be skipped; with
-      it always active, any later transform/opacity change animates cleanly. The initial
-      deal doesn't animate because a panel's first committed value is its baseline. */
+/* The BASE piece carries NO transition, so its FIRST committed transform (the initial
+   deal) snaps into place instead of sliding in from the corner (0,0). The transition is
+   added one frame later via `.mg-anim` (see makePiece), after the start position is set —
+   so every LATER transform/opacity/scale change animates. Longhand is mandatory: Panorama
+   does not parse the `transition:` shorthand for transform. */
 .mg-piece {
     width: 46px;
     height: 46px;
     border-radius: 50%;
     box-shadow: 0px 3px 5px 0px #00000099;
     pre-transform-scale2d: 1.0;
+}
+.mg-piece.mg-anim {
     transition-property: transform, opacity, pre-transform-scale2d;
     transition-duration: 0.18s, 0.2s, 0.2s;
     transition-timing-function: ease-in-out, ease-out, ease-out;
 }
 /* Captured: fade out while shrinking in place (scale set inline in JS). Both animate
-   via the base transition above. */
+   via the .mg-anim transition. */
 .mg-captured { opacity: 0.0; }
-/* The cursor-following ghost while dragging: lifted a touch so it reads as "picked up". */
+/* The cursor-following ghost while dragging: lifted a touch so it reads as "picked up".
+   Modest shadow — a big blurred one looked like a huge blob under the cursor. */
 .mg-piece.mg-dragging {
-    pre-transform-scale2d: 1.15;
-    box-shadow: 0px 6px 12px 2px #000000cc;
+    pre-transform-scale2d: 1.12;
+    box-shadow: 0px 3px 6px 0px #000000aa;
 }
 /* The real piece left behind on its square during a drag — dimmed so the ghost reads
    as the one being moved. Cleared on DragEnd. */
