@@ -261,22 +261,23 @@ Because the click now lands on the piece (not the cell beneath), each piece forw
     real piece is dimmed via `.mg-drag-source`. The piece's legal targets are lit up as
     drop hints (by calling `onCellClick` to select it), guarded to my turn / chaining piece.
     The ghost is `hittest:false` so it doesn't intercept its own drop.
-  - **Commit MULTI-METHOD, on `DragEnd`.** No single drop signal proved reliable in-game,
-    so `commitDropMultimethod(droppedPanel)` gathers every candidate square it can and
-    commits the FIRST that is a legal target (`isLegalTarget`). Order:
-    1. **`squareFromPanel(droppedPanel)`** — `DragEnd`'s 2nd arg is the panel released
-       onto; our cells are `id="cell_<square>"`, so parse the id (walking up to 6 ancestors
-       in case a child is reported). This is the native authoritative channel — how
-       QOLLOCK's `ql_hero_testing` reads a drop.
-    2. **`dragOverSq`** — last cell hovered, set from BOTH `DragEnter` *and* a plain
-       `onmouseover` on each cell (two independent hover sources; whichever the engine
-       actually fires mid-drag keeps it current).
-    3. **`squareFromGhost()`** — geometry, via `ghostPos()`: reparent the ghost back under
-       the pieces layer (the engine moves `displayPanel` into its own drag overlay), then
-       read position. **PRIMARY = `ghost.style.x` / `ghost.style.y`** — with
-       `removePositionBeforeDrop=false` the engine writes the drop position THERE, and that
-       is the channel QOLLOCK's `ReadPanelPosition` reads FIRST (we previously read only
-       `actualxoffset`, its fallback). Centre ÷ `SQ` → cell. Rejects an exact `(0,0)`.
+  - **⚠ PROVEN in-game (2026-07-07 `DRAG_DEBUG` run): native drag reports the drop location
+    through NOTHING.** A real drop logged: `panel=noid` (DragEnd's 2nd arg is the DRAGGED
+    ghost, not the target cell — and QOLLOCK uses it the same way), `over=-1(0e)` (**zero
+    `DragEnter`/`onmouseover` events** — the engine suppresses all pointer events on other
+    panels during a drag), `sx=null sy=null` (`removePositionBeforeDrop=false` did NOT
+    populate the ghost's `style.x/y`), and `actualxoffset = 3.4028e38 = FLT_MAX` (the ghost
+    is culled out of layout, so its layout offset is the "invalid" sentinel). So DragDrop /
+    DragEnter / droppedPanel / style.x/y / actualxoffset are ALL dead ends. Don't retry them.
+  - **Commit on `DragEnd`, primary channel = `squareFromWindow()`.** `GetPositionWithinWindow()`
+    is a real engine method (confirmed in `panorama_strings.txt`) that computes absolute
+    window pixels from the RENDER tree, so it stays valid even when the ghost is culled from
+    layout (unlike `actualxoffset`). `squareFromWindow` reads the ghost's window position and
+    the pieces-layer's window position; the delta ÷ (layer rendered width / 8) gives the
+    display col/row → real square. UI scale cancels (everything is window px). Read these
+    BEFORE `squareFromGhost()` runs, since its reparent invalidates the window reading.
+    `commitDropMultimethod` still tries the dead channels after it (harmless, and the debug
+    line reports each), committing the FIRST that is a legal target (`isLegalTarget`).
   - A garbage candidate is simply not in `legalTargets`, so it's skipped; if none match,
     the piece snaps back. **A false move is impossible, and nothing here touches the
     server** — the same `doLocalHop` path a click uses.
@@ -286,12 +287,13 @@ Because the click now lands on the piece (not the cell beneath), each piece forw
   - **First deal doesn't slide in.** The base `.mg-piece` has NO transition; the animating
     `.mg-anim` class is added one frame later (`$.Schedule(0.0)`), after the start transform
     is committed — so pieces snap onto their squares at start but every later move animates.
-  - 🔎 **`DRAG_DEBUG` diagnostic (currently ON).** After 4 blind single-channel attempts all
-    failed, `commitDropMultimethod` now writes what EVERY channel produced to the on-screen
-    status line on each `DragEnd`: `DROP OK via <ch>→<sq>` or `DROP MISS | panel=<id>→<sq>
-    over=<sq>(<n>e) ghost=<sq> [sx=.. sy=.. ax=.. ay=..] | targets=[..]`. This gives ground
-    truth in ONE in-game test — read which channel actually populated, lock it in, then set
-    `DRAG_DEBUG=false`. `<n>e` = how many `DragEnter` events fired (0 ⇒ that channel is dead).
+  - 🔎 **`DRAG_DEBUG` diagnostic (currently ON).** `commitDropMultimethod` writes what every
+    channel produced to the on-screen status line on each `DragEnd`: `DROP OK via win->37` or
+    `DROP MISS | win=<sq> g(<gx,gy>) L(<lx,ly>) lw=<layerWidth> | panel=.. over=..(<n>e)
+    ghost=.. | targets=[..]`. The `win=`/`g(..)`/`L(..)`/`lw=` fields are the window-position
+    channel; if `win` still misses, `g`/`L`/`lw` show whether `GetPositionWithinWindow`
+    returned usable numbers and let us fix the arithmetic. Once drag works, set
+    `DRAG_DEBUG=false` and delete the dead channels + their helpers.
 - **Bot color alternates** each `Play vs Bot` (`botGamesStarted % 2`) so you don't always
   open as white. When you're black/O, the boot path calls the bot to open (offline has no
   server to poll).

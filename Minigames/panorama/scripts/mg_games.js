@@ -535,6 +535,45 @@
             return -1;
         }
 
+        // Absolute position of a panel in WINDOW pixels. GetPositionWithinWindow is a real
+        // engine method (confirmed present in Deadlock's panorama_strings), and — unlike
+        // actualxoffset (which returned FLT_MAX because the dragged ghost is culled out of
+        // layout) — it's computed from the render tree, so it stays valid mid/post-drag and
+        // needs no reparenting. Return shape is defended (object {x,y} or array). FLT_MAX-ish
+        // magnitudes are rejected as the "invalid" sentinel.
+        function winPos(panel) {
+            if (!panel || !panel.GetPositionWithinWindow) return null;
+            var r;
+            try { r = panel.GetPositionWithinWindow(); } catch (e) { return null; }
+            if (!r) return null;
+            var x = (typeof r.x === "number") ? r.x : (typeof r[0] === "number" ? r[0] : null);
+            var y = (typeof r.y === "number") ? r.y : (typeof r[1] === "number" ? r[1] : null);
+            if (x === null || y === null || !isFinite(x) || !isFinite(y)) return null;
+            if (Math.abs(x) > 100000 || Math.abs(y) > 100000) return null; // FLT_MAX sentinel
+            return { x: x, y: y };
+        }
+
+        // Map the ghost's window position to a board square. Everything is in window pixels,
+        // so the UI scale cancels: cell size in window px = pieces-layer rendered width / 8.
+        // Ghost centre (top-left + half its RENDERED width) relative to the layer origin,
+        // divided by the window cell size, gives the display col/row → real square.
+        function squareFromWindow() {
+            var lp = winPos(piecesLayer);
+            var gp = winPos(dragGhost);
+            if (!lp || !gp) return -1;
+            var layerW = (piecesLayer && isFinite(piecesLayer.actuallayoutwidth) && piecesLayer.actuallayoutwidth > 0)
+                ? piecesLayer.actuallayoutwidth : 480;
+            var cellPx = layerW / 8;
+            var pieceW = (dragGhost && isFinite(dragGhost.actuallayoutwidth) && dragGhost.actuallayoutwidth > 0
+                          && dragGhost.actuallayoutwidth < 100000)
+                ? dragGhost.actuallayoutwidth : (PIECE_SZ * cellPx / SQ);
+            var cx = (gp.x - lp.x) + pieceW / 2;
+            var cy = (gp.y - lp.y) + pieceW / 2;
+            var dcol = Math.floor(cx / cellPx), drow = Math.floor(cy / cellPx);
+            if (dcol < 0 || dcol > 7 || drow < 0 || drow > 7) return -1;
+            return fromDisplay(drow * 8 + dcol);
+        }
+
         // Read the ghost's released position in pieces-layer space. The engine may have
         // reparented the ghost into its own drag overlay; pull it back under the pieces
         // layer first (QOLLOCK's ql_hero_testing reparents before reading) so the numbers are
@@ -576,29 +615,32 @@
                 if (DRAG_DEBUG) status("drop ignored: myTurn=" + myTurn() + " selected=" + selected);
                 return;
             }
-            var aPanel = squareFromPanel(droppedPanel); // A: native drop panel (best when present)
-            var bOver = dragOverSq;                     // B: last cell hovered (DragEnter/mouseover)
-            var cGhost = squareFromGhost();             // C: ghost geometry (style.x/y, then actual)
-            var candidates = [aPanel, bOver, cGhost];
-            var names = ["panel", "over", "ghost"];
+            // Capture window positions FIRST, before squareFromGhost() reparents the ghost
+            // (reparenting would invalidate the window reading).
+            var lw = winPos(piecesLayer);
+            var gw = winPos(dragGhost);
+            var wSq = squareFromWindow();               // W: absolute window geometry (new primary)
+            var aPanel = squareFromPanel(droppedPanel); // A: native drop panel (proven = the ghost, no id)
+            var bOver = dragOverSq;                     // B: last cell hovered (DragEnter/mouseover — dead in-game)
+            var cGhost = squareFromGhost();             // C: ghost layout geometry (FLT_MAX in-game)
+            var candidates = [wSq, aPanel, bOver, cGhost];
+            var names = ["win", "panel", "over", "ghost"];
             var matched = -1, via = "none";
             for (var k = 0; k < candidates.length; k++) {
                 if (candidates[k] >= 0 && isLegalTarget(candidates[k])) { matched = candidates[k]; via = names[k]; break; }
             }
 
             if (DRAG_DEBUG) {
-                var gp = ghostPos();
                 var dpid = "null";
                 try { dpid = droppedPanel ? (droppedPanel.id || "noid") : "null"; } catch (e) { dpid = "err"; }
                 var tg = [];
                 for (var t = 0; t < legalTargets.length; t++) tg.push(legalTargets[t].to);
-                var g = gp
-                    ? ("sx=" + gp.sx + " sy=" + gp.sy + " ax=" + (gp.ax === null ? "-" : Math.round(gp.ax)) + " ay=" + (gp.ay === null ? "-" : Math.round(gp.ay)))
-                    : "no-ghost";
-                status("DROP " + (matched >= 0 ? ("OK via " + via + "→" + matched) : "MISS")
-                    + " | panel=" + dpid + "→" + aPanel
-                    + " over=" + bOver + "(" + dragEnterCount + "e)"
-                    + " ghost=" + cGhost + " [" + g + "]"
+                var lwS = lw ? (Math.round(lw.x) + "," + Math.round(lw.y)) : "null";
+                var gwS = gw ? (Math.round(gw.x) + "," + Math.round(gw.y)) : "null";
+                var lwd = (piecesLayer && piecesLayer.actuallayoutwidth) || "?";
+                status("DROP " + (matched >= 0 ? ("OK via " + via + "->" + matched) : "MISS")
+                    + " | win=" + wSq + " g(" + gwS + ") L(" + lwS + ") lw=" + lwd
+                    + " | panel=" + dpid + "->" + aPanel + " over=" + bOver + "(" + dragEnterCount + "e) ghost=" + cGhost
                     + " | targets=[" + tg.join(",") + "]");
             }
 
