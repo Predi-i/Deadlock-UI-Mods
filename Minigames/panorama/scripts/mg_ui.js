@@ -15,8 +15,8 @@
     var MG = ($.MG = $.MG || {});
     if (MG.UI) return;
 
+    // Route through MG.debug so nothing hits the console unless debug mode is ON.
     function log(m) {
-        try { $.Msg("[MG.UI] " + m); } catch (e) {}
         try { if (MG.debug) MG.debug("[ui] " + m); } catch (e) {}
     }
 
@@ -33,7 +33,7 @@
 
     // Short blurb shown in the right-hand detail column for each game.
     var GAME_DESC = {
-        checkers:    "Russian draughts. Capture every enemy piece — flying kings, forced jumps.",
+        checkers:    "Russian draughts. Capture every enemy piece, with flying kings and forced jumps.",
         tictactoe:   "Classic 3×3 duel. Line up three marks in a row to win.",
         durak:       "Russia's favourite card game. Don't be the last one holding cards.",
         chess:       "The timeless game of kings. Full rules, online or versus a bot.",
@@ -133,9 +133,24 @@
 
         var header = $.CreatePanel("Panel", modal, "");
         header.AddClass("mg-header");
-        titleLabel = $.CreatePanel("Label", header, "");
+        // Left cluster: the mod NAME + a small "by Predi_i" credit right beside it.
+        var headerLeft = $.CreatePanel("Panel", header, "");
+        headerLeft.AddClass("mg-header-left");
+        titleLabel = $.CreatePanel("Label", headerLeft, "");
         titleLabel.AddClass("mg-title");
         titleLabel.text = "Minigames";
+        var credit = $.CreatePanel("Button", headerLeft, "");
+        credit.AddClass("mg-header-credit");
+        var creditLbl = $.CreatePanel("Label", credit, ""); creditLbl.text = "by Predi_i";
+        credit.SetPanelEvent("onactivate", function () { openSupport(); });
+        // Support pill sits just right of the credit (thumbsup icon + label) → Boosty.
+        var supportBtn = $.CreatePanel("Button", headerLeft, "");
+        supportBtn.AddClass("mg-support-btn");
+        var sIcon = $.CreatePanel("Panel", supportBtn, "");
+        sIcon.AddClass("mg-support-icon");   // background-image = icon_thumbsup.vsvg (CSS)
+        var sLbl = $.CreatePanel("Label", supportBtn, ""); sLbl.AddClass("mg-support-label"); sLbl.text = "Support";
+        supportBtn.SetPanelEvent("onactivate", function () { openSupport(); });
+        // Close button, pushed to the far right by the header's flow.
         var close = $.CreatePanel("Button", header, "");
         close.AddClass("mg-close");
         var closeLbl = $.CreatePanel("Label", close, "");
@@ -356,7 +371,7 @@
             locked.text = "IN DEVELOPMENT";
             var lockedSub = $.CreatePanel("Label", detailPanel, "");
             lockedSub.AddClass("mg-detail-locked-sub");
-            lockedSub.text = "This game isn't playable yet — pick another to start.";
+            lockedSub.text = "This game isn't playable yet. Pick another to start.";
             fadeInDetail();
             return;
         }
@@ -368,7 +383,7 @@
         quickBtn.SetPanelEvent("onactivate", function () { startQuickMatch(); });
         var quickCap = $.CreatePanel("Label", detailPanel, "");
         quickCap.AddClass("mg-caption");
-        quickCap.text = "Public — matched with anyone online.";
+        quickCap.text = "Public match against anyone online.";
 
         // Secondary: private match with a friend via a shared code.
         var friendLbl = $.CreatePanel("Label", detailPanel, "");
@@ -410,9 +425,15 @@
     // Footer: the dev tools (connection test / self-test / debug log) live here as
     // small, low-contrast text links so they no longer compete with the play buttons.
     // A Support link sits at the far right. (Tools get hidden wholesale near release.)
+    // Footer: only the discreet dev tools now (Support moved up to the header). The Debug
+    // toggle no longer spawns an on-screen panel — it just routes logs to the dev console.
     function buildFooter() {
         var footer = $.CreatePanel("Panel", modalBody, "");
         footer.AddClass("mg-footer");
+
+        // spacer takes the slack so the tools sit at the right edge
+        var spacer = $.CreatePanel("Panel", footer, "");
+        spacer.AddClass("mg-footer-spacer");
 
         var tools = $.CreatePanel("Panel", footer, "");
         tools.AddClass("mg-tools");
@@ -431,21 +452,17 @@
             MG.Api.ping(function (ms) {
                 setStatus("✅ Ping: " + ms + "ms. Connection is working!");
             }, function () {
-                setStatus("❌ Ping failed — server unreachable.");
+                setStatus("❌ Ping failed. Server unreachable.");
             });
         });
         mkTool("Self-Test", function () { runSelfTest(); });
-        function dbgText() { return MG.Net.isDebug && MG.Net.isDebug() ? "Hide Debug Log" : "Debug Log"; }
+        // Debug toggle: flips console logging on/off (no on-screen panel anymore).
+        function dbgText() { return MG.Net.isDebug && MG.Net.isDebug() ? "Debug: ON" : "Debug: OFF"; }
         var dbgLbl = mkTool(dbgText(), function () {
             if (!MG.Net.setDebug) return;
             MG.Net.setDebug(!MG.Net.isDebug());
             dbgLbl.text = dbgText();
         });
-
-        var support = $.CreatePanel("Button", footer, "");
-        support.AddClass("mg-support");
-        var sl = $.CreatePanel("Label", support, ""); sl.text = "Support";
-        support.SetPanelEvent("onactivate", function () { openSupport(); });
     }
 
     // ── online self-test ──────────────────────────────────────────────────────
@@ -485,7 +502,7 @@
                                 cleanup();
                                 if (!alive()) return;
                                 if (mv && mv.from === 8 && mv.to === 17 && mv.end === 1) {
-                                    setStatus("✅ Self-test passed — lobby, join, move & poll all work. Ping " + ms + "ms.");
+                                    setStatus("✅ Self-test passed: lobby, join, move & poll all work. Ping " + ms + "ms.");
                                 } else {
                                     fail("poll (move came back wrong)");
                                 }
@@ -560,7 +577,7 @@
             var cap = $.CreatePanel("Label", box, ""); cap.AddClass("mg-code-cap"); cap.text = "Lobby code:";
             var big = $.CreatePanel("Label", box, ""); big.AddClass("mg-code-big"); big.text = String(code);
             var hint = $.CreatePanel("Label", box, ""); hint.AddClass("mg-code-hint");
-            hint.text = "Share this code with your friend — they click \"Join\".";
+            hint.text = "Share this code with your friend, then they click Join.";
         }
 
         var row = $.CreatePanel("Panel", modalBody, "");
@@ -664,7 +681,7 @@
                 // The game id must decode to a real, playable game — mounting a
                 // disabled stub would leave the host playing against a ghost.
                 var g = MG.Games.byId(res.game);
-                if (!g || !g.enabled) { setStatus("Couldn't read the lobby — please try again."); return; }
+                if (!g || !g.enabled) { setStatus("Couldn't read the lobby. Please try again."); return; }
                 currentCode = code;
                 renderGame(res.game, code, false);
                 return;

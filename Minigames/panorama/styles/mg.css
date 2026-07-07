@@ -1,19 +1,44 @@
-/* mg.css — styling for the Deadlock Minigames overlay + checkers board. */
+/* ⚠ THE FONT FIX: `oracle` / `radiance` are NOT font names — they are @define aliases
+ * (e.g. `@define oracle: VALVEOracle, Reaver, sans-serif;`) declared in the game's
+ * citadel_base_styles. Our stylesheet is loaded via base_hud.xml into a scope that does
+ * NOT inherit those defines, so `font-family: oracle` didn't resolve and fell back to the
+ * default face. Importing the game's base styles here brings the defines into scope, and
+ * the fonts finally render. This is the same base the working Match-History mod includes. */
+@import url("s2r://panorama/styles/citadel_base_styles.vcss_c");
+
+/* mg.css — styling for the Deadlock Minigames overlay + boards.
+ *
+ * DESIGN SYSTEM (craft pass — see the 12 rules). One coherent language:
+ *   Fonts   : `oracle` (display / headings, bold) · `radiance` (all UI text & labels).
+ *             NEVER quote the family name — `font-family: "Radiance"` is NOT parsed by
+ *             Panorama and silently drops to the default face. Use `oracle` / `radiance`.
+ *   Neutrals: blue-tinted, never pure #000/#fff.
+ *             backdrop #05080e·  modal #0f141c ·  card #151c27 ·  raised #1b2431
+ *             border   #232f3e ·  hairline #ffffff10..14 ·  text #eaf0f8 / #9db0c6 / #63748a
+ *   Accent  : native Deadlock "builds" blue — the ONE hue, used sparingly.
+ *             #4f86d4 (accent) · #82b4ff (bright) · #16233a (tinted surface)
+ *   Danger  : #cf4a42 (close / leave).
+ * Discipline: FLAT solid fills (no decorative gradients), NO outer glow, hairline
+ *   borders for structure + one soft shadow for the modal float, brightness on hover,
+ *   sharp 2px corners, one 4px spacing scale.
+ *
+ * ⚠ WHY `!important` ON TYPOGRAPHY: our panels live in the HUD context, where the game's
+ *   own base styles set font-family / size / color on labels via HIGH-SPECIFICITY
+ *   (ID-scoped) selectors. A plain single-class rule LOSES the cascade to those, so
+ *   `oracle` fell back to the default face and custom sizes didn't take. `!important` wins
+ *   deterministically — the exact approach the Match-History-Cards-Redesign mod uses.
+ * Note: representational shading on the physical checker pieces (a subtle radial, the
+ *   "brand" look of a real disc) is a deliberate R1 exception, and it's in-game not lobby.
+ */
 
 .mg-escape-button {
-    /* Lifted well above the native sub-options so it never overlaps "Swap Hero". */
-    margin-top: -450px;
+    margin-top: -450px;              /* lifted above native sub-options; never overlaps "Swap Hero" */
 }
 .mg-escape-button Label {
-    /* Bigger, white, using the inherited in-game menu font. */
-    font-size: 24px;
-    color: #ffffff;
+    font-family: radiance !important;
+    font-size: 24px !important;
+    color: #ffffff !important;
 }
-
-/* ── palette (deep-blue "noir" theme; no CSS vars in Panorama, so hexes are inline) ──
-   bg/panel   #0a0f18 → #16202f      border      #26384f / hi #3a5f88
-   text       #e2eaf3   muted #7e91a8  accent (azure) #2e6db0 → #3f83cc, glow #4a90e2
-   danger     #c0433f   warn/support amber #cf9b4e                                    */
 
 /* ── overlay + modal ─────────────────────────────────────────────────────── */
 .mg-overlay {
@@ -26,43 +51,67 @@
 .mg-dim {
     width: 100%;
     height: 100%;
-    background-color: #05080dd9;
+    background-color: #05080ec2;          /* near-black blue backdrop, not pure #000 */
 }
 .mg-modal {
     width: 900px;
     min-height: 300px;
     max-height: 92%;
-    background-color: gradient(linear, 0% 0%, 0% 100%, from(#132030f7), to(#0a0f18fb));
-    border: 1px solid #2c455f;
-    box-shadow: 0px 0px 44px 6px #000000d9;
-    padding: 24px;
+    background-color: #0f141c;
+    border: 1px solid #232f3e;
+    box-shadow: 0px 22px 60px 0px #00000099;   /* soft elevation (R10), not a glow */
+    padding: 28px;
     flow-children: down;
     horizontal-align: center;
     vertical-align: center;
-    border-radius: 2px;                  /* sharp, "AAA" corners instead of the soft 6px */
+    border-radius: 2px;
 }
 .mg-header {
     width: 100%;
     flow-children: right;
-    margin-bottom: 18px;
-    padding-bottom: 14px;
-    border-bottom: 1px solid #ffffff14;   /* thin translucent rule, not a heavy accent bar */
+    margin-bottom: 24px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid #ffffff12;
+}
+/* title + "by Predi_i" credit sit together on the left; the close button is pushed right. */
+.mg-header-left {
+    width: fill-parent-flow(1.0);
+    flow-children: right;
+    vertical-align: center;
+    overflow: noclip;                    /* the Support pill sits taller than the title row */
 }
 .mg-title {
-    color: #e6eef8;
-    font-size: 26px;
+    font-family: oracle !important;
     font-weight: bold;
+    color: #eef3fa !important;
+    font-size: 26px !important;
     letter-spacing: 3px;
     text-transform: uppercase;
-    width: fill-parent-flow(1.0);
     vertical-align: center;
-    text-shadow: 0px 1px 4px #000000cc;
 }
+/* the credit — smaller than the title, right beside it, clickable → Boosty */
+.mg-header-credit {
+    vertical-align: center;
+    margin-left: 14px;
+}
+.mg-header-credit Label {
+    font-family: radiance !important;
+    color: #5f7893 !important;
+    font-size: 15px !important;
+    letter-spacing: 0.5px;
+    vertical-align: center;
+    transition-property: color;
+    transition-duration: 0.1s;
+}
+.mg-header-credit:hover Label { color: #82b4ff !important; }
+
+/* Close: a 30px square. The single glyph is centred, then nudged +1px right / +3px down
+   per the maintainer's in-game measurement (an odd box can't land perfectly on center). */
 .mg-close {
-    width: 32px;
-    height: 32px;
-    background-color: #16212e;
-    border: 1px solid #2c4258;
+    width: 30px;
+    height: 30px;
+    background-color: #161f2b;
+    border: 1px solid #2a3849;
     border-radius: 2px;
     horizontal-align: right;
     vertical-align: center;
@@ -71,13 +120,18 @@
     transition-timing-function: ease-out;
 }
 .mg-close Label {
-    color: #9fb3c8;
-    font-size: 17px;
+    font-family: oracle !important;
     font-weight: bold;
+    color: #93a6bb !important;
+    font-size: 18px !important;
     horizontal-align: center;
     vertical-align: center;
+    margin-left: 1px;                    /* +1px right */
+    margin-top: 3px;                     /* +3px down */
 }
-.mg-close:hover { background-color: #7a2420; border-color: #c0433f; }
+.mg-close:hover { background-color: #3a1c1a; border-color: #cf4a42; }
+.mg-close:hover Label { color: #f0c7c4 !important; }
+.mg-close:active { background-color: #4a201d; }
 
 .mg-body {
     width: 100%;
@@ -85,9 +139,10 @@
     vertical-align: top;
 }
 .mg-status {
-    color: #9fb3c8;
-    font-size: 16px;
-    margin-top: 16px;
+    font-family: radiance !important;
+    color: #9db0c6 !important;
+    font-size: 17px !important;
+    margin-top: 18px;
     width: 100%;
     text-align: center;
 }
@@ -99,57 +154,67 @@
 }
 .mg-col-left {
     width: 56%;
-    padding-right: 24px;
+    padding-right: 20px;
 }
 .mg-col-right {
     width: 44%;
     padding-left: 24px;
-    border-left: 1px solid #ffffff12;   /* faint divider between the columns */
+    padding-right: 2px;
+    border-left: 1px solid #ffffff10;
     flow-children: down;
+    overflow: noclip;                   /* default `squish` clipped the button's right border (п4) */
 }
 
-/* ── game picker ─────────────────────────────────────────────────────────── */
+/* ── game picker — scrolls vertically (9 games, 3 per row) ─────────────────── */
 .mg-picker {
     width: 100%;
-    flow-children: right-wrap;          /* 3 cards per row; the 5 games wrap to 2 rows */
+    max-height: 330px;                  /* ~2 rows visible; the rest scrolls */
+    flow-children: right-wrap;
+    overflow: clip scroll;              /* NATIVE Panorama vertical-scroll idiom */
 }
 .mg-game-card {
-    width: 144px;
-    height: 150px;
-    margin: 4px;
-    flow-children: none;                /* art layer fills; name plate overlays the bottom */
-    background-color: gradient(linear, 0% 0%, 0% 100%, from(#17222f), to(#0c1420));
-    border: 1px solid #274056;
+    width: 132px;
+    height: 148px;
+    margin: 5px;
+    flow-children: none;
+    background-color: #151c27;
+    border: 2px solid #232f3e;          /* 2px on every state → selection never shifts layout */
     border-radius: 2px;
-    box-shadow: 0px 2px 6px 0px #00000066;
-    pre-transform-scale2d: 1.0;
-    transition-property: border-color, box-shadow, pre-transform-scale2d;
+    transition-property: border-color, background-color, brightness, pre-transform-scale2d;
     transition-duration: 0.12s;
     transition-timing-function: ease-out;
+    pre-transform-scale2d: 1.0;
 }
 .mg-game-card:hover {
-    border-color: #3f6f9f;
-    pre-transform-scale2d: 1.03;        /* subtle lift so the hovered game pops */
+    border-color: #35506f;
+    brightness: 1.12;                   /* lift via brightness, like the reference redesign */
+    pre-transform-scale2d: 1.02;
 }
+/* Selected: solid accent border + accent-tinted fill + accent name — no glow, no ring. */
 .mg-selected {
-    border-color: #5aa0f0;
-    box-shadow: 0px 0px 14px 2px #4a90e24d;   /* soft azure glow, not a neon border */
+    border-color: #4f86d4;
+    background-color: #16233a;
 }
-.mg-disabled { saturation: 0.55; opacity: 0.5; }
-.mg-disabled:hover { pre-transform-scale2d: 1.0; border-color: #274056; } /* no lift for locked */
+.mg-selected:hover { border-color: #6499e0; background-color: #1a2a44; }
+.mg-selected .mg-game-name { color: #82b4ff !important; }
+.mg-disabled { saturation: 0.5; opacity: 0.48; }
+.mg-disabled:hover { brightness: 1.0; pre-transform-scale2d: 1.0; border-color: #232f3e; }
 /* centred "IN DEVELOPMENT" plate over the dimmed art */
 .mg-lock-badge {
-    background-color: #0a1019ee;
-    border: 1px solid #35506f;
+    background-color: #0b111aee;
+    border: 1px solid #2f4256;
     border-radius: 2px;
-    padding: 3px 9px;
+    padding: 4px 10px;
     horizontal-align: center;
     vertical-align: center;
 }
 .mg-lock-badge Label {
-    color: #a6c0dd;
-    font-size: 11px;
+    font-family: radiance !important;
+    font-weight: semi-bold;
+    color: #8ba1ba !important;
+    font-size: 12px !important;
     letter-spacing: 2px;
+    text-transform: uppercase;
     horizontal-align: center;
 }
 
@@ -162,14 +227,13 @@
 .mg-mini {
     horizontal-align: center;
     vertical-align: center;
-    margin-bottom: 22px;             /* clear the name plate at the bottom */
+    margin-bottom: 22px;
 }
 /* shared mini board (checkers 4x4, chess 3x3) */
 .mg-mini-board {
     flow-children: down;
     border: 2px solid #0a0d12;
-    border-radius: 3px;
-    box-shadow: 0px 2px 6px 0px #00000088;
+    border-radius: 2px;
 }
 .mg-mini-row { flow-children: right; height: 22px; }
 .mg-mini-cell { width: 22px; height: 22px; }
@@ -179,25 +243,23 @@
     width: 14px; height: 14px;
     border-radius: 50%;
     horizontal-align: center; vertical-align: center;
-    box-shadow: 0px 1px 2px 0px #000000aa;
 }
-.mg-mini-disc-w { background-color: gradient(radial, 50% 35%, 0% 0%, 70% 70%, from(#ffffff), to(#c9cdd4)); border: 1px solid #9aa0a8; }
-.mg-mini-disc-b { background-color: gradient(radial, 50% 35%, 0% 0%, 70% 70%, from(#4a4f57), to(#1c1f24)); border: 1px solid #0a0c0f; }
+/* flat discs — at 14px a gradient is just noise the disabled-wash muddies */
+.mg-mini-disc-w { background-color: #e9edf2; border: 1px solid #b4bac2; }
+.mg-mini-disc-b { background-color: #3a3f47; border: 1px solid #12151a; }
 .mg-mini-king {
     width: 15px; height: 15px;
     border-radius: 50%;
-    background-color: gradient(radial, 50% 35%, 0% 0%, 70% 70%, from(#ffe7a0), to(#d29a2a));
-    border: 1px solid #8a6410;
+    background-color: #e3ad3a;
+    border: 2px solid #8a6410;          /* gold ring conveys "king" — no glow */
     horizontal-align: center; vertical-align: center;
-    box-shadow: 0px 0px 6px 1px #ffd76eaa;
 }
 /* mini tic-tac-toe grid */
 .mg-mini-ttt {
     flow-children: right-wrap;
-    width: 90px;                     /* 3 * (26 + 2*2 margin) */
+    width: 90px;
     background-color: #0a0d12;
-    border-radius: 3px;
-    box-shadow: 0px 2px 6px 0px #00000088;
+    border-radius: 2px;
 }
 .mg-mini-ttt-cell { width: 26px; height: 26px; margin: 2px; background-color: #223142; }
 .mg-mini-x { width: 22px; height: 22px; horizontal-align: center; vertical-align: center; flow-children: none; }
@@ -219,7 +281,7 @@
 .mg-emblem { flow-children: none; width: 90px; height: 84px; }
 .mg-card-back {
     width: 46px; height: 64px;
-    border-radius: 5px;
+    border-radius: 4px;
     border: 2px solid #cdd6e2;
     horizontal-align: center; vertical-align: center;
     box-shadow: 0px 2px 5px 0px #000000aa;
@@ -232,132 +294,145 @@
     transform: rotateZ(45deg);
     horizontal-align: center; vertical-align: center;
 }
-/* connect four — blue frame with stacked red/yellow discs */
+/* connect four — flat blue frame with stacked red/yellow discs */
 .mg-c4-frame {
     flow-children: right-wrap;
-    width: 86px;                     /* 3*(22+2*2 margin) + 2*4 padding = 86, so 3 fit per row */
+    width: 86px;
     padding: 4px;
-    background-color: gradient(linear, 0% 0%, 0% 100%, from(#2a5bb0), to(#1c3f7d));
-    border-radius: 6px;
-    box-shadow: 0px 2px 6px 0px #00000088;
+    background-color: #24457f;
+    border-radius: 3px;
 }
-/* Empty slot = clearly dark hole; discs = FLAT, saturated red/yellow. Flat (not radial)
-   so the six discs read as one consistent colour each — the muted gradients looked like
-   "random shades of white" once the disabled-card filter washed them out. */
 .mg-c4-slot { width: 22px; height: 22px; margin: 2px; border-radius: 50%; background-color: #0c1626; }
 .mg-c4-r { background-color: #e23b3b; }
 .mg-c4-y { background-color: #f2c230; }
 
-/* name plate pinned to the bottom, dark gradient keeps text legible over the art */
+/* name plate pinned to the bottom — solid dark bar keeps the name legible over the art */
 .mg-card-namebar {
     width: 100%;
     vertical-align: bottom;
     flow-children: down;
-    padding-top: 5px;
-    padding-bottom: 7px;
-    background-color: gradient(linear, 0% 0%, 0% 100%, from(#080c12cc), to(#080c12f7));
-    border-radius: 0px 0px 2px 2px;
+    padding-top: 6px;
+    padding-bottom: 8px;
+    background-color: #0a0e16ee;
 }
 .mg-game-name {
-    color: #eef4fb;
-    font-size: 17px;
-    font-weight: bold;
-    letter-spacing: 1px;
+    font-family: radiance !important;
+    font-weight: semi-bold;
+    color: #dfe8f2 !important;
+    font-size: 15px !important;
+    letter-spacing: 0.5px;
     horizontal-align: center;
-    text-shadow: 0px 1px 3px #000000ee;
+    transition-property: color;
+    transition-duration: 0.12s;
 }
 
 /* ── right column: detail + actions ──────────────────────────────────────── */
+/* min-height reserves the tallest (enabled) layout, so switching between games — or to a
+   disabled game with fewer elements — never resizes the modal (kills the "jump"). */
 .mg-detail {
     width: 100%;
+    min-height: 380px;
     flow-children: down;
+    overflow: noclip;                     /* don't clip the full-width buttons' borders (п4) */
     transition-property: opacity;         /* fades in on each game switch (fadeInDetail) */
     transition-duration: 0.14s;
     transition-timing-function: ease-out;
 }
 .mg-detail-title {
-    color: #e6eef8;
-    font-size: 28px;
+    font-family: oracle !important;
     font-weight: bold;
-    letter-spacing: 2px;
+    color: #eef3fa !important;
+    font-size: 32px !important;           /* the big display element — huge type contrast */
+    letter-spacing: 1px;
     text-transform: uppercase;
-    text-shadow: 0px 1px 4px #000000cc;
-    margin-bottom: 6px;
+    margin-bottom: 8px;
 }
+/* FIXED height (not min) so a 1-line vs 2-line blurb occupies the same space → no jump
+   between games with different description lengths. */
 .mg-detail-desc {
-    color: #8ea3bb;
-    font-size: 15px;
+    font-family: radiance !important;
+    color: #9db0c6 !important;
+    font-size: 16px !important;
+    line-height: 24px;
+    height: 52px;
     width: 100%;
     margin-bottom: 20px;
 }
 .mg-detail-locked {
-    color: #cf9b4e;
-    font-size: 17px;
-    font-weight: bold;
+    font-family: radiance !important;
+    font-weight: semi-bold;
+    color: #7d92ab !important;            /* muted slate, not amber */
+    font-size: 16px !important;
     letter-spacing: 3px;
     text-transform: uppercase;
     margin-top: 12px;
 }
 .mg-detail-locked-sub {
-    color: #7e91a8;
-    font-size: 14px;
+    font-family: radiance !important;
+    color: #63748a !important;
+    font-size: 15px !important;
+    line-height: 21px;
     width: 100%;
-    margin-top: 6px;
+    margin-top: 8px;
 }
-/* small ALL-CAPS section labels replacing the old "— text —" dividers */
+/* small ALL-CAPS section labels (they replace the old "— text —" dividers) */
 .mg-section-label {
-    color: #647d99;
-    font-size: 12px;
+    font-family: radiance !important;
+    font-weight: semi-bold;
+    color: #64798f !important;
+    font-size: 13px !important;
     letter-spacing: 2px;
     text-transform: uppercase;
-    margin-top: 20px;
+    margin-top: 22px;
     margin-bottom: 8px;
 }
 
 /* ── buttons / actions ───────────────────────────────────────────────────── */
-/* .mg-actions is still used by the join / waiting / game views (centred row). */
 .mg-actions {
     width: fit-children;
     flow-children: right;
     horizontal-align: center;
-    margin-top: 12px;
+    margin-top: 16px;
 }
 .mg-btn {
-    height: 44px;
+    height: 46px;
     min-width: 120px;
     padding-left: 16px;
     padding-right: 16px;
     margin: 6px;
-    background-color: #16212e;
-    border: 1px solid #2c4258;
+    background-color: #161f2b;
+    border: 1px solid #2a3849;
     border-radius: 2px;
-    transition-property: background-color, border-color;
+    transition-property: background-color, border-color, brightness;
     transition-duration: 0.1s;
     transition-timing-function: ease-out;
 }
 .mg-btn Label {
-    color: #d7e2ef;
-    font-size: 17px;
-    letter-spacing: 1px;
+    font-family: radiance !important;
+    font-weight: semi-bold;
+    color: #cdd9e7 !important;
+    font-size: 16px !important;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
     horizontal-align: center;
     vertical-align: center;
 }
-.mg-btn:hover { background-color: #1c2b3c; border-color: #3f6f9f; }
-/* Primary CTA — the only filled, azure button so it clearly owns the eye. */
+.mg-btn:hover { background-color: #1c2836; border-color: #3a5170; brightness: 1.08; }
+.mg-btn:active { background-color: #131b26; brightness: 0.96; }
+/* Primary CTA — the ONLY filled, accent button, so it clearly owns the eye. FLAT solid. */
 .mg-btn-primary {
-    background-color: gradient(linear, 0% 0%, 0% 100%, from(#2f74be), to(#245e9e));
-    border: 1px solid #4b8fd6;
+    background-color: #4f86d4;
+    border: 1px solid #5e93de;
 }
-.mg-btn-primary:hover {
-    background-color: gradient(linear, 0% 0%, 0% 100%, from(#3a86d6), to(#2b6cb0));
-    border-color: #6aa6e8;
-}
-.mg-btn-quick { height: 56px; }
-.mg-btn-quick Label { font-size: 20px; font-weight: bold; letter-spacing: 2px; }
+.mg-btn-primary Label { color: #f4f8ff !important; }
+.mg-btn-primary:hover { background-color: #5e93de; border-color: #7aa8e8; brightness: 1.05; }
+.mg-btn-primary:active { background-color: #3f6fb8; brightness: 1.0; }
+.mg-btn-quick { height: 58px; }
+.mg-btn-quick Label { font-size: 19px !important; letter-spacing: 2px; }
 
-/* full-width buttons inside the right detail column */
+/* full-width buttons inside the right detail column. margin:0 (the default side margin was
+   letting the right border run past the column edge → "border cut off" on PLAY VS BOT, п4). */
 .mg-detail .mg-btn { width: 100%; margin: 0px; }
-/* Create / Join sit side by side, splitting the column width evenly. */
 .mg-btn-row {
     width: 100%;
     flow-children: right;
@@ -367,104 +442,153 @@
 
 /* caption under the Quick Match button */
 .mg-caption {
-    color: #7f93a8;
-    font-size: 13px;
+    font-family: radiance !important;
+    color: #6b7f96 !important;
+    font-size: 14px !important;
     width: 100%;
-    margin-top: 6px;
+    margin-top: 8px;
 }
 /* public-match "searching" line */
 .mg-searching {
-    color: #9fb3c8;
-    font-size: 22px;
+    font-family: radiance !important;
+    color: #9db0c6 !important;
+    font-size: 23px !important;
     width: 100%;
     text-align: center;
     margin-top: 24px;
     margin-bottom: 8px;
 }
 
-/* ── footer: discreet dev tools (left) + Support link (right) ─────────────── */
+/* ── footer: just the discreet dev tools now (Support moved to the header) ──── */
 .mg-footer {
     width: 100%;
     flow-children: right;
-    margin-top: 20px;
-    padding-top: 12px;
+    margin-top: 24px;
+    padding-top: 14px;
     border-top: 1px solid #ffffff10;
+    vertical-align: center;
 }
-.mg-tools {
+/* spacer takes the slack so the dev tools sit at the right edge */
+.mg-footer-spacer {
     width: fill-parent-flow(1.0);
+    height: 1px;
+}
+/* Support pill — sits in the HEADER, just right of "by Predi_i". Native-QOLLOCK styling
+   (dark fill, hairline, brightness hover). NO yellow. thumbsup icon wash-tinted to accent. */
+.mg-support-btn {
+    height: 28px;
+    margin-left: 14px;
+    padding-left: 10px;
+    padding-right: 12px;
+    background-color: #16233a;
+    border: 1px solid #34557f;
+    border-radius: 2px;
+    flow-children: right;
+    vertical-align: center;
+    transition-property: background-color, border-color, brightness;
+    transition-duration: 0.1s;
+    transition-timing-function: ease-out;
+}
+.mg-support-btn:hover { background-color: #1b2c47; border-color: #4f86d4; brightness: 1.08; }
+.mg-support-btn:active { brightness: 0.97; }
+.mg-support-icon {
+    width: 15px;
+    height: 15px;
+    margin-right: 7px;
+    vertical-align: center;
+    background-image: url("s2r://panorama/images/icons/icon_thumbsup.vsvg");
+    background-size: contain;
+    background-repeat: no-repeat;
+    wash-color: #82b4ff;
+    transition-property: wash-color;
+    transition-duration: 0.1s;
+}
+.mg-support-btn:hover .mg-support-icon { wash-color: #9cc3ff; }
+.mg-support-label {
+    font-family: radiance !important;
+    font-weight: semi-bold;
+    color: #9cc3ff !important;
+    font-size: 14px !important;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    vertical-align: center;
+}
+
+/* discreet dev tools, pushed to the right of the footer */
+.mg-tools {
+    width: fit-children;
     flow-children: right;
     vertical-align: center;
 }
 .mg-tool {
-    height: 24px;
+    height: 26px;
     padding-left: 8px;
     padding-right: 8px;
-    margin-right: 6px;
+    margin-left: 6px;
     background-color: #00000000;
     border: 0px solid #00000000;
     vertical-align: center;
 }
 .mg-tool Label {
-    color: #5f7288;
-    font-size: 12px;
+    font-family: radiance !important;
+    color: #55697e !important;
+    font-size: 13px !important;
     vertical-align: center;
     transition-property: color;
     transition-duration: 0.1s;
 }
-.mg-tool:hover Label { color: #9fb8d6; }
-.mg-support {
-    height: 28px;
-    padding-left: 14px;
-    padding-right: 14px;
-    background-color: #16212e;
-    border: 1px solid #2c4258;
-    border-radius: 2px;
-    horizontal-align: right;
-    vertical-align: center;
-    transition-property: border-color;
-    transition-duration: 0.1s;
-}
-.mg-support Label {
-    color: #cf9b4e;
-    font-size: 13px;
-    letter-spacing: 1px;
-    vertical-align: center;
-}
-.mg-support:hover { border-color: #cf9b4e; }
+.mg-tool:hover Label { color: #82b4ff !important; }
 
 /* ── join / code ─────────────────────────────────────────────────────────── */
-.mg-join-wrap { width: 100%; horizontal-align: center; margin-top: 10px; margin-bottom: 10px; }
+.mg-join-wrap { width: 100%; horizontal-align: center; margin-top: 12px; margin-bottom: 10px; }
 .mg-code-entry {
     width: 260px;
     height: 64px;
-    font-size: 40px;
-    color: #ffffff;
-    background-color: #10141a;
-    border: 2px solid #3a4a5f;
-    border-radius: 6px;
+    font-family: oracle !important;
+    font-weight: bold;
+    font-size: 40px !important;
+    color: #ffffff !important;
+    background-color: #0c1118;
+    border: 2px solid #2a3849;
+    border-radius: 2px;
     text-align: center;
     horizontal-align: center;
     letter-spacing: 8px;
+    transition-property: border-color;
+    transition-duration: 0.1s;
 }
+.mg-code-entry:focus { border-color: #4f86d4; }        /* designed focus state (R11) */
 .mg-code-box { width: 100%; flow-children: down; horizontal-align: center; margin-top: 10px; }
-.mg-code-cap { color: #9fb3c8; font-size: 18px; horizontal-align: center; }
-.mg-code-big {
-    color: #6ea8ff;
-    font-size: 72px;
-    font-weight: bold;
-    letter-spacing: 10px;
+.mg-code-cap {
+    font-family: radiance !important;
+    color: #9db0c6 !important;
+    font-size: 17px !important;
+    letter-spacing: 1px;
+    text-transform: uppercase;
     horizontal-align: center;
-    margin-top: 4px;
-    margin-bottom: 10px;
 }
-.mg-code-hint { color: #9fb3c8; font-size: 16px; horizontal-align: center; }
+.mg-code-big {
+    font-family: oracle !important;
+    font-weight: bold;
+    color: #82b4ff !important;
+    font-size: 76px !important;
+    letter-spacing: 12px;
+    horizontal-align: center;
+    margin-top: 6px;
+    margin-bottom: 12px;
+}
+.mg-code-hint {
+    font-family: radiance !important;
+    color: #6b7f96 !important;
+    font-size: 16px !important;
+    horizontal-align: center;
+}
 
 /* ── checkers board ──────────────────────────────────────────────────────── */
 .mg-game-host { width: 100%; horizontal-align: center; }
 .mg-checkers { horizontal-align: center; flow-children: down; }
-/* The board grid and the pieces overlay are stacked siblings here. `flow-children: none`
-   parks both at the wrap's top-left so they occupy the same space (Panorama has no
-   `position: absolute`). Size = 8*60 cells + 2*3 board border = 486px. */
+/* Board grid + pieces overlay are stacked siblings (flow-children:none parks both at the
+   wrap's top-left; Panorama has no position:absolute). Size = 8*60 + 2*3 border = 486px. */
 .mg-board-wrap {
     flow-children: none;
     width: 486px;
@@ -472,7 +596,7 @@
     horizontal-align: center;
 }
 .mg-board {
-    flow-children: down;              /* rows stacked; robust 8x8 grid */
+    flow-children: down;
     border: 3px solid #0a0d12;
 }
 .mg-board-row {
@@ -485,24 +609,22 @@
 }
 .mg-cell-light { background-color: #d8c6a8; }
 .mg-cell-dark { background-color: #6e5138; }
-.mg-cell.mg-target { background-color: #4b8f5a; }
-.mg-cell.mg-sel { background-color: #8a7d3f; }
+.mg-cell.mg-target { background-color: #4b8f5a; }   /* green "you can move here" (semantic) */
+.mg-cell.mg-sel { background-color: #3d5a7a; }      /* accent-blue selected square */
 
-/* Pieces sit in an overlay above the cells and are placed by JS via
-   `transform: translate3d(...)`, so a move animates as a slide. The 3px margin lines
-   the layer up inside the board's 3px border. Its own children use flow:none so each
-   piece parks at top-left and is then moved purely by its transform. */
+/* Pieces sit in an overlay above the cells, placed by JS via transform: translate3d(...),
+   so a move animates as a slide. The 3px margin lines the layer up inside the board border.
+   Its children use flow:none so each piece parks top-left and is moved purely by transform. */
 .mg-pieces-layer {
-    width: 480px;                    /* 8 * 60px cells */
+    width: 480px;
     height: 480px;
     margin: 3px;
     flow-children: none;
 }
-/* The BASE piece carries NO transition, so its FIRST committed transform (the initial
-   deal) snaps into place instead of sliding in from the corner (0,0). The transition is
-   added one frame later via `.mg-anim` (see makePiece), after the start position is set —
-   so every LATER transform/opacity/scale change animates. Longhand is mandatory: Panorama
-   does not parse the `transition:` shorthand for transform. */
+/* The BASE piece carries NO transition, so its FIRST committed transform (the initial deal)
+   snaps into place instead of sliding from (0,0). The transition is added one frame later
+   via .mg-anim (see makePiece), so every LATER move animates. Longhand is mandatory —
+   Panorama does not parse the `transition:` shorthand for transform. */
 .mg-piece {
     width: 46px;
     height: 46px;
@@ -515,31 +637,28 @@
     transition-duration: 0.18s, 0.2s, 0.2s;
     transition-timing-function: ease-in-out, ease-out, ease-out;
 }
-/* Captured: fade out while shrinking in place (scale set inline in JS). Both animate
-   via the .mg-anim transition. */
 .mg-captured { opacity: 0.0; }
-/* The cursor-following ghost while dragging: lifted a touch so it reads as "picked up".
-   Modest shadow — a big blurred one looked like a huge blob under the cursor. */
 .mg-piece.mg-dragging {
     pre-transform-scale2d: 1.12;
     box-shadow: 0px 3px 6px 0px #000000aa;
 }
-/* The real piece left behind on its square during a drag — dimmed so the ghost reads
-   as the one being moved. Cleared on DragEnd. */
 .mg-piece.mg-drag-source {
     opacity: 0.35;
 }
+/* Physical draughts pieces keep a subtle radial (representational shading, deliberate R1
+   exception — the "brand" look of a real disc; in-game, not lobby). */
 .mg-white { background-color: gradient(radial, 50% 35%, 0% 0%, 70% 70%, from(#ffffff), to(#c9cdd4)); border: 2px solid #9aa0a8; }
 .mg-black { background-color: gradient(radial, 50% 35%, 0% 0%, 70% 70%, from(#4a4f57), to(#1c1f24)); border: 2px solid #0a0c0f; }
+/* King crown: a solid gold ring, no glow (R2). */
 .mg-king {
-    box-shadow: 0px 0px 10px 2px #ffd76e;
-    border-color: #ffd76e;
+    border-color: #e3ad3a;
+    box-shadow: 0px 3px 5px 0px #00000099;
 }
 
 /* ── tic-tac-toe ───────────────────────────────────────────────────────────── */
 .mg-ttt { horizontal-align: center; flow-children: down; }
 .mg-ttt-board {
-    flow-children: down;              /* rows stacked, same robust grid as checkers */
+    flow-children: down;
     border: 3px solid #0a0d12;
     background-color: #0a0d12;         /* shows through as grid lines between cells */
     horizontal-align: center;
@@ -552,9 +671,12 @@
     width: 104px;
     height: 104px;
     margin: 3px;
-    background-color: #2c3a4d;
+    background-color: #223142;
+    transition-property: background-color;
+    transition-duration: 0.1s;
+    transition-timing-function: ease-out;
 }
-.mg-ttt-cell:hover { background-color: #35475e; }
+.mg-ttt-cell:hover { background-color: #2c3f55; }
 .mg-ttt-cell.mg-ttt-win { background-color: #4b8f5a; }
 
 /* Marks are panels, not text (the game font lacks ✕/◯ glyphs). */
@@ -564,25 +686,21 @@
     horizontal-align: center;
     vertical-align: center;
 }
-/* O — a ring: circular border with a transparent hole. */
 .mg-ttt-mark.mg-o {
     border: 9px solid #ff7b7b;
     border-radius: 50%;
-    box-shadow: 0px 2px 4px 0px #00000066;
 }
-/* X — two bars crossed via rotation, centered in the mark box. */
 .mg-x-bar {
     width: 82px;
     height: 13px;
-    border-radius: 3px;
+    border-radius: 2px;
     background-color: #6ea8ff;
     horizontal-align: center;
     vertical-align: center;
-    box-shadow: 0px 2px 4px 0px #00000066;
 }
 .mg-x-bar-a { transform: rotateZ(45deg); }
 .mg-x-bar-b { transform: rotateZ(-45deg); }
 
 /* ── stub ────────────────────────────────────────────────────────────────── */
 .mg-stub { width: 100%; height: 200px; }
-.mg-stub-label { color: #9fb3c8; font-size: 22px; horizontal-align: center; vertical-align: center; }
+.mg-stub-label { font-family: radiance !important; color: #9db0c6 !important; font-size: 22px !important; horizontal-align: center; vertical-align: center; }

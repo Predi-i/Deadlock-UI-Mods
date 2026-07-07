@@ -1091,7 +1091,7 @@
         root.AddClass("mg-stub");
         var l = $.CreatePanel("Label", root, "");
         l.AddClass("mg-stub-label");
-        l.text = (name || "This game") + " — coming soon.";
+        l.text = (name || "This game") + ": coming soon.";
         return { destroy: function () { try { root.DeleteAsync(0); } catch (e) {} } };
     }
 
@@ -1101,7 +1101,11 @@
             { id: 2, key: "tictactoe", name: "Tic-Tac-Toe", enabled: true },
             { id: 3, key: "durak", name: "Durak", enabled: false },
             { id: 4, key: "chess", name: "Chess", enabled: false },
-            { id: 5, key: "connectfour", name: "Connect Four", enabled: false }
+            { id: 5, key: "connectfour", name: "Connect Four", enabled: false },
+            { id: 6, key: "soon1", name: "Coming Soon", enabled: false },
+            { id: 7, key: "soon2", name: "Coming Soon", enabled: false },
+            { id: 8, key: "soon3", name: "Coming Soon", enabled: false },
+            { id: 9, key: "soon4", name: "Coming Soon", enabled: false }
         ],
         byId: function (id) {
             var l = this.list;

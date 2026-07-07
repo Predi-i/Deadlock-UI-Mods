@@ -38,57 +38,31 @@
     var REQ_TIMEOUT_MS = 8000;
     var POLL_STEP = 0.05;   // seconds between dimension checks
 
-    // On-screen debug console. Ships OFF so players don't see an orange log box,
-    // but it can be toggled at runtime from the overlay (tools → Debug Log). Log
-    // lines are collected either way, so turning it on shows recent history too.
+    // Debug logging. Ships OFF. When toggled on (overlay tools → Debug Log) every step is
+    // written to Deadlock's dev CONSOLE via $.Msg — no on-screen panel. When OFF, nothing
+    // is emitted at all (not even the routine step logs). Lines are still buffered so a
+    // later toggle-on can dump recent history to the console.
     var DEBUG = false;
-
-    // ── on-screen debug console ─────────────────────────────────────────────
-    // Deadlock's dev console isn't visible to us and Cloudflare shows nothing when
-    // the engine never fires the request, so we surface every step on screen.
-    var dbgPanel = null, dbgLabel = null, dbgLines = [];
-    function ensureDebug() {
-        if (!DEBUG) return;
-        if (dbgPanel && dbgPanel.IsValid && dbgPanel.IsValid()) return;
-        var ctx = $.GetContextPanel();
-        dbgPanel = $.CreatePanel("Panel", ctx, "MG_Debug");
-        dbgPanel.style.position = "20px 20px 0px";
-        dbgPanel.style.width = "760px";
-        dbgPanel.style.height = "420px";
-        dbgPanel.style.backgroundColor = "#000000dd";
-        dbgPanel.style.border = "2px solid #ffaa00";
-        dbgPanel.style.padding = "10px";
-        dbgPanel.style.zIndex = "100000";
-        try { dbgPanel.SetAttributeString("hittest", "false"); } catch (e) {}
-        dbgLabel = $.CreatePanel("Label", dbgPanel, "");
-        dbgLabel.style.color = "#00ff66";
-        dbgLabel.style.fontSize = "17px";
-        dbgLabel.style.fontFamily = "monospace";
-        dbgLabel.text = "MG debug ready";
-    }
+    var dbgLines = [];
     function debug(msg) {
         dbgLines.push(msg);
-        if (dbgLines.length > 20) dbgLines.shift();
-        ensureDebug();
-        if (dbgLabel) dbgLabel.text = dbgLines.join("\n");
+        if (dbgLines.length > 40) dbgLines.shift();
+        if (DEBUG) { try { $.Msg("[MG] " + msg); } catch (e) {} }
     }
 
     function setDebug(on) {
         DEBUG = !!on;
         if (DEBUG) {
-            ensureDebug();
-            if (dbgLabel) dbgLabel.text = dbgLines.join("\n");
-        } else if (dbgPanel) {
-            try { dbgPanel.DeleteAsync(0); } catch (e) {}
-            dbgPanel = null;
-            dbgLabel = null;
+            // Dump buffered history so turning it on shows what already happened.
+            try {
+                $.Msg("[MG] debug ON — recent history:");
+                for (var i = 0; i < dbgLines.length; i++) $.Msg("[MG] " + dbgLines[i]);
+            } catch (e) {}
         }
     }
 
-    function log(msg) {
-        try { $.Msg("[MG.Net] " + msg); } catch (e) {}
-        debug(msg);
-    }
+    // Routine internal log: goes to the console ONLY in debug mode (via debug()).
+    function log(msg) { debug(msg); }
     MG.debug = debug; // shared: mg_ui.js routes its logs here too
 
     // Host that carries the request images. It MUST be on-screen and not culled —
