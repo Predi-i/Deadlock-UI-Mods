@@ -1773,6 +1773,12 @@
         return { destroy: function () { try { root.DeleteAsync(0); } catch (e) {} } };
     }
 
+    // ── game registry ────────────────────────────────────────────────────────
+    // The picker reads `list` (id/key/name/enabled); `mount` dispatches to a factory
+    // registered under the game's id. Games self-register their factory via
+    // `register(...)` so a new game (e.g. Durak in mg_durak.js) can live in its own
+    // file: it just calls MG.Games.register(...) after this script has run — no edit
+    // to the dispatch here. A game with no registered factory falls back to the stub.
     MG.Games = {
         list: [
             { id: 1, key: "checkers", name: "Checkers", enabled: true },
@@ -1785,17 +1791,33 @@
             { id: 8, key: "soon3", name: "Coming Soon", enabled: false },
             { id: 9, key: "soon4", name: "Coming Soon", enabled: false }
         ],
+        _factories: {},
         byId: function (id) {
             var l = this.list;
             for (var i = 0; i < l.length; i++) if (l[i].id === id) return l[i];
             return null;
         },
+        // opts = { id, create, enabled? }. Registers the mount factory for a game and
+        // optionally flips its `enabled` flag (so a game file can enable itself only
+        // once its factory is actually present).
+        register: function (opts) {
+            if (!opts || opts.id == null || typeof opts.create !== "function") return;
+            this._factories[opts.id] = opts.create;
+            if (typeof opts.enabled === "boolean") {
+                var g = this.byId(opts.id);
+                if (g) g.enabled = opts.enabled;
+            }
+        },
         mount: function (gameId, container, session) {
-            if (gameId === 1) return createCheckers(container, session);
-            if (gameId === 2) return createTicTacToe(container, session);
-            if (gameId === 4) return createChess(container, session);
+            var f = this._factories[gameId];
+            if (f) return f(container, session);
             var g = this.byId(gameId);
             return createStub(container, session, g ? g.name : null);
         }
     };
+
+    // Built-in games register their factories (their bodies live above in this file).
+    MG.Games.register({ id: 1, create: createCheckers });
+    MG.Games.register({ id: 2, create: createTicTacToe });
+    MG.Games.register({ id: 4, create: createChess });
 })();
