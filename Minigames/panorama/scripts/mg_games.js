@@ -1337,7 +1337,431 @@
     }
 
     // ── chess controller ─────────────────────────────────────────────────────────
-    // (createChess added in the next stage — rendering + input + online sync.)
+    // Mirrors createCheckers: same board geometry, same proven click+drag input, same
+    // move/poll transport. Differences: pieces are .vtex sprites, colour is +1/-1 (sign of
+    // the piece), and a turn is a single move (no multi-jump chains). Castling / en passant /
+    // promotion are derived from board+state by makeMove, so from/to alone travels the wire.
+    function createChess(container, session) {
+        var Api = MG.Api;
+        var code = session.code;
+        var myColor = session.isHost ? 1 : -1;   // host = white (+1), joiner = black (-1)
+        var board = initialChessBoard();
+        var cst = initialChessState();
+        var turn = 1;                  // white moves first
+        var appliedSeq = 0;            // moves consumed from the shared server list
+        var selected = -1;
+        var legalTargets = [];         // [{to}] — shape kept identical to checkers so the drag code is shared
+        var pollToken = 0;
+        var destroyed = false;
+        var gameOver = false;
+
+        var dragActive = false, dragGhost = null, dragOverSq = -1, dragEnterCount = 0;
+        var DRAG_DEBUG = false;        // drag path is the proven checkers recipe; flip on only to debug
+
+        function status(t) { if (session.onStatus) session.onStatus(t); }
+        function parsePx(v) {
+            if (typeof v !== "string" || !v.length) return null;
+            var m = v.match(/-?\d+(\.\d+)?/);
+            return m ? parseFloat(m[0]) : null;
+        }
+
+        // Black sees the board rotated 180° so its own pieces sit at the bottom.
+        function toDisplay(i) { return myColor === 1 ? i : 63 - i; }
+        function fromDisplay(i) { return myColor === 1 ? i : 63 - i; }
+
+        function pieceImg(v) {
+            var name = (v > 0 ? "White" : "Black") + ["", "Pawn", "Knight", "Bishop", "Rook", "Queen", "King"][cType(v)];
+            return "url('s2r://panorama/images/" + name + ".vtex')";
+        }
+
+        var root = $.CreatePanel("Panel", container, "MG_ChessRoot");
+        root.AddClass("mg-chess");
+        var boardWrap = $.CreatePanel("Panel", root, "MG_ChessWrap");
+        boardWrap.AddClass("mg-board-wrap");
+        var boardPanel = $.CreatePanel("Panel", boardWrap, "MG_ChessBoard");
+        boardPanel.AddClass("mg-board");
+
+        var SQ = 60, PIECE_SZ = 56, INSET = (SQ - PIECE_SZ) / 2;
+        function transformFor(realIdx) {
+            var d = toDisplay(realIdx);
+            var dr = (d / 8) | 0, dc = d % 8;
+            return "translate3d(" + (dc * SQ + INSET) + "px, " + (dr * SQ + INSET) + "px, 0px)";
+        }
+
+        var cells = [];
+        var piecesLayer = null;
+        var pieceEls = {};
+
+        function buildCells() {
+            boardPanel.RemoveAndDeleteChildren();
+            cells = [];
+            pieceEls = {};
+            for (var dr = 0; dr < 8; dr++) {
+                var rowPanel = $.CreatePanel("Panel", boardPanel, "row_" + dr);
+                rowPanel.AddClass("mg-board-row");
+                for (var dc = 0; dc < 8; dc++) {
+                    var d = dr * 8 + dc;
+                    var i = fromDisplay(d);
+                    var cell = $.CreatePanel("Panel", rowPanel, "cell_" + i);
+                    cell.AddClass("mg-cell");
+                    cell.AddClass(((cRow(i) + cCol(i)) & 1) === 1 ? "mg-cell-dark" : "mg-cell-light");
+                    (function (square) {
+                        cell.SetPanelEvent("onactivate", function () { onCellClick(square); });
+                        $.RegisterEventHandler("DragEnter", cell, function () {
+                            if (dragActive) { dragOverSq = square; dragEnterCount++; }
+                            return true;
+                        });
+                        $.RegisterEventHandler("DragLeave", cell, function () {
+                            if (dragActive && dragOverSq === square) dragOverSq = -1;
+                        });
+                        $.RegisterEventHandler("DragDrop", cell, function () { onCellDrop(square); });
+                        cell.SetPanelEvent("onmouseover", function () { if (dragActive) dragOverSq = square; });
+                    })(i);
+                    cells[i] = cell;
+                }
+            }
+            piecesLayer = $.CreatePanel("Panel", boardWrap, "MG_ChessPieces");
+            piecesLayer.AddClass("mg-pieces-layer");
+            try { piecesLayer.SetAttributeString("hittest", "false"); } catch (e) {}
+        }
+
+        function makePiece(realIdx, v) {
+            var piece = $.CreatePanel("Panel", piecesLayer, "");
+            piece.AddClass("mg-piece");
+            piece.AddClass("mg-chess-piece");
+            piece.style.backgroundImage = pieceImg(v);
+            piece.style.transform = transformFor(realIdx);
+            $.Schedule(0.0, function () {
+                if (piece && piece.IsValid && piece.IsValid()) piece.AddClass("mg-anim");
+            });
+            piece._sq = realIdx;
+            pieceEls[realIdx] = piece;
+            setupPieceInput(piece);
+            return piece;
+        }
+
+        function setupPieceInput(piece) {
+            piece.SetPanelEvent("onactivate", function () {
+                if (piece._sq === undefined) return;
+                onCellClick(piece._sq);
+            });
+            if (cSign(board[piece._sq]) !== myColor) return;   // only my pieces are grabbable
+            piece.SetDraggable(true);
+
+            $.RegisterEventHandler("DragStart", piece, function (_p, dragEvent) {
+                var sq = piece._sq;
+                var ghost = $.CreatePanel("Panel", piecesLayer, "");
+                ghost.AddClass("mg-piece");
+                ghost.AddClass("mg-chess-piece");
+                ghost.AddClass("mg-dragging");
+                ghost.style.backgroundImage = pieceImg(board[sq]);
+                try { ghost.SetAttributeString("hittest", "false"); } catch (e) {}
+                dragGhost = ghost;
+                dragEvent.displayPanel = ghost;
+                dragEvent.removePositionBeforeDrop = false;
+                ghost.style.align = "left top";
+
+                dragActive = true;
+                dragOverSq = -1;
+                dragEnterCount = 0;
+                piece.AddClass("mg-drag-source");
+
+                if (!destroyed && myTurn() && selected !== sq) onCellClick(sq);
+            });
+
+            $.RegisterEventHandler("DragEnd", piece, function (_p, droppedPanel) {
+                commitDropMultimethod(droppedPanel);
+                if (dragGhost) { try { dragGhost.DeleteAsync(0); } catch (e) {} dragGhost = null; }
+                piece.RemoveClass("mg-drag-source");
+                dragActive = false;
+                dragOverSq = -1;
+            });
+        }
+
+        // ── drop resolution (verbatim from checkers: proven in-game 2026-07-07) ──────
+        function isLegalTarget(sq) {
+            for (var t = 0; t < legalTargets.length; t++) if (legalTargets[t].to === sq) return true;
+            return false;
+        }
+        function squareFromPanel(p) {
+            for (var hops = 0; p && hops < 6; hops++) {
+                var id = null;
+                try { id = p.id; } catch (e) {}
+                if (id && id.indexOf("cell_") === 0) {
+                    var n = parseInt(id.substring(5), 10);
+                    if (isFinite(n) && n >= 0 && n < 64) return n;
+                }
+                try { p = p.GetParent ? p.GetParent() : null; } catch (e2) { p = null; }
+            }
+            return -1;
+        }
+        function winPos(panel) {
+            if (!panel || !panel.GetPositionWithinWindow) return null;
+            var r;
+            try { r = panel.GetPositionWithinWindow(); } catch (e) { return null; }
+            if (!r) return null;
+            var x = (typeof r.x === "number") ? r.x : (typeof r[0] === "number" ? r[0] : null);
+            var y = (typeof r.y === "number") ? r.y : (typeof r[1] === "number" ? r[1] : null);
+            if (x === null || y === null || !isFinite(x) || !isFinite(y)) return null;
+            if (Math.abs(x) > 100000 || Math.abs(y) > 100000) return null;
+            return { x: x, y: y };
+        }
+        function squareFromWindow() {
+            var lp = winPos(piecesLayer);
+            var gp = winPos(dragGhost);
+            if (!lp || !gp) return -1;
+            var layerW = (piecesLayer && isFinite(piecesLayer.actuallayoutwidth) && piecesLayer.actuallayoutwidth > 0)
+                ? piecesLayer.actuallayoutwidth : 480;
+            var cellPx = layerW / 8;
+            var pieceW = (dragGhost && isFinite(dragGhost.actuallayoutwidth) && dragGhost.actuallayoutwidth > 0
+                          && dragGhost.actuallayoutwidth < 100000)
+                ? dragGhost.actuallayoutwidth : (PIECE_SZ * cellPx / SQ);
+            var cx = (gp.x - lp.x) + pieceW / 2;
+            var cy = (gp.y - lp.y) + pieceW / 2;
+            var dcol = Math.floor(cx / cellPx), drow = Math.floor(cy / cellPx);
+            if (dcol < 0 || dcol > 7 || drow < 0 || drow > 7) return -1;
+            return fromDisplay(drow * 8 + dcol);
+        }
+        function ghostPos() {
+            var g = dragGhost;
+            if (!g || (g.IsValid && !g.IsValid())) return null;
+            try { if (g.GetParent && g.GetParent() !== piecesLayer) g.SetParent(piecesLayer); } catch (e) {}
+            var sx = parsePx(g.style ? g.style.x : null);
+            var sy = parsePx(g.style ? g.style.y : null);
+            var ax = (typeof g.actualxoffset === "number" && isFinite(g.actualxoffset)) ? g.actualxoffset : null;
+            var ay = (typeof g.actualyoffset === "number" && isFinite(g.actualyoffset)) ? g.actualyoffset : null;
+            var x = (sx !== null) ? sx : ax;
+            var y = (sy !== null) ? sy : ay;
+            if (x === null || y === null) return null;
+            return { x: x, y: y };
+        }
+        function squareFromGhost() {
+            var p = ghostPos();
+            if (!p) return -1;
+            if (p.x === 0 && p.y === 0) return -1;
+            var cx = p.x + PIECE_SZ / 2, cy = p.y + PIECE_SZ / 2;
+            var dcol = Math.floor(cx / SQ), drow = Math.floor(cy / SQ);
+            if (dcol < 0 || dcol > 7 || drow < 0 || drow > 7) return -1;
+            return fromDisplay(drow * 8 + dcol);
+        }
+        function commitDropMultimethod(droppedPanel) {
+            if (destroyed || !myTurn() || selected < 0) return;
+            var wSq = squareFromWindow();
+            var aPanel = squareFromPanel(droppedPanel);
+            var bOver = dragOverSq;
+            var cGhost = squareFromGhost();
+            var candidates = [wSq, aPanel, bOver, cGhost];
+            for (var k = 0; k < candidates.length; k++) {
+                if (candidates[k] >= 0 && isLegalTarget(candidates[k])) { onCellDrop(candidates[k]); return; }
+            }
+            if (DRAG_DEBUG) status("DROP MISS win=" + wSq + " panel=" + aPanel + " over=" + bOver + " ghost=" + cGhost);
+        }
+
+        // ── rendering ───────────────────────────────────────────────────────────────
+        function layoutPieces() {
+            if (!piecesLayer) return;
+            piecesLayer.RemoveAndDeleteChildren();
+            pieceEls = {};
+            for (var i = 0; i < 64; i++) { if (board[i] !== 0) makePiece(i, board[i]); }
+        }
+
+        function refreshHighlights() {
+            for (var i = 0; i < 64; i++) {
+                var cell = cells[i];
+                if (!cell) continue;
+                cell.RemoveClass("mg-sel");
+                cell.RemoveClass("mg-target");
+                cell.RemoveClass("mg-check");
+            }
+            if (selected >= 0 && cells[selected]) cells[selected].AddClass("mg-sel");
+            for (var t = 0; t < legalTargets.length; t++) {
+                var tc = cells[legalTargets[t].to];
+                if (tc) tc.AddClass("mg-target");
+            }
+            if (!gameOver && inCheck(board, turn)) {
+                var ks = findKing(board, turn);
+                if (ks >= 0 && cells[ks]) cells[ks].AddClass("mg-check");
+            }
+        }
+
+        function slidePiece(from, to) {
+            var piece = pieceEls[from];
+            delete pieceEls[from];
+            if (!piece || !piece.IsValid || !piece.IsValid()) { if (board[to] !== 0) makePiece(to, board[to]); return; }
+            piece.style.transform = transformFor(to);
+            piece._sq = to;
+            pieceEls[to] = piece;
+        }
+
+        // Apply from→to to the model and mirror it visually: slide the mover, fade any capture
+        // (incl. en passant), swap the sprite on promotion, and slide the rook on a castle.
+        function applyChessMove(from, to) {
+            var mover = board[from], t = cType(mover), color = cSign(mover);
+            var fr = cRow(from), fc = cCol(from), tr = cRow(to), tc = cCol(to);
+            var capSq = -1;
+            if (t === C_PAWN && tc !== fc && board[to] === 0) capSq = cSq(fr, tc);   // en passant
+            else if (board[to] !== 0) capSq = to;
+
+            var r = makeMove(board, cst, from, to);
+            board = r[0]; cst = r[1];
+
+            if (capSq >= 0 && pieceEls[capSq]) {
+                var dead = pieceEls[capSq];
+                delete pieceEls[capSq];
+                dead.AddClass("mg-captured");
+                dead.style.preTransformScale2d = "0.2";
+                (function (d) { $.Schedule(0.22, function () { try { d.DeleteAsync(0); } catch (e) {} }); })(dead);
+            }
+            slidePiece(from, to);
+            if (t === C_PAWN && (tr === 0 || tr === 7)) {
+                var pp = pieceEls[to];
+                if (pp && pp.IsValid && pp.IsValid()) pp.style.backgroundImage = pieceImg(color * C_QUEEN);
+            }
+            if (t === C_KING && Math.abs(tc - fc) === 2) {
+                if (tc - fc === 2) slidePiece(cSq(fr, 7), cSq(fr, 5));   // O-O  rook h→f
+                else slidePiece(cSq(fr, 0), cSq(fr, 3));                 // O-O-O rook a→d
+            }
+        }
+
+        // ── input / move flow ────────────────────────────────────────────────────────
+        function myTurn() { return turn === myColor && !gameOver; }
+        function clearSelection() { selected = -1; legalTargets = []; }
+
+        function targetsFor(i) {
+            var all = legalMoves(board, cst, myColor), out = [];
+            for (var k = 0; k < all.length; k++) if (all[k].from === i) out.push({ to: all[k].to });
+            return out;
+        }
+
+        function onCellClick(i) {
+            if (destroyed || !myTurn()) return;
+            if (selected >= 0) {
+                for (var t = 0; t < legalTargets.length; t++) {
+                    if (legalTargets[t].to === i) { doLocalMove(selected, i); return; }
+                }
+            }
+            if (cSign(board[i]) === myColor) {
+                var tg = targetsFor(i);
+                if (tg.length === 0) { status("That piece has no legal move."); return; }
+                selected = i;
+                legalTargets = tg;
+                refreshHighlights();
+            }
+        }
+
+        function onCellDrop(i) {
+            if (destroyed || !myTurn() || !dragActive || selected < 0) return;
+            for (var t = 0; t < legalTargets.length; t++) {
+                if (legalTargets[t].to === i) { doLocalMove(selected, i); return; }
+            }
+        }
+
+        function doLocalMove(from, to) {
+            applyChessMove(from, to);
+            clearSelection();
+            turn = -myColor;               // hand off locally
+            refreshHighlights();
+
+            if (session.bot) {
+                if (!checkEnd()) { status("Bot is thinking…"); scheduleBotTurn(); }
+                return;
+            }
+            status("Move sent. Waiting for opponent…");
+            checkEnd();                    // may end the game (and set the win/draw status)
+            sendChessMove(from, to);       // always relay — the opponent must see even a mating move
+        }
+
+        // ── bot (offline) ─────────────────────────────────────────────────────────────
+        function scheduleBotTurn() { $.Schedule(0.45, botTurn); }
+        function botTurn() {
+            if (destroyed || gameOver) return;
+            var botColor = -myColor;
+            var mv = chessBotMove(board, cst, botColor);
+            if (!mv) { checkEnd(); return; }
+            applyChessMove(mv.from, mv.to);
+            turn = myColor;
+            refreshHighlights();
+            if (!checkEnd()) status(inCheck(board, myColor) ? "Check! Your turn." : "Your turn.");
+        }
+
+        // ── networking ─────────────────────────────────────────────────────────────────
+        function sendChessMove(from, to) {
+            if (destroyed) return;
+            Api.move(code, from, to, 1, function () {
+                appliedSeq++;
+                afterTurnSwitch();
+            }, function () {
+                $.Schedule(0.6, function () { sendChessMove(from, to); });
+            });
+        }
+        function afterTurnSwitch() {
+            if (gameOver) return;
+            startPolling();
+        }
+        function startPolling() {
+            pollToken++;
+            pollOnce(pollToken);
+        }
+        function pollOnce(myToken) {
+            if (destroyed || myToken !== pollToken) return;
+            if (turn === myColor) return;
+            Api.poll(code, appliedSeq, function (mv) {
+                if (destroyed || myToken !== pollToken) return;
+                if (mv) {
+                    appliedSeq++;
+                    applyChessMove(mv.from, mv.to);
+                    turn = myColor;                 // every chess move ends the turn (end always 1)
+                    refreshHighlights();
+                    if (!checkEnd()) status(inCheck(board, myColor) ? "Check! Your turn." : "Your turn.");
+                } else {
+                    $.Schedule(0.4, function () { pollOnce(myToken); });
+                }
+            }, function () {
+                $.Schedule(0.6, function () { pollOnce(myToken); });
+            }, function (from, to) {
+                return from >= 0 && from < 64 && to >= 0 && to < 64 && from !== to;
+            });
+        }
+
+        // ── end of game ─────────────────────────────────────────────────────────────────
+        // Evaluates the side whose turn it now is. Returns true if the game ended.
+        function checkEnd() {
+            var res = chessResult(board, cst, turn);
+            if (res === "checkmate") { finish(-turn); return true; }
+            if (res === "stalemate") { finishDraw(); return true; }
+            return false;
+        }
+        function finish(winner) {
+            gameOver = true;
+            clearSelection();
+            refreshHighlights();
+            status(winner === myColor ? "🏆 Checkmate — you win!" : "Checkmate — you lose.");
+        }
+        function finishDraw() {
+            gameOver = true;
+            clearSelection();
+            refreshHighlights();
+            status("Stalemate — it's a draw.");
+        }
+
+        // ── boot ──────────────────────────────────────────────────────────────────────
+        buildCells();
+        layoutPieces();
+        refreshHighlights();
+        if (myTurn()) {
+            status("Your turn. You play " + (myColor === 1 ? "white (bottom)." : "black (bottom)."));
+        } else if (session.bot) {
+            status("Bot is thinking…");
+            scheduleBotTurn();
+        } else {
+            status("Opponent's turn…");
+            startPolling();
+        }
+
+        return {
+            destroy: function () { destroyed = true; pollToken++; try { root.DeleteAsync(0); } catch (e) {} }
+        };
+    }
 
     // ── placeholder for not-yet-built games ─────────────────────────────────
     function createStub(container, session, name) {
@@ -1354,7 +1778,7 @@
             { id: 1, key: "checkers", name: "Checkers", enabled: true },
             { id: 2, key: "tictactoe", name: "Tic-Tac-Toe", enabled: true },
             { id: 3, key: "durak", name: "Durak", enabled: false },
-            { id: 4, key: "chess", name: "Chess", enabled: false },
+            { id: 4, key: "chess", name: "Chess", enabled: true },
             { id: 5, key: "connectfour", name: "Connect Four", enabled: false },
             { id: 6, key: "soon1", name: "Coming Soon", enabled: false },
             { id: 7, key: "soon2", name: "Coming Soon", enabled: false },
@@ -1369,6 +1793,7 @@
         mount: function (gameId, container, session) {
             if (gameId === 1) return createCheckers(container, session);
             if (gameId === 2) return createTicTacToe(container, session);
+            if (gameId === 4) return createChess(container, session);
             var g = this.byId(gameId);
             return createStub(container, session, g ? g.name : null);
         }

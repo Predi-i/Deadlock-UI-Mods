@@ -621,6 +621,28 @@
     box-shadow: 0px 3px 5px 0px #00000099;
 }
 
+/* ── chess ─────────────────────────────────────────────────────────────────────
+   Reuses the whole checkers board (.mg-board-wrap / .mg-board / .mg-board-row / .mg-cell*
+   / .mg-pieces-layer) and the .mg-piece transition + drag machinery. Only the piece LOOK
+   differs: a compiled .vtex sprite (set inline in JS) instead of a drawn disc. */
+.mg-chess { horizontal-align: center; flow-children: down; }
+/* the checking king's square, so a player sees why they must respond */
+.mg-cell.mg-check { background-color: #7a2f2f; }
+/* Chess piece = image sprite. Overrides the disc look of .mg-piece (declared later so it wins
+   at equal specificity): bigger, square, no radius, no box shadow, transparent fill. The
+   background-image (WhitePawn.vtex …) is assigned per piece in makePiece. */
+.mg-chess-piece {
+    width: 56px;
+    height: 56px;
+    border-radius: 0px;
+    box-shadow: 0px 0px 0px 0px #00000000;
+    background-color: #00000000;
+    background-size: contain;
+    background-position: center;
+    background-repeat: no-repeat;
+}
+.mg-chess-piece.mg-dragging { box-shadow: 0px 0px 0px 0px #00000000; }
+
 /* ── tic-tac-toe ───────────────────────────────────────────────────────────── */
 .mg-ttt { horizontal-align: center; flow-children: down; }
 .mg-ttt-board {
