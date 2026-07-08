@@ -692,3 +692,71 @@
 /* ── stub ────────────────────────────────────────────────────────────────── */
 .mg-stub { width: 100%; height: 200px; }
 .mg-stub-label { font-family: radiance !important; color: #9db0c6 !important; font-size: 22px !important; horizontal-align: center; vertical-align: center; }
+
+/* ── durak ───────────────────────────────────────────────────────────────────
+   Card table laid out in zones: opponents across the TOP (and the LEFT/RIGHT columns
+   for 3–4 players), the deck+trump and the attack/defense pairs in the CENTER, and my
+   own hand + Бито/Take controls along the BOTTOM. Everyone renders themselves at the
+   bottom, so an opponent's screen side is relative to the viewer (mg_durak.js seatZone).
+   A card is a compiled .vtex sprite (deck/<S><R>.vtex) set as background-image — faces
+   inline in JS, the shared back via .mg-card-back here. Overlapping cards use
+   flow-children:none / negative margins (Panorama has no position:absolute). */
+.mg-durak { width: 100%; flow-children: down; horizontal-align: center; }
+
+.mg-durak-top { width: 100%; flow-children: right; horizontal-align: center; min-height: 104px; }
+.mg-durak-mid { width: 100%; flow-children: right; horizontal-align: center; margin-top: 6px; margin-bottom: 6px; }
+.mg-durak-left, .mg-durak-right { width: 132px; flow-children: down; }
+.mg-durak-center { width: fill-parent-flow(1.0); flow-children: down; horizontal-align: center; min-height: 150px; }
+.mg-durak-self { width: 100%; flow-children: down; horizontal-align: center; }
+
+/* a single card sprite; face art assigned inline in JS, missing art falls back to the card fill */
+.mg-card {
+    width: 58px;
+    height: 82px;
+    background-color: #151c27;
+    background-size: contain;
+    background-repeat: no-repeat;
+    background-position: 50% 50%;
+    border: 1px solid #232f3e;
+    border-radius: 4px;
+    box-shadow: 0px 2px 4px 0px #00000080;
+}
+.mg-card-back {
+    background-image: url("s2r://panorama/images/deck/BACK.vtex");
+    background-color: #16233a;
+    border-color: #2a3849;
+}
+/* a hand card I can legally play right now — accent hairline + subtle lift on hover */
+.mg-card-playable {
+    border-color: #4f86d4;
+    transition-property: brightness, border-color;
+    transition-duration: 0.1s;
+}
+.mg-card-playable:hover { brightness: 1.15; border-color: #82b4ff; }
+
+/* opponents: name + card count + a small fan of backs */
+.mg-opp { flow-children: down; horizontal-align: center; margin: 6px; }
+.mg-opp-label { font-family: radiance !important; color: #9db0c6 !important; font-size: 17px !important; horizontal-align: center; }
+.mg-opp-atk .mg-opp-label { color: #82b4ff !important; }
+.mg-opp-def .mg-opp-label { color: #e0a24a !important; }
+.mg-oppfan { flow-children: right; horizontal-align: center; }
+/* backs are shrunk + heavily overlapped so a full hand fits the zone */
+.mg-oppfan .mg-card { width: 40px; height: 56px; margin-right: -26px; }
+
+/* center: deck + trump indicator, then the attack/defense pairs */
+.mg-durak-info { flow-children: right; horizontal-align: center; vertical-align: middle; margin-bottom: 8px; }
+.mg-deck-indicator { flow-children: none; margin-right: 10px; }
+.mg-trump-card { width: 46px; height: 66px; }
+.mg-deck-label { font-family: radiance !important; color: #9db0c6 !important; font-size: 18px !important; vertical-align: middle; }
+
+.mg-durak-table { flow-children: right; horizontal-align: center; }
+/* a pair overlaps the defense card over the attack card (flow-children:none stacks them) */
+.mg-tpair { flow-children: none; width: 78px; height: 100px; margin: 3px; }
+.mg-tpair-open { background-color: #2a3849; border-radius: 6px; }
+.mg-tcard-atk { }
+.mg-tcard-def { margin-left: 18px; margin-top: 20px; }
+
+/* my hand fans across the bottom; controls sit under it */
+.mg-durak-hand { flow-children: right; horizontal-align: center; margin-top: 8px; }
+.mg-durak-hand .mg-card { margin-right: -18px; }
+.mg-durak-controls { flow-children: right; horizontal-align: center; margin-top: 10px; }

@@ -8,6 +8,7 @@
 	<scripts>
 		<include src="s2r://panorama/scripts/mg_net.vjs_c" />
 		<include src="s2r://panorama/scripts/mg_games.vjs_c" />
+		<include src="s2r://panorama/scripts/mg_durak.vjs_c" />
 		<include src="s2r://panorama/scripts/mg_ui.vjs_c" />
 	</scripts>
 	<Panel class="WindowRoot" hittest="false" disallowedstyleflags="hover,descendantfocus">

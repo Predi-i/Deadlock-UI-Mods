@@ -17,7 +17,8 @@ When you change layout/animation/input, say honestly which of the two it is.
 
 Online mini-games played **inside Deadlock's pause (Esc) menu**, without leaving the
 match. Shipping games: **Checkers** (Russian draughts), **Tic-Tac-Toe** and **Chess**.
-Durak / Connect Four are disabled placeholders in the picker.
+**Durak** is playable **vs bot only** for now (Stage 1); its online 2–4 player mode is
+Stage 2 (see §8.6). Connect Four is still a disabled placeholder in the picker.
 
 Picker cards show a custom **`.vtex` image** (drawn by the maintainer, compiled from PNG)
 as the card background — `s2r://panorama/images/cards/<key>.vtex`, set inline in
@@ -55,17 +56,28 @@ panorama/
   styles/mg.css            all styling. Note the Panorama-specific idioms (§6).
   scripts/
     mg_net.js              image side-channel transport + typed protocol ($.MG.Net, $.MG.Api)
-    mg_games.js            checkers + TTT engines, rendering, bot AI, drag/click input ($.MG.Games)
+    mg_games.js            checkers + TTT + chess engines, rendering, bot AI, drag/click input;
+                           the $.MG.Games registry (list + register + mount).
+    mg_durak.js            Durak: pure rules + render + click input + bot; self-registers game id 3.
     mg_ui.js               Esc-menu button injection + full-screen lobby overlay ($.MG.UI)
 server/                    Cloudflare Worker (dev-only, NOT packed into the VPK)
   worker.js                Durable-Object lobby store + PNG encoder
   wrangler.jsonc, README.md
 tools/                     dev-only Node test harnesses (NOT packed)
   mg_rules_test.js         checkers rules: captures, flying kings, full bot game
+  mg_chess_test.js         chess rules: perft, castling, en passant, promotion, mate/stalemate
+  mg_durak_test.js         durak rules: deal, beats(), throw-in legality, 120 full bot games
   mg_server_test.js        worker: matchmaking, code round-trip, concurrent lobbies
 ```
 
-Everything shared between the three scripts hangs off **`$.MG`** — `$` is the single
+**Game registry.** `$.MG.Games` (defined at the bottom of `mg_games.js`) is a small
+registry: `list` drives the picker, `register({id, create, enabled?})` attaches a mount
+factory (and can flip a game's `enabled`), and `mount` dispatches to it (falling back to
+the stub). This is why a new game can live in **its own file** — `mg_durak.js` just calls
+`MG.Games.register(...)` after `mg_games.js` has loaded; no edit to the dispatch. The
+`<include>` order in `base_hud.xml` is therefore net → games → **durak** → ui.
+
+Everything shared between the scripts hangs off **`$.MG`** — `$` is the single
 object shared across all scripts loaded in the same panel context. Each script guards with
 `if (MG.X) return;` so a double-include is a no-op.
 
@@ -370,6 +382,58 @@ sanity check on the first in-game chess sync.
 
 ---
 
+## 8.6 Durak internals (mg_durak.js)
+
+Durak is the first game that does NOT fit the 2-player, "a move is two small ints"
+transport, so it is being built in **stages**. Stage 1 (shipping) is **offline vs bot
+only** — no server touched at all, exactly like the other games' bot mode. Online 2–4
+player play is Stage 2 and needs a different transport (see below); the pure rules are
+written once and reused by both.
+
+- **Two-section file, like chess.** `// ── durak: pure rules ──` … `// ── durak
+  controller ──`. The pure section is self-contained (no `$`, no `MG`) so
+  `tools/mg_durak_test.js` slices and runs it under Node — same trick as `mg_rules_test.js`.
+  ⚠ The banner strings are the slice markers, so prose comments must NOT contain the literal
+  `// ── durak controller` (an early draft did and the test sliced an empty body).
+- **Card model.** id `0..35` = `suit*9 + rank`. suit `0..3` = S,H,D,C; rank `0..8` =
+  6,7,8,9,T,J,Q,K,A (**higher rank index = stronger**). Trump = suit of the deck's bottom
+  card. Art is a compiled `.vtex` per card, `deck/<S><R>.vtex` (e.g. `SA.vtex`), backs via
+  `.mg-card-back` → `deck/BACK.vtex`. Faces set inline in JS, same idiom as chess sprites.
+- **Deterministic deal.** `makeRng(seed)` (mulberry32) → `freshDeck` → `deal`. A seed fully
+  determines the game (the test relies on it; online the **server** will own the seed). Deck
+  is drawn from the FRONT; the bottom card (trump) is drawn last. Lowest-trump holder opens.
+- **State** `st = {numPlayers, trump, trumpCard, deck, hands[], table:[{a,d}], attacker,
+  defender, phase, discard, out[], loser}`. `phase` ∈ `attack|defend|over`. `beats(att,def,
+  trump)`: same-suit-higher, or a trump over a non-trump. Bout resolution (`endBout(st,
+  took)`) collects/discards the table, refills (attacker first, defender last), rotates
+  roles (successful defender attacks next; a taker is skipped), then `checkOver` (last player
+  holding cards is the **durak**). The full-game test asserts card conservation (=36) and
+  termination across 120 games (2/3/4 players).
+- **Bot** is intentionally basic: defend with the minimal beating card (trumps sorted far
+  above non-trumps) or take; attack/throw-in with the lowest card, only throwing in genuinely
+  cheap non-trumps. Tune later if it plays too passively.
+- **Rendering & seating.** Zones: opponents across the TOP (plus LEFT/RIGHT for 3–4), the
+  deck+trump and attack/defense pairs in the CENTER, my hand + Бито/Take along the BOTTOM.
+  **Everyone renders themselves at the bottom**; an opponent's screen side is `seatZone((seat
+  - mySeat + N) % N, N)`, so "left" for one viewer is "right" for another (the relativity the
+  design calls for). Overlapping cards use `flow-children:none` / negative margins (no
+  `position:absolute`, trap §6.1). Input is **click-only** for now (select a hand card → it
+  attacks, or auto-covers the first open attack it beats); drag (chess recipe §7) is a later
+  add.
+- **⚠ Stage-1 simplifications** (documented, not bugs): only the **primary attacker** throws
+  in during the attack phase (other attackers don't pile on — matters only at 3–4 players);
+  throw-ins are allowed only while the table is fully covered. Full podkidnoy throw-in from
+  all attackers is a Stage-2 concern.
+- **Stage 2 transport (planned, not built).** The public move log can't hide hands, so the
+  **worker becomes an authoritative dealer**: it owns the deck/hands, deals privately per seat
+  via an indexed `/api/ddraw` channel, and relays public actions (PLAY/COVER/TAKE/DONE/DRAW)
+  through an indexed `/api/dlog` — clients reconstruct table, trump, turn, roles, deck count
+  and every player's card *count* from the public log, learning only their OWN card identities
+  privately. A determined cheater could pull another seat's `ddraw` (no per-caller auth), an
+  accepted trust level identical to the existing client-authoritative games. UI gate: the
+  online buttons (Quick/Create/Join) are hidden for Durak in `mg_ui.js` (`onlineReady`) until
+  this lands.
+
 ## 9. Turn/sync model (both games)
 
 Client-authoritative: each player validates + applies moves locally, then relays each hop
@@ -388,9 +452,12 @@ Disconnect signals: `status` returning `(9,1)` while a host waits, or `poll` ret
 Before committing, always:
 ```
 node --check panorama/scripts/mg_games.js
+node --check panorama/scripts/mg_durak.js
 node --check panorama/scripts/mg_ui.js
 node --check panorama/scripts/mg_net.js
 node tools/mg_rules_test.js
+node tools/mg_chess_test.js
+node tools/mg_durak_test.js
 node tools/mg_server_test.js
 ```
 Then say plainly what is **verified** (syntax, pure rules, server protocol) vs what is

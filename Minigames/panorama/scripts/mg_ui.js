@@ -325,34 +325,41 @@
             return;
         }
 
-        // Primary: one-button public matchmaking. Wrapped in a .mg-btn-row so it uses
-        // fill-parent-flow width, NOT width:100% — the latter makes Panorama clip the button's
-        // right border (the PLAY VS BOT / QUICK MATCH "no right border" bug). Same structure as
-        // the working CREATE/JOIN row.
-        var quickRow = $.CreatePanel("Panel", detailPanel, "");
-        quickRow.AddClass("mg-btn-row");
-        var quickBtn = $.CreatePanel("Button", quickRow, "");
-        quickBtn.AddClass("mg-btn"); quickBtn.AddClass("mg-btn-primary"); quickBtn.AddClass("mg-btn-quick"); quickBtn.AddClass("mg-btn-solo");
-        var ql = $.CreatePanel("Label", quickBtn, ""); ql.text = "QUICK MATCH";
-        quickBtn.SetPanelEvent("onactivate", function () { startQuickMatch(); });
-        var quickCap = $.CreatePanel("Label", detailPanel, "");
-        quickCap.AddClass("mg-caption");
-        quickCap.text = "Public match against anyone online.";
+        // Durak ships bot-only for now: its online path (worker-as-dealer, 2–4 player
+        // seating) is Stage 2. Until then hide the online actions so a player can't start a
+        // dead lobby, and show only PLAY VS BOT below. Remove this gate when online lands.
+        var onlineReady = (g.key !== "durak");
 
-        // Secondary: private match with a friend via a shared code.
-        var friendLbl = $.CreatePanel("Label", detailPanel, "");
-        friendLbl.AddClass("mg-section-label");
-        friendLbl.text = "Play with a friend";
-        var friendRow = $.CreatePanel("Panel", detailPanel, "");
-        friendRow.AddClass("mg-btn-row");
-        var createBtn = $.CreatePanel("Button", friendRow, "");
-        createBtn.AddClass("mg-btn");
-        var cl = $.CreatePanel("Label", createBtn, ""); cl.text = "CREATE";
-        createBtn.SetPanelEvent("onactivate", function () { startCreate(); });
-        var joinBtn = $.CreatePanel("Button", friendRow, "");
-        joinBtn.AddClass("mg-btn"); joinBtn.AddClass("mg-btn-2nd");
-        var jl = $.CreatePanel("Label", joinBtn, ""); jl.text = "JOIN";
-        joinBtn.SetPanelEvent("onactivate", function () { renderJoin(); });
+        if (onlineReady) {
+            // Primary: one-button public matchmaking. Wrapped in a .mg-btn-row so it uses
+            // fill-parent-flow width, NOT width:100% — the latter makes Panorama clip the button's
+            // right border (the PLAY VS BOT / QUICK MATCH "no right border" bug). Same structure as
+            // the working CREATE/JOIN row.
+            var quickRow = $.CreatePanel("Panel", detailPanel, "");
+            quickRow.AddClass("mg-btn-row");
+            var quickBtn = $.CreatePanel("Button", quickRow, "");
+            quickBtn.AddClass("mg-btn"); quickBtn.AddClass("mg-btn-primary"); quickBtn.AddClass("mg-btn-quick"); quickBtn.AddClass("mg-btn-solo");
+            var ql = $.CreatePanel("Label", quickBtn, ""); ql.text = "QUICK MATCH";
+            quickBtn.SetPanelEvent("onactivate", function () { startQuickMatch(); });
+            var quickCap = $.CreatePanel("Label", detailPanel, "");
+            quickCap.AddClass("mg-caption");
+            quickCap.text = "Public match against anyone online.";
+
+            // Secondary: private match with a friend via a shared code.
+            var friendLbl = $.CreatePanel("Label", detailPanel, "");
+            friendLbl.AddClass("mg-section-label");
+            friendLbl.text = "Play with a friend";
+            var friendRow = $.CreatePanel("Panel", detailPanel, "");
+            friendRow.AddClass("mg-btn-row");
+            var createBtn = $.CreatePanel("Button", friendRow, "");
+            createBtn.AddClass("mg-btn");
+            var cl = $.CreatePanel("Label", createBtn, ""); cl.text = "CREATE";
+            createBtn.SetPanelEvent("onactivate", function () { startCreate(); });
+            var joinBtn = $.CreatePanel("Button", friendRow, "");
+            joinBtn.AddClass("mg-btn"); joinBtn.AddClass("mg-btn-2nd");
+            var jl = $.CreatePanel("Label", joinBtn, ""); jl.text = "JOIN";
+            joinBtn.SetPanelEvent("onactivate", function () { renderJoin(); });
+        }
 
         // Offline practice vs the bot.
         var practiceLbl = $.CreatePanel("Label", detailPanel, "");
@@ -365,6 +372,12 @@
         botBtn.AddClass("mg-btn"); botBtn.AddClass("mg-btn-solo");
         var bl = $.CreatePanel("Label", botBtn, ""); bl.text = "PLAY VS BOT";
         botBtn.SetPanelEvent("onactivate", function () { startBotGame(); });
+
+        if (!onlineReady) {
+            var soon = $.CreatePanel("Label", detailPanel, "");
+            soon.AddClass("mg-caption");
+            soon.text = "Online 2–4 player Durak is coming soon.";
+        }
 
         fadeInDetail();
     }
