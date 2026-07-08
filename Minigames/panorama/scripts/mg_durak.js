@@ -298,8 +298,8 @@
     // stage, exactly like the checkers pieces overlay. Because a card PANEL persists across
     // refreshes (keyed by card id), reassigning its transform makes it SLIDE (the .mg-dk-anim
     // transition), so playing a card glides from hand → table and a draw glides from the deck.
-    var CARD_W = 78, CARD_H = 110;
-    var STAGE_W = 640, STAGE_H = 410;
+    var CARD_W = 100, CARD_H = 140;
+    var STAGE_W = 680, STAGE_H = 470;
 
     function createDurak(container, session) {
         var numPlayers = session.numPlayers || 2;
@@ -342,27 +342,37 @@
             var t = "translate3d(" + Math.round(x) + "px, " + Math.round(y) + "px, 0px)";
             return rot ? (t + " rotateZ(" + rot + "deg)") : t;
         }
-        function deckSlot() { return { x: 10, y: 84 }; }
-        function trumpSlot() { return { x: 2, y: 108, rot: 90 }; } // rotated, poking out from under the stack
-        // Hand fans across the bottom, centred in the stage (the deck is top-left, so no
-        // horizontal conflict). Gentle upward bow + tiny per-card rotation reads as a hand.
+        var DECK_X = 8, DECK_Y = 150;
+        function deckSlot() { return { x: DECK_X, y: DECK_Y }; }
+        // Trump lies horizontally UNDER the deck stack, its right half poking out to the side
+        // (classic durak). Rotated 90° about its centre; the offset lands the right end clear
+        // of the vertical stack so it's clearly visible without any text label.
+        function trumpSlot() { return { x: DECK_X + (CARD_H - CARD_W) / 2 + 24, y: DECK_Y, rot: 90 }; }
+        // A card the opponent PLAYS should glide in from where they sit (top of the stage),
+        // not from the deck — so a new TABLE card starts here, a new HAND (drawn) card at the deck.
+        function oppOriginSlot() { return { x: STAGE_W / 2 - CARD_W / 2, y: 2 }; }
+        // Hand fans across the bottom, centred in the stage. Even horizontal spacing + a gentle
+        // per-card tilt reads as a real hand; the vertical bow is deliberately SMALL (a big dome
+        // looked wrong) so the fan stays flat and readable.
         function handSlot(j, n) {
-            var step = n > 1 ? Math.min(CARD_W * 0.66, (STAGE_W - 40 - CARD_W) / (n - 1)) : 0;
+            var step = n > 1 ? Math.min(56, (STAGE_W - CARD_W - 80) / (n - 1)) : 0;
             var totalW = CARD_W + step * (n - 1);
             var x0 = (STAGE_W - totalW) / 2;
-            var y0 = STAGE_H - CARD_H - 6;
             var mid = (n - 1) / 2, d = j - mid;
-            var arc = Math.round((mid * mid - d * d) * 1.1);
-            return { x: x0 + j * step, y: y0 - arc, rot: Math.round(d * 3) };
+            var dome = 12;                                  // px the middle rises above the edges
+            var arc = mid > 0 ? Math.round(dome * (1 - (d * d) / (mid * mid))) : 0;
+            var y0 = STAGE_H - CARD_H - 22;                 // edge baseline (lowest cards)
+            return { x: x0 + j * step, y: y0 - arc, rot: Math.round(d * 3.5) };
         }
-        // Attack/defense pairs centred in the stage's upper-middle band.
+        // Attack/defense pairs centred in the stage's upper-middle band. pairStep compresses
+        // when there are many pairs so a full table (up to 6) never overflows the stage.
         function tableAtkSlot(i, m) {
-            var pairStep = CARD_W + 30;
+            var pairStep = Math.min(CARD_W + 28, (STAGE_W - CARD_W - 24) / Math.max(m - 1, 1));
             var totalW = CARD_W + pairStep * (m - 1);
             var x0 = (STAGE_W - totalW) / 2;
-            return { x: x0 + i * pairStep, y: 92 };
+            return { x: x0 + i * pairStep, y: 78 };
         }
-        function tableDefSlot(i, m) { var s = tableAtkSlot(i, m); return { x: s.x + 16, y: s.y + 26 }; }
+        function tableDefSlot(i, m) { var s = tableAtkSlot(i, m); return { x: s.x + 20, y: s.y + 32 }; }
 
         // ── decor + opponents (non-animated, rebuilt each refresh) ──
         function buildDecor() {
@@ -381,10 +391,12 @@
                     b.style.transform = xform(deckSlot().x + i * 3, deckSlot().y - i * 3, 0);
                 }
             }
+            // Trump is shown by the rotated card poking out of the stack, so the label is just
+            // the remaining deck count (no "Trump X" text — the maintainer asked to drop it).
             var lbl = $.CreatePanel("Label", decorLayer, "");
             lbl.AddClass("mg-dk-decklabel");
-            lbl.style.transform = xform(6, deckSlot().y + CARD_H + 14, 0);
-            lbl.text = "Deck " + st.deck.length + " · Trump " + SUIT_CHARS[st.trump];
+            lbl.style.transform = xform(DECK_X - 2, deckSlot().y + CARD_H + 12, 0);
+            lbl.text = "Deck " + st.deck.length;
 
             // open-slot hint behind each uncovered attack while I'm defending
             if (st.defender === mySeat && st.phase === "defend") {
@@ -432,10 +444,10 @@
             var m = st.table.length, i;
             for (i = 0; i < m; i++) {
                 var a = tableAtkSlot(i, m);
-                wanted.push({ id: st.table[i].a, x: a.x, y: a.y, rot: 0, z: 40 + i * 2, playable: false });
+                wanted.push({ id: st.table[i].a, x: a.x, y: a.y, rot: 0, z: 40 + i * 2, playable: false, table: true });
                 if (st.table[i].d >= 0) {
                     var dd = tableDefSlot(i, m);
-                    wanted.push({ id: st.table[i].d, x: dd.x, y: dd.y, rot: 0, z: 41 + i * 2, playable: false });
+                    wanted.push({ id: st.table[i].d, x: dd.x, y: dd.y, rot: 0, z: 41 + i * 2, playable: false, table: true });
                 }
             }
             var myHand = st.hands[mySeat].slice();
@@ -466,9 +478,12 @@
                 el.AddClass("mg-dk-card");
                 el.style.backgroundImage = "url('" + cardFaceUrl(w.id) + "')";
                 el.style.zIndex = String(w.z);
-                var start = deckSlot();                 // new cards fly in from the deck
+                // A brand-new TABLE card was just played by an opponent → glide it in from
+                // their seat (top of the stage). A new HAND card is one I drew → from the deck.
+                var start = w.table ? oppOriginSlot() : deckSlot();
                 el.style.transform = xform(start.x, start.y, 0);
                 cardEls[w.id] = el;
+                bindCardDrag(el, w.id);
                 (function (elem, tgt) {
                     $.Schedule(0.0, function () {
                         if (elem && elem.IsValid && elem.IsValid()) { elem.AddClass("mg-dk-anim"); elem.style.transform = tgt; }
@@ -478,6 +493,9 @@
                 el.style.zIndex = String(w.z);
                 el.style.transform = target;            // slides (already has .mg-dk-anim)
             }
+            el._dkCard = w.id;
+            el._dkPlayable = !!w.playable;
+            try { el.SetDraggable(!!w.playable); } catch (e) {}
             el.RemoveClass("mg-dk-playable");
             if (w.playable) {
                 el.AddClass("mg-dk-playable");
@@ -496,6 +514,85 @@
             try { el.DeleteAsync(0.25); } catch (e) { }
         }
 
+        // ── drag-and-drop (pick a hand card up, drop it on the table) ──────────────
+        // Reuses the proven QOLLOCK/checkers recipe: drag a throwaway GHOST (not the real
+        // card), then on release read the ghost's absolute WINDOW position (the only channel
+        // that survives the engine culling the ghost out of layout — see ARCHITECTURE §7) and
+        // map it into stage coords to decide the drop target. Click-to-play still works; drag
+        // is additive and can only ever produce a LEGAL move (a bad drop just snaps back).
+        function winPos(panel) {
+            if (!panel || !panel.GetPositionWithinWindow) return null;
+            var r; try { r = panel.GetPositionWithinWindow(); } catch (e) { return null; }
+            if (!r) return null;
+            var x = (typeof r.x === "number") ? r.x : (typeof r[0] === "number" ? r[0] : null);
+            var y = (typeof r.y === "number") ? r.y : (typeof r[1] === "number" ? r[1] : null);
+            if (x === null || y === null || !isFinite(x) || !isFinite(y)) return null;
+            if (Math.abs(x) > 100000 || Math.abs(y) > 100000) return null; // FLT_MAX sentinel
+            return { x: x, y: y };
+        }
+        // Ghost centre → stage coordinates. Everything is window px, so the UI scale cancels
+        // out via (rendered layer width / STAGE_W).
+        function stagePointFromGhost(ghost) {
+            var lp = winPos(cardLayer), gp = winPos(ghost);
+            if (!lp || !gp) return null;
+            var layerW = (cardLayer && isFinite(cardLayer.actuallayoutwidth) && cardLayer.actuallayoutwidth > 0)
+                ? cardLayer.actuallayoutwidth : STAGE_W;
+            var scale = layerW / STAGE_W;
+            var gw = (ghost && isFinite(ghost.actuallayoutwidth) && ghost.actuallayoutwidth > 0
+                      && ghost.actuallayoutwidth < 100000) ? ghost.actuallayoutwidth : CARD_W * scale;
+            var gh = (ghost && isFinite(ghost.actuallayoutheight) && ghost.actuallayoutheight > 0
+                      && ghost.actuallayoutheight < 100000) ? ghost.actuallayoutheight : CARD_H * scale;
+            var cx = gp.x + gw / 2, cy = gp.y + gh / 2;
+            return { x: (cx - lp.x) / scale, y: (cy - lp.y) / scale };
+        }
+        function commitDrop(card, ghost) {
+            if (!myTurn()) return;
+            var pt = stagePointFromGhost(ghost);
+            if (!pt) return;                            // can't read the drop → snap back
+            if (st.phase === "defend" && st.defender === mySeat) {
+                // Cover the UNCOVERED pair nearest the drop that this card can beat.
+                var m = st.table.length, best = -1, bestDx = 1e9;
+                for (var t = 0; t < m; t++) {
+                    if (st.table[t].d >= 0 || !canDefendPair(st, t, card)) continue;
+                    var sx = tableAtkSlot(t, m).x + CARD_W / 2;
+                    var dx = Math.abs(pt.x - sx);
+                    if (dx < bestDx) { bestDx = dx; best = t; }
+                }
+                if (best >= 0) { applyDefend(st, best, card); afterAction(); }
+                else status("That card can't cover an open attack there.");
+                return;
+            }
+            if (st.phase === "attack" && st.attacker === mySeat) {
+                // Only a drop up on the table (not back on the hand) plays the card.
+                if (pt.y < STAGE_H - CARD_H - 30 && canAttackWith(st, mySeat, card)) {
+                    applyAttack(st, mySeat, card); afterAction();
+                }
+                return;
+            }
+        }
+        function bindCardDrag(el, cid) {
+            $.RegisterEventHandler("DragStart", el, function (_p, dragEvent) {
+                if (!el._dkPlayable || !myTurn()) return;
+                var ghost = $.CreatePanel("Panel", cardLayer, "");
+                ghost.AddClass("mg-dk-card"); ghost.AddClass("mg-dk-dragging");
+                ghost.style.backgroundImage = el.style.backgroundImage;
+                ghost.style.zIndex = "900";
+                try { ghost.SetAttributeString("hittest", "false"); } catch (e) {}
+                dragEvent.displayPanel = ghost;
+                dragEvent.removePositionBeforeDrop = false;
+                ghost.style.align = "left top";         // engine positions the ghost under the cursor
+                el._dkGhost = ghost;
+                el.AddClass("mg-dk-drag-source");
+            });
+            $.RegisterEventHandler("DragEnd", el, function () {
+                var ghost = el._dkGhost;
+                try { commitDrop(el._dkCard, ghost); } catch (e) {}
+                if (ghost) { try { ghost.DeleteAsync(0); } catch (e2) {} }
+                el._dkGhost = null;
+                el.RemoveClass("mg-dk-drag-source");
+            });
+        }
+
         function buildControls() {
             controlsZone.RemoveAndDeleteChildren();
             var canAct = myTurn();
@@ -509,7 +606,9 @@
 
         function mkButton(parent, text, onClick) {
             var b = $.CreatePanel("Button", parent, "");
-            b.AddClass("mg-btn");
+            // Filled accent blue (same as QUICK MATCH) + centred via .mg-dk-action, so the
+            // Take / Бито button reads as the primary action and never drifts to the far left.
+            b.AddClass("mg-btn"); b.AddClass("mg-btn-primary"); b.AddClass("mg-dk-action");
             var l = $.CreatePanel("Label", b, ""); l.text = text;
             b.SetPanelEvent("onactivate", onClick);
             return b;

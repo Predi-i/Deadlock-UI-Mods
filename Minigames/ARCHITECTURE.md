@@ -416,18 +416,25 @@ written once and reused by both.
   everyone renders themselves at the bottom, so an opponent's screen side is `seatZone((seat
   - mySeat + N) % N, N)` — "left" for one viewer is "right" for another (the relativity the
   design calls for). The deck+trump, the attack/defense pairs and MY hand all live on one
-  fixed-size **STAGE** (`flow-children:none`, CARD 78×110 / STAGE 640×410 — the JS px math and
+  fixed-size **STAGE** (`flow-children:none`, CARD 100×140 / STAGE 680×470 — the JS px math and
   the CSS sizes MUST agree), where **each card is positioned by `transform:translate3d`** (no
   `position:absolute`, trap §6.1). A card panel **persists across refreshes keyed by its id**
   (`cardEls`), so reassigning its transform makes it **SLIDE** — exactly the checkers
   `.mg-piece`/`.mg-anim` idiom (base class has no transition; `.mg-dk-anim` armed one frame
-  after creation). So playing a card glides hand→table, a "take" glides the table cards into
-  my hand, and a draw glides in from the deck (new panels start at the deck slot). The deck is
-  a real **stack** of overlapped backs with the **trump tucked under it, rotated 90°** (drawn
-  before the stack so it paints under). `render()` reconciles `cardEls` against `computeWanted()`
-  each turn. Input is **click-only** (select a hand card → it attacks, or auto-covers the first
-  open attack it beats); native drag (chess recipe §7) is a later add. ⚠ All pixel geometry is
-  unverified from a shell — tune in-game.
+  after creation). So playing a card glides hand→table and a "take" glides the table cards into
+  my hand. **New-card entry origin is source-aware**: a freshly created TABLE card was just
+  played by an opponent, so it glides in from their seat (`oppOriginSlot`, top-centre); a fresh
+  HAND card is one I drew, so it glides from the deck. The deck is a real **stack** of
+  overlapped backs with the **trump laid horizontally UNDER it, rotated 90°**, its right half
+  poking clear of the stack (drawn before the stack so it paints under) — this replaces the old
+  "· Trump X" text on the deck label, which now shows only the count. `render()` reconciles
+  `cardEls` against `computeWanted()` each turn. Input is **click + drag**: click a hand card to
+  attack / auto-cover; or **drag** it onto the table (the checkers/QOLLOCK ghost recipe §7 —
+  `SetDraggable` + a throwaway ghost as `displayPanel`, drop resolved from the ghost's
+  `GetPositionWithinWindow` mapped into stage coords). While defending, the drop targets the
+  **nearest uncovered pair the card can beat**, so you choose *which* attack to cover; a bad
+  drop just snaps back (drag can only ever produce a legal move). ⚠ All pixel geometry + the
+  drag drop-mapping are unverified from a shell — tune in-game.
 - **⚠ Stage-1 simplifications** (documented, not bugs): only the **primary attacker** throws
   in during the attack phase (other attackers don't pile on — matters only at 3–4 players);
   throw-ins are allowed only while the table is fully covered. Full podkidnoy throw-in from

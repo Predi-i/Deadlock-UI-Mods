@@ -702,26 +702,31 @@
    pattern): playing glides hand→table, a draw glides from the deck. Card faces are compiled
    .vtex sprites (deck/<S><R>.vtex) set inline in JS; the shared back is .mg-dk-cardback.
    Everyone renders themselves at the bottom, so an opponent's side is relative (seatZone).
-   Geometry MUST match mg_durak.js: CARD 78×110, STAGE 620×410. */
+   Geometry MUST match mg_durak.js: CARD 100×140, STAGE 680×470. */
 .mg-durak { width: 100%; flow-children: down; horizontal-align: center; }
-.mg-durak-top { width: 100%; flow-children: right; horizontal-align: center; min-height: 84px; }
+.mg-durak-top { width: 100%; flow-children: right; horizontal-align: center; min-height: 120px; }
 .mg-durak-mid { width: 100%; flow-children: right; horizontal-align: center; }
-.mg-durak-left, .mg-durak-right { width: 100px; flow-children: down; vertical-align: middle; }
+.mg-durak-left, .mg-durak-right { width: 72px; flow-children: down; vertical-align: middle; }
 .mg-durak-self { width: 100%; flow-children: down; horizontal-align: center; }
-.mg-durak-controls { width: 100%; flow-children: right; horizontal-align: center; min-height: 40px; margin-top: 4px; }
+/* Single action button: flow-children:down so horizontal-align:center on the button actually
+   centres it (in a flow:right row a lone child pins to the left — that was the "куда уползло?"
+   Take button drifting off to the far left). */
+.mg-durak-controls { width: 100%; flow-children: down; horizontal-align: center; min-height: 40px; margin-top: 6px; }
+.mg-dk-action { horizontal-align: center; min-width: 220px; height: 52px; }
+.mg-dk-action Label { font-size: 19px !important; letter-spacing: 2px; }
 
 /* the stage: fixed size so JS px math lands; two stacked flow-children:none layers.
-   Fits the 900px modal (usable ≈844): 100 + 640 + 100 = 840. */
-.mg-durak-stage { width: 640px; height: 410px; flow-children: none; horizontal-align: center; }
-.mg-dk-decor { width: 640px; height: 410px; flow-children: none; }
-.mg-dk-cards { width: 640px; height: 410px; flow-children: none; }
+   Fits the 900px modal (usable ≈844): 72 + 680 + 72 = 824. */
+.mg-durak-stage { width: 680px; height: 470px; flow-children: none; horizontal-align: center; }
+.mg-dk-decor { width: 680px; height: 470px; flow-children: none; }
+.mg-dk-cards { width: 680px; height: 470px; flow-children: none; }
 
 /* a card sprite. NO transition on the base class so a freshly-created card snaps to its
    start position; .mg-dk-anim is added one frame later, after which every transform change
    animates (identical arming trick to .mg-piece / .mg-anim). */
 .mg-dk-card {
-    width: 78px;
-    height: 110px;
+    width: 100px;
+    height: 140px;
     background-color: #151c27;
     background-size: contain;
     background-repeat: no-repeat;
@@ -729,6 +734,9 @@
     border-radius: 6px;
     box-shadow: 0px 3px 6px 0px #00000099;
 }
+/* the drag visual (a throwaway copy under the cursor) + the dimmed source it left behind */
+.mg-dk-dragging { opacity: 0.95; box-shadow: 0px 6px 14px 0px #000000cc; }
+.mg-dk-drag-source { opacity: 0.30; }
 .mg-dk-card.mg-dk-anim {
     transition-property: transform, opacity;
     transition-duration: 0.22s, 0.2s;
@@ -747,7 +755,7 @@
 }
 .mg-dk-playable:hover { brightness: 1.18; border-color: #82b4ff; }
 /* faint plate behind an uncovered attack while I'm defending */
-.mg-dk-openslot { width: 86px; height: 118px; border-radius: 8px; background-color: #2a384966; }
+.mg-dk-openslot { width: 108px; height: 148px; border-radius: 8px; background-color: #2a384966; }
 
 /* opponents: name + card count + a small fan of backs */
 .mg-opp { flow-children: down; horizontal-align: center; margin: 6px; }
@@ -756,13 +764,13 @@
 .mg-opp-def .mg-opp-label { color: #e0a24a !important; }
 .mg-oppfan { flow-children: right; horizontal-align: center; margin-top: 3px; }
 .mg-opp-back {
-    width: 40px;
-    height: 56px;
-    margin-right: -26px;                /* heavy overlap so a full hand fits the zone */
+    width: 62px;
+    height: 86px;
+    margin-right: -40px;                /* heavy overlap so a full hand fits the zone */
     background-image: url("s2r://panorama/images/deck/BACK.vtex");
     background-color: #16233a;
     background-size: contain;
     background-repeat: no-repeat;
-    border-radius: 4px;
+    border-radius: 5px;
 }
 .mg-dk-decklabel { font-family: radiance !important; color: #9db0c6 !important; font-size: 17px !important; }
