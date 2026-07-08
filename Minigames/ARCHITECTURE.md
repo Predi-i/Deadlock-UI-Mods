@@ -412,14 +412,22 @@ written once and reused by both.
 - **Bot** is intentionally basic: defend with the minimal beating card (trumps sorted far
   above non-trumps) or take; attack/throw-in with the lowest card, only throwing in genuinely
   cheap non-trumps. Tune later if it plays too passively.
-- **Rendering & seating.** Zones: opponents across the TOP (plus LEFT/RIGHT for 3–4), the
-  deck+trump and attack/defense pairs in the CENTER, my hand + Бито/Take along the BOTTOM.
-  **Everyone renders themselves at the bottom**; an opponent's screen side is `seatZone((seat
-  - mySeat + N) % N, N)`, so "left" for one viewer is "right" for another (the relativity the
-  design calls for). Overlapping cards use `flow-children:none` / negative margins (no
-  `position:absolute`, trap §6.1). Input is **click-only** for now (select a hand card → it
-  attacks, or auto-covers the first open attack it beats); drag (chess recipe §7) is a later
-  add.
+- **Rendering & seating.** Opponents sit in **zones** (TOP, plus LEFT/RIGHT for 3–4);
+  everyone renders themselves at the bottom, so an opponent's screen side is `seatZone((seat
+  - mySeat + N) % N, N)` — "left" for one viewer is "right" for another (the relativity the
+  design calls for). The deck+trump, the attack/defense pairs and MY hand all live on one
+  fixed-size **STAGE** (`flow-children:none`, CARD 78×110 / STAGE 640×410 — the JS px math and
+  the CSS sizes MUST agree), where **each card is positioned by `transform:translate3d`** (no
+  `position:absolute`, trap §6.1). A card panel **persists across refreshes keyed by its id**
+  (`cardEls`), so reassigning its transform makes it **SLIDE** — exactly the checkers
+  `.mg-piece`/`.mg-anim` idiom (base class has no transition; `.mg-dk-anim` armed one frame
+  after creation). So playing a card glides hand→table, a "take" glides the table cards into
+  my hand, and a draw glides in from the deck (new panels start at the deck slot). The deck is
+  a real **stack** of overlapped backs with the **trump tucked under it, rotated 90°** (drawn
+  before the stack so it paints under). `render()` reconciles `cardEls` against `computeWanted()`
+  each turn. Input is **click-only** (select a hand card → it attacks, or auto-covers the first
+  open attack it beats); native drag (chess recipe §7) is a later add. ⚠ All pixel geometry is
+  unverified from a shell — tune in-game.
 - **⚠ Stage-1 simplifications** (documented, not bugs): only the **primary attacker** throws
   in during the attack phase (other attackers don't pile on — matters only at 3–4 players);
   throw-ins are allowed only while the table is fully covered. Full podkidnoy throw-in from

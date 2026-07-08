@@ -293,6 +293,14 @@
         return rel === 1 ? "left" : (rel === 2 ? "top" : "right"); // N === 4
     }
 
+    // Stage geometry (px, in the stage's own coordinate space). Cards are positioned by
+    // transform:translate3d — Panorama has no position:absolute — inside a flow-children:none
+    // stage, exactly like the checkers pieces overlay. Because a card PANEL persists across
+    // refreshes (keyed by card id), reassigning its transform makes it SLIDE (the .mg-dk-anim
+    // transition), so playing a card glides from hand → table and a draw glides from the deck.
+    var CARD_W = 78, CARD_H = 110;
+    var STAGE_W = 640, STAGE_H = 410;
+
     function createDurak(container, session) {
         var numPlayers = session.numPlayers || 2;
         var mySeat = (session.seat != null) ? session.seat : 0;
@@ -310,123 +318,192 @@
         var root = $.CreatePanel("Panel", container, "MG_DurakRoot");
         root.AddClass("mg-durak");
 
-        // Zone containers (built once; render() only refills their children).
+        // Opponents sit in zones (top / left / right); the deck, table and my own hand all
+        // live on one flow-children:none STAGE so cards can slide anywhere across it.
         var topZone = $.CreatePanel("Panel", root, "MG_DkTop"); topZone.AddClass("mg-durak-top");
         var midRow = $.CreatePanel("Panel", root, "MG_DkMid"); midRow.AddClass("mg-durak-mid");
         var leftZone = $.CreatePanel("Panel", midRow, "MG_DkLeft"); leftZone.AddClass("mg-durak-left");
-        var centerZone = $.CreatePanel("Panel", midRow, "MG_DkCenter"); centerZone.AddClass("mg-durak-center");
+        var stage = $.CreatePanel("Panel", midRow, "MG_DkStage"); stage.AddClass("mg-durak-stage");
         var rightZone = $.CreatePanel("Panel", midRow, "MG_DkRight"); rightZone.AddClass("mg-durak-right");
-        var selfZone = $.CreatePanel("Panel", root, "MG_DkSelf"); selfZone.AddClass("mg-durak-self");
+        // decor (deck stack, rotated trump, labels, open-slot hints) is rebuilt each refresh
+        // and sits BEHIND the persistent card layer.
+        var decorLayer = $.CreatePanel("Panel", stage, "MG_DkDecor"); decorLayer.AddClass("mg-dk-decor");
+        var cardLayer = $.CreatePanel("Panel", stage, "MG_DkCards"); cardLayer.AddClass("mg-dk-cards");
+        var controlsZone = $.CreatePanel("Panel", root, "MG_DkControls"); controlsZone.AddClass("mg-durak-controls");
         var zones = { top: topZone, left: leftZone, right: rightZone };
+
+        var cardEls = {}; // card id -> persistent face panel on the stage
 
         function actionActor() { return st.phase === "defend" ? st.defender : st.attacker; }
         function myTurn() { return !destroyed && st.phase !== "over" && actionActor() === mySeat; }
 
-        // ── small render helpers ──
-        function makeFaceCard(parent, id, playable, onClick) {
-            var c = $.CreatePanel("Panel", parent, "");
-            c.AddClass("mg-card");
-            c.style.backgroundImage = "url('" + cardFaceUrl(id) + "')";
-            if (playable) {
-                c.AddClass("mg-card-playable");
-                (function (cardId) { c.SetPanelEvent("onactivate", function () { onClick(cardId); }); })(id);
-            }
-            return c;
+        // ── slot geometry (stage coords) ──
+        function xform(x, y, rot) {
+            var t = "translate3d(" + Math.round(x) + "px, " + Math.round(y) + "px, 0px)";
+            return rot ? (t + " rotateZ(" + rot + "deg)") : t;
         }
-        function makeBackCard(parent) {
-            var c = $.CreatePanel("Panel", parent, "");
-            c.AddClass("mg-card"); c.AddClass("mg-card-back");
-            return c;
+        function deckSlot() { return { x: 10, y: 84 }; }
+        function trumpSlot() { return { x: 2, y: 108, rot: 90 }; } // rotated, poking out from under the stack
+        // Hand fans across the bottom, centred in the stage (the deck is top-left, so no
+        // horizontal conflict). Gentle upward bow + tiny per-card rotation reads as a hand.
+        function handSlot(j, n) {
+            var step = n > 1 ? Math.min(CARD_W * 0.66, (STAGE_W - 40 - CARD_W) / (n - 1)) : 0;
+            var totalW = CARD_W + step * (n - 1);
+            var x0 = (STAGE_W - totalW) / 2;
+            var y0 = STAGE_H - CARD_H - 6;
+            var mid = (n - 1) / 2, d = j - mid;
+            var arc = Math.round((mid * mid - d * d) * 1.1);
+            return { x: x0 + j * step, y: y0 - arc, rot: Math.round(d * 3) };
         }
+        // Attack/defense pairs centred in the stage's upper-middle band.
+        function tableAtkSlot(i, m) {
+            var pairStep = CARD_W + 30;
+            var totalW = CARD_W + pairStep * (m - 1);
+            var x0 = (STAGE_W - totalW) / 2;
+            return { x: x0 + i * pairStep, y: 92 };
+        }
+        function tableDefSlot(i, m) { var s = tableAtkSlot(i, m); return { x: s.x + 16, y: s.y + 26 }; }
 
-        function renderOpponent(seat) {
-            var rel = (seat - mySeat + numPlayers) % numPlayers;
-            var zone = zones[seatZone(rel, numPlayers)] || topZone;
-            var opp = $.CreatePanel("Panel", zone, "");
-            opp.AddClass("mg-opp");
-            if (seat === st.attacker) opp.AddClass("mg-opp-atk");
-            if (seat === st.defender) opp.AddClass("mg-opp-def");
-            var lbl = $.CreatePanel("Label", opp, "");
-            lbl.AddClass("mg-opp-label");
-            var roleTag = seat === st.attacker ? " • ATK" : (seat === st.defender ? " • DEF" : "");
-            lbl.text = nameOf(seat) + " (" + st.hands[seat].length + ")" + roleTag;
-            var fan = $.CreatePanel("Panel", opp, "");
-            fan.AddClass("mg-oppfan");
-            var shown = Math.min(st.hands[seat].length, 8);
-            for (var i = 0; i < shown; i++) makeBackCard(fan);
-        }
-
-        function renderCenter() {
-            centerZone.RemoveAndDeleteChildren();
-            // Trump + deck indicator.
-            var info = $.CreatePanel("Panel", centerZone, "");
-            info.AddClass("mg-durak-info");
-            var deckPanel = $.CreatePanel("Panel", info, "");
-            deckPanel.AddClass("mg-deck-indicator");
+        // ── decor + opponents (non-animated, rebuilt each refresh) ──
+        function buildDecor() {
+            decorLayer.RemoveAndDeleteChildren();
             if (st.deck.length > 0) {
-                var tc = $.CreatePanel("Panel", deckPanel, "");
-                tc.AddClass("mg-card"); tc.AddClass("mg-trump-card");
+                // trump first so the stack paints OVER it → it reads as tucked under the deck
+                var ts = trumpSlot();
+                var tc = $.CreatePanel("Panel", decorLayer, "");
+                tc.AddClass("mg-dk-card"); tc.AddClass("mg-dk-trump");
                 tc.style.backgroundImage = "url('" + cardFaceUrl(st.trumpCard) + "')";
+                tc.style.transform = xform(ts.x, ts.y, ts.rot);
+                var backs = Math.min(st.deck.length, 6);
+                for (var i = 0; i < backs; i++) {
+                    var b = $.CreatePanel("Panel", decorLayer, "");
+                    b.AddClass("mg-dk-card"); b.AddClass("mg-dk-cardback");
+                    b.style.transform = xform(deckSlot().x + i * 3, deckSlot().y - i * 3, 0);
+                }
             }
-            var deckLbl = $.CreatePanel("Label", info, "");
-            deckLbl.AddClass("mg-deck-label");
-            deckLbl.text = "Deck: " + st.deck.length + "  •  Trump: " + SUIT_CHARS[st.trump];
+            var lbl = $.CreatePanel("Label", decorLayer, "");
+            lbl.AddClass("mg-dk-decklabel");
+            lbl.style.transform = xform(6, deckSlot().y + CARD_H + 14, 0);
+            lbl.text = "Deck " + st.deck.length + " · Trump " + SUIT_CHARS[st.trump];
 
-            // Table: attack/defense pairs.
-            var table = $.CreatePanel("Panel", centerZone, "");
-            table.AddClass("mg-durak-table");
-            var iAmDefender = st.defender === mySeat && st.phase === "defend";
-            for (var i = 0; i < st.table.length; i++) {
-                var pair = $.CreatePanel("Panel", table, "");
-                pair.AddClass("mg-tpair");
-                var atk = $.CreatePanel("Panel", pair, "");
-                atk.AddClass("mg-card"); atk.AddClass("mg-tcard-atk");
-                atk.style.backgroundImage = "url('" + cardFaceUrl(st.table[i].a) + "')";
-                if (st.table[i].d >= 0) {
-                    var def = $.CreatePanel("Panel", pair, "");
-                    def.AddClass("mg-card"); def.AddClass("mg-tcard-def");
-                    def.style.backgroundImage = "url('" + cardFaceUrl(st.table[i].d) + "')";
-                } else if (iAmDefender) {
-                    pair.AddClass("mg-tpair-open"); // hint: needs covering
+            // open-slot hint behind each uncovered attack while I'm defending
+            if (st.defender === mySeat && st.phase === "defend") {
+                for (var t = 0; t < st.table.length; t++) {
+                    if (st.table[t].d >= 0) continue;
+                    var s = tableAtkSlot(t, st.table.length);
+                    var hint = $.CreatePanel("Panel", decorLayer, "");
+                    hint.AddClass("mg-dk-openslot");
+                    hint.style.transform = xform(s.x - 4, s.y - 4, 0);
                 }
             }
         }
 
-        function renderSelf() {
-            selfZone.RemoveAndDeleteChildren();
+        function buildOpponents() {
+            topZone.RemoveAndDeleteChildren();
+            leftZone.RemoveAndDeleteChildren();
+            rightZone.RemoveAndDeleteChildren();
+            for (var seat = 0; seat < numPlayers; seat++) {
+                if (seat === mySeat) continue;
+                var rel = (seat - mySeat + numPlayers) % numPlayers;
+                var zone = zones[seatZone(rel, numPlayers)] || topZone;
+                var opp = $.CreatePanel("Panel", zone, "");
+                opp.AddClass("mg-opp");
+                if (seat === st.attacker) opp.AddClass("mg-opp-atk");
+                if (seat === st.defender) opp.AddClass("mg-opp-def");
+                var lbl = $.CreatePanel("Label", opp, "");
+                lbl.AddClass("mg-opp-label");
+                var roleTag = seat === st.attacker ? " · ATK" : (seat === st.defender ? " · DEF" : "");
+                lbl.text = nameOf(seat) + " (" + st.hands[seat].length + ")" + roleTag;
+                var fan = $.CreatePanel("Panel", opp, "");
+                fan.AddClass("mg-oppfan");
+                var shown = Math.min(st.hands[seat].length, 8);
+                for (var i = 0; i < shown; i++) {
+                    var bk = $.CreatePanel("Panel", fan, "");
+                    bk.AddClass("mg-opp-back");
+                }
+            }
+        }
 
-            var hand = $.CreatePanel("Panel", selfZone, "");
-            hand.AddClass("mg-durak-hand");
+        // ── persistent card reconcile (the slide machinery) ──
+        // Compute where every card I can SEE (my hand + everything on the table) should be,
+        // then move existing panels to their new slot and create/destroy as needed.
+        function computeWanted() {
+            var wanted = [];
+            var m = st.table.length, i;
+            for (i = 0; i < m; i++) {
+                var a = tableAtkSlot(i, m);
+                wanted.push({ id: st.table[i].a, x: a.x, y: a.y, rot: 0, z: 40 + i * 2, playable: false });
+                if (st.table[i].d >= 0) {
+                    var dd = tableDefSlot(i, m);
+                    wanted.push({ id: st.table[i].d, x: dd.x, y: dd.y, rot: 0, z: 41 + i * 2, playable: false });
+                }
+            }
             var myHand = st.hands[mySeat].slice();
             sortByValue(myHand, st.trump);
-            var canAct = myTurn();
-            var attackPlayable = {}, defendPlayable = {};
+            var n = myHand.length;
+            var canAct = myTurn(), play = {};
             if (canAct && st.phase === "attack" && st.attacker === mySeat) {
                 var la = legalAttacks(st, mySeat);
-                for (var a = 0; a < la.length; a++) attackPlayable[la[a]] = 1;
+                for (i = 0; i < la.length; i++) play[la[i]] = 1;
             }
             if (canAct && st.phase === "defend" && st.defender === mySeat) {
-                // A hand card is playable if it can cover ANY open attack.
-                for (var h = 0; h < myHand.length; h++) {
-                    for (var t = 0; t < st.table.length; t++) {
-                        if (st.table[t].d < 0 && canDefendPair(st, t, myHand[h])) { defendPlayable[myHand[h]] = 1; break; }
-                    }
-                }
+                for (i = 0; i < n; i++)
+                    for (var t = 0; t < st.table.length; t++)
+                        if (st.table[t].d < 0 && canDefendPair(st, t, myHand[i])) { play[myHand[i]] = 1; break; }
             }
-            for (var m = 0; m < myHand.length; m++) {
-                var id = myHand[m];
-                var playable = !!attackPlayable[id] || !!defendPlayable[id];
-                makeFaceCard(hand, id, playable, onHandCardClick);
+            for (i = 0; i < n; i++) {
+                var s = handSlot(i, n);
+                wanted.push({ id: myHand[i], x: s.x, y: s.y, rot: s.rot, z: 100 + i, playable: !!play[myHand[i]] });
             }
+            return wanted;
+        }
 
-            // Controls: Бито (attacker, when the table is fully covered) / Take (defender).
-            var controls = $.CreatePanel("Panel", selfZone, "");
-            controls.AddClass("mg-durak-controls");
+        function ensureCard(w) {
+            var el = cardEls[w.id];
+            var target = xform(w.x, w.y, w.rot);
+            if (!el) {
+                el = $.CreatePanel("Panel", cardLayer, "");
+                el.AddClass("mg-dk-card");
+                el.style.backgroundImage = "url('" + cardFaceUrl(w.id) + "')";
+                el.style.zIndex = String(w.z);
+                var start = deckSlot();                 // new cards fly in from the deck
+                el.style.transform = xform(start.x, start.y, 0);
+                cardEls[w.id] = el;
+                (function (elem, tgt) {
+                    $.Schedule(0.0, function () {
+                        if (elem && elem.IsValid && elem.IsValid()) { elem.AddClass("mg-dk-anim"); elem.style.transform = tgt; }
+                    });
+                })(el, target);
+            } else {
+                el.style.zIndex = String(w.z);
+                el.style.transform = target;            // slides (already has .mg-dk-anim)
+            }
+            el.RemoveClass("mg-dk-playable");
+            if (w.playable) {
+                el.AddClass("mg-dk-playable");
+                (function (cid) { el.SetPanelEvent("onactivate", function () { onHandCardClick(cid); }); })(w.id);
+            } else {
+                el.SetPanelEvent("onactivate", function () { });
+            }
+        }
+
+        function animateOut(el) {
+            try {
+                el.AddClass("mg-dk-anim");
+                el.style.opacity = "0.0";
+                el.style.transform = xform(deckSlot().x, deckSlot().y, 0);
+            } catch (e) { }
+            try { el.DeleteAsync(0.25); } catch (e) { }
+        }
+
+        function buildControls() {
+            controlsZone.RemoveAndDeleteChildren();
+            var canAct = myTurn();
             if (canAct && st.phase === "attack" && st.attacker === mySeat && st.table.length > 0) {
-                mkButton(controls, "Бито (Done)", function () { if (myTurn()) { endBout(st, false); afterAction(); } });
+                mkButton(controlsZone, "Бито (Done)", function () { if (myTurn()) { endBout(st, false); afterAction(); } });
             }
             if (canAct && st.phase === "defend" && st.defender === mySeat && st.table.length > 0) {
-                mkButton(controls, "Take (Беру)", function () { if (myTurn()) { endBout(st, true); afterAction(); } });
+                mkButton(controlsZone, "Take (Беру)", function () { if (myTurn()) { endBout(st, true); afterAction(); } });
             }
         }
 
@@ -439,19 +516,22 @@
         }
 
         function render() {
-            topZone.RemoveAndDeleteChildren();
-            leftZone.RemoveAndDeleteChildren();
-            rightZone.RemoveAndDeleteChildren();
-            for (var s = 0; s < numPlayers; s++) if (s !== mySeat) renderOpponent(s);
-            renderCenter();
-            renderSelf();
+            buildDecor();
+            buildOpponents();
+            var wanted = computeWanted();
+            var wid = {};
+            for (var k = 0; k < wanted.length; k++) wid[wanted[k].id] = 1;
+            for (var id in cardEls) {
+                if (cardEls.hasOwnProperty(id) && !wid[id]) { animateOut(cardEls[id]); delete cardEls[id]; }
+            }
+            for (var i = 0; i < wanted.length; i++) ensureCard(wanted[i]);
+            buildControls();
         }
 
         // ── input ──
         function onHandCardClick(card) {
             if (!myTurn()) return;
             if (st.phase === "defend" && st.defender === mySeat) {
-                var i = firstUncovered(st);
                 // Cover the first open attack this card can beat (walk all open pairs).
                 for (var t = 0; t < st.table.length; t++) {
                     if (st.table[t].d < 0 && canDefendPair(st, t, card)) { applyDefend(st, t, card); afterAction(); return; }
