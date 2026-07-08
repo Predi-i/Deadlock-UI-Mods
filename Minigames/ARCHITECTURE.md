@@ -16,8 +16,12 @@ When you change layout/animation/input, say honestly which of the two it is.
 ## 1. What this mod is
 
 Online mini-games played **inside Deadlock's pause (Esc) menu**, without leaving the
-match. Shipping games: **Checkers** (Russian draughts) and **Tic-Tac-Toe**. Durak /
-Chess / Connect Four are disabled placeholders in the picker.
+match. Shipping games: **Checkers** (Russian draughts), **Tic-Tac-Toe** and **Chess**.
+Durak / Connect Four are disabled placeholders in the picker.
+
+Picker cards show a custom **`.vtex` image** (drawn by the maintainer, compiled from PNG)
+as the card background — `s2r://panorama/images/cards/<key>.vtex`, set inline in
+`renderMenu`. Missing art falls back to a plain dark card.
 
 Three ways to play (see `mg_ui.js`):
 - **Quick Match** — public matchmaking; server pairs you with anyone else who pressed it.
@@ -322,6 +326,47 @@ Reuses the checkers move transport: a placement in cell `0..8` is sent as
 holds and validation is trivial (`from∈0..8 && to==9`). Board is `Array(9)` (0 empty,
 1 = X, 2 = O). Host plays X and moves first. Bot is win > block > center > corner > side —
 strong but deliberately beatable (not full minimax). Marks are panel-drawn (trap 6).
+
+---
+
+## 8.5 Chess internals (mg_games.js)
+
+Chess deliberately mirrors checkers so the two share the board geometry, the click+drag
+input recipe, and the move/poll transport.
+
+- **Self-contained engine.** The `// ── chess: pure rules` … `// ── chess controller`
+  section has NO dependency on the checkers helpers (it defines its own `cSq/cRow/cCol/
+  cSign/cType`), so `tools/mg_chess_test.js` can slice and run it standalone — same trick as
+  `mg_rules_test.js`. Perft from the start position (20 / 400 / 8902) is the correctness
+  anchor; targeted tests cover castling, en passant, promotion, checkmate, stalemate.
+- **Board model** differs from checkers: `Array(64)`, `0` empty, **sign = colour** (white
+  `> 0`, black `< 0`), **abs = type** (1 P, 2 N, 3 B, 4 R, 5 Q, 6 K). "Colour" in chess code
+  is `+1`/`-1` (the piece's sign), NOT the checkers `WHITE`/`BLACK` strings. White = host,
+  starts on the bottom rows (6-7) and moves first; black = joiner, top rows (0-1).
+- **`makeMove(b, st, from, to)` derives every special move** from the board + state
+  (`st` = castling rights + en-passant target): a king moving two files ⇒ move the rook; a
+  pawn stepping diagonally onto an empty square ⇒ en passant (remove the passed pawn); a pawn
+  reaching the last rank ⇒ **auto-queen** (MVP: no under-promotion). Same "derive, don't
+  transmit" idiom as checkers `applyHop` — so **from/to alone travels the wire**. Promotion,
+  castling and en passant need NO protocol change.
+- **Pieces are `.vtex` sprites**, not drawn shapes: a `.mg-chess-piece` panel with
+  `background-image: url("s2r://panorama/images/<Colour><Piece>.vtex")` set in `makePiece`
+  (e.g. `WhiteKnight.vtex`). It reuses `.mg-piece` for the slide transition + drag classes,
+  overriding only the disc look. The 12 source PNGs live in `panorama/images/`; the
+  maintainer compiles them to `.vtex`.
+- **A turn is ONE move** (no multi-jump chains), so every move is `end = 1`; after applying
+  a polled move the turn always hands straight back. Poll `validate` = `0..63, from != to`.
+- **Check** highlights the king's square (`.mg-cell.mg-check`); `chessResult` ends the game
+  on checkmate (win/lose) or stalemate (draw).
+- **Bot** = alpha-beta negamax (`chessBotMove`, depth 3, node-budget capped, captures-first
+  ordering, material + light central eval, tiny random tie-break). Colour alternates per
+  `Play vs Bot` like checkers. ⚠ Depth/budget are a **perf guess** for Panorama — if the bot
+  hitches noticeably in-game, drop `DEPTH` to 2 or lower `budget.max`.
+
+⚠ **Poll decode range.** Checkers/chess both send squares `0..63`, so `poll` encodes
+`(from + 1 [+100 if end], to + 1)` → up to **164 × 64 px**. That's larger than checkers'
+usual reads but well within the 600×1000 probe, so calibration covers it — still worth a
+sanity check on the first in-game chess sync.
 
 ---
 
