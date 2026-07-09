@@ -30,6 +30,7 @@
     var selectedGameId = 1;
     var activeGame = null;        // { destroy }
     var currentCode = 0;
+    var currentTok = "";          // seat token for the CURRENT online game (see mg_net MG.Session)
     var statusPollToken = 0;
     var selfTestToken = 0;
     var cardEls = [];        // [{ id, panel }] — picker cards, so selection can re-skin them without a full rebuild
@@ -453,11 +454,15 @@
         function fail(what) { if (alive()) setStatus("❌ Self-test failed at: " + what); }
         function step(n, what) { if (alive()) setStatus("Self-test " + n + "/6: " + what); }
 
+        // Two tokens: this one client fills both seats to drive the full protocol solo.
+        var hostTok = MG.Session.newToken(), joinTok = MG.Session.newToken();
+        // A legal white checkers opener: (5,0)->(4,1) = squares 40 -> 33.
+        var mFrom = 40, mTo = 33;
         step(1, "ping…");
         MG.Api.ping(function (ms) {
             if (!alive()) return;
             step(2, "creating a test lobby…");
-            MG.Api.create(1, function (code) {
+            MG.Api.create(1, hostTok, function (code) {
                 if (!alive()) return;
                 // Always tidy up the test lobby, pass or fail.
                 function cleanup() { try { MG.Api.cancel(code); } catch (e) {} }
@@ -466,19 +471,20 @@
                     if (!alive()) return;
                     if (st.gone || st.players !== 1) { cleanup(); fail("status (got " + st.players + " players, expected 1)"); return; }
                     step(4, "joining own lobby…");
-                    MG.Api.join(code, function (res) {
+                    MG.Api.join(code, joinTok, function (res) {
                         if (!alive()) return;
                         if (!res.ok || res.game !== 1) { cleanup(); fail("join (" + (res.reason || "game=" + res.game) + ")"); return; }
                         step(5, "relaying a test move…");
-                        MG.Api.move(code, 8, 17, 1, function (ok) {
+                        // White (host seat) plays first; authorise with the host token.
+                        MG.Api.move(code, mFrom, mTo, 1, hostTok, function (r) {
                             if (!alive()) return;
-                            if (!ok) { cleanup(); fail("move (rejected)"); return; }
+                            if (!r.ok) { cleanup(); fail("move (rejected: " + r.reason + ")"); return; }
                             step(6, "polling the move back…");
                             MG.Api.poll(code, 0, function (mv) {
                                 cleanup();
                                 if (!alive()) return;
-                                if (mv && mv.from === 8 && mv.to === 17 && mv.end === 1) {
-                                    setStatus("✅ Self-test passed: lobby, join, move & poll all work. Ping " + ms + "ms.");
+                                if (mv && mv.from === mFrom && mv.to === mTo && mv.end === 1) {
+                                    setStatus("✅ Self-test passed: lobby, join, authorised move & poll all work. Ping " + ms + "ms.");
                                 } else {
                                     fail("poll (move came back wrong)");
                                 }
@@ -583,6 +589,7 @@
             code: code,
             isHost: isHost,
             bot: !!bot,
+            tok: currentTok,          // seat token: authorises this client's moves (unused offline)
             onStatus: setStatus
         });
 
@@ -600,8 +607,9 @@
         var g = MG.Games.byId(selectedGameId);
         if (!g || !g.enabled) { setStatus("Pick an available game."); return; }
         setStatus("Creating lobby…");
+        currentTok = MG.Session.newToken();   // one seat token for this whole game
         log("startCreate game=" + selectedGameId + " base=" + MG.Net.getBaseUrl());
-        MG.Api.create(selectedGameId, function (code) {
+        MG.Api.create(selectedGameId, currentTok, function (code) {
             log("create ok, code=" + code);
             currentCode = code;
             renderWaiting(code);
@@ -631,8 +639,9 @@
         var g = MG.Games.byId(selectedGameId);
         if (!g || !g.enabled) { setStatus("Pick an available game."); return; }
         setStatus("Finding a match…");
+        currentTok = MG.Session.newToken();
         log("startQuickMatch game=" + selectedGameId);
-        MG.Api.quick(selectedGameId, function (res) {
+        MG.Api.quick(selectedGameId, currentTok, function (res) {
             if (res.role === "joiner") {
                 log("quick joined, code=" + res.code);
                 currentCode = res.code;
@@ -652,7 +661,8 @@
     function doJoin(code) {
         if (!MG.Net.isConfigured()) { setStatus("⚠ Configure the server first (BASE_URL in mg_net.js)."); return; }
         setStatus("Connecting to " + code + "…");
-        MG.Api.join(code, function (res) {
+        currentTok = MG.Session.newToken();
+        MG.Api.join(code, currentTok, function (res) {
             if (res.ok) {
                 // The game id must decode to a real, playable game — mounting a
                 // disabled stub would leave the host playing against a ghost.

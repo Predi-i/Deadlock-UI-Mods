@@ -15,14 +15,19 @@
  * Public API:
  *   $.MG.Net.isConfigured()                     -> false until BASE_URL is set
  *   $.MG.Net.request(path, params, onDone, onErr)  raw (w,h) after swap+scale decode
- *   $.MG.Api.create(game, cb(code), err)
- *   $.MG.Api.quick(game, cb({role,code}), err)   role = "host" | "joiner"
+ *   $.MG.Session.newToken()                     -> a fresh high-entropy seat token
+ *   $.MG.Api.create(game, tok, cb(code), err)
+ *   $.MG.Api.quick(game, tok, cb({role,code}), err)   role = "host" | "joiner"
  *   $.MG.Api.cancel(code, cb(ok), err)
- *   $.MG.Api.join(code, cb({ok,game,reason}), err)
+ *   $.MG.Api.join(code, tok, cb({ok,game,reason}), err)
  *   $.MG.Api.status(code, cb({gone,players}), err)
- *   $.MG.Api.move(code, from, to, end, cb(ok), err)
+ *   $.MG.Api.move(code, from, to, end, tok, cb({ok,reason}), err)   reason: turn|illegal|token|gone
  *   $.MG.Api.poll(code, since, cb(move|null), err)      move = {from,to,end,seq}
- *   $.MG.Api.reset(code, game, cb(ok), err)
+ *   $.MG.Api.reset(code, game, tok, cb(ok), err)
+ *
+ * The seat token (tok) is the identity that makes the server authoritative: it flows
+ * ONLY upward (query param), never in a response, so it can't leak through the 2-int
+ * downlink and can't be guessed. See $.MG.Session below.
  */
 
 (function () {
@@ -339,6 +344,23 @@
         getBaseUrl: function () { return BASE_URL; }
     };
 
+    // ── seat identity (the trust anchor) ────────────────────────────────────
+    // A seat token is generated ONCE per game on the client and flows ONLY upward
+    // (as a query param) into create/quick/join/move/reset. It is never rendered and
+    // never returned in a response, so the 2-int downlink limit doesn't constrain it
+    // and an observer can neither read nor guess it. The server binds the first token
+    // it sees on a seat to that seat; afterwards only that token may act for the seat.
+    MG.Session = {
+        newToken: function () {
+            // High-entropy random string. Math.random isn't crypto-grade, but combined
+            // across several draws + a time salt it's far beyond guessable for a friendly
+            // relay, and it never travels downward where it could leak.
+            var s = "";
+            for (var i = 0; i < 5; i++) s += Math.random().toString(36).slice(2, 12);
+            return (s + Date.now().toString(36)).slice(0, 48);
+        }
+    };
+
     // ── Typed protocol layer ────────────────────────────────────────────────
     // Every decode is range-checked against what the protocol can actually produce.
     // An impossible value means the scale calibration is stale — reject it, trigger
@@ -357,8 +379,8 @@
             }, err);
         },
 
-        create: function (game, cb, err) {
-            request("/api/create", { game: game }, function (w, h) {
+        create: function (game, tok, cb, err) {
+            request("/api/create", { game: game, tok: tok }, function (w, h) {
                 var code = w * 100 + (h - 1); // CODE = hi*100 + lo
                 log("create decoded w=" + w + " h=" + h + " => code=" + code);
                 if (code < 1000 || code > 9999) {
@@ -372,8 +394,8 @@
 
         // Public quickmatch. Server either seats us into a waiting lobby (JOINER, we play
         // black) or hosts a fresh public lobby and waits (HOST, +100 on the width flags it).
-        quick: function (game, cb, err) {
-            request("/api/quick", { game: game }, function (w, h) {
+        quick: function (game, tok, cb, err) {
+            request("/api/quick", { game: game, tok: tok }, function (w, h) {
                 var isHost = w >= 100;
                 var code = (isHost ? w - 100 : w) * 100 + (h - 1);
                 if (code < 1000 || code > 9999) {
@@ -390,8 +412,8 @@
             request("/api/cancel", { code: code }, function (w, h) { if (cb) cb(true); }, err);
         },
 
-        join: function (code, cb, err) {
-            request("/api/join", { code: code }, function (w, h) {
+        join: function (code, tok, cb, err) {
+            request("/api/join", { code: code, tok: tok }, function (w, h) {
                 log("join decoded w=" + w + " h=" + h);
                 if (w >= 1 && w <= 9) cb({ ok: true, game: w });
                 else if (w === 20) cb({ ok: false, reason: "missing" });
@@ -423,9 +445,21 @@
             }, err);
         },
 
-        move: function (code, from, to, end, cb, err) {
-            request("/api/move", { code: code, from: from, to: to, end: end ? 1 : 0 },
-                function (w, h) { if (cb) cb(w < 9); }, err);
+        // The seat token authorises this move. The server validates it against its own
+        // board and returns (1,1) on accept or (9,x) on reject — the client maps x to a
+        // reason so the controller can roll back its prediction and resync:
+        //   (9,1) turn · (9,2) illegal · (9,3) token · (9,9) gone.
+        move: function (code, from, to, end, tok, cb, err) {
+            request("/api/move", { code: code, from: from, to: to, end: end ? 1 : 0, tok: tok },
+                function (w, h) {
+                    if (!cb) return;
+                    if (w === 9) {
+                        var reason = h === 1 ? "turn" : h === 2 ? "illegal" : h === 3 ? "token" : "gone";
+                        cb({ ok: false, reason: reason });
+                    } else {
+                        cb({ ok: true });
+                    }
+                }, err);
         },
 
         // `validate(from,to)` is an optional game-specific sanity check on the decoded
@@ -456,8 +490,8 @@
             }, err);
         },
 
-        reset: function (code, game, cb, err) {
-            request("/api/reset", { code: code, game: game },
+        reset: function (code, game, tok, cb, err) {
+            request("/api/reset", { code: code, game: game, tok: tok },
                 function (w, h) { if (cb) cb(w < 9); }, err);
         }
     };

@@ -560,12 +560,57 @@
             if (destroyed) return;
             if (i >= hops.length) { afterTurnSwitch(); return; }
             var hop = hops[i];
-            Api.move(code, hop.from, hop.to, hop.end, function (ok) {
-                appliedSeq++; // our own hop is now in the shared list
-                sendHops(hops, i + 1);
+            Api.move(code, hop.from, hop.to, hop.end, session.tok, function (r) {
+                if (r.ok) {
+                    appliedSeq++; // our own hop is now in the shared server list
+                    sendHops(hops, i + 1);
+                    return;
+                }
+                // The AUTHORITATIVE server rejected this hop (illegal / not-our-turn /
+                // bad token). Our optimistic prediction is now wrong — roll the whole
+                // turn back to the last server-confirmed state and resync via poll.
+                rejectAndResync(r.reason);
             }, function () {
-                $.Schedule(0.6, function () { sendHops(hops, i); }); // retry same hop
+                $.Schedule(0.6, function () { sendHops(hops, i); }); // transport hiccup: retry same hop
             });
+        }
+
+        // Server said no. Discard the predicted turn, rebuild the board from the moves
+        // the server HAS accepted (0..appliedSeq), and drop back into polling so the
+        // authoritative sequence drives us again. A cheat's illegal hop dies here; an
+        // honest desync self-heals instead of wedging.
+        function rejectAndResync(reason) {
+            pendingHops = [];
+            chaining = false;
+            clearSelection();
+            board = initialBoard();
+            turn = WHITE;
+            replayAccepted(0);
+        }
+
+        // Re-fetch and re-apply the server's accepted moves from `seq` up to appliedSeq,
+        // rebuilding the local board, then resume the normal turn/poll loop.
+        function replayAccepted(seq) {
+            if (destroyed) return;
+            if (seq >= appliedSeq) {
+                layoutPieces();
+                refreshHighlights();
+                if (myTurn()) status("Move rejected — resynced. Your turn.");
+                else { status("Move rejected — resyncing…"); startPolling(); }
+                return;
+            }
+            Api.poll(code, seq, function (mv) {
+                if (destroyed) return;
+                if (mv) {
+                    applyHop(board, mv.from, mv.to);
+                    if (mv.end) turn = (turn === WHITE ? BLACK : WHITE);
+                    replayAccepted(seq + 1);
+                } else {
+                    // fewer accepted moves than expected — trust what we have
+                    appliedSeq = seq;
+                    replayAccepted(seq);
+                }
+            }, function () { $.Schedule(0.4, function () { replayAccepted(seq); }); });
         }
 
         // ── opponent polling ────────────────────────────────────────────────
@@ -768,12 +813,44 @@
         // ── relay + polling ──────────────────────────────────────────────────
         function sendMove(cell, attempt) {
             if (destroyed) return;
-            Api.move(code, cell, 9, 1, function () {
-                appliedSeq++;              // our own placement is now in the shared list
-                if (!gameOver) startPolling();
+            Api.move(code, cell, 9, 1, session.tok, function (r) {
+                if (r.ok) {
+                    appliedSeq++;          // our own placement is now in the shared server list
+                    if (!gameOver) startPolling();
+                    return;
+                }
+                rejectAndResync(r.reason); // server refused (occupied / not our turn / bad token)
             }, function () {
-                $.Schedule(0.6, function () { sendMove(cell, (attempt || 0) + 1); }); // retry
+                $.Schedule(0.6, function () { sendMove(cell, (attempt || 0) + 1); }); // transport retry
             });
+        }
+
+        // Server rejected our placement — discard the optimistic mark, rebuild the board
+        // from the accepted log, and resume polling so the authoritative order drives us.
+        function rejectAndResync(reason) {
+            gameOver = false;
+            for (var q = 0; q < 9; q++) board[q] = 0;
+            turn = X;
+            replayAccepted(0);
+        }
+        function replayAccepted(seq) {
+            if (destroyed) return;
+            if (seq >= appliedSeq) {
+                render(null);
+                if (myTurn()) status("Move rejected — resynced. Your turn.");
+                else { status("Move rejected — resyncing…"); startPolling(); }
+                return;
+            }
+            Api.poll(code, seq, function (mv) {
+                if (destroyed) return;
+                if (mv) {
+                    var mk = (seq % 2 === 0) ? X : O; // X placed the even-indexed moves
+                    if (!board[mv.from]) place(mv.from, mk);
+                    turn = (mk === X ? O : X);
+                    replayAccepted(seq + 1);
+                } else { appliedSeq = seq; replayAccepted(seq); }
+            }, function () { $.Schedule(0.4, function () { replayAccepted(seq); }); },
+            function (from, to) { return from >= 0 && from <= 8 && to === 9; });
         }
 
         function startPolling() {
@@ -1187,12 +1264,47 @@
         // ── networking ─────────────────────────────────────────────────────────────────
         function sendChessMove(from, to) {
             if (destroyed) return;
-            Api.move(code, from, to, 1, function () {
-                appliedSeq++;
-                afterTurnSwitch();
+            Api.move(code, from, to, 1, session.tok, function (r) {
+                if (r.ok) {
+                    appliedSeq++;
+                    afterTurnSwitch();
+                    return;
+                }
+                rejectAndResync(r.reason); // authoritative server refused this move
             }, function () {
                 $.Schedule(0.6, function () { sendChessMove(from, to); });
             });
+        }
+
+        // Server rejected our move — rebuild the position from the accepted log (which
+        // encodes castling / en passant / promotion via makeMove) and resume polling.
+        function rejectAndResync(reason) {
+            gameOver = false;
+            clearSelection();
+            board = initialChessBoard();
+            cst = initialChessState();
+            turn = 1;
+            replayAccepted(0);
+        }
+        function replayAccepted(seq) {
+            if (destroyed) return;
+            if (seq >= appliedSeq) {
+                layoutPieces();
+                refreshHighlights();
+                if (myTurn()) status("Move rejected — resynced. Your turn.");
+                else { status("Move rejected — resyncing…"); startPolling(); }
+                return;
+            }
+            Api.poll(code, seq, function (mv) {
+                if (destroyed) return;
+                if (mv) {
+                    var r = makeMove(board, cst, mv.from, mv.to);
+                    board = r[0]; cst = r[1];
+                    turn = -turn;
+                    replayAccepted(seq + 1);
+                } else { appliedSeq = seq; replayAccepted(seq); }
+            }, function () { $.Schedule(0.4, function () { replayAccepted(seq); }); },
+            function (from, to) { return from >= 0 && from < 64 && to >= 0 && to < 64 && from !== to; });
         }
         function afterTurnSwitch() {
             if (gameOver) return;
