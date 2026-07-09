@@ -74,7 +74,12 @@ export class Hub {
         await this.maybeSweep();
         const game = clampInt(q.get("game"), 1, 1, 9);
         const newCode = await this.freshCode();
-        const lobby = { game, players: 1, moves: [], pub: 0, t: nowSeq() };
+        const lobby = {
+          game, players: 1, moves: [], pub: 0, t: nowSeq(),
+          seats: [{ tok: q.get("tok") || "" }, null], // seat 0 = host = white/X/+1, moves first
+          turn: 0,                                     // seat index whose turn it is
+          state: initState(game)                       // authoritative board/state
+        };
         await this.storage.put("l:" + newCode, lobby);
         // Split the 4-digit code across both dimensions to keep them small.
         return png(Math.floor(newCode / 100), (newCode % 100) + 1);
@@ -88,6 +93,8 @@ export class Hub {
           const w = await this.storage.get("l:" + waitCode);
           if (w && w.pub && w.players < 2) {
             w.players = 2;
+            w.seats = w.seats || [null, null];
+            w.seats[1] = { tok: q.get("tok") || "" }; // joiner takes seat 1 (black/O/-1)
             await this.storage.put("l:" + waitCode, w);
             await this.storage.delete("pubq:" + game);
             return png(Math.floor(waitCode / 100), (waitCode % 100) + 1); // JOINER (black)
@@ -95,7 +102,12 @@ export class Hub {
           // stale/closed slot — fall through and host a fresh lobby.
         }
         const newCode = await this.freshCode();
-        const lobby = { game, players: 1, moves: [], pub: 1, t: nowSeq() };
+        const lobby = {
+          game, players: 1, moves: [], pub: 1, t: nowSeq(),
+          seats: [{ tok: q.get("tok") || "" }, null], // host takes seat 0 (white/X/+1)
+          turn: 0,
+          state: initState(game)
+        };
         await this.storage.put("l:" + newCode, lobby);
         await this.storage.put("pubq:" + game, newCode);
         // HOST (white): +100 on the width flags the role without a fragile extra value.
@@ -119,6 +131,8 @@ export class Hub {
         if (!lobby) return png(20, 1);             // missing
         if (lobby.players >= 2) return png(21, 1); // full
         lobby.players = 2;
+        lobby.seats = lobby.seats || [null, null];
+        lobby.seats[1] = { tok: q.get("tok") || "" }; // joiner takes seat 1
         await this.storage.put("l:" + code, lobby);
         return png(lobby.game, 1);                 // ok: which game the host picked (1..9)
       }
@@ -131,13 +145,20 @@ export class Hub {
 
       if (p === "/api/move") {
         const lobby = code ? await this.storage.get("l:" + code) : null;
-        if (!lobby) return png(9, 9);              // fail
+        if (!lobby) return png(9, 9);              // no lobby
+        const seat = seatOf(lobby, q.get("tok"));
+        if (seat < 0) return png(9, 3);            // bad / foreign token — caller isn't a seat here
         const from = clampInt(q.get("from"), 0, 0, 63);
         const to = clampInt(q.get("to"), 0, 0, 63);
         const end = clampInt(q.get("end"), 0, 0, 1);
-        lobby.moves.push({ f: from, t: to, e: end });
+        // Authoritative validation: the server owns the board, enforces whose turn it is,
+        // and rejects any illegal move with a (9,x) code. The stored `end` is the one the
+        // SERVER computes (never the client's), so a cheat can't forge the turn hand-off.
+        const v = validateMove(lobby, seat, from, to, end);
+        if (!v.ok) return png(9, v.code);          // (9,1) not your turn · (9,2) illegal
+        lobby.moves.push(v.move);
         await this.storage.put("l:" + code, lobby);
-        return png(1, 1);                          // ok
+        return png(1, 1);                          // accepted
       }
 
       if (p === "/api/poll") {
@@ -155,8 +176,11 @@ export class Hub {
       if (p === "/api/reset") {
         const lobby = code ? await this.storage.get("l:" + code) : null;
         if (!lobby) return png(9, 9);
+        if (seatOf(lobby, q.get("tok")) < 0) return png(9, 3); // only a seated player may reset
         lobby.game = clampInt(q.get("game"), lobby.game, 1, 9);
         lobby.moves = [];
+        lobby.turn = 0;
+        lobby.state = initState(lobby.game);
         await this.storage.put("l:" + code, lobby);
         return png(1, 1);
       }
@@ -204,6 +228,95 @@ function nowSeq() {
   // Monotonic-ish tag for debugging; not used for logic.
   return Date.now();
 }
+
+/* ───────────────── authoritative identity + move validation ─────────────────
+ * The seat token is the trust anchor. It flows ONLY upward (query param), is never
+ * echoed in a response, and is long + random, so an observer can neither read nor
+ * guess it. seatOf maps a presented token to its seat index (0/1) or -1 (→ (9,3)).
+ * Fixed seat↔side mapping (matches the client): seat 0 = host, moves first.
+ */
+function rules() { return (typeof globalThis !== "undefined" && globalThis.MGRules) || {}; }
+
+function seatOf(lobby, tok) {
+  if (!tok || !lobby.seats) return -1;
+  for (let i = 0; i < lobby.seats.length; i++) {
+    const s = lobby.seats[i];
+    if (s && s.tok && s.tok === tok) return i;
+  }
+  return -1;
+}
+
+// Fresh authoritative state per game. null = no server engine → legacy relay.
+function initState(game) {
+  const R = rules();
+  if (game === 1) return { board: R.checkers.initialBoard(), chainSq: -1 }; // checkers
+  if (game === 2) return { board: [0, 0, 0, 0, 0, 0, 0, 0, 0] };            // tic-tac-toe
+  if (game === 4) return { board: R.chess.initialChessBoard(), cst: R.chess.initialChessState() }; // chess
+  return null;
+}
+
+// Validate a move by the seat holder against the authoritative state. Returns
+// { ok:true, move:{f,t,e} } (e computed by the SERVER) or { ok:false, code } where
+// code is 1 (not your turn) or 2 (illegal move). Mutates lobby.state / lobby.turn on
+// acceptance. A game with no server engine relays unchecked (backward compatible).
+function validateMove(lobby, seat, from, to, end) {
+  const R = rules();
+  if (!lobby.state) return { ok: true, move: { f: from, t: to, e: end } };
+  if (lobby.game === 1) return validateCheckers(R.checkers, lobby, seat, from, to);
+  if (lobby.game === 2) return validateTtt(lobby, seat, from, to);
+  if (lobby.game === 4) return validateChess(R.chess, lobby, seat, from, to);
+  return { ok: true, move: { f: from, t: to, e: end } };
+}
+
+function validateCheckers(RC, lobby, seat, from, to) {
+  const st = lobby.state, b = st.board;
+  const side = seat === 0 ? RC.WHITE : RC.BLACK;
+  const chaining = st.chainSq >= 0;
+  // Turn: mid-chain only the chaining seat may move, and only its chain piece.
+  if (chaining) { if (seat !== lobby.turn || from !== st.chainSq) return { ok: false, code: 1 }; }
+  else if (seat !== lobby.turn) return { ok: false, code: 1 };
+  if (RC.colorOf(b[from]) !== side) return { ok: false, code: 2 };
+  // Legal targets for THIS piece, honouring forced capture / an active chain.
+  let targets;
+  if (chaining || RC.anyCaptureFor(b, side)) targets = RC.captureMoves(b, from);
+  else targets = RC.simpleMoves(b, from);
+  let ok = false;
+  for (let i = 0; i < targets.length; i++) if (targets[i].to === to) { ok = true; break; }
+  if (!ok) return { ok: false, code: 2 };
+  const res = RC.applyHop(b, from, to); // mutates the authoritative board
+  // Same piece may keep jumping (a capture, and not just crowned) → chain continues.
+  const more = res.captured && !res.promoted && RC.captureMoves(b, to).length > 0;
+  let e;
+  if (more) { st.chainSq = to; e = 0; }                       // turn stays with this seat
+  else { st.chainSq = -1; e = 1; lobby.turn = seat === 0 ? 1 : 0; } // hand off
+  return { ok: true, move: { f: from, t: to, e: e } };
+}
+
+function validateTtt(lobby, seat, from, to) {
+  const b = lobby.state.board;
+  if (seat !== lobby.turn) return { ok: false, code: 1 };
+  // A placement is cell 0..8 with the fixed marker to===9, onto an empty cell.
+  if (to !== 9 || from < 0 || from > 8 || b[from] !== 0) return { ok: false, code: 2 };
+  b[from] = seat === 0 ? 1 : 2;              // X (host) / O (joiner)
+  lobby.turn = seat === 0 ? 1 : 0;
+  return { ok: true, move: { f: from, t: 9, e: 1 } };
+}
+
+function validateChess(RX, lobby, seat, from, to) {
+  const st = lobby.state;
+  const side = seat === 0 ? 1 : -1;          // white / black
+  if (seat !== lobby.turn) return { ok: false, code: 1 };
+  if (RX.cSign(st.board[from]) !== side) return { ok: false, code: 2 };
+  const legal = RX.legalMoves(st.board, st.cst, side); // includes self-check filter, castling, ep
+  let ok = false;
+  for (let i = 0; i < legal.length; i++) if (legal[i].from === from && legal[i].to === to) { ok = true; break; }
+  if (!ok) return { ok: false, code: 2 };
+  const r = RX.makeMove(st.board, st.cst, from, to);
+  st.board = r[0]; st.cst = r[1];
+  lobby.turn = seat === 0 ? 1 : 0;           // every chess move ends the turn
+  return { ok: true, move: { f: from, t: to, e: 1 } };
+}
+
 
 /* ─────────────────────────── PNG encoder ───────────────────────────
  * Emits an 8-bit grayscale PNG of exactly W x H black pixels. Data is all
