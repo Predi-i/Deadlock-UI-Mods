@@ -41,9 +41,17 @@ is the intrinsic pixel size of an `<Image>`:
 2. The server answers with a tiny PNG whose **width × height encode two integers**.
 3. Read them back via `img.actuallayoutwidth` / `img.actuallayoutheight`.
 
-This is the whole transport. It dictates everything else: the server is a **dumb relay**,
-clients are **authoritative** on game rules, and every response is squeezed into two small
-numbers. Full protocol lives in `server/worker.js`'s header comment and §5 below.
+This is the whole transport, and its **asymmetry** is the key: the **uplink (URL query) is
+unlimited**, the **downlink (2 ints) is tiny**. That's what lets the server be
+**authoritative** — a seat-identifying token and full move data ride up freely, while the
+answer stays two small numbers (accept, or a `(9,x)` rejection code). The client keeps a
+local rules engine as an **instant-feedback predictor**, but the **server owns the board
+and validates every move** (§5.1). Full protocol lives in `server/worker.js`'s header and §5.
+
+> **Single source of rules.** The pure engines live in `panorama/scripts/rules/*.js`. The
+> client `<include>`s them; `tools/build_worker.js` concatenates the SAME bytes into the
+> deployed `server/worker.js`. So predictor and authority can't drift — `mg_parity_test.js`
+> proves it. Edit `rules/*.js` or `server/worker.core.js`, never the generated `worker.js`.
 
 ---
 
@@ -55,27 +63,37 @@ panorama/
                            mg_net (defines $.MG.Net/$.MG.Api) → mg_games ($.MG.Games) → mg_ui.
   styles/mg.css            all styling. Note the Panorama-specific idioms (§6).
   scripts/
-    mg_net.js              image side-channel transport + typed protocol ($.MG.Net, $.MG.Api)
-    mg_games.js            checkers + TTT + chess engines, rendering, bot AI, drag/click input;
-                           the $.MG.Games registry (list + register + mount).
+    mg_net.js              image side-channel transport + typed protocol ($.MG.Net, $.MG.Api, $.MG.Session)
+    rules/checkers.js      SHARED pure checkers engine (client predictor + server authority)
+    rules/ttt.js           SHARED pure tic-tac-toe engine
+    rules/chess.js         SHARED pure chess engine
+    mg_games.js            checkers + TTT + chess CONTROLLERS (render, input, net); aliases MG.Rules.*
+                           and owns the $.MG.Games registry (list + register + mount).
     mg_durak.js            Durak: pure rules + render + click input + bot; self-registers game id 3.
     mg_ui.js               Esc-menu button injection + full-screen lobby overlay ($.MG.UI)
 server/                    Cloudflare Worker (dev-only, NOT packed into the VPK)
-  worker.js                Durable-Object lobby store + PNG encoder
+  worker.core.js           AUTHORED relay + validators + PNG encoder (edit this)
+  worker.js                GENERATED (rules/*.js + worker.core.js via tools/build_worker.js) — deploy artifact
   wrangler.jsonc, README.md
 tools/                     dev-only Node test harnesses (NOT packed)
+  build_worker.js          concatenate rules/*.js + worker.core.js → server/worker.js
   mg_rules_test.js         checkers rules: captures, flying kings, full bot game
   mg_chess_test.js         chess rules: perft, castling, en passant, promotion, mate/stalemate
   mg_durak_test.js         durak rules: deal, beats(), throw-in legality, 120 full bot games
-  mg_server_test.js        worker: matchmaking, code round-trip, concurrent lobbies
+  mg_server_test.js        worker: matchmaking, seat tokens, per-move validation, concurrent lobbies
+  mg_parity_test.js        client predictor vs server authority give identical legal moves
 ```
+
+The `<include>` order in `base_hud.xml` is net → **rules/checkers, rules/ttt, rules/chess**
+→ games → durak → ui: the shared engines must populate `$.MG.Rules` before the controllers
+alias them.
 
 **Game registry.** `$.MG.Games` (defined at the bottom of `mg_games.js`) is a small
 registry: `list` drives the picker, `register({id, create, enabled?})` attaches a mount
 factory (and can flip a game's `enabled`), and `mount` dispatches to it (falling back to
 the stub). This is why a new game can live in **its own file** — `mg_durak.js` just calls
 `MG.Games.register(...)` after `mg_games.js` has loaded; no edit to the dispatch. The
-`<include>` order in `base_hud.xml` is therefore net → games → **durak** → ui.
+`<include>` order in `base_hud.xml` is therefore net → rules/* → games → **durak** → ui.
 
 Everything shared between the scripts hangs off **`$.MG`** — `$` is the single
 object shared across all scripts loaded in the same panel context. Each script guards with
@@ -123,14 +141,32 @@ images; the worker strips `.png` before routing).
 |---|---|
 | `/api/probe` | `(600, 1000)` — swap + scale calibration reference |
 | `/api/ping` | `(1, 1)` |
-| `/api/create?game=G` | `(CODE_HI, CODE_LO+1)` — new private lobby, host = player 0 |
-| `/api/quick?game=G` | JOINER `(CODE_HI, CODE_LO+1)` · HOST `(CODE_HI+100, CODE_LO+1)` |
+| `/api/create?game=G&tok=T` | `(CODE_HI, CODE_LO+1)` — new private lobby, host = seat 0 |
+| `/api/quick?game=G&tok=T` | JOINER `(CODE_HI, CODE_LO+1)` · HOST `(CODE_HI+100, CODE_LO+1)` |
 | `/api/cancel?code=C` | `(1,1)` |
-| `/api/join?code=C` | `(G,1)` ok · `(20,1)` missing · `(21,1)` full |
+| `/api/join?code=C&tok=T` | `(G,1)` ok · `(20,1)` missing · `(21,1)` full |
 | `/api/status?code=C` | `(players,1)` · `(9,1)` gone |
-| `/api/move?code=C&from=F&to=T&end=E` | `(1,1)` ok · `(9,9)` fail |
+| `/api/move?code=C&from=F&to=T&end=E&tok=T` | `(1,1)` ok · `(9,1)` not-your-turn · `(9,2)` illegal · `(9,3)` bad-token · `(9,9)` gone |
 | `/api/poll?code=C&since=S` | `(from+1 [+100 if end], to+1)` · `(1,1)` nothing new |
-| `/api/reset?code=C&game=G` | `(1,1)` |
+| `/api/reset?code=C&game=G&tok=T` | `(1,1)` · `(9,3)` bad-token |
+
+### 5.1 Server authority (seats, tokens, validation)
+
+- **Seat token.** Each client mints one random `tok` per online game (`MG.Session.newToken`)
+  and sends it up on create/quick/join/move/reset — **never downward**, so it can't leak
+  through the 2-int response or be guessed. The server binds the first token it sees on a
+  seat; afterwards only that token may act for it. A stranger's token → `(9,3)`.
+- **Owned state.** The lobby holds `{ seats:[{tok},{tok}], turn, state }`. `state` is the
+  authoritative board, initialised per game (checkers/ttt/chess) from the shared rules.
+  Seat 0 = host = white/X/+1 (moves first); seat 1 = joiner.
+- **Validation.** `/api/move` runs the shared rules engine: it checks the token → seat, that
+  it's that seat's turn (checkers honours an in-progress multi-jump `chainSq`), and that
+  `{from,to}` is in the generated legal set (forced capture, self-check, castling, ep — all
+  enforced). The **server** computes the `end` flag and appends `{f,t,e}` to `moves`;
+  a rejected move never enters the log, so a poller never sees it.
+- **Client resync.** On any `(9,x)`, the controller discards its optimistic prediction,
+  rebuilds the board from the accepted `moves` log (`replayAccepted`), and resumes polling.
+  Honest desyncs self-heal; a cheat's illegal move simply never lands.
 
 Key encoding tricks and **why**:
 - **Code split across both dims** (`hi = code/100`, `lo = code%100 + 1`) keeps both numbers
@@ -451,11 +487,17 @@ written once and reused by both.
 
 ## 9. Turn/sync model (both games)
 
-Client-authoritative: each player validates + applies moves locally, then relays each hop
-(`sendHops` / `sendMove`). The other side **polls** (`pollOnce`) with `since = appliedSeq`
-and applies returned hops. `end=1` marks the turn-ending hop and hands the turn back.
-Poll tokens (`pollToken`) invalidate stale loops after a view change. In **bot/offline**
-mode there is no server: after your move the bot is scheduled directly; nothing is polled.
+**Server-authoritative predict-and-confirm.** Each player applies a move locally FIRST for
+instant feedback (the local rules act as a predictor), then relays it with the seat token
+(`sendHops` / `sendMove` / `sendChessMove`). The server validates it (§5.1) and either
+appends it to the shared log (accept) or returns `(9,x)`. On accept, the other side **polls**
+(`pollOnce`) with `since = appliedSeq` and applies returned moves; `end=1` marks the
+turn-ending hop and hands the turn back. On reject, the mover's `rejectAndResync` discards the
+prediction, rebuilds the board from the accepted log (`replayAccepted`), and resumes polling —
+so an honest desync self-heals and a cheat's illegal move never enters the log for the
+opponent to see. Poll tokens (`pollToken`) invalidate stale loops after a view change. In
+**bot/offline** mode there is no server: after your move the bot is scheduled directly;
+nothing is polled and no token is used.
 
 Disconnect signals: `status` returning `(9,1)` while a host waits, or `poll` returning
 `(9,9)`, route to `MG.UI.kickToMenu(reason)`.
@@ -466,15 +508,22 @@ Disconnect signals: `status` returning `(9,1)` while a host waits, or `poll` ret
 
 Before committing, always:
 ```
+node tools/build_worker.js                     # regenerate server/worker.js from core + rules
+node --check panorama/scripts/rules/checkers.js
+node --check panorama/scripts/rules/ttt.js
+node --check panorama/scripts/rules/chess.js
 node --check panorama/scripts/mg_games.js
 node --check panorama/scripts/mg_durak.js
 node --check panorama/scripts/mg_ui.js
 node --check panorama/scripts/mg_net.js
+node --check server/worker.js
 node tools/mg_rules_test.js
 node tools/mg_chess_test.js
 node tools/mg_durak_test.js
 node tools/mg_server_test.js
+node tools/mg_parity_test.js                    # client predictor == server authority
 ```
+
 Then say plainly what is **verified** (syntax, pure rules, server protocol) vs what is
 **only reasoned** (anything visual/animated/drag/hover — needs a VPK repack + in-game run
 by the maintainer). Don't present unrendered layout or input behavior as confirmed.
