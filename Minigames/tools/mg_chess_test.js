@@ -1,22 +1,16 @@
 "use strict";
-// Ad-hoc rules test for the chess engine in mg_games.js. Run: node tools/mg_chess_test.js
-// Slices the self-contained "chess: pure rules" section (same trick as mg_rules_test.js) and
-// exercises it standalone: perft node counts + castling / en-passant / promotion / mate / stalemate.
+// Ad-hoc rules test for the shared chess engine. Run: node tools/mg_chess_test.js
+// Since the trust refactor the engine lives in panorama/scripts/rules/chess.js — the exact
+// same file the authoritative server runs. Loading it in Node (no `$`) attaches it to
+// globalThis.MGRules.chess, which we read here.
+// Exercises: perft node counts + castling / en-passant / promotion / mate / stalemate.
 const fs = require("fs");
 const path = require("path");
 
-const src = fs.readFileSync(path.join(__dirname, "..", "panorama", "scripts", "mg_games.js"), "utf8");
-const start = src.indexOf("// ── chess: pure rules");
-const end = src.indexOf("// ── chess controller");
-if (start < 0 || end < 0) throw new Error("could not slice the chess pure-rules section");
-const body = src.slice(start, end);
-const factory = new Function(
-    body +
-    "; return { initialChessBoard, initialChessState, cloneChessState, legalMoves, makeMove," +
-    " inCheck, attacksSquare, chessResult, findKing, chessBotMove, pseudoMoves," +
-    " cSq, cRow, cCol, cType, cSign };"
-);
-const M = factory();
+const src = fs.readFileSync(path.join(__dirname, "..", "panorama", "scripts", "rules", "chess.js"), "utf8");
+new Function(src)(); // populates globalThis.MGRules.chess
+const M = globalThis.MGRules.chess;
+
 
 let failures = 0;
 function ok(cond, msg) { if (!cond) { failures++; console.log("  ✗ " + msg); } else { console.log("  ✓ " + msg); } }

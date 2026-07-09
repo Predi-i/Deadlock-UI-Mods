@@ -1,20 +1,21 @@
 "use strict";
-// Ad-hoc rules test for mg_games.js (Russian draughts). Run: node tools/mg_rules_test.js
+// Ad-hoc rules test for the shared checkers + ttt engines. Run: node tools/mg_rules_test.js
+// Since the trust refactor the pure rules live in panorama/scripts/rules/*.js — the exact
+// same files the authoritative server runs. We load them here: each file's IIFE sees no `$`
+// (Node), so it attaches to globalThis.MGRules, which we then read.
 const fs = require("fs");
 const path = require("path");
 
-const src = fs.readFileSync(path.join(__dirname, "..", "panorama", "scripts", "mg_games.js"), "utf8");
-const start = src.indexOf("var WHITE");
-const end = src.indexOf("// ── checkers controller");
-if (start < 0 || end < 0) throw new Error("could not slice pure-function section");
-const body = src.slice(start, end);
-const factory = new Function(
-    body +
-    "; return { initialBoard, simpleMoves, captureMoves, applyHop, legalSequences, chooseBotMove," +
-    " colorOf, isKing, idx, rowOf, colOf, anyCaptureFor, hasAnyMove, WHITE, BLACK," +
-    " tttWinner, tttFull, tttBotMove };"
-);
-const M = factory();
+const rulesDir = path.join(__dirname, "..", "panorama", "scripts", "rules");
+function loadRules(name) {
+    const src = fs.readFileSync(path.join(rulesDir, name), "utf8");
+    new Function(src)(); // populates globalThis.MGRules.<game>
+}
+loadRules("checkers.js");
+loadRules("ttt.js");
+const R = globalThis.MGRules;
+const M = Object.assign({}, R.checkers, R.ttt);
+
 
 let failures = 0;
 function ok(cond, msg) { if (!cond) { failures++; console.log("  ✗ " + msg); } else { console.log("  ✓ " + msg); } }
