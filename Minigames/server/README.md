@@ -15,6 +15,13 @@ the SQLite backend are included for free).
 You need Node.js installed.
 
 ```bash
+# 0. Build the deploy artifact (server/worker.js) from its sources. This concatenates
+#    the SHARED rule engines (panorama/scripts/rules/*.js — the exact files the client
+#    runs) in front of the authored core (server/worker.core.js), so the server validates
+#    every move with byte-for-byte the same rules the client predicts with. Re-run this
+#    whenever you edit worker.core.js OR any rules/*.js file.
+node tools/build_worker.js
+
 cd Minigames/server
 
 # 1. Log in to Cloudflare (opens a browser). Free account is fine.
@@ -23,6 +30,11 @@ npx wrangler login
 # 2. Deploy.
 npx wrangler deploy
 ```
+
+> **Sources vs artifact.** Edit `server/worker.core.js` (the relay + PNG encoder) and
+> `panorama/scripts/rules/*.js` (the shared game rules). `server/worker.js` is a
+> GENERATED file (it carries a "DO NOT EDIT" banner) — never hand-edit it; run the build.
+
 
 After deploy, wrangler prints your URL, e.g.:
 

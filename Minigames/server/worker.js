@@ -1,51 +1,637 @@
-/**
- * Deadlock Minigames relay — Cloudflare Worker.
+/* ============================================================================
+ * GENERATED FILE — DO NOT EDIT BY HAND.
+ * Produced by `node tools/build_worker.js` from:
+ *   panorama/scripts/rules/checkers.js + ttt.js + chess.js   (shared with client)
+ *   server/worker.core.js                                    (authored core)
+ * Edit those sources, then rebuild. See server/README.md.
+ * ============================================================================ */
+
+/* ── shared rules (from panorama/scripts/rules/*.js; attach to globalThis.MGRules) ── */
+// ---- rules/checkers.js ----
+"use strict";
+
+/*
+ * rules/checkers.js — pure Russian-draughts rules, shared by BOTH runtimes.
  *
- * Panorama UI has no fetch / no AsyncWebRequest / no websockets. The ONLY channel
- * back to the client is the intrinsic pixel size of an <Image>: the client sets an
- * image src and reads actuallayoutwidth / actuallayoutheight. So every response here
- * is a tiny PNG whose (width, height) ENCODE two integers.
+ * SINGLE SOURCE OF TRUTH. The client loads this as a Panorama script (it hangs the
+ * functions off $.MG.Rules.checkers); the Cloudflare Worker gets the exact same bytes
+ * concatenated by tools/build_worker.js (it hangs them off globalThis.MGRules.checkers).
+ * So the predictor on the client and the authority on the server can never disagree.
  *
- * Sending data TO the server is unlimited (URL query params). Only the RESPONSE is
- * squeezed into (width, height). Design accordingly: clients are authoritative on
- * game rules; the server is a dumb, strongly-consistent relay of moves.
+ * NO DOM, NO rendering, NO network — pure functions only. The only environment thing it
+ * touches is the namespace object it attaches to, resolved below for whichever runtime.
  *
- * Transport is strongly consistent because all state lives in ONE Durable Object
- * instance ("hub"). No KV eventual-consistency lag between the two players.
- *
- * Every response keeps BOTH dimensions small (<= ~128 px) so the engine never has
- * to lay out a huge image. Big numbers (the 4-digit lobby code) are split across the
- * two dimensions. On startup the client calls /api/probe once to learn whether the
- * engine swaps width/height, then applies that correction to every read.
- *
- * NOTE: image dimensions are always >= 1 (png() clamps), so a raw 0 can never be read
- * back. Every sentinel below is therefore a non-zero value.
- *
- * Routes (all GET, all return a PNG; pass &rnd=<random> to defeat engine caching):
- *   /api/probe                             -> (600, 1000)               swap + scale calibration
- *   /api/ping                              -> (1, 1)                    UI tester route
- *   /api/create?game=G                     -> (CODE_HI, CODE_LO+1)      new PRIVATE lobby, host is player 0
- *   /api/quick?game=G                      -> JOINER (CODE_HI, CODE_LO+1) · HOST (CODE_HI+100, CODE_LO+1)
- *   /api/cancel?code=C                     -> (1,1)                     drop a still-waiting lobby
- *   /api/join?code=C                       -> (G,1) ok · (20,1) missing · (21,1) full
- *   /api/status?code=C                     -> (players,1) · (9,1) gone
- *   /api/move?code=C&from=F&to=T&end=E     -> (1,1) ok · (9,9) fail
- *   /api/poll?code=C&since=S               -> (from+1[+100 if end], to+1) · (1,1) nothing new
- *   /api/reset?code=C&game=G               -> (1,1)
- *
- * The probe returns a LARGE known image on purpose: the client derives the UI scale
- * from it, and a big reference makes that scale precise, so every small returned value
- * (code halves <=99, squares 0..63, the +100 flags) decodes without rounding drift.
- *
- * Public quickmatch keeps a single waiting slot per game under "pubq:<game>". A caller
- * either joins the waiting lobby (becomes player 1, black) or hosts a fresh public lobby
- * and waits. The +100 gap on the HOST width encodes the role, immune to +/-1 rounding.
- *
- * CODE = CODE_HI*100 + CODE_LO (4-digit). Squares are 0..63; from != to always, so a
- * real poll move can never decode to (1,1) — that's why (1,1) is a safe "nothing" marker.
- * The client polls with since = last applied seq; the returned move is seq = since+1.
+ * Board: flat Array(64), index = row*8 + col. Values: 0 empty · 1 white man · 2 white
+ * king · 3 black man · 4 black king. White = host, rows 5-7, moves UP, moves first.
  */
 
+(function () {
+    // Resolve the shared namespace for this runtime:
+    //  - Panorama client: $ is the cross-script shared object → $.MG.Rules
+    //  - Worker / Node   : no $, but globalThis exists → globalThis.MGRules
+    var R;
+    if (typeof $ !== "undefined" && $) {
+        var MG = ($.MG = $.MG || {});
+        R = (MG.Rules = MG.Rules || {});
+    } else if (typeof globalThis !== "undefined") {
+        R = (globalThis.MGRules = globalThis.MGRules || {});
+    } else {
+        R = (this.MGRules = this.MGRules || {});
+    }
+
+    var WHITE = "w", BLACK = "b";
+
+    function idx(r, c) { return r * 8 + c; }
+    function rowOf(i) { return (i / 8) | 0; }
+    function colOf(i) { return i % 8; }
+    function inBounds(r, c) { return r >= 0 && r < 8 && c >= 0 && c < 8; }
+    function isDark(r, c) { return ((r + c) & 1) === 1; }
+
+    function colorOf(v) { return v === 1 || v === 2 ? WHITE : (v === 3 || v === 4 ? BLACK : null); }
+    function isKing(v) { return v === 2 || v === 4; }
+    function isEnemy(v, color) { var c = colorOf(v); return c && c !== color; }
+
+    function initialBoard() {
+        var b = new Array(64);
+        for (var i = 0; i < 64; i++) b[i] = 0;
+        for (var r = 0; r < 8; r++) {
+            for (var c = 0; c < 8; c++) {
+                if (!isDark(r, c)) continue;
+                if (r <= 2) b[idx(r, c)] = 3;       // black men (top)
+                else if (r >= 5) b[idx(r, c)] = 1;  // white men (bottom)
+            }
+        }
+        return b;
+    }
+
+    // Men move forward only; kings slide any distance along a diagonal ("flying").
+    var ALL_DIRS = [[-1, -1], [-1, 1], [1, -1], [1, 1]];
+    function moveDirs(v) {
+        if (v === 1) return [[-1, -1], [-1, 1]]; // white man: up
+        if (v === 3) return [[1, -1], [1, 1]];   // black man: down
+        return ALL_DIRS;                          // king: all four
+    }
+
+    function simpleMoves(b, i) {
+        var v = b[i]; if (!v) return [];
+        var r = rowOf(i), c = colOf(i), out = [];
+        if (isKing(v)) {
+            // Flying king: any number of empty squares along each diagonal.
+            for (var k = 0; k < 4; k++) {
+                var dr = ALL_DIRS[k][0], dc = ALL_DIRS[k][1];
+                var nr = r + dr, nc = c + dc;
+                while (inBounds(nr, nc) && b[idx(nr, nc)] === 0) {
+                    out.push({ to: idx(nr, nc) });
+                    nr += dr; nc += dc;
+                }
+            }
+            return out;
+        }
+        var dirs = moveDirs(v); // forward only for men
+        for (var m = 0; m < dirs.length; m++) {
+            var pr = r + dirs[m][0], pc = c + dirs[m][1];
+            if (inBounds(pr, pc) && b[idx(pr, pc)] === 0) out.push({ to: idx(pr, pc) });
+        }
+        return out;
+    }
+
+    // Men capture in ANY diagonal direction (forward or backward), one square over.
+    // A flying king slides over empties, takes exactly one enemy, and may land on
+    // any empty square beyond it.
+    function captureMoves(b, i) {
+        var v = b[i]; if (!v) return [];
+        var color = colorOf(v), r = rowOf(i), c = colOf(i), out = [];
+        if (isKing(v)) {
+            for (var k = 0; k < 4; k++) {
+                var dr = ALL_DIRS[k][0], dc = ALL_DIRS[k][1];
+                var nr = r + dr, nc = c + dc;
+                while (inBounds(nr, nc) && b[idx(nr, nc)] === 0) { nr += dr; nc += dc; }
+                if (!inBounds(nr, nc) || !isEnemy(b[idx(nr, nc)], color)) continue;
+                var cap = idx(nr, nc);
+                var lr = nr + dr, lc = nc + dc;
+                while (inBounds(lr, lc) && b[idx(lr, lc)] === 0) {
+                    out.push({ to: idx(lr, lc), cap: cap });
+                    lr += dr; lc += dc;
+                }
+            }
+            return out;
+        }
+        for (var k2 = 0; k2 < 4; k2++) {
+            var mr = r + ALL_DIRS[k2][0], mc = c + ALL_DIRS[k2][1];         // enemy square
+            var lr2 = r + 2 * ALL_DIRS[k2][0], lc2 = c + 2 * ALL_DIRS[k2][1]; // landing
+            if (!inBounds(lr2, lc2) || b[idx(lr2, lc2)] !== 0) continue;
+            if (isEnemy(b[idx(mr, mc)], color)) out.push({ to: idx(lr2, lc2), cap: idx(mr, mc) });
+        }
+        return out;
+    }
+
+    function anyCaptureFor(b, color) {
+        for (var i = 0; i < 64; i++) {
+            if (colorOf(b[i]) === color && captureMoves(b, i).length > 0) return true;
+        }
+        return false;
+    }
+
+    // Apply a single hop in place. Any piece on the diagonal between `from` and `to`
+    // is captured — this covers both a man's 1-over jump and a flying king's ranged
+    // capture without needing the captured square passed in (keeps the net protocol
+    // just {from,to,end}). Returns {captured, promoted}.
+    function applyHop(b, from, to) {
+        var v = b[from];
+        b[from] = 0;
+        var fr = rowOf(from), fc = colOf(from), tr = rowOf(to), tc = colOf(to);
+        var dr = tr > fr ? 1 : -1, dc = tc > fc ? 1 : -1;
+        var captured = false;
+        // Walk the diagonal, bounded to the board (max 7 steps). The guard is pure
+        // insurance: a legal move is always diagonal so it reaches (tr,tc) within 7
+        // steps — but a corrupt/desynced hop must never spin the loop forever.
+        var r = fr + dr, c = fc + dc, guard = 0;
+        while ((r !== tr || c !== tc) && guard++ < 8 && inBounds(r, c)) {
+            var j = idx(r, c);
+            if (b[j] !== 0) { b[j] = 0; captured = true; }
+            r += dr; c += dc;
+        }
+        var promoted = false;
+        if (v === 1 && tr === 0) { v = 2; promoted = true; }
+        else if (v === 3 && tr === 7) { v = 4; promoted = true; }
+        b[to] = v;
+        return { captured: captured, promoted: promoted };
+    }
+
+    function hasAnyMove(b, color) {
+        for (var i = 0; i < 64; i++) {
+            if (colorOf(b[i]) !== color) continue;
+            if (simpleMoves(b, i).length || captureMoves(b, i).length) return true;
+        }
+        return false;
+    }
+
+    // ── AI (bot mode) ────────────────────────────────────────────────────────
+    // A "sequence" is a full legal turn: an array of hops [{from,to}, ...]. Multi-
+    // jumps are expanded into their full chains so the bot evaluates whole turns.
+    function captureSequencesFrom(b, i) {
+        var caps = captureMoves(b, i);
+        if (caps.length === 0) return [];
+        var seqs = [];
+        for (var k = 0; k < caps.length; k++) {
+            var mv = caps[k];
+            var nb = b.slice();
+            var res = applyHop(nb, i, mv.to);
+            if (!res.promoted && captureMoves(nb, mv.to).length > 0) {
+                var tails = captureSequencesFrom(nb, mv.to);
+                for (var t = 0; t < tails.length; t++) {
+                    seqs.push([{ from: i, to: mv.to }].concat(tails[t]));
+                }
+            } else {
+                seqs.push([{ from: i, to: mv.to }]);
+            }
+        }
+        return seqs;
+    }
+
+    function legalSequences(b, color) {
+        var i, k, seqs = [], hasCap = false;
+        for (i = 0; i < 64; i++) {
+            if (colorOf(b[i]) === color && captureMoves(b, i).length) { hasCap = true; break; }
+        }
+        if (hasCap) { // forced capture: only capture chains are legal
+            for (i = 0; i < 64; i++) {
+                if (colorOf(b[i]) !== color) continue;
+                var cs = captureSequencesFrom(b, i);
+                for (k = 0; k < cs.length; k++) seqs.push(cs[k]);
+            }
+            return seqs;
+        }
+        for (i = 0; i < 64; i++) {
+            if (colorOf(b[i]) !== color) continue;
+            var sm = simpleMoves(b, i);
+            for (k = 0; k < sm.length; k++) seqs.push([{ from: i, to: sm[k].to }]);
+        }
+        return seqs;
+    }
+
+    function applySequence(b, seq) {
+        for (var h = 0; h < seq.length; h++) applyHop(b, seq[h].from, seq[h].to);
+    }
+
+    function evalBoard(b, me) {
+        var score = 0;
+        for (var i = 0; i < 64; i++) {
+            var v = b[i]; if (!v) continue;
+            var val = isKing(v) ? 25 : 10; // flying kings are worth far more than a man
+            if (v === 1) val += (7 - rowOf(i));   // white man: advance toward row 0
+            else if (v === 3) val += rowOf(i);    // black man: advance toward row 7
+            score += (colorOf(v) === me ? val : -val);
+        }
+        return score;
+    }
+
+    function minimax(b, color, me, depth, alpha, beta) {
+        var seqs = legalSequences(b, color);
+        if (seqs.length === 0) return color === me ? -100000 + depth : 100000 - depth;
+        if (depth === 0) return evalBoard(b, me);
+        var opp = color === WHITE ? BLACK : WHITE, k, nb, sc;
+        if (color === me) {
+            var best = -1e9;
+            for (k = 0; k < seqs.length; k++) {
+                nb = b.slice(); applySequence(nb, seqs[k]);
+                sc = minimax(nb, opp, me, depth - 1, alpha, beta);
+                if (sc > best) best = sc;
+                if (best > alpha) alpha = best;
+                if (alpha >= beta) break;
+            }
+            return best;
+        }
+        var worst = 1e9;
+        for (k = 0; k < seqs.length; k++) {
+            nb = b.slice(); applySequence(nb, seqs[k]);
+            sc = minimax(nb, opp, me, depth - 1, alpha, beta);
+            if (sc < worst) worst = sc;
+            if (worst < beta) beta = worst;
+            if (alpha >= beta) break;
+        }
+        return worst;
+    }
+
+    function chooseBotMove(b, color) {
+        var seqs = legalSequences(b, color);
+        if (seqs.length === 0) return null;
+        var opp = color === WHITE ? BLACK : WHITE;
+        var DEPTH = 5, best = -1e9, pick = seqs[0];
+        for (var k = 0; k < seqs.length; k++) {
+            var nb = b.slice(); applySequence(nb, seqs[k]);
+            // small random tie-break so the bot isn't perfectly repetitive
+            var sc = minimax(nb, opp, color, DEPTH - 1, -1e9, 1e9) + Math.random() * 0.5;
+            if (sc > best) { best = sc; pick = seqs[k]; }
+        }
+        return pick;
+    }
+
+    R.checkers = {
+        WHITE: WHITE, BLACK: BLACK,
+        idx: idx, rowOf: rowOf, colOf: colOf, isDark: isDark,
+        colorOf: colorOf, isKing: isKing,
+        initialBoard: initialBoard,
+        simpleMoves: simpleMoves, captureMoves: captureMoves,
+        anyCaptureFor: anyCaptureFor, applyHop: applyHop, hasAnyMove: hasAnyMove,
+        legalSequences: legalSequences, chooseBotMove: chooseBotMove
+    };
+})();
+
+// ---- rules/ttt.js ----
+"use strict";
+
+/*
+ * rules/ttt.js — pure Tic-Tac-Toe rules, shared by client predictor + server authority.
+ * See rules/checkers.js header for the shared-namespace mechanism.
+ *
+ * Board is a flat length-9 array: 0 empty, 1 = X, 2 = O. Cells index left→right,
+ * top→bottom (0..8). Host plays X and moves first.
+ */
+
+(function () {
+    var R;
+    if (typeof $ !== "undefined" && $) {
+        var MG = ($.MG = $.MG || {});
+        R = (MG.Rules = MG.Rules || {});
+    } else if (typeof globalThis !== "undefined") {
+        R = (globalThis.MGRules = globalThis.MGRules || {});
+    } else {
+        R = (this.MGRules = this.MGRules || {});
+    }
+
+    var TTT_LINES = [
+        [0, 1, 2], [3, 4, 5], [6, 7, 8],   // rows
+        [0, 3, 6], [1, 4, 7], [2, 5, 8],   // cols
+        [0, 4, 8], [2, 4, 6]               // diagonals
+    ];
+
+    // Returns { mark, line } for the first completed line, or null.
+    function tttWinner(b) {
+        for (var i = 0; i < TTT_LINES.length; i++) {
+            var L = TTT_LINES[i], v = b[L[0]];
+            if (v && v === b[L[1]] && v === b[L[2]]) return { mark: v, line: L };
+        }
+        return null;
+    }
+
+    function tttFull(b) {
+        for (var i = 0; i < 9; i++) if (!b[i]) return false;
+        return true;
+    }
+
+    // If `mark` has a one-move win available, return that cell; else -1.
+    function tttFindWin(b, mark) {
+        for (var i = 0; i < 9; i++) {
+            if (b[i]) continue;
+            b[i] = mark;
+            var w = tttWinner(b);
+            b[i] = 0;                      // restore — this must not mutate the board
+            if (w && w.mark === mark) return i;
+        }
+        return -1;
+    }
+
+    // Heuristic bot: win > block > center > corner > side. Strong but not a full
+    // minimax, so a sharp human can still fork it — deliberately beatable.
+    function tttBotMove(b, mark) {
+        var opp = mark === 1 ? 2 : 1;
+        var pick = tttFindWin(b, mark); if (pick >= 0) return pick;   // 1) take the win
+        pick = tttFindWin(b, opp);      if (pick >= 0) return pick;   // 2) block theirs
+        if (!b[4]) return 4;                                          // 3) center
+        var corners = [0, 2, 6, 8];
+        for (var i = 0; i < 4; i++) if (!b[corners[i]]) return corners[i]; // 4) corner
+        var sides = [1, 3, 5, 7];
+        for (var j = 0; j < 4; j++) if (!b[sides[j]]) return sides[j];     // 5) side
+        return -1;                                                    // board full
+    }
+
+    R.ttt = {
+        TTT_LINES: TTT_LINES,
+        tttWinner: tttWinner, tttFull: tttFull, tttBotMove: tttBotMove
+    };
+})();
+
+// ---- rules/chess.js ----
+"use strict";
+
+/*
+ * rules/chess.js — pure chess rules, shared by client predictor + server authority.
+ * See rules/checkers.js header for the shared-namespace mechanism.
+ *
+ * Board is a flat Array(64), index = row*8 + col, row 0 = TOP (black back rank), row 7 =
+ * BOTTOM (white back rank). Piece value: 0 empty; SIGN = colour (white > 0, black < 0);
+ * ABS = type 1=pawn 2=knight 3=bishop 4=rook 5=queen 6=king. "Colour" here is +1 (white) /
+ * -1 (black) — the sign of the piece — NOT the checkers WHITE/BLACK strings. White = host,
+ * bottom rows (6-7), moves first. Promotion is ALWAYS to a queen (MVP). from/to alone
+ * travels the wire: castling / en-passant / promotion are derived by makeMove.
+ */
+
+(function () {
+    var R;
+    if (typeof $ !== "undefined" && $) {
+        var MG = ($.MG = $.MG || {});
+        R = (MG.Rules = MG.Rules || {});
+    } else if (typeof globalThis !== "undefined") {
+        R = (globalThis.MGRules = globalThis.MGRules || {});
+    } else {
+        R = (this.MGRules = this.MGRules || {});
+    }
+
+    var C_PAWN = 1, C_KNIGHT = 2, C_BISHOP = 3, C_ROOK = 4, C_QUEEN = 5, C_KING = 6;
+    var KNIGHT_D = [[-2, -1], [-2, 1], [-1, -2], [-1, 2], [1, -2], [1, 2], [2, -1], [2, 1]];
+    var KING_D   = [[-1, -1], [-1, 0], [-1, 1], [0, -1], [0, 1], [1, -1], [1, 0], [1, 1]];
+    var DIAG_D   = [[-1, -1], [-1, 1], [1, -1], [1, 1]];
+    var ORTHO_D  = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+    var QUEEN_D  = DIAG_D.concat(ORTHO_D);
+
+    function cSq(r, c) { return r * 8 + c; }
+    function cRow(i) { return (i / 8) | 0; }
+    function cCol(i) { return i % 8; }
+    function cOn(r, c) { return r >= 0 && r < 8 && c >= 0 && c < 8; }
+    function cSign(v) { return v > 0 ? 1 : (v < 0 ? -1 : 0); }
+    function cType(v) { return v < 0 ? -v : v; }
+
+    function initialChessBoard() {
+        var b = new Array(64);
+        for (var i = 0; i < 64; i++) b[i] = 0;
+        var back = [C_ROOK, C_KNIGHT, C_BISHOP, C_QUEEN, C_KING, C_BISHOP, C_KNIGHT, C_ROOK];
+        for (var c = 0; c < 8; c++) {
+            b[cSq(0, c)] = -back[c];   // black back rank (top)
+            b[cSq(1, c)] = -C_PAWN;    // black pawns
+            b[cSq(6, c)] = C_PAWN;     // white pawns
+            b[cSq(7, c)] = back[c];    // white back rank (bottom)
+        }
+        return b;
+    }
+
+    // Game state that from/to alone can't carry: castling rights + en-passant target square.
+    function initialChessState() { return { ep: -1, wK: true, wQ: true, bK: true, bQ: true }; }
+    function cloneChessState(st) { return { ep: st.ep, wK: st.wK, wQ: st.wQ, bK: st.bK, bQ: st.bQ }; }
+
+    function findKing(b, color) {
+        var k = color > 0 ? C_KING : -C_KING;
+        for (var i = 0; i < 64; i++) if (b[i] === k) return i;
+        return -1;
+    }
+
+    // Is square s attacked by any piece of `byColor` (+1/-1)? Used for check + castling.
+    function attacksSquare(b, s, byColor) {
+        var sr = cRow(s), sc = cCol(s), i, r, c, v;
+        // pawns: a byColor pawn attacking s sits one row "behind" s (row = sr + byColor).
+        var pr = sr + byColor;
+        if (pr >= 0 && pr < 8) {
+            if (sc > 0 && b[cSq(pr, sc - 1)] === byColor * C_PAWN) return true;
+            if (sc < 7 && b[cSq(pr, sc + 1)] === byColor * C_PAWN) return true;
+        }
+        for (i = 0; i < 8; i++) {                                  // knights
+            r = sr + KNIGHT_D[i][0]; c = sc + KNIGHT_D[i][1];
+            if (cOn(r, c) && b[cSq(r, c)] === byColor * C_KNIGHT) return true;
+        }
+        for (i = 0; i < 8; i++) {                                  // king
+            r = sr + KING_D[i][0]; c = sc + KING_D[i][1];
+            if (cOn(r, c) && b[cSq(r, c)] === byColor * C_KING) return true;
+        }
+        for (i = 0; i < 4; i++) {                                  // diagonals → bishop/queen
+            r = sr + DIAG_D[i][0]; c = sc + DIAG_D[i][1];
+            while (cOn(r, c)) {
+                v = b[cSq(r, c)];
+                if (v !== 0) { if (cSign(v) === byColor && (cType(v) === C_BISHOP || cType(v) === C_QUEEN)) return true; break; }
+                r += DIAG_D[i][0]; c += DIAG_D[i][1];
+            }
+        }
+        for (i = 0; i < 4; i++) {                                  // orthogonals → rook/queen
+            r = sr + ORTHO_D[i][0]; c = sc + ORTHO_D[i][1];
+            while (cOn(r, c)) {
+                v = b[cSq(r, c)];
+                if (v !== 0) { if (cSign(v) === byColor && (cType(v) === C_ROOK || cType(v) === C_QUEEN)) return true; break; }
+                r += ORTHO_D[i][0]; c += ORTHO_D[i][1];
+            }
+        }
+        return false;
+    }
+
+    function inCheck(b, color) {
+        var k = findKing(b, color);
+        return k >= 0 && attacksSquare(b, k, -color);
+    }
+
+    // Apply from→to on a COPY, deriving castling / en-passant / promotion from board+state so
+    // the network receive path needs only {from,to} (same "derive, don't transmit" trick as
+    // checkers applyHop). Returns [newBoard, newState]. Promotion is ALWAYS to a queen (MVP).
+    function makeMove(b, st, from, to) {
+        var nb = b.slice(), nst = cloneChessState(st);
+        var piece = b[from], color = cSign(piece), t = cType(piece);
+        var fr = cRow(from), fc = cCol(from), tr = cRow(to), tc = cCol(to);
+        nst.ep = -1;
+        nb[to] = piece; nb[from] = 0;
+        if (t === C_PAWN) {
+            if (Math.abs(tr - fr) === 2) nst.ep = cSq((fr + tr) >> 1, fc);   // double push sets ep
+            else if (tc !== fc && b[to] === 0) nb[cSq(fr, tc)] = 0;          // en-passant capture
+            if (tr === 0 || tr === 7) nb[to] = color * C_QUEEN;             // auto-queen promotion
+        } else if (t === C_KING) {
+            if (color > 0) { nst.wK = false; nst.wQ = false; } else { nst.bK = false; nst.bQ = false; }
+            if (tc - fc === 2) { nb[cSq(fr, 5)] = nb[cSq(fr, 7)]; nb[cSq(fr, 7)] = 0; }        // O-O
+            else if (fc - tc === 2) { nb[cSq(fr, 3)] = nb[cSq(fr, 0)]; nb[cSq(fr, 0)] = 0; }   // O-O-O
+        }
+        // a rook leaving OR being captured on its home corner forfeits that side's castling
+        if (from === cSq(7, 0) || to === cSq(7, 0)) nst.wQ = false;
+        if (from === cSq(7, 7) || to === cSq(7, 7)) nst.wK = false;
+        if (from === cSq(0, 0) || to === cSq(0, 0)) nst.bQ = false;
+        if (from === cSq(0, 7) || to === cSq(0, 7)) nst.bK = false;
+        return [nb, nst];
+    }
+
+    // King castling candidates, appended to `moves`. Blocks castling out of / through / into
+    // check and requires the squares between king and rook to be empty + the rook present.
+    function addCastles(b, st, color, ksq, moves) {
+        var row = color > 0 ? 7 : 0;
+        if (ksq !== cSq(row, 4)) return;
+        if (attacksSquare(b, ksq, -color)) return;                 // not out of check
+        var kSide = color > 0 ? st.wK : st.bK;
+        var qSide = color > 0 ? st.wQ : st.bQ;
+        if (kSide && b[cSq(row, 5)] === 0 && b[cSq(row, 6)] === 0 && b[cSq(row, 7)] === color * C_ROOK
+            && !attacksSquare(b, cSq(row, 5), -color) && !attacksSquare(b, cSq(row, 6), -color)) {
+            moves.push({ from: ksq, to: cSq(row, 6) });
+        }
+        if (qSide && b[cSq(row, 1)] === 0 && b[cSq(row, 2)] === 0 && b[cSq(row, 3)] === 0 && b[cSq(row, 0)] === color * C_ROOK
+            && !attacksSquare(b, cSq(row, 3), -color) && !attacksSquare(b, cSq(row, 2), -color)) {
+            moves.push({ from: ksq, to: cSq(row, 2) });
+        }
+    }
+
+    // Pseudo-legal moves for `color` (own-king-safety NOT yet filtered). Each is {from,to}.
+    function pseudoMoves(b, st, color) {
+        var moves = [], i, r, c, v, t, d, nr, nc;
+        for (i = 0; i < 64; i++) {
+            v = b[i];
+            if (v === 0 || cSign(v) !== color) continue;
+            t = cType(v); r = cRow(i); c = cCol(i);
+            if (t === C_PAWN) {
+                var fwd = -color;                         // white(+1) moves up the board (row-1)
+                var one = r + fwd;
+                if (one >= 0 && one < 8 && b[cSq(one, c)] === 0) {
+                    moves.push({ from: i, to: cSq(one, c) });
+                    var startRow = color > 0 ? 6 : 1, two = r + 2 * fwd;
+                    if (r === startRow && b[cSq(two, c)] === 0) moves.push({ from: i, to: cSq(two, c) });
+                }
+                for (d = -1; d <= 1; d += 2) {
+                    nc = c + d;
+                    if (nc < 0 || nc > 7 || one < 0 || one > 7) continue;
+                    var tsq = cSq(one, nc), tv = b[tsq];
+                    if ((tv !== 0 && cSign(tv) === -color) || tsq === st.ep) moves.push({ from: i, to: tsq });
+                }
+            } else if (t === C_KNIGHT) {
+                for (d = 0; d < 8; d++) {
+                    nr = r + KNIGHT_D[d][0]; nc = c + KNIGHT_D[d][1];
+                    if (cOn(nr, nc) && cSign(b[cSq(nr, nc)]) !== color) moves.push({ from: i, to: cSq(nr, nc) });
+                }
+            } else if (t === C_KING) {
+                for (d = 0; d < 8; d++) {
+                    nr = r + KING_D[d][0]; nc = c + KING_D[d][1];
+                    if (cOn(nr, nc) && cSign(b[cSq(nr, nc)]) !== color) moves.push({ from: i, to: cSq(nr, nc) });
+                }
+                addCastles(b, st, color, i, moves);
+            } else {
+                var dirs = t === C_BISHOP ? DIAG_D : (t === C_ROOK ? ORTHO_D : QUEEN_D);
+                for (d = 0; d < dirs.length; d++) {
+                    nr = r + dirs[d][0]; nc = c + dirs[d][1];
+                    while (cOn(nr, nc)) {
+                        var sv = b[cSq(nr, nc)];
+                        if (sv === 0) moves.push({ from: i, to: cSq(nr, nc) });
+                        else { if (cSign(sv) !== color) moves.push({ from: i, to: cSq(nr, nc) }); break; }
+                        nr += dirs[d][0]; nc += dirs[d][1];
+                    }
+                }
+            }
+        }
+        return moves;
+    }
+
+    // Legal moves = pseudo-legal minus those leaving one's own king in check.
+    function legalMoves(b, st, color) {
+        var ps = pseudoMoves(b, st, color), out = [];
+        for (var i = 0; i < ps.length; i++) {
+            var r = makeMove(b, st, ps[i].from, ps[i].to);
+            if (!inCheck(r[0], color)) out.push(ps[i]);
+        }
+        return out;
+    }
+
+    // "ongoing" | "checkmate" | "stalemate" for `color` to move.
+    function chessResult(b, st, color) {
+        if (legalMoves(b, st, color).length > 0) return "ongoing";
+        return inCheck(b, color) ? "checkmate" : "stalemate";
+    }
+
+    // ── chess bot: material + light positional eval, alpha-beta negamax ──────────
+    function pieceValue(t) { return t === C_PAWN ? 100 : t === C_KNIGHT ? 320 : t === C_BISHOP ? 330
+        : t === C_ROOK ? 500 : t === C_QUEEN ? 900 : t === C_KING ? 20000 : 0; }
+
+    // White-positive static score: material + a small central pull for every piece.
+    function evalBoard(b) {
+        var s = 0;
+        for (var i = 0; i < 64; i++) {
+            var v = b[i];
+            if (v === 0) continue;
+            var sg = cSign(v);
+            s += sg * pieceValue(cType(v));
+            var center = (3.5 - Math.abs(3.5 - cCol(i))) + (3.5 - Math.abs(3.5 - cRow(i)));
+            s += sg * center * 2;
+        }
+        return s;
+    }
+
+    // Captures first → better alpha-beta pruning.
+    function orderChessMoves(b, moves) {
+        moves.sort(function (a, z) {
+            return (b[z.to] !== 0 ? pieceValue(cType(b[z.to])) : 0) - (b[a.to] !== 0 ? pieceValue(cType(b[a.to])) : 0);
+        });
+    }
+
+    function negamax(b, st, color, depth, alpha, beta, budget) {
+        if (depth === 0) return color * evalBoard(b);
+        var moves = legalMoves(b, st, color);
+        if (moves.length === 0) return inCheck(b, color) ? -100000 - depth : 0;   // mate (deeper = worse) / stalemate
+        orderChessMoves(b, moves);
+        var best = -1e9;
+        for (var i = 0; i < moves.length; i++) {
+            if (budget.n++ > budget.max) break;                  // node cap: bail with best-so-far
+            var r = makeMove(b, st, moves[i].from, moves[i].to);
+            var sc = -negamax(r[0], r[1], -color, depth - 1, -beta, -alpha, budget);
+            if (sc > best) best = sc;
+            if (best > alpha) alpha = best;
+            if (alpha >= beta) break;
+        }
+        return best;
+    }
+
+    // Pick a move for `color`. Depth/budget tuned to stay responsive in Panorama; if the node
+    // budget trips mid-search the best move found so far is used. Tiny jitter avoids repetition.
+    function chessBotMove(b, st, color) {
+        var moves = legalMoves(b, st, color);
+        if (moves.length === 0) return null;
+        orderChessMoves(b, moves);
+        var budget = { n: 0, max: 120000 }, DEPTH = 3, best = null, bestScore = -1e9;
+        for (var i = 0; i < moves.length; i++) {
+            var r = makeMove(b, st, moves[i].from, moves[i].to);
+            var sc = -negamax(r[0], r[1], -color, DEPTH - 1, -1e9, 1e9, budget) + Math.random() * 8;
+            if (sc > bestScore) { bestScore = sc; best = moves[i]; }
+        }
+        return best;
+    }
+
+    R.chess = {
+        C_PAWN: C_PAWN, C_KNIGHT: C_KNIGHT, C_BISHOP: C_BISHOP, C_ROOK: C_ROOK, C_QUEEN: C_QUEEN, C_KING: C_KING,
+        cSq: cSq, cRow: cRow, cCol: cCol, cSign: cSign, cType: cType,
+        initialChessBoard: initialChessBoard, initialChessState: initialChessState, cloneChessState: cloneChessState,
+        findKing: findKing, attacksSquare: attacksSquare, inCheck: inCheck,
+        makeMove: makeMove, pseudoMoves: pseudoMoves, legalMoves: legalMoves, chessResult: chessResult,
+        chessBotMove: chessBotMove
+    };
+})();
+
+/* ── authored core (from server/worker.core.js) ── */
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
