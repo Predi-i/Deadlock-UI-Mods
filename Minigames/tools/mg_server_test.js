@@ -235,9 +235,11 @@ async function main() {
         ok(atkAct.w === 1 && atkAct.h === 1, "durak: attacker opens (accepted)");
         var ev = await req(L.hub, "/api/dlog.png?code=" + L.code + "&since=4");
         ok(ev.w === (10 + attacker) && ev.h === (hand[0] + 1), "durak: dlog records PLAY(attacker, card)");
-        // The defender covering with a card that can't beat it (or a wrong pair) is illegal.
-        var badCover = await req(L.hub, "/api/dact.png?code=" + L.code + "&tok=" + defTok + "&a=2&p=0&c=" + defHand0);
-        ok(badCover.w === 9 && (badCover.h === 2 || badCover.h === 1), "durak: an illegal cover is rejected");
+        // Covering pair 0 with a card the defender does NOT hold is illegal. The attacker's
+        // just-played card (hand[0]) is provably not in the defender's hand (the deal is
+        // disjoint), so this is deterministically illegal regardless of the random deal.
+        var badCover = await req(L.hub, "/api/dact.png?code=" + L.code + "&tok=" + defTok + "&a=2&p=0&c=" + hand[0]);
+        ok(badCover.w === 9 && badCover.h === 2, "durak: covering with a card you don't hold → (9,2)");
     })();
 
     // ── public quickmatch: pairs two callers into one lobby (with tokens) ──
