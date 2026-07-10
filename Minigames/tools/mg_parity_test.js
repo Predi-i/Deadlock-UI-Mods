@@ -19,7 +19,7 @@ const root = path.join(__dirname, "..");
 function loadClientRules() {
     var sandbox = {};                 // isolated MGRules so it can't collide with the server copy
     var g = { globalThis: sandbox };
-    ["checkers.js", "ttt.js", "chess.js", "connectfour.js"].forEach(function (name) {
+    ["checkers.js", "ttt.js", "chess.js", "connectfour.js", "durak.js"].forEach(function (name) {
         var src = fs.readFileSync(path.join(root, "panorama", "scripts", "rules", name), "utf8");
         // The IIFE resolves its namespace off `globalThis`; give it our sandbox as that.
         new Function("globalThis", src)(sandbox);
@@ -133,6 +133,42 @@ function makeRng(seed) { var s = seed >>> 0; return function () { s = (s * 16645
         }
     }
     ok(mismatches === 0, "connect four: client & server legalCols/winner/bot identical over " + plies + " plies");
+})();
+
+// ── durak: server owns the deck/seed, so drive one deterministic self-play per seed with
+// the CLIENT engine, and at every ply assert the SERVER engine enumerates the identical
+// legalAttacks (for the attacker) and legalDefends (for each uncovered pair). Both sides
+// share newGame(seed), so a mismatch means the bundled durak rules drifted from source. ──
+(function () {
+    var C = CL.durak, S = SV.durak;
+    function attKey(R, st, seat) { return R.legalAttacks(st, seat).slice().sort(function (a, b) { return a - b; }).join(","); }
+    function defKey(R, st, pair) { return R.legalDefends(st, pair).slice().sort(function (a, b) { return a - b; }).join(","); }
+    var rng = makeRng(31415926), mismatches = 0, plies = 0;
+    for (var game = 0; game < 40; game++) {
+        var seed = (rng() * 0x7fffffff) | 0;
+        var st = C.newGame(2, seed);          // client-owned copy drives the walk
+        var steps = 0;
+        while (st.phase !== "over" && steps < 400) {
+            plies++;
+            // The server engine is stateless over the SAME object, so compare enumerations on `st`.
+            if (attKey(C, st, st.attacker) !== attKey(S, st, st.attacker)) { mismatches++; break; }
+            var u = C.firstUncovered(st);
+            if (u >= 0 && defKey(C, st, u) !== defKey(S, st, u)) { mismatches++; break; }
+            // Advance with the client's own bot so the walk is deterministic and legal.
+            if (st.phase === "defend" && st.table.length && C.uncoveredCount(st) > 0) {
+                var d = C.durakBotDefend(st, st.defender);
+                if (d) { C.applyDefend(st, d.pair, d.card); }
+                else { C.endBout(st, true); }
+            } else {
+                var a = C.durakBotAttack(st, st.attacker);
+                if (a >= 0) { C.applyAttack(st, st.attacker, a); }
+                else if (st.table.length && C.uncoveredCount(st) === 0) { C.endBout(st, false); }
+                else { C.endBout(st, true); }   // attacker has nothing to open with → bout ends
+            }
+            steps++;
+        }
+    }
+    ok(mismatches === 0, "durak: client & server legalAttacks/legalDefends identical over " + plies + " plies");
 })();
 
 console.log((failures === 0 ? "  ✓ " : "") + "");
