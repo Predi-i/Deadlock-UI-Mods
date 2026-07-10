@@ -1237,6 +1237,62 @@ export class Hub {
         return png(1, 1);
       }
 
+      // ── Durak (authoritative dealer, 2 players) ────────────────────────────
+      // Separate route set from the 2-int move/poll games: the worker OWNS the deck,
+      // hands and seed, deals PRIVATELY per seat via /api/ddraw, and relays PUBLIC events
+      // via an indexed /api/dlog. Clients rebuild table/trump/turn/roles/counts from the
+      // public log and learn only their OWN card identities privately. All actions require
+      // a seat token (tok → seat), which also gates ddraw so a cheat can't read a foreign
+      // seat's private cards. Only 2 players are wired for now (3–4 seating is deferred).
+      if (p === "/api/room") {
+        const lobby = code ? await this.storage.get("l:" + code) : null;
+        if (!lobby) return png(9, 1);                        // gone
+        const started = lobby.state && lobby.state.started ? 2 : 1; // h: 2 started, 1 waiting
+        return png(lobby.players, started);
+      }
+      if (p === "/api/start") {
+        const lobby = code ? await this.storage.get("l:" + code) : null;
+        if (!lobby) return png(9, 9);
+        const seat = seatOf(lobby, q.get("tok"));
+        if (seat < 0) return png(9, 3);
+        const r = durakStart(lobby, seat);
+        if (!r.ok) return png(9, r.code);
+        await this.storage.put("l:" + code, lobby);
+        return png(1, 1);
+      }
+      if (p === "/api/dact") {
+        const lobby = code ? await this.storage.get("l:" + code) : null;
+        if (!lobby) return png(9, 9);
+        const seat = seatOf(lobby, q.get("tok"));
+        if (seat < 0) return png(9, 3);
+        const a = clampInt(q.get("a"), 0, 1, 4);
+        const pr = clampInt(q.get("p"), 0, 0, 5);
+        const c = clampInt(q.get("c"), 0, 0, 35);
+        const r = durakAct(lobby, seat, a, pr, c);
+        if (!r.ok) return png(9, r.code);
+        await this.storage.put("l:" + code, lobby);
+        return png(1, 1);
+      }
+      if (p === "/api/dlog") {
+        const lobby = code ? await this.storage.get("l:" + code) : null;
+        if (!lobby) return png(9, 9);
+        const since = clampInt(q.get("since"), 0, 0, 100000);
+        const ev = lobby.state && lobby.state.pub ? lobby.state.pub[since] : null;
+        if (!ev) return png(1, 1);                           // nothing new (no event is (1,1))
+        return png(ev.w, ev.h);
+      }
+      if (p === "/api/ddraw") {
+        const lobby = code ? await this.storage.get("l:" + code) : null;
+        if (!lobby) return png(9, 9);
+        const seat = seatOf(lobby, q.get("tok"));
+        if (seat < 0) return png(9, 3);                      // only your own seat's private cards
+        const i = clampInt(q.get("i"), 0, 0, 100000);
+        const priv = lobby.state && lobby.state.priv ? lobby.state.priv[seat] : null;
+        const card = priv ? priv[i] : undefined;
+        if (card === undefined || card === null) return png(1, 1); // no card at that index yet
+        return png(card + 2, 1);
+      }
+
       return png(9, 8); // unknown route
     } catch (e) {
       return png(9, 7); // server error marker
@@ -1304,6 +1360,7 @@ function initState(game) {
   if (game === 1) return { board: R.checkers.initialBoard(), chainSq: -1 }; // checkers
   if (game === 2) return { board: [0, 0, 0, 0, 0, 0, 0, 0, 0] };            // tic-tac-toe
   if (game === 4) return { board: R.chess.initialChessBoard(), cst: R.chess.initialChessState() }; // chess
+  if (game === 3) return { started: 0, pub: [], priv: [[], []] };                                  // durak (dealt on /api/start)
   if (game === 5) return { board: R.connectfour.initialBoard() };                                  // connect four
   return null;
 }
@@ -1383,6 +1440,105 @@ function validateConnectFour(RC, lobby, seat, from, to) {
   st.board = r.board;
   lobby.turn = seat === 0 ? 1 : 0;
   return { ok: true, move: { f: from, t: 7, e: 1 } };
+}
+
+/* ───────────────────── Durak authoritative dealer (2 players) ─────────────────────
+ * Public event encoding (each fits the 2-int downlink, both dims <= ~63; NONE is (1,1)):
+ *   TRUMP        (2,  trumpCard+1)
+ *   OPEN atk a   (3,  a+1)                     first attacker seat
+ *   PLAY  s c    (10+s, c+1)                   seat s attacks/throws in card c
+ *   COVER p c    (20+p, c+1)                   defender covers table pair p with card c
+ *   TAKE  s      (30+s, 1)                     seat s (defender) takes the table
+ *   BITO         (40,   1)                     table beaten & discarded
+ *   DRAW  s n    (50+s, n+1)                   seat s drew n cards from the deck
+ *   OVER  L      (60,   L+2)                   game over; L = fool seat (-1 = draw)
+ * Private per-seat draws go to state.priv[seat] and are pulled one index at a time via
+ * /api/ddraw (gated by the seat token), encoded as (card+2, 1). The +2 is deliberate:
+ * card id 0 would otherwise collide with the universal (1,1) "nothing new" marker.
+ */
+function dpush(st, w, h) { st.pub.push({ w: w, h: h }); }
+
+function durakStart(lobby, seat) {
+  const R = rules().durak;
+  const st = lobby.state;
+  if (!st || st.started) return { ok: true };            // idempotent (already dealt)
+  if (seat !== 0) return { ok: false, code: 1 };         // only the host (seat 0) starts
+  if (lobby.players < 2) return { ok: false, code: 2 };  // need both players
+  const seed = (Math.random() * 0x7fffffff) | 0;         // SERVER owns the seed (never sent down)
+  const g = R.newGame(2, seed);
+  st.numPlayers = 2;
+  st.trump = g.trump; st.trumpCard = g.trumpCard;
+  st.deck = g.deck; st.hands = g.hands; st.table = g.table;
+  st.attacker = g.attacker; st.defender = g.defender; st.phase = g.phase;
+  st.discard = g.discard; st.out = g.out; st.loser = g.loser;
+  st.pub = []; st.priv = [[], []];
+  st.started = 1;
+  dpush(st, 2, g.trumpCard + 1);                         // TRUMP
+  dpush(st, 3, g.attacker + 1);                          // OPEN(first attacker)
+  for (let s = 0; s < 2; s++) {
+    for (let k = 0; k < g.hands[s].length; k++) st.priv[s].push(g.hands[s][k]);
+    dpush(st, 50 + s, g.hands[s].length + 1);            // DRAW(s, 6)
+  }
+  return { ok: true };
+}
+
+// Resolve a bout, then emit DRAW events for the DECK cards each seat picked up during
+// refill. A card drawn from the deck is one now in a hand that WAS in the pre-bout deck
+// (hands and deck are disjoint before the bout), so hand_after ∩ deckBefore = the draws.
+// Table cards a taker picks up were already public, so they are NOT re-emitted.
+function durakEndBout(st, took) {
+  const R = rules().durak;
+  const before = {};
+  for (let i = 0; i < st.deck.length; i++) before[st.deck[i]] = 1;
+  R.endBout(st, took);
+  for (let s = 0; s < st.numPlayers; s++) {
+    const drawn = [];
+    for (let k = 0; k < st.hands[s].length; k++) if (before[st.hands[s][k]]) drawn.push(st.hands[s][k]);
+    if (drawn.length) {
+      for (let d = 0; d < drawn.length; d++) st.priv[s].push(drawn[d]);
+      dpush(st, 50 + s, drawn.length + 1);               // DRAW(s, n)
+    }
+  }
+  if (st.phase === "over") dpush(st, 60, st.loser + 2);  // OVER(loser)
+}
+
+// Validate + apply one durak action by the seat holder. a: 1 attack, 2 cover, 3 take, 4 bito.
+function durakAct(lobby, seat, a, p, c) {
+  const R = rules().durak;
+  const st = lobby.state;
+  if (!st || !st.started || st.phase === "over") return { ok: false, code: 2 };
+  if (a === 1) {                                         // attack / throw-in
+    if (!R.canAttackWith(st, seat, c)) {
+      // distinguish "not your role/turn" from "illegal card" for a friendlier client message
+      if (seat === st.defender) return { ok: false, code: 1 };
+      return { ok: false, code: 2 };
+    }
+    R.applyAttack(st, seat, c);
+    dpush(st, 10 + seat, c + 1);
+    return { ok: true };
+  }
+  if (a === 2) {                                         // cover a table pair
+    if (seat !== st.defender) return { ok: false, code: 1 };
+    if (!R.canDefendPair(st, p, c)) return { ok: false, code: 2 };
+    R.applyDefend(st, p, c);
+    dpush(st, 20 + p, c + 1);
+    return { ok: true };
+  }
+  if (a === 3) {                                         // take
+    if (seat !== st.defender) return { ok: false, code: 1 };
+    if (st.table.length === 0) return { ok: false, code: 2 };
+    dpush(st, 30 + seat, 1);
+    durakEndBout(st, true);
+    return { ok: true };
+  }
+  if (a === 4) {                                         // bito (beat)
+    if (seat !== st.attacker) return { ok: false, code: 1 };
+    if (st.table.length === 0 || R.uncoveredCount(st) !== 0) return { ok: false, code: 2 };
+    dpush(st, 40, 1);
+    durakEndBout(st, false);
+    return { ok: true };
+  }
+  return { ok: false, code: 2 };
 }
 
 
