@@ -24,6 +24,11 @@
  *   $.MG.Api.move(code, from, to, end, tok, cb({ok,reason}), err)   reason: turn|illegal|token|gone
  *   $.MG.Api.poll(code, since, cb(move|null), err)      move = {from,to,end,seq}
  *   $.MG.Api.reset(code, game, tok, cb(ok), err)
+ *   $.MG.Api.room(code, cb({gone,players,started}), err)            Durak online room state
+ *   $.MG.Api.start(code, tok, cb({ok,reason}), err)                 Durak host starts/deals
+ *   $.MG.Api.dact(code, tok, a, pair, card, cb({ok,reason}), err)   Durak public action
+ *   $.MG.Api.dlog(code, since, cb(event|null), err)                 Durak public event log
+ *   $.MG.Api.ddraw(code, tok, index, cb(card|null), err)            Durak private draw log
  *
  * The seat token (tok) is the identity that makes the server authoritative: it flows
  * ONLY upward (query param), never in a response, so it can't leak through the 2-int
@@ -493,6 +498,90 @@
         reset: function (code, game, tok, cb, err) {
             request("/api/reset", { code: code, game: game, tok: tok },
                 function (w, h) { if (cb) cb(w < 9); }, err);
+        },
+
+        // ── Durak online (authoritative 2-player dealer) ────────────────────
+        // These routes use the same image side-channel but a separate indexed public
+        // event log (`dlog`) plus a private per-seat draw stream (`ddraw`). All writes and
+        // private reads are authorised by the seat token. Event dimensions deliberately stay
+        // small (<= ~63) and no real event is (1,1), so (1,1) remains "nothing new".
+        room: function (code, cb, err) {
+            request("/api/room", { code: code }, function (w, h) {
+                if (w === 9) { cb({ gone: true, players: 0, started: false }); return; }
+                if (w < 1 || w > 2 || (h !== 1 && h !== 2)) {
+                    suspectDecode("room w=" + w + " h=" + h);
+                    if (err) err("decode");
+                    return;
+                }
+                cb({ gone: false, players: w, started: h === 2 });
+            }, err);
+        },
+
+        start: function (code, tok, cb, err) {
+            request("/api/start", { code: code, tok: tok }, function (w, h) {
+                if (!cb) return;
+                if (w === 1 && h === 1) { cb({ ok: true }); return; }
+                if (w === 9) {
+                    var reason = h === 1 ? "host" : h === 2 ? "players" : h === 3 ? "token" : "gone";
+                    cb({ ok: false, reason: reason });
+                    return;
+                }
+                suspectDecode("start w=" + w + " h=" + h);
+                cb({ ok: false, reason: "decode" });
+            }, err);
+        },
+
+        dact: function (code, tok, a, pair, card, cb, err) {
+            request("/api/dact", { code: code, tok: tok, a: a, p: pair || 0, c: card || 0 }, function (w, h) {
+                if (!cb) return;
+                if (w === 1 && h === 1) { cb({ ok: true }); return; }
+                if (w === 9) {
+                    var reason = h === 1 ? "turn" : h === 2 ? "illegal" : h === 3 ? "token" : "gone";
+                    cb({ ok: false, reason: reason });
+                    return;
+                }
+                suspectDecode("dact w=" + w + " h=" + h);
+                cb({ ok: false, reason: "decode" });
+            }, err);
+        },
+
+        dlog: function (code, since, cb, err) {
+            request("/api/dlog", { code: code, since: since }, function (w, h) {
+                if (w === 1 && h === 1) { cb(null); return; }
+                if (w === 9 && h === 9) {
+                    if (MG.UI && MG.UI.kickToMenu) MG.UI.kickToMenu("Lobby closed.");
+                    return;
+                }
+                var ev = null;
+                if (w === 2 && h >= 1 && h <= 36) ev = { type: "trump", card: h - 1 };
+                else if (w === 3 && h >= 1 && h <= 2) ev = { type: "open", seat: h - 1 };
+                else if (w >= 10 && w <= 11 && h >= 1 && h <= 36) ev = { type: "play", seat: w - 10, card: h - 1 };
+                else if (w >= 20 && w <= 25 && h >= 1 && h <= 36) ev = { type: "cover", pair: w - 20, card: h - 1 };
+                else if (w >= 30 && w <= 31 && h === 1) ev = { type: "take", seat: w - 30 };
+                else if (w === 40 && h === 1) ev = { type: "bito" };
+                else if (w >= 50 && w <= 51 && h >= 1 && h <= 7) ev = { type: "draw", seat: w - 50, count: h - 1 };
+                else if (w === 60 && h >= 1 && h <= 3) ev = { type: "over", loser: h - 2 };
+                if (!ev) {
+                    suspectDecode("dlog w=" + w + " h=" + h);
+                    if (err) err("decode");
+                    return;
+                }
+                ev.seq = since + 1;
+                cb(ev);
+            }, err);
+        },
+
+        ddraw: function (code, tok, index, cb, err) {
+            request("/api/ddraw", { code: code, tok: tok, i: index }, function (w, h) {
+                if (w === 1 && h === 1) { cb(null); return; }
+                if (w === 9 && h === 3) { if (err) err("token"); return; }
+                if (w === 9 && h === 9) { if (err) err("gone"); return; }
+                // Private card ids use card+2 (2..37), not card+1, so card 0 never
+                // collides with the universal (1,1) "nothing new" marker.
+                if (w >= 2 && w <= 37 && h === 1) { cb(w - 2); return; }
+                suspectDecode("ddraw w=" + w + " h=" + h);
+                if (err) err("decode");
+            }, err);
         }
     };
 
