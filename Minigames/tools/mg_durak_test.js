@@ -1,23 +1,14 @@
 "use strict";
-// Ad-hoc rules test for mg_durak.js (Подкидной дурак). Run: node tools/mg_durak_test.js
-// Slices the pure-rules section (UI-free) and exercises it under Node, same trick as
-// tools/mg_rules_test.js / mg_chess_test.js.
+// Rules test for the shared Durak engine. Run: node tools/mg_durak_test.js
+// Since the trust refactor the pure rules live in panorama/scripts/rules/durak.js — the exact
+// same file the authoritative server dealer runs. Load it like the other rules tests: the IIFE
+// sees no `$` in Node, so it attaches to globalThis.MGRules.durak.
 const fs = require("fs");
 const path = require("path");
 
-const src = fs.readFileSync(path.join(__dirname, "..", "panorama", "scripts", "mg_durak.js"), "utf8");
-const start = src.indexOf("// ── durak: pure rules");
-const end = src.indexOf("// ── durak controller");
-if (start < 0 || end < 0) throw new Error("could not slice pure-rules section");
-const body = src.slice(start, end);
-const factory = new Function(
-    body +
-    "; return { newGame, deal, freshDeck, makeRng, beats, legalAttacks, legalDefends," +
-    " canAttackWith, canDefendPair, applyAttack, applyDefend, endBout, refill, checkOver," +
-    " updateOut, nextInPlay, firstUncovered, uncoveredCount, durakBotAttack, durakBotDefend," +
-    " cardValue, suitOf, rankOf, SUIT_CHARS, RANK_CHARS, DECK_SIZE };"
-);
-const M = factory();
+const rulesDir = path.join(__dirname, "..", "panorama", "scripts", "rules");
+new Function(fs.readFileSync(path.join(rulesDir, "durak.js"), "utf8"))();
+const M = globalThis.MGRules.durak;
 
 let failures = 0;
 function ok(cond, msg) { if (!cond) { failures++; console.log("  ✗ " + msg); } else { console.log("  ✓ " + msg); } }

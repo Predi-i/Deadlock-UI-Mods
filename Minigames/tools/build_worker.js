@@ -17,7 +17,7 @@ const path = require("path");
 
 const root = path.join(__dirname, "..");
 const rulesDir = path.join(root, "panorama", "scripts", "rules");
-const RULES = ["checkers.js", "ttt.js", "chess.js", "connectfour.js"];
+const RULES = ["checkers.js", "ttt.js", "chess.js", "connectfour.js", "durak.js"];
 const corePath = path.join(root, "server", "worker.core.js");
 const outPath = path.join(root, "server", "worker.js");
 
