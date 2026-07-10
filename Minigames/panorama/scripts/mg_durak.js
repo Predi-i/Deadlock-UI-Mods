@@ -1,11 +1,11 @@
 "use strict";
 
 /*
- * mg_durak.js — "Durak" (Подкидной дурак) for the Deadlock Minigames mod.
+ * mg_durak.js — "Durak" (Podkidnoy durak) for the Deadlock Minigames mod.
  *
  * Stage 1 (this file, for now): OFFLINE play vs bot(s). No server calls at all — the
  * whole deck/deal/rules run locally, exactly like the other games' bot mode. Online
- * 2–4 player play (worker as authoritative dealer + per-seat private deal channel) is
+ * 2-4 player play (worker as authoritative dealer + per-seat private deal channel) is
  * Stage 2 and will reuse the pure rules below unchanged.
  *
  * The file is split into two clearly marked sections (see the banner comments below):
@@ -25,7 +25,7 @@
     if (MG._durakLoaded) return;
     MG._durakLoaded = true;
 
-    // ── durak: pure rules ─────────────────────────────────────────────────────
+    // ── durak: pure rules ──────────────────────────────────────────────────────────
     // NOTHING below this line up to the controller banner may reference $ or MG: it is
     // sliced out and run standalone by tools/mg_durak_test.js.
 
@@ -125,7 +125,7 @@
         return st;
     }
 
-    // ── table queries ──
+    // table queries
     function tableRankSet(st) {
         var set = {};
         for (var i = 0; i < st.table.length; i++) {
@@ -175,7 +175,7 @@
         return out;
     }
 
-    // ── mutators ──
+    // mutators
     function applyAttack(st, seat, card) {
         removeCard(st.hands[seat], card);
         st.table.push({ a: card, d: -1 });
@@ -184,7 +184,7 @@
     function applyDefend(st, pairIndex, card) {
         removeCard(st.hands[st.defender], card);
         st.table[pairIndex].d = card;
-        if (uncoveredCount(st) === 0) st.phase = "attack"; // hand back to the attacker (add or Бито)
+        if (uncoveredCount(st) === 0) st.phase = "attack"; // hand back to the attacker (add or Bito)
     }
 
     function updateOut(st) {
@@ -213,7 +213,7 @@
         }
     }
     // End the current bout. took=true → defender picks up the whole table; else the table
-    // is "beaten" (Бито) and discarded. Then refill and rotate roles.
+    // is "beaten" (Bito) and discarded. Then refill and rotate roles.
     function endBout(st, took) {
         var oldDef = st.defender, i;
         if (took) {
@@ -248,14 +248,14 @@
         return false;
     }
 
-    // ── bot ──
+    // bot
     // Trumps sort far above non-trumps so the bot spends its cheapest, non-trump cards first.
     function cardValue(id, trump) { return rankOf(id) + (suitOf(id) === trump ? 100 : 0); }
     function sortByValue(arr, trump) {
         arr.sort(function (a, b) { return cardValue(a, trump) - cardValue(b, trump); });
         return arr;
     }
-    // Returns the card to attack/throw-in with, or -1 to end the bout (Бито).
+    // Returns the card to attack/throw-in with, or -1 to end the bout (Bito).
     function durakBotAttack(st, seat) {
         var la = sortByValue(legalAttacks(st, seat), st.trump);
         if (la.length === 0) return -1;
@@ -274,19 +274,23 @@
         return { pair: i, card: ld[0] };
     }
 
-    // ── durak controller ──────────────────────────────────────────────────────
+    // ── durak controller ───────────────────────────────────────────────────────────
     // Panorama rendering, input and the offline bot loop. NONE of this is verifiable from
     // a shell — it only runs inside Deadlock after a VPK repack. Reasoned from the game's
     // CSS idioms + the other controllers in mg_games.js, not confirmed in-game.
 
     var DECK_DIR = "s2r://panorama/images/deck/";
     function cardFaceUrl(id) { return DECK_DIR + SUIT_CHARS[suitOf(id)] + RANK_CHARS[rankOf(id)] + ".vtex"; }
-    function cardBackUrl() { return DECK_DIR + "BACK.vtex"; }
+    // Always build the CSS url() string ourselves. NEVER read it back off style.backgroundImage:
+    // Panorama returns it UNQUOTED (`url( s2r://... )`), and re-assigning that throws
+    // "Invalid value for property 'background-image'" — which used to abort DragStart and leak
+    // orphaned "phantom" ghost cards. We stash the quoted string on the panel (`_dkFace`).
+    function faceCss(id) { return "url('" + cardFaceUrl(id) + "')"; }
 
     // Where each opponent sits on MY screen, given their offset from me around the table.
     // Everyone renders themselves at the bottom; opponents are placed by relative seat, so
-    // "left" for one player is "right" for another (exactly the relativity the design calls
-    // for). Zone map is easy to tweak; 3/4-player layouts are only exercised online (Stage 2).
+    // "left" for one player is "right" for another. 3/4-player layouts are only exercised
+    // online (Stage 2).
     function seatZone(rel, N) {
         if (N <= 2) return "top";
         if (N === 3) return rel === 1 ? "left" : "right";
@@ -299,7 +303,7 @@
     // refreshes (keyed by card id), reassigning its transform makes it SLIDE (the .mg-dk-anim
     // transition), so playing a card glides from hand → table and a draw glides from the deck.
     var CARD_W = 100, CARD_H = 140;
-    var STAGE_W = 680, STAGE_H = 470;
+    var STAGE_W = 680, STAGE_H = 500;
 
     function createDurak(container, session) {
         var numPlayers = session.numPlayers || 2;
@@ -318,85 +322,83 @@
         var root = $.CreatePanel("Panel", container, "MG_DurakRoot");
         root.AddClass("mg-durak");
 
-        // Opponents sit in zones (top / left / right); the deck, table and my own hand all
-        // live on one flow-children:none STAGE so cards can slide anywhere across it.
-        var topZone = $.CreatePanel("Panel", root, "MG_DkTop"); topZone.AddClass("mg-durak-top");
-        var midRow = $.CreatePanel("Panel", root, "MG_DkMid"); midRow.AddClass("mg-durak-mid");
-        var leftZone = $.CreatePanel("Panel", midRow, "MG_DkLeft"); leftZone.AddClass("mg-durak-left");
-        var stage = $.CreatePanel("Panel", midRow, "MG_DkStage"); stage.AddClass("mg-durak-stage");
-        var rightZone = $.CreatePanel("Panel", midRow, "MG_DkRight"); rightZone.AddClass("mg-durak-right");
-        // decor (deck stack, rotated trump, labels, open-slot hints) is rebuilt each refresh
-        // and sits BEHIND the persistent card layer.
+        // EVERYTHING — the opponents' avatar tiles, the deck+trump, the attack/defense pairs
+        // and MY hand — lives on ONE flow-children:none felt STAGE (fixed size), so a card can
+        // slide anywhere across it and the players sit ON the felt. The stage never resizes, so
+        // playing a card can't make the modal "jump".
+        var stage = $.CreatePanel("Panel", root, "MG_DkStage"); stage.AddClass("mg-durak-stage");
         var decorLayer = $.CreatePanel("Panel", stage, "MG_DkDecor"); decorLayer.AddClass("mg-dk-decor");
         var cardLayer = $.CreatePanel("Panel", stage, "MG_DkCards"); cardLayer.AddClass("mg-dk-cards");
+        // Controls sit in their OWN fixed-height row below the stage (.mg-durak-controls reserves
+        // the button height whether or not a button is showing) so toggling Take/Done never
+        // reflows the modal.
         var controlsZone = $.CreatePanel("Panel", root, "MG_DkControls"); controlsZone.AddClass("mg-durak-controls");
-        var zones = { top: topZone, left: leftZone, right: rightZone };
 
         var cardEls = {}; // card id -> persistent face panel on the stage
 
         function actionActor() { return st.phase === "defend" ? st.defender : st.attacker; }
         function myTurn() { return !destroyed && st.phase !== "over" && actionActor() === mySeat; }
 
-        // ── slot geometry (stage coords) ──
+        // slot geometry (stage coords)
         function xform(x, y, rot) {
             var t = "translate3d(" + Math.round(x) + "px, " + Math.round(y) + "px, 0px)";
             return rot ? (t + " rotateZ(" + rot + "deg)") : t;
         }
-        var DECK_X = 8, DECK_Y = 150;
+        // Deck stack on the LEFT, at the table row's height. The trump card sits UPRIGHT just
+        // to the RIGHT of the stack and MOSTLY visible (only its left edge tucked under the
+        // deck), so its suit reads clearly. NO rotation — rotateZ was the source of the "300%
+        // scale" trump glitch and sometimes culled the card off-screen entirely.
+        var DECK_X = 32, DECK_Y = 150;
         function deckSlot() { return { x: DECK_X, y: DECK_Y }; }
-        // Trump lies horizontally UNDER the deck stack, its right half poking out to the side
-        // (classic durak). Rotated 90° about its centre; the offset lands the right end clear
-        // of the vertical stack so it's clearly visible without any text label.
-        function trumpSlot() { return { x: DECK_X + (CARD_H - CARD_W) / 2 + 24, y: DECK_Y, rot: 90 }; }
-        // A card the opponent PLAYS should glide in from where they sit (top of the stage),
-        // not from the deck — so a new TABLE card starts here, a new HAND (drawn) card at the deck.
-        function oppOriginSlot() { return { x: STAGE_W / 2 - CARD_W / 2, y: 2 }; }
-        // Hand fans across the bottom, centred in the stage. Even horizontal spacing + a gentle
-        // per-card tilt reads as a real hand; the vertical bow is deliberately SMALL (a big dome
-        // looked wrong) so the fan stays flat and readable.
+        function trumpSlot() { return { x: DECK_X + CARD_W - 22, y: DECK_Y, rot: 0 }; }
+        // Big deck-count number centred BELOW the stack (not cramped against its side).
+        function deckCountSlot() { return { x: DECK_X + 30, y: DECK_Y + CARD_H + 10 }; }
+        // A card an opponent PLAYS glides in from the top-centre (where they sit); a drawn HAND
+        // card glides from the deck.
+        function oppOriginSlot() { return { x: STAGE_W / 2 - CARD_W / 2, y: 60 }; }
+        // Hand: a clean FLAT row (no arc, no tilt), CENTRED on the stage centre (STAGE_W/2).
         function handSlot(j, n) {
-            var step = n > 1 ? Math.min(56, (STAGE_W - CARD_W - 80) / (n - 1)) : 0;
+            var step = n > 1 ? Math.min(64, 380 / (n - 1)) : 0;
             var totalW = CARD_W + step * (n - 1);
-            var x0 = (STAGE_W - totalW) / 2;
-            var mid = (n - 1) / 2, d = j - mid;
-            var dome = 12;                                  // px the middle rises above the edges
-            var arc = mid > 0 ? Math.round(dome * (1 - (d * d) / (mid * mid))) : 0;
-            var y0 = STAGE_H - CARD_H - 22;                 // edge baseline (lowest cards)
-            return { x: x0 + j * step, y: y0 - arc, rot: Math.round(d * 3.5) };
+            var x0 = STAGE_W / 2 - totalW / 2;
+            var y0 = STAGE_H - CARD_H - 16;
+            return { x: x0 + j * step, y: y0, rot: 0 };
         }
-        // Attack/defense pairs centred in the stage's upper-middle band. pairStep compresses
-        // when there are many pairs so a full table (up to 6) never overflows the stage.
+        // Attack/defense pairs centred in the felt's middle band (centre x = STAGE_W/2), clear
+        // of the deck/trump column on the left and well below the top opponent tile.
+        var TABLE_CX = STAGE_W / 2, TABLE_ATK_Y = 178;
         function tableAtkSlot(i, m) {
-            var pairStep = Math.min(CARD_W + 28, (STAGE_W - CARD_W - 24) / Math.max(m - 1, 1));
+            var pairStep = Math.min(CARD_W + 30, (460 - CARD_W) / Math.max(m - 1, 1));
             var totalW = CARD_W + pairStep * (m - 1);
-            var x0 = (STAGE_W - totalW) / 2;
-            return { x: x0 + i * pairStep, y: 78 };
+            var x0 = TABLE_CX - totalW / 2;
+            return { x: x0 + i * pairStep, y: TABLE_ATK_Y };
         }
-        function tableDefSlot(i, m) { var s = tableAtkSlot(i, m); return { x: s.x + 20, y: s.y + 32 }; }
+        function tableDefSlot(i, m) { var s = tableAtkSlot(i, m); return { x: s.x + 18, y: s.y + 34 }; }
 
-        // ── decor + opponents (non-animated, rebuilt each refresh) ──
+        // decor + opponents (non-animated, rebuilt each refresh)
         function buildDecor() {
             decorLayer.RemoveAndDeleteChildren();
             if (st.deck.length > 0) {
-                // trump first so the stack paints OVER it → it reads as tucked under the deck
+                // trump first so the stack paints OVER its left edge → it reads as coming out
+                // from under the deck
                 var ts = trumpSlot();
                 var tc = $.CreatePanel("Panel", decorLayer, "");
-                tc.AddClass("mg-dk-card"); tc.AddClass("mg-dk-trump");
-                tc.style.backgroundImage = "url('" + cardFaceUrl(st.trumpCard) + "')";
+                tc.AddClass("mg-dk-card");
+                tc.style.backgroundImage = faceCss(st.trumpCard);
                 tc.style.transform = xform(ts.x, ts.y, ts.rot);
                 var backs = Math.min(st.deck.length, 6);
                 for (var i = 0; i < backs; i++) {
                     var b = $.CreatePanel("Panel", decorLayer, "");
                     b.AddClass("mg-dk-card"); b.AddClass("mg-dk-cardback");
-                    b.style.transform = xform(deckSlot().x + i * 3, deckSlot().y - i * 3, 0);
+                    b.style.transform = xform(deckSlot().x + i * 2, deckSlot().y - i * 2, 0);
                 }
+                // Big remaining-deck count below the stack.
+                var dc = deckCountSlot();
+                var lbl = $.CreatePanel("Label", decorLayer, "");
+                lbl.AddClass("mg-dk-deckcount");
+                lbl.style.transform = xform(dc.x, dc.y, 0);
+                lbl.text = String(st.deck.length);
             }
-            // Trump is shown by the rotated card poking out of the stack, so the label is just
-            // the remaining deck count (no "Trump X" text — the maintainer asked to drop it).
-            var lbl = $.CreatePanel("Label", decorLayer, "");
-            lbl.AddClass("mg-dk-decklabel");
-            lbl.style.transform = xform(DECK_X - 2, deckSlot().y + CARD_H + 12, 0);
-            lbl.text = "Deck " + st.deck.length;
 
             // open-slot hint behind each uncovered attack while I'm defending
             if (st.defender === mySeat && st.phase === "defend") {
@@ -410,35 +412,67 @@
             }
         }
 
+        // Avatar tiles sit ON the felt: a rounded tile with the player's initial, a role RING
+        // (red = attacker, blue = defender), a hand-COUNT badge, and a NEAT little stack of card
+        // backs behind opponents. My own tile is bottom-LEFT (balancing the top opponent and
+        // clear of my centred hand); opponents by relative seat.
+        var AV = 64;
+        function avatarCenter(zone) {
+            if (zone === "left") return { x: 66, y: STAGE_H * 0.44 };
+            if (zone === "right") return { x: STAGE_W - 66, y: STAGE_H * 0.44 };
+            return { x: STAGE_W / 2, y: 46 };               // top
+        }
+        // A neat, tightly-overlapped stack of backs behind a tile (gentle 3° fan, not scattered).
+        function buildBackBunch(center, count) {
+            var shown = Math.min(count, 4);
+            if (shown <= 0) return;
+            var mid = (shown - 1) / 2;
+            for (var i = 0; i < shown; i++) {
+                var d = i - mid;
+                var bk = $.CreatePanel("Panel", decorLayer, "");
+                bk.AddClass("mg-dk-card"); bk.AddClass("mg-opp-back");
+                bk.style.transform = xform(center.x - 27 + d * 7, center.y - 22, Math.round(d * 3));
+            }
+        }
+        function buildTile(seat, center) {
+            var isMe = seat === mySeat;
+            var tile = $.CreatePanel("Panel", decorLayer, "");
+            tile.AddClass("mg-opp-tile");
+            if (isMe) tile.AddClass("mg-opp-me");
+            if (seat === st.attacker) tile.AddClass("mg-opp-atk");
+            if (seat === st.defender) tile.AddClass("mg-opp-def");
+            tile.style.transform = xform(center.x - AV / 2, center.y - AV / 2, 0);
+            var av = $.CreatePanel("Panel", tile, "");
+            av.AddClass("mg-opp-avatar");
+            var ini = $.CreatePanel("Label", av, "");
+            ini.AddClass("mg-opp-initial");
+            ini.text = isMe ? "You" : (isBot ? "B" + seat : "P" + (seat + 1));
+            var name = $.CreatePanel("Label", tile, "");
+            name.AddClass("mg-opp-name");
+            name.text = nameOf(seat);
+            var badge = $.CreatePanel("Panel", tile, "");
+            badge.AddClass("mg-opp-badge");
+            var bl = $.CreatePanel("Label", badge, "");
+            bl.AddClass("mg-opp-badgenum");
+            bl.text = String(st.hands[seat].length);
+        }
         function buildOpponents() {
-            topZone.RemoveAndDeleteChildren();
-            leftZone.RemoveAndDeleteChildren();
-            rightZone.RemoveAndDeleteChildren();
             for (var seat = 0; seat < numPlayers; seat++) {
-                if (seat === mySeat) continue;
-                var rel = (seat - mySeat + numPlayers) % numPlayers;
-                var zone = zones[seatZone(rel, numPlayers)] || topZone;
-                var opp = $.CreatePanel("Panel", zone, "");
-                opp.AddClass("mg-opp");
-                if (seat === st.attacker) opp.AddClass("mg-opp-atk");
-                if (seat === st.defender) opp.AddClass("mg-opp-def");
-                var lbl = $.CreatePanel("Label", opp, "");
-                lbl.AddClass("mg-opp-label");
-                var roleTag = seat === st.attacker ? " · ATK" : (seat === st.defender ? " · DEF" : "");
-                lbl.text = nameOf(seat) + " (" + st.hands[seat].length + ")" + roleTag;
-                var fan = $.CreatePanel("Panel", opp, "");
-                fan.AddClass("mg-oppfan");
-                var shown = Math.min(st.hands[seat].length, 8);
-                for (var i = 0; i < shown; i++) {
-                    var bk = $.CreatePanel("Panel", fan, "");
-                    bk.AddClass("mg-opp-back");
+                var center;
+                if (seat === mySeat) {
+                    // Bottom-left corner: well away from the centred hand and mirrors the top
+                    // opponent tile so the table reads symmetrically.
+                    center = { x: 60, y: STAGE_H - 54 };
+                } else {
+                    var rel = (seat - mySeat + numPlayers) % numPlayers;
+                    center = avatarCenter(seatZone(rel, numPlayers));
+                    buildBackBunch(center, st.hands[seat].length);   // opponents' hands are hidden
                 }
+                buildTile(seat, center);
             }
         }
 
-        // ── persistent card reconcile (the slide machinery) ──
-        // Compute where every card I can SEE (my hand + everything on the table) should be,
-        // then move existing panels to their new slot and create/destroy as needed.
+        // persistent card reconcile (the slide machinery)
         function computeWanted() {
             var wanted = [];
             var m = st.table.length, i;
@@ -476,10 +510,11 @@
             if (!el) {
                 el = $.CreatePanel("Panel", cardLayer, "");
                 el.AddClass("mg-dk-card");
-                el.style.backgroundImage = "url('" + cardFaceUrl(w.id) + "')";
+                el._dkFace = faceCss(w.id);                 // stash the QUOTED url for the ghost
+                el.style.backgroundImage = el._dkFace;
                 el.style.zIndex = String(w.z);
-                // A brand-new TABLE card was just played by an opponent → glide it in from
-                // their seat (top of the stage). A new HAND card is one I drew → from the deck.
+                // A brand-new TABLE card was just played by an opponent → glide it in from the
+                // top-centre. A new HAND card is one I drew → glide from the deck.
                 var start = w.table ? oppOriginSlot() : deckSlot();
                 el.style.transform = xform(start.x, start.y, 0);
                 cardEls[w.id] = el;
@@ -514,12 +549,11 @@
             try { el.DeleteAsync(0.25); } catch (e) { }
         }
 
-        // ── drag-and-drop (pick a hand card up, drop it on the table) ──────────────
+        // drag-and-drop (pick a hand card up, drop it on the table)
         // Reuses the proven QOLLOCK/checkers recipe: drag a throwaway GHOST (not the real
         // card), then on release read the ghost's absolute WINDOW position (the only channel
         // that survives the engine culling the ghost out of layout — see ARCHITECTURE §7) and
-        // map it into stage coords to decide the drop target. Click-to-play still works; drag
-        // is additive and can only ever produce a LEGAL move (a bad drop just snaps back).
+        // map it into stage coords to decide the drop target. Click-to-play still works.
         function winPos(panel) {
             if (!panel || !panel.GetPositionWithinWindow) return null;
             var r; try { r = panel.GetPositionWithinWindow(); } catch (e) { return null; }
@@ -530,8 +564,6 @@
             if (Math.abs(x) > 100000 || Math.abs(y) > 100000) return null; // FLT_MAX sentinel
             return { x: x, y: y };
         }
-        // Ghost centre → stage coordinates. Everything is window px, so the UI scale cancels
-        // out via (rendered layer width / STAGE_W).
         function stagePointFromGhost(ghost) {
             var lp = winPos(cardLayer), gp = winPos(ghost);
             if (!lp || !gp) return null;
@@ -545,12 +577,19 @@
             var cx = gp.x + gw / 2, cy = gp.y + gh / 2;
             return { x: (cx - lp.x) / scale, y: (cy - lp.y) / scale };
         }
+        // The felt "drop zone" is everything ABOVE the hand row. A release BELOW this line means
+        // "I changed my mind" (or a fat-fingered miss) → the card just snaps back to the hand and
+        // NO move is committed. This is exactly the "return to hand on miss/cancel" behaviour that
+        // was missing: previously a defend was applied no matter where you let go.
+        var DROP_ZONE_MAX_Y = STAGE_H - CARD_H - 30;
         function commitDrop(card, ghost) {
             if (!myTurn()) return;
             var pt = stagePointFromGhost(ghost);
-            if (!pt) return;                            // can't read the drop → snap back
+            if (!pt) return;                            // can't read the drop -> snap back
+            if (pt.y >= DROP_ZONE_MAX_Y) return;        // dropped back over the hand -> cancel, snap back
             if (st.phase === "defend" && st.defender === mySeat) {
-                // Cover the UNCOVERED pair nearest the drop that this card can beat.
+                // Cover the nearest UNCOVERED pair this card can beat, but ONLY if the drop
+                // actually landed near that pair (within ~1.4 card widths). A miss snaps back.
                 var m = st.table.length, best = -1, bestDx = 1e9;
                 for (var t = 0; t < m; t++) {
                     if (st.table[t].d >= 0 || !canDefendPair(st, t, card)) continue;
@@ -558,15 +597,13 @@
                     var dx = Math.abs(pt.x - sx);
                     if (dx < bestDx) { bestDx = dx; best = t; }
                 }
-                if (best >= 0) { applyDefend(st, best, card); afterAction(); }
-                else status("That card can't cover an open attack there.");
+                if (best >= 0 && bestDx <= CARD_W * 1.4) { applyDefend(st, best, card); afterAction(); }
+                // else: no reachable pair under the drop -> snap back silently (a miss shouldn't nag)
                 return;
             }
             if (st.phase === "attack" && st.attacker === mySeat) {
-                // Only a drop up on the table (not back on the hand) plays the card.
-                if (pt.y < STAGE_H - CARD_H - 30 && canAttackWith(st, mySeat, card)) {
-                    applyAttack(st, mySeat, card); afterAction();
-                }
+                if (canAttackWith(st, mySeat, card)) { applyAttack(st, mySeat, card); afterAction(); }
+                // else: illegal card dropped on the felt -> snap back silently
                 return;
             }
         }
@@ -575,7 +612,7 @@
                 if (!el._dkPlayable || !myTurn()) return;
                 var ghost = $.CreatePanel("Panel", cardLayer, "");
                 ghost.AddClass("mg-dk-card"); ghost.AddClass("mg-dk-dragging");
-                ghost.style.backgroundImage = el.style.backgroundImage;
+                ghost.style.backgroundImage = el._dkFace;   // reuse the stashed quoted url (never read it back off style)
                 ghost.style.zIndex = "900";
                 try { ghost.SetAttributeString("hittest", "false"); } catch (e) {}
                 dragEvent.displayPanel = ghost;
@@ -597,17 +634,15 @@
             controlsZone.RemoveAndDeleteChildren();
             var canAct = myTurn();
             if (canAct && st.phase === "attack" && st.attacker === mySeat && st.table.length > 0) {
-                mkButton(controlsZone, "Бито (Done)", function () { if (myTurn()) { endBout(st, false); afterAction(); } });
+                mkButton(controlsZone, "Bito (Pass)", function () { if (myTurn()) { endBout(st, false); afterAction(); } });
             }
             if (canAct && st.phase === "defend" && st.defender === mySeat && st.table.length > 0) {
-                mkButton(controlsZone, "Take (Беру)", function () { if (myTurn()) { endBout(st, true); afterAction(); } });
+                mkButton(controlsZone, "Take", function () { if (myTurn()) { endBout(st, true); afterAction(); } });
             }
         }
 
         function mkButton(parent, text, onClick) {
             var b = $.CreatePanel("Button", parent, "");
-            // Filled accent blue (same as QUICK MATCH) + centred via .mg-dk-action, so the
-            // Take / Бито button reads as the primary action and never drifts to the far left.
             b.AddClass("mg-btn"); b.AddClass("mg-btn-primary"); b.AddClass("mg-dk-action");
             var l = $.CreatePanel("Label", b, ""); l.text = text;
             b.SetPanelEvent("onactivate", onClick);
@@ -627,15 +662,14 @@
             buildControls();
         }
 
-        // ── input ──
+        // input
         function onHandCardClick(card) {
             if (!myTurn()) return;
             if (st.phase === "defend" && st.defender === mySeat) {
-                // Cover the first open attack this card can beat (walk all open pairs).
                 for (var t = 0; t < st.table.length; t++) {
                     if (st.table[t].d < 0 && canDefendPair(st, t, card)) { applyDefend(st, t, card); afterAction(); return; }
                 }
-                status("That card can't beat an open attack. Cover it or Take.");
+                status("That card can't beat an open attack. Cover it or take.");
                 return;
             }
             if (st.phase === "attack" && st.attacker === mySeat) {
@@ -645,13 +679,13 @@
             }
         }
 
-        // ── turn loop ──
+        // turn loop
         function promptFor() {
             if (st.phase === "defend" && st.defender === mySeat)
-                return "Your defense — cover the attack(s) or Take.";
-            if (st.attacker === mySeat && st.table.length === 0) return "Your turn — attack.";
-            if (st.attacker === mySeat) return "Add a matching-rank card, or press Бито.";
-            return "Waiting…";
+                return "Your defense. Cover the attacks or take.";
+            if (st.attacker === mySeat && st.table.length === 0) return "Your turn. Attack.";
+            if (st.attacker === mySeat) return "Add a matching-rank card, or press Bito.";
+            return "Waiting.";
         }
 
         function afterAction() {
@@ -660,9 +694,9 @@
             if (checkOver(st)) { finishGame(); return; }
             var actor = actionActor();
             if (actor === mySeat) { status(promptFor()); return; }
-            if (isBot) { status(nameOf(actor) + " is thinking…"); $.Schedule(0.55, botTurn); return; }
+            if (isBot) { status(nameOf(actor) + " is thinking..."); $.Schedule(0.55, botTurn); return; }
             // Stage 2 (online): poll the public log here.
-            status(nameOf(actor) + "'s turn…");
+            status(nameOf(actor) + "'s turn...");
         }
 
         function botTurn() {
@@ -685,16 +719,16 @@
 
         function finishGame() {
             render();
-            if (st.loser < 0) status("Draw — nobody is the fool!");
-            else if (st.loser === mySeat) status("You are the fool (durak). 🙃");
-            else status(nameOf(st.loser) + " is the fool! 🏆");
+            if (st.loser < 0) status("Draw.");
+            else if (st.loser === mySeat) status("You lose.");
+            else status("You win.");
         }
 
-        // ── boot ──
+        // boot
         render();
         if (myTurn()) status(promptFor());
-        else if (isBot) { status(nameOf(actionActor()) + " is thinking…"); $.Schedule(0.55, botTurn); }
-        else status(nameOf(actionActor()) + "'s turn…");
+        else if (isBot) { status(nameOf(actionActor()) + " is thinking..."); $.Schedule(0.55, botTurn); }
+        else status(nameOf(actionActor()) + "'s turn...");
 
         return {
             destroy: function () { destroyed = true; try { root.DeleteAsync(0); } catch (e) {} }
