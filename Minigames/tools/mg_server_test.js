@@ -188,6 +188,58 @@ async function main() {
         ok(ft.w === 9 && ft.h === 3, "c4: foreign token → (9,3) bad-token");
     })();
 
+    // ── durak: authoritative dealer (2 players), private deal + public log ──
+    await (async function () {
+        var L = await seatedLobby(3, "DH", "DJ");   // create(game=3) + join → seats 0/1
+        // Waiting room: both seated, not started yet.
+        var rm = await req(L.hub, "/api/room.png?code=" + L.code);
+        ok(rm.w === 2 && rm.h === 1, "durak: room shows 2 players, not started");
+        // Only the host (seat 0) may start.
+        var badStart = await req(L.hub, "/api/start.png?code=" + L.code + "&tok=DJ");
+        ok(badStart.w === 9 && badStart.h === 1, "durak: non-host start → (9,1)");
+        var st = await req(L.hub, "/api/start.png?code=" + L.code + "&tok=DH");
+        ok(st.w === 1 && st.h === 1, "durak: host start deals the game");
+        var rm2 = await req(L.hub, "/api/room.png?code=" + L.code);
+        ok(rm2.w === 2 && rm2.h === 2, "durak: room now shows started");
+        // Public log: TRUMP, OPEN, DRAW(0,6), DRAW(1,6).
+        var e0 = await req(L.hub, "/api/dlog.png?code=" + L.code + "&since=0");
+        ok(e0.w === 2 && e0.h >= 2 && e0.h <= 37, "durak: dlog[0] = TRUMP (2, trumpCard+1)");
+        var e1 = await req(L.hub, "/api/dlog.png?code=" + L.code + "&since=1");
+        ok(e1.w === 3 && (e1.h === 1 || e1.h === 2), "durak: dlog[1] = OPEN (3, attacker+1)");
+        var attacker = e1.h - 1, defender = attacker === 0 ? 1 : 0;
+        var e2 = await req(L.hub, "/api/dlog.png?code=" + L.code + "&since=2");
+        ok(e2.w === 50 && e2.h === 7, "durak: dlog[2] = DRAW(seat0, 6)");
+        var e3 = await req(L.hub, "/api/dlog.png?code=" + L.code + "&since=3");
+        ok(e3.w === 51 && e3.h === 7, "durak: dlog[3] = DRAW(seat1, 6)");
+        var e4 = await req(L.hub, "/api/dlog.png?code=" + L.code + "&since=4");
+        ok(e4.w === 1 && e4.h === 1, "durak: dlog[4] = nothing new (1,1)");
+        // Private deal: read my own 6 cards via ddraw.
+        var atkTok = attacker === 0 ? "DH" : "DJ", defTok = defender === 0 ? "DH" : "DJ";
+        var hand = [];
+        for (var i = 0; i < 6; i++) {
+            var d = await req(L.hub, "/api/ddraw.png?code=" + L.code + "&tok=" + atkTok + "&i=" + i);
+            ok(d.w >= 2 && d.w <= 37 && d.h === 1, "durak: ddraw[" + i + "] returns a card (card+2, never (1,1))");
+            hand.push(d.w - 2);
+        }
+        var d6 = await req(L.hub, "/api/ddraw.png?code=" + L.code + "&tok=" + atkTok + "&i=6");
+        ok(d6.w === 1 && d6.h === 1, "durak: ddraw past the hand → (1,1)");
+        // Privacy: a foreign token cannot read any seat's private cards.
+        var spy = await req(L.hub, "/api/ddraw.png?code=" + L.code + "&tok=STRANGER&i=0");
+        ok(spy.w === 9 && spy.h === 3, "durak: ddraw with foreign token → (9,3)");
+        // The defender may not attack.
+        var defHand0 = (await req(L.hub, "/api/ddraw.png?code=" + L.code + "&tok=" + defTok + "&i=0")).w - 2;
+        var defAtk = await req(L.hub, "/api/dact.png?code=" + L.code + "&tok=" + defTok + "&a=1&c=" + defHand0);
+        ok(defAtk.w === 9 && defAtk.h === 1, "durak: defender attacking → (9,1)");
+        // The attacker opens with one of its cards → accepted, and a PLAY event appears.
+        var atkAct = await req(L.hub, "/api/dact.png?code=" + L.code + "&tok=" + atkTok + "&a=1&c=" + hand[0]);
+        ok(atkAct.w === 1 && atkAct.h === 1, "durak: attacker opens (accepted)");
+        var ev = await req(L.hub, "/api/dlog.png?code=" + L.code + "&since=4");
+        ok(ev.w === (10 + attacker) && ev.h === (hand[0] + 1), "durak: dlog records PLAY(attacker, card)");
+        // The defender covering with a card that can't beat it (or a wrong pair) is illegal.
+        var badCover = await req(L.hub, "/api/dact.png?code=" + L.code + "&tok=" + defTok + "&a=2&p=0&c=" + defHand0);
+        ok(badCover.w === 9 && (badCover.h === 2 || badCover.h === 1), "durak: an illegal cover is rejected");
+    })();
+
     // ── public quickmatch: pairs two callers into one lobby (with tokens) ──
     var h2 = new Hub({ storage: new FakeStorage() });
     var q1 = await req(h2, "/api/quick.png?game=1&tok=QA");
