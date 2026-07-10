@@ -350,7 +350,10 @@
         // scale" trump glitch and sometimes culled the card off-screen entirely.
         var DECK_X = 32, DECK_Y = 150;
         function deckSlot() { return { x: DECK_X, y: DECK_Y }; }
-        function trumpSlot() { return { x: DECK_X + CARD_W - 22, y: DECK_Y, rot: 0 }; }
+        // Trump lies HORIZONTAL (rotateZ 90) UNDER the deck via a wrapper (translate) + inner
+        // card (rotateZ only in CSS .mg-dk-trump). NEVER translate3d+rotateZ in one inline
+        // string: that mix was the "300% scale" + off-screen-cull glitch (scale3d trap family).
+        function trumpSlot() { return { x: DECK_X + 46, y: DECK_Y + 20 }; }
         // Big deck-count number centred BELOW the stack (not cramped against its side).
         function deckCountSlot() { return { x: DECK_X + 30, y: DECK_Y + CARD_H + 10 }; }
         // A card an opponent PLAYS glides in from the top-centre (where they sit); a drawn HAND
@@ -382,10 +385,12 @@
                 // trump first so the stack paints OVER its left edge → it reads as coming out
                 // from under the deck
                 var ts = trumpSlot();
-                var tc = $.CreatePanel("Panel", decorLayer, "");
-                tc.AddClass("mg-dk-card");
+                var twrap = $.CreatePanel("Panel", decorLayer, "");
+                twrap.AddClass("mg-dk-trump-wrap");
+                twrap.style.transform = xform(ts.x, ts.y, 0);
+                var tc = $.CreatePanel("Panel", twrap, "");
+                tc.AddClass("mg-dk-card"); tc.AddClass("mg-dk-trump");
                 tc.style.backgroundImage = faceCss(st.trumpCard);
-                tc.style.transform = xform(ts.x, ts.y, ts.rot);
                 var backs = Math.min(st.deck.length, 6);
                 for (var i = 0; i < backs; i++) {
                     var b = $.CreatePanel("Panel", decorLayer, "");

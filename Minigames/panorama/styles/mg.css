@@ -749,6 +749,12 @@
     background-image: url("s2r://panorama/images/deck/BACK.vtex");
     background-color: #16233a;
 }
+/* Trump laid horizontal UNDER the deck: outer wrapper positioned by translate3d in JS, this
+   inner card rotated 90 with a SINGLE rotateZ (idiom proven by .mg-x-bar-a). NEVER combine
+   translate3d + rotateZ in one inline transform (the "300% scale" trump glitch, scale3d trap
+   family). The wrapper keeps the 100x140 box so nothing scales. */
+.mg-dk-trump-wrap { width: 100px; height: 140px; flow-children: none; overflow: noclip; }
+.mg-dk-trump { transform: rotateZ(90deg); }
 /* a hand card I can legally play right now — accent hairline + brighten on hover.
    No transform on :hover (it would fight the inline positioning transform). */
 .mg-dk-playable {
