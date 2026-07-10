@@ -252,6 +252,7 @@ function initState(game) {
   if (game === 1) return { board: R.checkers.initialBoard(), chainSq: -1 }; // checkers
   if (game === 2) return { board: [0, 0, 0, 0, 0, 0, 0, 0, 0] };            // tic-tac-toe
   if (game === 4) return { board: R.chess.initialChessBoard(), cst: R.chess.initialChessState() }; // chess
+  if (game === 5) return { board: R.connectfour.initialBoard() };                                  // connect four
   return null;
 }
 
@@ -265,6 +266,7 @@ function validateMove(lobby, seat, from, to, end) {
   if (lobby.game === 1) return validateCheckers(R.checkers, lobby, seat, from, to);
   if (lobby.game === 2) return validateTtt(lobby, seat, from, to);
   if (lobby.game === 4) return validateChess(R.chess, lobby, seat, from, to);
+  if (lobby.game === 5) return validateConnectFour(R.connectfour, lobby, seat, from, to);
   return { ok: true, move: { f: from, t: to, e: end } };
 }
 
@@ -315,6 +317,20 @@ function validateChess(RX, lobby, seat, from, to) {
   st.board = r[0]; st.cst = r[1];
   lobby.turn = seat === 0 ? 1 : 0;           // every chess move ends the turn
   return { ok: true, move: { f: from, t: to, e: 1 } };
+}
+
+// Connect Four: a move is a COLUMN in `from` (0..6) with the fixed marker `to === 7` (so
+// from != to always holds, exactly like tic-tac-toe's to === 9). The server derives the
+// landing row via gravity and rejects a full column. Host = seat 0 = red, moves first.
+function validateConnectFour(RC, lobby, seat, from, to) {
+  const st = lobby.state;
+  if (seat !== lobby.turn) return { ok: false, code: 1 };
+  if (to !== 7 || from < 0 || from >= RC.COLS) return { ok: false, code: 2 };
+  const r = RC.drop(st.board, from, seat === 0 ? 1 : 2);
+  if (!r) return { ok: false, code: 2 };     // column full
+  st.board = r.board;
+  lobby.turn = seat === 0 ? 1 : 0;
+  return { ok: true, move: { f: from, t: 7, e: 1 } };
 }
 
 

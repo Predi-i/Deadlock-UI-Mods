@@ -153,6 +153,41 @@ async function main() {
         ok(c2.w === 1 && c2.h === 1, "chess: black e7-e5 accepted");
     })();
 
+    // ── connect four: column marker + gravity + turn + full column ──
+    (async function () {
+        var L = await seatedLobby(5, "H", "J");
+        // Host (red, seat 0) drops in column 3 — accepted (to=7 marker).
+        var a = await req(L.hub, "/api/move.png?code=" + L.code + "&from=3&to=7&end=1&tok=H");
+        ok(a.w === 1 && a.h === 1, "c4: host drops in column 3 (accepted)");
+        // A bad marker (to != 7) is illegal.
+        var b2 = await req(L.hub, "/api/move.png?code=" + L.code + "&from=2&to=5&end=1&tok=J");
+        ok(b2.w === 9 && b2.h === 2, "c4: wrong destination marker → (9,2)");
+        // Host playing twice in a row → not your turn.
+        var c2 = await req(L.hub, "/api/move.png?code=" + L.code + "&from=2&to=7&end=1&tok=H");
+        ok(c2.w === 9 && c2.h === 1, "c4: host playing twice → (9,1) not-your-turn");
+        // Joiner (yellow) drops in column 2 — accepted (turn alternation).
+        var e2 = await req(L.hub, "/api/move.png?code=" + L.code + "&from=2&to=7&end=1&tok=J");
+        ok(e2.w === 1 && e2.h === 1, "c4: joiner drops (turn alternation)");
+        // Poll round-trips the host's first drop (from=3, to marker=7, end=1).
+        var pd = await req(L.hub, "/api/poll.png?code=" + L.code + "&since=0");
+        var pend = pd.w > 100 ? 1 : 0, pfrom = (pend ? pd.w - 100 : pd.w) - 1, pto = pd.h - 1;
+        ok(pend === 1 && pfrom === 3 && pto === 7, "c4: poll round-trips the column drop with end=1");
+        // Fill column 0 (6 discs) then a 7th drop into it is rejected as illegal.
+        var L2 = await seatedLobby(5, "H2", "J2");
+        var toks = ["H2", "J2"];
+        for (var k = 0; k < 6; k++) {
+            var who = toks[k % 2];
+            var rr = await req(L2.hub, "/api/move.png?code=" + L2.code + "&from=0&to=7&end=1&tok=" + who);
+            ok(rr.w === 1, "c4: fill column 0 drop " + (k + 1) + " accepted");
+        }
+        // It's host's turn again (6 drops = even). Dropping into the FULL column 0 → (9,2).
+        var full = await req(L2.hub, "/api/move.png?code=" + L2.code + "&from=0&to=7&end=1&tok=H2");
+        ok(full.w === 9 && full.h === 2, "c4: dropping into a full column → (9,2) illegal");
+        // Foreign token still rejected.
+        var ft = await req(L2.hub, "/api/move.png?code=" + L2.code + "&from=1&to=7&end=1&tok=NOPE");
+        ok(ft.w === 9 && ft.h === 3, "c4: foreign token → (9,3) bad-token");
+    })();
+
     // ── public quickmatch: pairs two callers into one lobby (with tokens) ──
     var h2 = new Hub({ storage: new FakeStorage() });
     var q1 = await req(h2, "/api/quick.png?game=1&tok=QA");

@@ -19,7 +19,7 @@ const root = path.join(__dirname, "..");
 function loadClientRules() {
     var sandbox = {};                 // isolated MGRules so it can't collide with the server copy
     var g = { globalThis: sandbox };
-    ["checkers.js", "ttt.js", "chess.js"].forEach(function (name) {
+    ["checkers.js", "ttt.js", "chess.js", "connectfour.js"].forEach(function (name) {
         var src = fs.readFileSync(path.join(root, "panorama", "scripts", "rules", name), "utf8");
         // The IIFE resolves its namespace off `globalThis`; give it our sandbox as that.
         new Function("globalThis", src)(sandbox);
@@ -112,6 +112,27 @@ function makeRng(seed) { var s = seed >>> 0; return function () { s = (s * 16645
         }
     }
     ok(mismatches === 0, "chess: client & server legalMoves identical over " + plies + " plies");
+})();
+
+// ── connect four: random self-play; at each ply assert identical legalCols + winner + bot ──
+(function () {
+    var C = CL.connectfour, S = SV.connectfour;
+    function key(R, b) { return R.legalCols(b).join(",") + "|" + R.winner(b) + "|" + R.cfBotMove(b.slice(), 1) + "/" + R.cfBotMove(b.slice(), 2); }
+    var rng = makeRng(424242), mismatches = 0, plies = 0;
+    for (var game = 0; game < 40; game++) {
+        var b = C.initialBoard(), p = 1, steps = 0;
+        while (steps < 42) {
+            plies++;
+            if (key(C, b) !== key(S, b)) { mismatches++; break; }
+            if (C.winner(b) || C.isFull(b)) break;
+            var cols = C.legalCols(b);
+            if (!cols.length) break;
+            var col = cols[(rng() * cols.length) | 0];
+            b = C.drop(b, col, p).board;
+            p = p === 1 ? 2 : 1; steps++;
+        }
+    }
+    ok(mismatches === 0, "connect four: client & server legalCols/winner/bot identical over " + plies + " plies");
 })();
 
 console.log((failures === 0 ? "  ✓ " : "") + "");
