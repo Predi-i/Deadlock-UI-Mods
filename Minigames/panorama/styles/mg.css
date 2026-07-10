@@ -850,3 +850,39 @@
     font-family: radiance !important; color: #cdd9e7 !important; font-size: 15px !important;
     horizontal-align: center; vertical-align: center;
 }
+
+/* ── connect four ────────────────────────────────────────────────────────────
+   Blue board with round holes; a disc is a child of the landed cell and falls in via a
+   translateY animation armed one frame after creation (.mg-cf-anim, checkers idiom).
+   Geometry MUST match mg_connectfour.js: CELL 60, disc 50, 7x6. */
+.mg-cf { horizontal-align: center; flow-children: down; }
+.mg-cf-board {
+    flow-children: down; horizontal-align: center; overflow: noclip;
+    padding: 6px; border-radius: 10px;
+    background-color: #23479e;
+    box-shadow: 0px 6px 16px 0px #00000099;
+}
+.mg-cf-row { flow-children: right; height: 60px; }
+.mg-cf-cell { width: 60px; height: 60px; flow-children: none; }
+/* the empty hole the discs sit in; a hover tints the whole cell to hint the drop column */
+.mg-cf-hole {
+    width: 50px; height: 50px; border-radius: 50%;
+    background-color: #0d1b3e;
+    horizontal-align: center; vertical-align: center;
+    transition-property: background-color; transition-duration: 0.1s;
+}
+.mg-cf-cell:hover .mg-cf-hole { background-color: #16275c; }
+/* a played disc. BASE class carries NO transition so a rebuilt board snaps; the falling
+   disc gets .mg-cf-anim one frame later so only real drops animate (checkers arming). */
+.mg-cf-disc {
+    width: 50px; height: 50px; border-radius: 50%;
+    horizontal-align: center; vertical-align: center;
+    box-shadow: 0px 2px 4px 0px #00000099;
+}
+.mg-cf-disc.mg-cf-anim {
+    transition-property: transform; transition-duration: 0.28s; transition-timing-function: ease-in;
+}
+.mg-cf-red { background-color: gradient(radial, 50% 35%, 0% 0%, 75% 75%, from(#ff6b63), to(#c8352c)); border: 2px solid #a02820; }
+.mg-cf-yellow { background-color: gradient(radial, 50% 35%, 0% 0%, 75% 75%, from(#ffe06a), to(#e0b422)); border: 2px solid #b8901a; }
+/* winning four highlighted with a bright ring */
+.mg-cf-win .mg-cf-disc { border-color: #ffffff; box-shadow: 0px 0px 0px 3px #ffffffcc; }

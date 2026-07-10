@@ -10,9 +10,11 @@
 		<include src="s2r://panorama/scripts/rules/checkers.vjs_c" />
 		<include src="s2r://panorama/scripts/rules/ttt.vjs_c" />
 		<include src="s2r://panorama/scripts/rules/chess.vjs_c" />
+		<include src="s2r://panorama/scripts/rules/connectfour.vjs_c" />
 		<include src="s2r://panorama/scripts/mg_games.vjs_c" />
 
 		<include src="s2r://panorama/scripts/mg_durak.vjs_c" />
+		<include src="s2r://panorama/scripts/mg_connectfour.vjs_c" />
 		<include src="s2r://panorama/scripts/mg_ui.vjs_c" />
 	</scripts>
 	<Panel class="WindowRoot" hittest="false" disallowedstyleflags="hover,descendantfocus">
