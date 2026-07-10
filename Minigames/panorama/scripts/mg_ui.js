@@ -21,6 +21,10 @@
     }
 
     var overlay = null, modalBody = null, statusLabel = null, titleLabel = null;
+    // UI-scale control (dropdown left of the close X): scales the WHOLE modal — picker,
+    // boards, Durak felt & cards — via pre-transform-scale2d on .mg-modal. Kept for the
+    // session; the drag maths in the games are already relative so any scale is safe.
+    var modalPanel = null, uiScalePct = 100, scaleMenu = null, scaleLabel = null;
     // In the MENU view the status text lives on the LEFT of the footer row (same line as the
     // dev tools) instead of on its own line below — shorter panel, and the message sits level
     // with Test Connection / Self-Test. Other views keep the centred bottom statusLabel.
@@ -137,6 +141,7 @@
 
         var modal = $.CreatePanel("Panel", overlay, "MG_Modal");
         modal.AddClass("mg-modal");
+        modalPanel = modal;
 
         var header = $.CreatePanel("Panel", modal, "");
         header.AddClass("mg-header");
@@ -157,6 +162,8 @@
         sIcon.AddClass("mg-support-icon");   // background-image = icon_thumbsup.vsvg (CSS)
         var sLbl = $.CreatePanel("Label", supportBtn, ""); sLbl.AddClass("mg-support-label"); sLbl.text = "Support";
         supportBtn.SetPanelEvent("onactivate", function () { openSupport(); });
+        // UI-scale dropdown sits between the header's flexible left cluster and the close X.
+        buildScaleControl(header);
         // Close button, pushed to the far right by the header's flow.
         var close = $.CreatePanel("Button", header, "");
         close.AddClass("mg-close");
@@ -170,6 +177,7 @@
         statusLabel = $.CreatePanel("Label", modal, "MG_Status");
         statusLabel.AddClass("mg-status");
         statusLabel.text = "";
+        applyUiScale();
     }
 
     function setStatus(t) {
@@ -187,6 +195,55 @@
         }
     }
     function setTitle(t) { if (titleLabel) titleLabel.text = t; }
+
+    // ── UI-scale dropdown ─────────────────────────────────────────────────────
+    // A tiny custom dropdown (button + popup list) — a native <DropDown> is fragile in the
+    // HUD context, and panels + onactivate are the proven idiom. The wrapper is
+    // flow-children:none so the popup can overlap the body below (overlap idiom, §6.1), NOT
+    // position:absolute (which Panorama ignores).
+    var SCALE_STEPS = [100, 125, 150, 175, 200];
+    function buildScaleControl(parent) {
+        var wrap = $.CreatePanel("Panel", parent, "MG_ScaleWrap");
+        wrap.AddClass("mg-scale");
+        var btn = $.CreatePanel("Button", wrap, "MG_ScaleBtn");
+        btn.AddClass("mg-scale-btn");
+        scaleLabel = $.CreatePanel("Label", btn, "");
+        scaleLabel.AddClass("mg-scale-label");
+        scaleLabel.text = uiScalePct + "%";
+        var caret = $.CreatePanel("Label", btn, "");
+        caret.AddClass("mg-scale-caret");
+        caret.text = "v";                                   // plain ASCII: no chevron glyph in the font
+        var menu = $.CreatePanel("Panel", wrap, "MG_ScaleMenu");
+        menu.AddClass("mg-scale-menu");
+        menu.style.visibility = "collapse";
+        scaleMenu = menu;
+        for (var i = 0; i < SCALE_STEPS.length; i++) {
+            (function (pct) {
+                var row = $.CreatePanel("Button", menu, "");
+                row.AddClass("mg-scale-opt");
+                var l = $.CreatePanel("Label", row, ""); l.text = pct + "%";
+                row.SetPanelEvent("onactivate", function () { setUiScale(pct); hideScaleMenu(); });
+            })(SCALE_STEPS[i]);
+        }
+        btn.SetPanelEvent("onactivate", function () {
+            var open = scaleMenu && scaleMenu.BHasClass && scaleMenu.BHasClass("mg-scale-open");
+            if (open) hideScaleMenu(); else showScaleMenu();
+        });
+    }
+    function showScaleMenu() { if (scaleMenu) { scaleMenu.style.visibility = "visible"; scaleMenu.AddClass("mg-scale-open"); } }
+    function hideScaleMenu() { if (scaleMenu) { scaleMenu.style.visibility = "collapse"; scaleMenu.RemoveClass("mg-scale-open"); } }
+    function setUiScale(pct) {
+        uiScalePct = pct;
+        if (scaleLabel) scaleLabel.text = pct + "%";
+        applyUiScale();
+    }
+    // pre-transform-scale2d scales the modal in place (around its centre) AFTER layout, so the
+    // full-screen dim behind it stays put. Every child (board/cards) scales with it.
+    function applyUiScale() {
+        if (modalPanel && modalPanel.IsValid && modalPanel.IsValid()) {
+            try { modalPanel.style.preTransformScale2d = (uiScalePct / 100).toFixed(3); } catch (e) {}
+        }
+    }
 
     function cleanupCurrentView(cancelServer) {
         // Stop any background polling and drop pending requests from the queue

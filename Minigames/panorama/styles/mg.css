@@ -816,3 +816,37 @@
 }
 /* big remaining-deck count to the right of the stack */
 .mg-dk-deckcount { font-family: oracle !important; font-weight: bold; color: #eaf2ff !important; font-size: 40px !important; }
+
+/* ── UI-scale dropdown (header, left of the close X) ────────────────────────── */
+/* Wrapper is flow-children:none so the popup menu can overlap the body below it (overlap
+   idiom, no position:absolute). The modal itself is scaled via pre-transform-scale2d set in JS. */
+.mg-scale { flow-children: none; width: 84px; height: 30px; vertical-align: center; margin-right: 10px; overflow: noclip; }
+.mg-scale-btn {
+    width: 84px; height: 30px;
+    background-color: #161f2b; border: 1px solid #2a3849; border-radius: 2px;
+    flow-children: right; vertical-align: center;
+    transition-property: background-color, border-color, brightness;
+    transition-duration: 0.1s; transition-timing-function: ease-out;
+}
+.mg-scale-btn:hover { background-color: #1c2836; border-color: #3a5170; brightness: 1.08; }
+.mg-scale-label {
+    font-family: radiance !important; font-weight: semi-bold; color: #cdd9e7 !important;
+    font-size: 15px !important; vertical-align: center; margin-left: 10px;
+}
+.mg-scale-caret {
+    font-family: radiance !important; color: #7a8ea6 !important; font-size: 12px !important;
+    vertical-align: center; margin-left: 6px;
+}
+/* popup list, dropped below the button (margin-top clears the 30px button). z-index lifts it
+   over the modal body; it toggles visibility from JS. */
+.mg-scale-menu {
+    margin-top: 33px; width: 84px; z-index: 200;
+    background-color: #0f141c; border: 1px solid #2a3849; border-radius: 2px;
+    flow-children: down; box-shadow: 0px 8px 20px 0px #000000aa;
+}
+.mg-scale-opt { width: 100%; height: 30px; background-color: #00000000; }
+.mg-scale-opt:hover { background-color: #1c2836; }
+.mg-scale-opt Label {
+    font-family: radiance !important; color: #cdd9e7 !important; font-size: 15px !important;
+    horizontal-align: center; vertical-align: center;
+}
