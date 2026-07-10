@@ -252,7 +252,7 @@
         if (MG.Net && MG.Net.clearQueue) try { MG.Net.clearQueue(); } catch (e) {}
         
         // Only cancel the server lobby if the player explicitly left or closed the menu
-        if (cancelServer && currentCode && (view === "waiting" || view === "game")) {
+        if (cancelServer && currentCode && (view === "waiting" || view === "room" || view === "game")) {
             try { MG.Api.cancel(currentCode); } catch (e) {}
         }
         
@@ -383,10 +383,9 @@
             return;
         }
 
-        // Durak ships bot-only for now: its online path (worker-as-dealer, 2–4 player
-        // seating) is Stage 2. Until then hide the online actions so a player can't start a
-        // dead lobby, and show only PLAY VS BOT below. Remove this gate when online lands.
-        var onlineReady = (g.key !== "durak");
+        // Durak online is wired for 2 players only for now. 3–4-player seating/throw-in UI is
+        // deliberately deferred; the normal Create/Join/Quick buttons enter a 2-seat room.
+        var onlineReady = true;
 
         if (onlineReady) {
             // Primary: one-button public matchmaking. Wrapped in a .mg-btn-row so it uses
@@ -431,10 +430,10 @@
         var bl = $.CreatePanel("Label", botBtn, ""); bl.text = "PLAY VS BOT";
         botBtn.SetPanelEvent("onactivate", function () { startBotGame(); });
 
-        if (!onlineReady) {
-            var soon = $.CreatePanel("Label", detailPanel, "");
-            soon.AddClass("mg-caption");
-            soon.text = "Online 2–4 player Durak is coming soon.";
+        if (g.key === "durak") {
+            var durakNote = $.CreatePanel("Label", detailPanel, "");
+            durakNote.AddClass("mg-caption");
+            durakNote.text = "Online Durak is 2-player now; 3–4 players are deferred.";
         }
 
         fadeInDetail();
@@ -632,7 +631,7 @@
         setStatus(isPublic ? "Searching for an opponent…" : "Waiting for a player…");
     }
 
-    function renderGame(gameId, code, isHost, bot) {
+    function renderGame(gameId, code, isHost, bot, opts) {
         cleanupCurrentView(false);
         view = "game";
         var g = MG.Games.byId(gameId);
@@ -647,6 +646,8 @@
             isHost: isHost,
             bot: !!bot,
             tok: currentTok,          // seat token: authorises this client's moves (unused offline)
+            seat: opts && opts.seat,
+            numPlayers: opts && opts.numPlayers,
             onStatus: setStatus
         });
 
@@ -659,6 +660,8 @@
     }
 
     // ── lobby flow ────────────────────────────────────────────────────────────
+    function isDurakOnlineGame(id) { return id === 3; }
+
     function startCreate() {
         if (!MG.Net.isConfigured()) { setStatus("⚠ Configure the server first (BASE_URL in mg_net.js)."); return; }
         var g = MG.Games.byId(selectedGameId);
@@ -669,12 +672,83 @@
         MG.Api.create(selectedGameId, currentTok, function (code) {
             log("create ok, code=" + code);
             currentCode = code;
+            if (isDurakOnlineGame(selectedGameId)) { renderRoom(code, true, false); return; }
             renderWaiting(code);
             waitForJoiner(code);
         }, function () {
             log("create FAILED (request errored)");
             setStatus("Couldn't create lobby. Check the server.");
         });
+    }
+
+    function renderRoom(code, isHost, isPublic) {
+        cleanupCurrentView(false);
+        view = "room";
+        setTitle(isHost ? "Durak Room" : "Joined Durak Room");
+        clearBody();
+        currentCode = code;
+
+        if (isPublic) {
+            var searching = $.CreatePanel("Label", modalBody, "");
+            searching.AddClass("mg-searching");
+            searching.text = isHost ? "Waiting for a Durak opponent…" : "Matched. Waiting for host start…";
+        } else {
+            var box = $.CreatePanel("Panel", modalBody, "");
+            box.AddClass("mg-code-box");
+            var cap = $.CreatePanel("Label", box, ""); cap.AddClass("mg-code-cap"); cap.text = "Durak lobby code:";
+            var big = $.CreatePanel("Label", box, ""); big.AddClass("mg-code-big"); big.text = String(code);
+            var hint = $.CreatePanel("Label", box, ""); hint.AddClass("mg-code-hint");
+            hint.text = "2-player online Durak. Host starts after the second player joins.";
+        }
+
+        var seats = $.CreatePanel("Panel", modalBody, "");
+        seats.AddClass("mg-room-seats");
+        var seat0 = $.CreatePanel("Label", seats, ""); seat0.AddClass("mg-room-seat"); seat0.text = isHost ? "Seat 1: You (host)" : "Seat 1: Host";
+        var seat1 = $.CreatePanel("Label", seats, ""); seat1.AddClass("mg-room-seat"); seat1.text = isHost ? "Seat 2: Waiting…" : "Seat 2: You";
+
+        var row = $.CreatePanel("Panel", modalBody, "");
+        row.AddClass("mg-actions");
+        if (isHost) {
+            var start = $.CreatePanel("Button", row, "");
+            start.AddClass("mg-btn"); start.AddClass("mg-btn-primary");
+            var sl = $.CreatePanel("Label", start, ""); sl.text = "Start";
+            start.SetPanelEvent("onactivate", function () {
+                setStatus("Starting Durak…");
+                MG.Api.start(code, currentTok, function (r) {
+                    if (r.ok) { renderGame(3, code, true, false, { seat: 0, numPlayers: 2 }); return; }
+                    if (r.reason === "players") setStatus("Need a second player before starting.");
+                    else if (r.reason === "host") setStatus("Only the host can start.");
+                    else setStatus("Couldn't start Durak (" + (r.reason || "error") + ").");
+                }, function () { setStatus("Server unavailable."); });
+            });
+        }
+        var back = $.CreatePanel("Button", row, "");
+        back.AddClass("mg-btn");
+        var bl = $.CreatePanel("Label", back, ""); bl.text = "Cancel";
+        back.SetPanelEvent("onactivate", function () { renderMenu(); });
+
+        setStatus(isHost ? "Waiting for player 2…" : "Waiting for host to start…");
+        pollDurakRoom(code, isHost, seat1);
+    }
+
+    function pollDurakRoom(code, isHost, seat1Label) {
+        statusPollToken++;
+        var token = statusPollToken;
+        function tick() {
+            if (token !== statusPollToken || view !== "room") return;
+            MG.Api.room(code, function (r) {
+                if (token !== statusPollToken || view !== "room") return;
+                if (r.gone) { renderMenu(); setStatus("⚠ Lobby closed."); return; }
+                if (seat1Label && seat1Label.IsValid && seat1Label.IsValid()) {
+                    seat1Label.text = isHost ? (r.players >= 2 ? "Seat 2: Player joined" : "Seat 2: Waiting…") : "Seat 2: You";
+                }
+                if (r.started) { renderGame(3, code, isHost, false, { seat: isHost ? 0 : 1, numPlayers: 2 }); return; }
+                if (isHost) setStatus(r.players >= 2 ? "Player 2 joined. Press Start." : "Waiting for player 2…");
+                else setStatus("Waiting for host to start…");
+                $.Schedule(1.0, tick);
+            }, function () { $.Schedule(1.5, tick); });
+        }
+        tick();
     }
 
     function waitForJoiner(code) {
@@ -702,10 +776,12 @@
             if (res.role === "joiner") {
                 log("quick joined, code=" + res.code);
                 currentCode = res.code;
+                if (isDurakOnlineGame(selectedGameId)) { renderRoom(res.code, false, true); return; }
                 renderGame(selectedGameId, res.code, false); // seated by the server; we play black
             } else {
                 log("quick hosting, code=" + res.code);
                 currentCode = res.code;
+                if (isDurakOnlineGame(selectedGameId)) { renderRoom(res.code, true, true); return; }
                 renderWaiting(res.code, true);
                 waitForJoiner(res.code);
             }
@@ -726,6 +802,7 @@
                 var g = MG.Games.byId(res.game);
                 if (!g || !g.enabled) { setStatus("Couldn't read the lobby. Please try again."); return; }
                 currentCode = code;
+                if (res.game === 3) { renderRoom(code, false, false); return; }
                 renderGame(res.game, code, false);
                 return;
             }

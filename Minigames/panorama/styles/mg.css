@@ -550,6 +550,27 @@
     horizontal-align: center;
 }
 
+/* ── simple 2-seat room view (Durak online v1) ───────────────────────────── */
+.mg-room-seats {
+    width: 420px;
+    flow-children: down;
+    horizontal-align: center;
+    margin-top: 16px;
+    padding: 12px;
+    background-color: #0c1118;
+    border: 1px solid #263445;
+    border-radius: 2px;
+}
+.mg-room-seat {
+    font-family: radiance !important;
+    color: #cdd9e7 !important;
+    font-size: 18px !important;
+    width: 100%;
+    margin-top: 3px;
+    margin-bottom: 3px;
+    text-align: center;
+}
+
 /* ── checkers board ──────────────────────────────────────────────────────── */
 .mg-game-host { width: 100%; horizontal-align: center; }
 .mg-checkers { horizontal-align: center; flow-children: down; }
