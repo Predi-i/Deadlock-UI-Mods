@@ -76,9 +76,45 @@
         var numPlayers = session.numPlayers || 2;
         var mySeat = (session.seat != null) ? session.seat : 0;
         var isBot = !!session.bot;
+        // Online (worker-as-dealer) vs offline (local deck+bot). Online, the server OWNS the
+        // deck/hands/seed: this client learns the table/trump/roles/counts from the public
+        // /api/dlog event stream and its OWN card identities from the private /api/ddraw
+        // channel. It never sees the deck or a foreign hand. Offline, everything runs locally
+        // exactly as before.
+        var online = !isBot && !!session.code && !!(MG.Api && MG.Api.dlog);
         var seed = (session.seed != null) ? session.seed : ((Math.random() * 0x7fffffff) | 0);
-        var st = newGame(numPlayers, seed);
+        var st = online ? emptyOnlineState(numPlayers) : newGame(numPlayers, seed);
         var destroyed = false;
+
+        // ── online sync state ──────────────────────────────────────────────────────
+        // logSeq = next public event index to fetch; drawCursor[seat] = next private card
+        // index already pulled for a seat (only MY cursor pulls real ids via ddraw, opponents
+        // just get placeholder count). pendingAct blocks input between send and the echo.
+        var logSeq = 0, drawCursor = [], pendingAct = false, pendingDraws = 0, gameOver = false;
+        var deckRemaining = DECK_SIZE;   // 36 minus every card drawn (client can't see the deck, only count it)
+        for (var _s = 0; _s < numPlayers; _s++) drawCursor.push(0);
+
+
+        // A fresh online state: unknown trump/deck yet, empty hands (opponents get placeholder
+        // sentinels so their COUNT badges + back-bunches render; my hand fills from ddraw).
+        function emptyOnlineState(N) {
+            var s = { numPlayers: N, trump: -1, trumpCard: -1, deck: [], hands: [], table: [],
+                      attacker: 0, defender: 1 % N, phase: "attack", discard: 0, out: [], loser: -1 };
+            for (var i = 0; i < N; i++) { s.hands.push([]); s.out.push(false); }
+            return s;
+        }
+        // The client can't see the real deck, but it can COUNT it: 36 cards minus every card
+        // drawn (DRAW events) that isn't the face-up trump. We keep a placeholder array so the
+        // deck stack + count render; length is all render() ever reads.
+        function setDeckCount(n) {
+            var arr = [];
+            for (var i = 0; i < n; i++) arr.push(-1);
+            st.deck = arr;
+        }
+        // Placeholder id for a hidden opponent card (never rendered as a face — opponents only
+        // show back-bunches + a count badge).
+        var HIDDEN = -1;
+
 
         function status(t) { if (session.onStatus) session.onStatus(t); }
         function nameOf(seat) {
@@ -355,7 +391,7 @@
         // was missing: previously a defend was applied no matter where you let go.
         var DROP_ZONE_MAX_Y = STAGE_H - CARD_H - 30;
         function commitDrop(card, ghost) {
-            if (!myTurn()) return;
+            if (!myTurn() || pendingAct) return;
             var pt = stagePointFromGhost(ghost);
             if (!pt) return;                            // can't read the drop -> snap back
             if (pt.y >= DROP_ZONE_MAX_Y) return;        // dropped back over the hand -> cancel, snap back
@@ -369,16 +405,23 @@
                     var dx = Math.abs(pt.x - sx);
                     if (dx < bestDx) { bestDx = dx; best = t; }
                 }
-                if (best >= 0 && bestDx <= CARD_W * 1.4) { applyDefend(st, best, card); afterAction(); }
+                if (best >= 0 && bestDx <= CARD_W * 1.4) {
+                    if (online) { sendAct(2, best, card); return; }
+                    applyDefend(st, best, card); afterAction();
+                }
                 // else: no reachable pair under the drop -> snap back silently (a miss shouldn't nag)
                 return;
             }
             if (st.phase === "attack" && st.attacker === mySeat) {
-                if (canAttackWith(st, mySeat, card)) { applyAttack(st, mySeat, card); afterAction(); }
+                if (canAttackWith(st, mySeat, card)) {
+                    if (online) { sendAct(1, 0, card); return; }
+                    applyAttack(st, mySeat, card); afterAction();
+                }
                 // else: illegal card dropped on the felt -> snap back silently
                 return;
             }
         }
+
         function bindCardDrag(el, cid) {
             $.RegisterEventHandler("DragStart", el, function (_p, dragEvent) {
                 if (!el._dkPlayable || !myTurn()) return;
@@ -404,14 +447,23 @@
 
         function buildControls() {
             controlsZone.RemoveAndDeleteChildren();
-            var canAct = myTurn();
+            var canAct = myTurn() && !pendingAct;
             if (canAct && st.phase === "attack" && st.attacker === mySeat && st.table.length > 0) {
-                mkButton(controlsZone, "Bito (Pass)", function () { if (myTurn()) { endBout(st, false); afterAction(); } });
+                mkButton(controlsZone, "Bito (Pass)", function () {
+                    if (!myTurn() || pendingAct) return;
+                    if (online) { sendAct(4, 0, 0); return; }         // 4 = bito (beat)
+                    endBout(st, false); afterAction();
+                });
             }
             if (canAct && st.phase === "defend" && st.defender === mySeat && st.table.length > 0) {
-                mkButton(controlsZone, "Take", function () { if (myTurn()) { endBout(st, true); afterAction(); } });
+                mkButton(controlsZone, "Take", function () {
+                    if (!myTurn() || pendingAct) return;
+                    if (online) { sendAct(3, 0, 0); return; }         // 3 = take
+                    endBout(st, true); afterAction();
+                });
             }
         }
+
 
         function mkButton(parent, text, onClick) {
             var b = $.CreatePanel("Button", parent, "");
@@ -436,20 +488,27 @@
 
         // input
         function onHandCardClick(card) {
-            if (!myTurn()) return;
+            if (!myTurn() || pendingAct) return;
             if (st.phase === "defend" && st.defender === mySeat) {
                 for (var t = 0; t < st.table.length; t++) {
-                    if (st.table[t].d < 0 && canDefendPair(st, t, card)) { applyDefend(st, t, card); afterAction(); return; }
+                    if (st.table[t].d < 0 && canDefendPair(st, t, card)) {
+                        if (online) { sendAct(2, t, card); return; }   // server applies + echoes
+                        applyDefend(st, t, card); afterAction(); return;
+                    }
                 }
                 status("That card can't beat an open attack. Cover it or take.");
                 return;
             }
             if (st.phase === "attack" && st.attacker === mySeat) {
-                if (canAttackWith(st, mySeat, card)) { applyAttack(st, mySeat, card); afterAction(); return; }
+                if (canAttackWith(st, mySeat, card)) {
+                    if (online) { sendAct(1, 0, card); return; }
+                    applyAttack(st, mySeat, card); afterAction(); return;
+                }
                 status(st.table.length === 0 ? "Play a card to attack." : "Only a matching rank can be added.");
                 return;
             }
         }
+
 
         // turn loop
         function promptFor() {
@@ -496,11 +555,108 @@
             else status("You win.");
         }
 
+        // ── online sync (worker-as-dealer) ───────────────────────────────────────────
+        // The client holds NO authority: it applies the public /api/dlog event stream to a
+        // local `st` (opponent hands are placeholder counts, table cards are public, my own
+        // cards come from /api/ddraw) and sends its own actions via /api/dact — never mutating
+        // `st` optimistically. The server's echoed event is the single source of truth, so a
+        // rejected action simply never lands (no rollback needed). Roles rotate deterministically
+        // after each bout exactly like the shared endBout (2-player: Bito swaps, Take keeps).
+        var myDrawExpected = 0;   // total cards the server has told me I hold (from DRAW events)
+
+        function addToHand(seat, id) { st.hands[seat].push(seat === mySeat ? id : HIDDEN); }
+        function removeFromHand(seat, card) {
+            var h = st.hands[seat];
+            if (seat === mySeat) { var i = h.indexOf(card); if (i >= 0) h.splice(i, 1); }
+            else if (h.length) h.pop();     // opponents are counts only
+        }
+        function rotateRolesAfterBout(took) {
+            var oldAtk = st.attacker, oldDef = st.defender;
+            if (took) { st.attacker = oldAtk; st.defender = oldDef; }  // taker skipped → roles unchanged
+            else { st.attacker = oldDef; st.defender = oldAtk; }       // successful defence → defender attacks
+            st.phase = "attack";
+        }
+        function applyEvent(ev) {
+            if (ev.type === "trump") { st.trumpCard = ev.card; st.trump = suitOf(ev.card); }
+            else if (ev.type === "open") { st.attacker = ev.seat; st.defender = nextInPlay(st, ev.seat); st.phase = "attack"; }
+            else if (ev.type === "play") { st.table.push({ a: ev.card, d: -1 }); st.phase = "defend"; removeFromHand(ev.seat, ev.card); }
+            else if (ev.type === "cover") {
+                if (st.table[ev.pair]) st.table[ev.pair].d = ev.card;
+                removeFromHand(st.defender, ev.card);
+                if (uncoveredCount(st) === 0) st.phase = "attack";
+            }
+            else if (ev.type === "take") {
+                for (var i = 0; i < st.table.length; i++) { addToHand(ev.seat, st.table[i].a); if (st.table[i].d >= 0) addToHand(ev.seat, st.table[i].d); }
+                st.table = []; rotateRolesAfterBout(true);
+            }
+            else if (ev.type === "bito") { st.table = []; rotateRolesAfterBout(false); }
+            else if (ev.type === "draw") {
+                deckRemaining = Math.max(0, deckRemaining - ev.count);
+                setDeckCount(deckRemaining);
+                if (ev.seat === mySeat) myDrawExpected += ev.count;      // real ids pulled via ddraw
+                else for (var k = 0; k < ev.count; k++) addToHand(ev.seat, HIDDEN);
+            }
+            else if (ev.type === "over") { st.phase = "over"; st.loser = ev.loser; gameOver = true; }
+        }
+        // Pull my newly-dealt private cards one index at a time (FIFO-safe), then continue.
+        function pullDraws(done) {
+            if (destroyed) return;
+            if (drawCursor[mySeat] >= myDrawExpected) { done(); return; }
+            MG.Api.ddraw(session.code, session.tok, drawCursor[mySeat], function (card) {
+                if (destroyed) return;
+                if (card == null) { done(); return; }       // nothing at that index yet — try later
+                st.hands[mySeat].push(card);
+                drawCursor[mySeat]++;
+                pullDraws(done);
+            }, function () { if (!destroyed) $.Schedule(0.5, function () { pullDraws(done); }); });
+        }
+        function onlineStatus() {
+            if (gameOver) return;
+            if (myTurn()) { status(promptFor()); return; }
+            status(nameOf(actionActor()) + "'s turn…");
+        }
+        function pollLoop() {
+            if (destroyed || gameOver) return;
+            MG.Api.dlog(session.code, logSeq, function (ev) {
+                if (destroyed) return;
+                if (!ev) { $.Schedule(0.6, pollLoop); return; }     // nothing new
+                logSeq++;
+                applyEvent(ev);
+                if (ev.type === "draw" && ev.seat === mySeat) {
+                    pullDraws(function () { render(); onlineStatus(); if (gameOver) finishGame(); else pollLoop(); });
+                    return;
+                }
+                render();
+                onlineStatus();
+                if (gameOver) { finishGame(); return; }
+                pollLoop();                                          // drain any burst immediately
+            }, function () { if (!destroyed) $.Schedule(1.0, pollLoop); });
+        }
+        // Send one action; the server validates and (on success) appends the event we'll read
+        // back on the next poll. We do NOT mutate `st` here — the echo is authoritative.
+        function sendAct(a, pair, card) {
+            if (destroyed || pendingAct) return;
+            pendingAct = true;
+            MG.Api.dact(session.code, session.tok, a, pair || 0, card || 0, function (r) {
+                pendingAct = false;
+                if (r && r.ok) { pollLoop(); return; }               // pull the echo promptly
+                var why = r && r.reason;
+                if (why === "turn") status("Not your turn.");
+                else if (why === "illegal") status("That move isn't legal.");
+                else if (why === "gone") { if (MG.UI && MG.UI.kickToMenu) MG.UI.kickToMenu("Lobby closed."); }
+                else status("Move rejected.");
+            }, function () { pendingAct = false; status("Server unavailable."); });
+        }
+
         // boot
         render();
-        if (myTurn()) status(promptFor());
+        if (online) {
+            status("Dealing…");
+            pollLoop();
+        } else if (myTurn()) status(promptFor());
         else if (isBot) { status(nameOf(actionActor()) + " is thinking..."); $.Schedule(0.55, botTurn); }
         else status(nameOf(actionActor()) + "'s turn...");
+
 
         return {
             destroy: function () { destroyed = true; try { root.DeleteAsync(0); } catch (e) {} }
