@@ -78,7 +78,14 @@
     margin-bottom: 24px;
     padding-bottom: 16px;
     border-bottom: 1px solid #ffffff12;
+    /* The UI-scale popup is a descendant that drops BELOW the header row; without noclip the
+       header's own box clips it away (the "dropdown doesn't appear" bug), and without a z-index
+       it renders UNDER the body panel that follows it in the modal's flow. Both are needed so the
+       popup escapes the header and paints over the body. */
+    overflow: noclip;
+    z-index: 10;
 }
+
 /* title + "by Predi_i" credit sit together on the left; the close button is pushed right. */
 .mg-header-left {
     width: fill-parent-flow(1.0);
