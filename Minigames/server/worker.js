@@ -1125,7 +1125,11 @@ export class Hub {
       if (p === "/api/create") {
         await this.maybeSweep();
         const game = clampInt(q.get("game"), 1, 1, 9);
+        if (!SUPPORTED_GAMES[game]) return png(9, 6);      // unsupported game id (6..9 have no engine)
+
+        if (!validTok(q.get("tok"))) return png(9, 3);     // reject empty/garbage seat token
         const newCode = await this.freshCode();
+
         const lobby = {
           game, players: 1, moves: [], pub: 0, t: nowSeq(),
           seats: [{ tok: q.get("tok") || "" }, null], // seat 0 = host = white/X/+1, moves first
@@ -1140,7 +1144,11 @@ export class Hub {
       if (p === "/api/quick") {
         await this.maybeSweep();
         const game = clampInt(q.get("game"), 1, 1, 9);
+        if (!SUPPORTED_GAMES[game]) return png(9, 6);      // unsupported game id (6..9 have no engine)
+
+        if (!validTok(q.get("tok"))) return png(9, 3);     // reject empty/garbage seat token
         const waitCode = await this.storage.get("pubq:" + game);
+
         if (waitCode) {
           const w = await this.storage.get("l:" + waitCode);
           if (w && w.pub && w.players < 2) {
@@ -1168,7 +1176,9 @@ export class Hub {
 
       if (p === "/api/cancel") {
         const lobby = code ? await this.storage.get("l:" + code) : null;
-        if (lobby) {
+        // Only a SEATED player (valid token) may cancel, and only while the lobby is still
+        // waiting for the second player. Never let a 4-digit code-guesser nuke an active match.
+        if (lobby && seatOf(lobby, q.get("tok")) >= 0 && lobby.players < 2) {
           await this.storage.delete("l:" + code);
           const waitCode = await this.storage.get("pubq:" + lobby.game);
           if (waitCode != null && Number(waitCode) === Number(code)) {
@@ -1178,10 +1188,13 @@ export class Hub {
         return png(1, 1);
       }
 
+
       if (p === "/api/join") {
+        if (!validTok(q.get("tok"))) return png(9, 3); // reject empty/garbage seat token
         const lobby = code ? await this.storage.get("l:" + code) : null;
         if (!lobby) return png(20, 1);             // missing
         if (lobby.players >= 2) return png(21, 1); // full
+
         lobby.players = 2;
         lobby.seats = lobby.seats || [null, null];
         lobby.seats[1] = { tok: q.get("tok") || "" }; // joiner takes seat 1
@@ -1198,6 +1211,7 @@ export class Hub {
       if (p === "/api/move") {
         const lobby = code ? await this.storage.get("l:" + code) : null;
         if (!lobby) return png(9, 9);              // no lobby
+        if (lobby.players < 2) return png(9, 1);   // can't move before the opponent has joined
         const seat = seatOf(lobby, q.get("tok"));
         if (seat < 0) return png(9, 3);            // bad / foreign token — caller isn't a seat here
         const from = clampInt(q.get("from"), 0, 0, 63);
@@ -1209,9 +1223,11 @@ export class Hub {
         const v = validateMove(lobby, seat, from, to, end);
         if (!v.ok) return png(9, v.code);          // (9,1) not your turn · (9,2) illegal
         lobby.moves.push(v.move);
+        lobby.t = nowSeq();                        // keep-alive: TTL is measured from last activity
         await this.storage.put("l:" + code, lobby);
         return png(1, 1);                          // accepted
       }
+
 
       if (p === "/api/poll") {
         const lobby = code ? await this.storage.get("l:" + code) : null;
@@ -1229,13 +1245,16 @@ export class Hub {
         const lobby = code ? await this.storage.get("l:" + code) : null;
         if (!lobby) return png(9, 9);
         if (seatOf(lobby, q.get("tok")) < 0) return png(9, 3); // only a seated player may reset
-        lobby.game = clampInt(q.get("game"), lobby.game, 1, 9);
+        // Rematch = same game, fresh state. The game TYPE is fixed at create time and can
+        // never be switched mid-lobby (that would desync / void the opponent's board).
         lobby.moves = [];
         lobby.turn = 0;
         lobby.state = initState(lobby.game);
+        lobby.t = nowSeq();
         await this.storage.put("l:" + code, lobby);
         return png(1, 1);
       }
+
 
       // ── Durak (authoritative dealer, 2 players) ────────────────────────────
       // Separate route set from the 2-int move/poll games: the worker OWNS the deck,
@@ -1300,14 +1319,20 @@ export class Hub {
   }
 
   async freshCode() {
-    // 4-digit lobby code (1000..9999), avoid collisions.
-    for (let i = 0; i < 40; i++) {
+    // 4-digit lobby code (1000..9999). Never return a code that's already taken — random
+    // probes first, then a full linear scan as a fallback so we can't clobber a live lobby.
+    for (let i = 0; i < 200; i++) {
       const c = 1000 + Math.floor(Math.random() * 9000);
       const existing = await this.storage.get("l:" + c);
       if (!existing) return c;
     }
-    return 1000 + Math.floor(Math.random() * 9000);
+    for (let c = 1000; c <= 9999; c++) {
+      const existing = await this.storage.get("l:" + c);
+      if (!existing) return c;
+    }
+    return 0; // server full (extremely unlikely); the client-side create just looks broken
   }
+
 
   // Opportunistic cleanup so a public relay's storage stays bounded. Runs at most
   // once a minute (guarded by a stored timestamp) and only off write paths
@@ -1331,6 +1356,20 @@ function clampInt(v, dflt, lo, hi) {
   if (isNaN(n)) return dflt;
   return Math.max(lo, Math.min(hi, n));
 }
+
+// A seat token must be a non-empty, sanely-bounded alphanumeric string. Rejecting junk /
+// empty tokens stops us from ever creating an unusable "occupied but tokenless" seat (a
+// seat whose empty tok makes seatOf return -1 forever), and the length cap keeps a caller
+// from bloating Durable Object storage with a giant token. The client mint is 48 hex-ish
+// chars (see MG.Session.newToken), comfortably inside these bounds.
+function validTok(tok) {
+  return typeof tok === "string" && tok.length >= 8 && tok.length <= 64 && /^[a-z0-9]+$/i.test(tok);
+}
+
+// Game ids the server is authoritative for. 3 = durak (its own route set). An id outside
+// this set has no engine, so create/quick reject it up front and move never relays it.
+const SUPPORTED_GAMES = { 1: 1, 2: 1, 3: 1, 4: 1, 5: 1 };
+
 
 function nowSeq() {
   // Monotonic-ish tag for debugging; not used for logic.
@@ -1371,13 +1410,16 @@ function initState(game) {
 // acceptance. A game with no server engine relays unchecked (backward compatible).
 function validateMove(lobby, seat, from, to, end) {
   const R = rules();
-  if (!lobby.state) return { ok: true, move: { f: from, t: to, e: end } };
+  // No authoritative engine for this lobby → REJECT. We never blindly relay an unchecked
+  // move (that would make the server a dumb, cheatable relay for any unknown game id).
+  if (!lobby.state) return { ok: false, code: 2 };
   if (lobby.game === 1) return validateCheckers(R.checkers, lobby, seat, from, to);
   if (lobby.game === 2) return validateTtt(lobby, seat, from, to);
   if (lobby.game === 4) return validateChess(R.chess, lobby, seat, from, to);
   if (lobby.game === 5) return validateConnectFour(R.connectfour, lobby, seat, from, to);
-  return { ok: true, move: { f: from, t: to, e: end } };
+  return { ok: false, code: 2 };
 }
+
 
 function validateCheckers(RC, lobby, seat, from, to) {
   const st = lobby.state, b = st.board;
@@ -1404,10 +1446,15 @@ function validateCheckers(RC, lobby, seat, from, to) {
 }
 
 function validateTtt(lobby, seat, from, to) {
+  const R = rules();
   const b = lobby.state.board;
   if (seat !== lobby.turn) return { ok: false, code: 1 };
+  // Reject any move once the game is already decided (a win line or a full board), so a
+  // loser can't keep placing marks and corrupt the finished log.
+  if (R.ttt.tttWinner(b) || R.ttt.tttFull(b)) return { ok: false, code: 2 };
   // A placement is cell 0..8 with the fixed marker to===9, onto an empty cell.
   if (to !== 9 || from < 0 || from > 8 || b[from] !== 0) return { ok: false, code: 2 };
+
   b[from] = seat === 0 ? 1 : 2;              // X (host) / O (joiner)
   lobby.turn = seat === 0 ? 1 : 0;
   return { ok: true, move: { f: from, t: 9, e: 1 } };
@@ -1434,7 +1481,9 @@ function validateChess(RX, lobby, seat, from, to) {
 function validateConnectFour(RC, lobby, seat, from, to) {
   const st = lobby.state;
   if (seat !== lobby.turn) return { ok: false, code: 1 };
+  if (RC.winner(st.board) || RC.isFull(st.board)) return { ok: false, code: 2 }; // game already over
   if (to !== 7 || from < 0 || from >= RC.COLS) return { ok: false, code: 2 };
+
   const r = RC.drop(st.board, from, seat === 0 ? 1 : 2);
   if (!r) return { ok: false, code: 2 };     // column full
   st.board = r.board;
@@ -1464,8 +1513,10 @@ function durakStart(lobby, seat) {
   if (!st || st.started) return { ok: true };            // idempotent (already dealt)
   if (seat !== 0) return { ok: false, code: 1 };         // only the host (seat 0) starts
   if (lobby.players < 2) return { ok: false, code: 2 };  // need both players
-  const seed = (Math.random() * 0x7fffffff) | 0;         // SERVER owns the seed (never sent down)
+  const seedBuf = new Uint32Array(1); crypto.getRandomValues(seedBuf);
+  const seed = seedBuf[0] & 0x7fffffff;                  // SERVER owns the seed (never sent down)
   const g = R.newGame(2, seed);
+
   st.numPlayers = 2;
   st.trump = g.trump; st.trumpCard = g.trumpCard;
   st.deck = g.deck; st.hands = g.hands; st.table = g.table;

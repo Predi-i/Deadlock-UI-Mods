@@ -412,10 +412,13 @@
             }, err);
         },
 
-        // Drop a lobby we created but nobody joined yet (host pressed Cancel).
-        cancel: function (code, cb, err) {
-            request("/api/cancel", { code: code }, function (w, h) { if (cb) cb(true); }, err);
+        // Drop a lobby we created but nobody joined yet (host pressed Cancel). Carries the
+        // seat token: the server only honours a cancel from a SEATED player while the lobby is
+        // still waiting, so a 4-digit-code guesser can't nuke someone else's active match.
+        cancel: function (code, tok, cb, err) {
+            request("/api/cancel", { code: code, tok: tok || "" }, function (w, h) { if (cb) cb(true); }, err);
         },
+
 
         join: function (code, tok, cb, err) {
             request("/api/join", { code: code, tok: tok }, function (w, h) {

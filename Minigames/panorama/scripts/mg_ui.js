@@ -253,7 +253,8 @@
         
         // Only cancel the server lobby if the player explicitly left or closed the menu
         if (cancelServer && currentCode && (view === "waiting" || view === "room" || view === "game")) {
-            try { MG.Api.cancel(currentCode); } catch (e) {}
+            try { MG.Api.cancel(currentCode, currentTok); } catch (e) {}
+
         }
         
         // Destroy active game if any
@@ -521,7 +522,8 @@
             MG.Api.create(1, hostTok, function (code) {
                 if (!alive()) return;
                 // Always tidy up the test lobby, pass or fail.
-                function cleanup() { try { MG.Api.cancel(code); } catch (e) {} }
+                function cleanup() { try { MG.Api.cancel(code, hostTok); } catch (e) {} }
+
                 step(3, "reading lobby status…");
                 MG.Api.status(code, function (st) {
                     if (!alive()) return;
