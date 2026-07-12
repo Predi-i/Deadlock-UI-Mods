@@ -318,11 +318,16 @@
 
 
 /* ── right column: detail + actions ──────────────────────────────────────── */
-/* min-height reserves the tallest (enabled) layout, so switching between games — or to a
-   disabled game with fewer elements — never resizes the modal (kills the "jump"). */
+/* FIXED height (not min) so the right column is ALWAYS the same size no matter how many
+   buttons/labels the current view has — a locked game (fewer elements), Select-Multiple
+   (no Join/Practice), or a game with a longer note (durak) all occupy the same box. A plain
+   min-height let the taller single-game layout grow past it while multi-select shrank back,
+   so the whole modal jumped (п5: "panel is shorter when Join disappears"). overflow:noclip
+   keeps any slight overflow visible without changing the panel's committed height. 430 fits
+   the tallest layout (single-game durak) with headroom. */
 .mg-detail {
     width: 100%;
-    min-height: 380px;
+    height: 430px;
     flow-children: down;
     overflow: noclip;                     /* don't clip the full-width buttons' borders (п4) */
     transition-property: opacity;         /* fades in on each game switch (fadeInDetail) */
