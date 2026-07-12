@@ -97,28 +97,35 @@
         // Place a disc on the OVERLAY at cell `i`. If animate, it starts just above the board's
         // top edge and slides down the whole column into place (base class has no transition;
         // add .mg-cf-anim one frame later after the start transform is committed — checkers idiom).
+        // Place a disc INSIDE its landing cell (a child of the cell, centred over the dark hole),
+        // NOT on a top overlay. That keeps the disc at the board plate's z-level — it covers the
+        // dark socket but does NOT float above the whole blue plate (the maintainer's "discs on
+        // max z-index" complaint, п3). The board panel is overflow:noclip so a disc animating in
+        // from above its cell is still visible mid-fall. Position is relative to the cell: the
+        // resting disc is centred (INSET,INSET); a falling disc starts one full cell higher.
         function placeDisc(i, mark, animate) {
             if (discEls[i]) return discEls[i];
-            var disc = $.CreatePanel("Panel", piecesLayer, "");
+            var cell = cells[i];
+            var disc = $.CreatePanel("Panel", cell, "");
             disc.AddClass("mg-cf-disc");
             disc.AddClass(mark === RED ? "mg-cf-red" : "mg-cf-yellow");
             discEls[i] = disc;
-            var p = discXY(i);
             if (animate) {
-                disc.style.transform = "translate3d(" + p.x + "px, " + (-CELL + INSET) + "px, 0px)";
-                (function (d, px, py) {
+                disc.style.transform = "translate3d(" + INSET + "px, " + (-CELL + INSET) + "px, 0px)";
+                (function (d) {
                     $.Schedule(0.0, function () {
                         if (d && d.IsValid && d.IsValid()) {
                             d.AddClass("mg-cf-anim");
-                            d.style.transform = "translate3d(" + px + "px, " + py + "px, 0px)";
+                            d.style.transform = "translate3d(" + INSET + "px, " + INSET + "px, 0px)";
                         }
                     });
-                })(disc, p.x, p.y);
+                })(disc);
             } else {
-                disc.style.transform = "translate3d(" + p.x + "px, " + p.y + "px, 0px)";
+                disc.style.transform = "translate3d(" + INSET + "px, " + INSET + "px, 0px)";
             }
             return disc;
         }
+
 
         // Full rebuild of the disc layer from `board` (used on reset/resync). Clears then
         // repopulates without fall animation.
