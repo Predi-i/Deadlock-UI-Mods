@@ -215,48 +215,61 @@
     }
     function setTitle(t) { if (titleLabel) titleLabel.text = t; }
 
-    // ── UI-scale control (NATIVE DropDown — QOLLOCK "Default Hero" recipe) ─────
-    // Use Panorama's built-in DropDown widget exactly like QOLLOCK's Default-Hero picker
-    // ($.CreatePanel("DropDown"), AddOption(labelPanel), SetSelected(id), oninputsubmit). The
-    // widget owns and OPENS its own popup reliably — hand-rolled popups (visibility toggle /
-    // ancestor class) never opened in this HUD context. The ONLY problem before was cosmetic:
-    // the spawned menu inherited the game's base DropDownMenu look (a `paper_tile` background
-    // IMAGE + a "…" placeholder). Fix that in CSS by overriding `background-image: none !important`
-    // on the menu panel `#MG_ScaleDDDropDownMenu` (id = dropdownId + "DropDownMenu") and re-skinning
-    // it in our palette — NOT by rebuilding the widget.
+    // ── UI-scale control (CUSTOM button + popup) ──────────────────────────────
+    // FINAL approach after the native DropDown kept failing in this HUD context (it dragged in
+    // the game's `paper_tile` popup texture that we could NOT override, showed a "…" instead of
+    // the value, and shoved the close X out). This is our OWN control:
+    //   • a button whose label ALWAYS shows the current % (fixes the "…" — п2),
+    //   • a popup Panel of options in OUR palette (no paper texture — п3),
+    //   • fixed 84px width so the close X keeps its place (п1/п4),
+    //   • shown/hidden by the `.visible` PROPERTY (the most reliable toggle in Panorama —
+    //     class/inline-visibility toggles proved flaky here).
+    // The wrapper is flow-children:none + overflow:noclip so the popup overlaps the body (no
+    // position:absolute), and the popup carries a z-index to paint over it.
     var SCALE_STEPS = [100, 125, 150, 175, 200];
-    var scaleDropDown = null;
+    var scaleMenuOpen = false;
     function buildScaleControl(parent) {
-        var dd = $.CreatePanel("DropDown", parent, "MG_ScaleDD");
-        dd.AddClass("mg-scale-dd");
-        scaleDropDown = dd;
+        var wrap = $.CreatePanel("Panel", parent, "MG_ScaleWrap");
+        wrap.AddClass("mg-scale");
 
+        var btn = $.CreatePanel("Button", wrap, "MG_ScaleBtn");
+        btn.AddClass("mg-scale-btn");
+        scaleLabel = $.CreatePanel("Label", btn, "");
+        scaleLabel.AddClass("mg-scale-label");
+        scaleLabel.text = uiScalePct + "%";
+        var caret = $.CreatePanel("Label", btn, "");
+        caret.AddClass("mg-scale-caret");
+        caret.text = "v";
+        btn.SetPanelEvent("onactivate", function () { toggleScaleMenu(); });
+
+        scaleMenu = $.CreatePanel("Panel", wrap, "MG_ScaleMenu");
+        scaleMenu.AddClass("mg-scale-menu");
+        scaleMenu.visible = false;
         for (var i = 0; i < SCALE_STEPS.length; i++) {
-            var pct = SCALE_STEPS[i];
-            var opt = $.CreatePanel("Label", dd, "mgscale_" + pct);   // id encodes the value
-            opt.AddClass("mg-scale-opt");
-            opt.AddClass("DropDownChild");                            // native option class
-            opt.text = pct + "%";
-            dd.AddOption(opt);
+            (function (pct) {
+                var opt = $.CreatePanel("Button", scaleMenu, "");
+                opt.AddClass("mg-scale-opt");
+                var ol = $.CreatePanel("Label", opt, ""); ol.AddClass("mg-scale-opt-label"); ol.text = pct + "%";
+                opt.SetPanelEvent("onactivate", function () { setUiScale(pct); closeScaleMenu(); });
+            })(SCALE_STEPS[i]);
         }
-        try { dd.SetSelected("mgscale_" + uiScalePct); } catch (e) {}
-
-        dd.SetPanelEvent("oninputsubmit", function () {
-            var pct = uiScalePct;
-            try {
-                var sel = dd.GetSelected && dd.GetSelected();
-                if (sel && sel.id) {
-                    var n = parseInt(String(sel.id).replace("mgscale_", ""), 10);
-                    if (!isNaN(n)) pct = n;
-                }
-            } catch (e2) {}
-            setUiScale(pct);
-        });
+        scaleMenuOpen = false;
+    }
+    function toggleScaleMenu() { if (scaleMenuOpen) closeScaleMenu(); else openScaleMenu(); }
+    function openScaleMenu() {
+        if (scaleMenu && scaleMenu.IsValid && scaleMenu.IsValid()) scaleMenu.visible = true;
+        scaleMenuOpen = true;
+    }
+    function closeScaleMenu() {
+        if (scaleMenu && scaleMenu.IsValid && scaleMenu.IsValid()) scaleMenu.visible = false;
+        scaleMenuOpen = false;
     }
     function setUiScale(pct) {
         uiScalePct = pct;
+        if (scaleLabel && scaleLabel.IsValid && scaleLabel.IsValid()) scaleLabel.text = pct + "%";
         applyUiScale();
     }
+
 
 
 
