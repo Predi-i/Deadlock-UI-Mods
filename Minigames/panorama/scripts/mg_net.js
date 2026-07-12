@@ -539,7 +539,12 @@
         // small (<= ~63) and no real event is (1,1), so (1,1) remains "nothing new".
         room: function (code, cb, err) {
             request("/api/room", { code: code }, function (w, h) {
-                if (w === 9) { cb({ gone: true, players: 0, started: false }); return; }
+                // ONLY (9,1) means the lobby is truly gone (swept/closed). Any OTHER 9,x — an
+                // unknown route on a stale-deployed worker (9,8), a server error (9,7), etc. — is
+                // treated as a TRANSIENT error so the poll retries instead of instantly kicking the
+                // host out of a freshly-created room (the "durak lobby closes immediately" bug).
+                if (w === 9 && h === 1) { cb({ gone: true, players: 0, started: false }); return; }
+                if (w === 9) { if (err) err("transient"); return; }
                 if (w < 1 || w > 2 || (h !== 1 && h !== 2)) {
                     suspectDecode("room w=" + w + " h=" + h);
                     if (err) err("decode");
@@ -548,6 +553,7 @@
                 cb({ gone: false, players: w, started: h === 2 });
             }, err);
         },
+
 
         start: function (code, tok, cb, err) {
             request("/api/start", { code: code, tok: tok }, function (w, h) {

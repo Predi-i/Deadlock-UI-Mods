@@ -337,10 +337,26 @@
                     var ll = $.CreatePanel("Label", lock, "");
                     ll.text = "IN DEVELOPMENT";
                 }
-                card.SetPanelEvent("onactivate", function () { selectGame(g.id); });
-                cardEls.push({ id: g.id, panel: card });
+                // Corner tick badge — shown only in multi-select mode when this card is ticked.
+                var tick = $.CreatePanel("Panel", card, "");
+                tick.AddClass("mg-card-tick");
+                var tickMark = $.CreatePanel("Label", tick, ""); tickMark.AddClass("mg-card-tick-mark"); tickMark.text = "x";
+                // Click: in multi-select mode a multi-capable, enabled card TOGGLES its tick and
+                // focuses it; otherwise it just selects the card.
+                card.SetPanelEvent("onactivate", function () {
+                    if (multiSelect && isMultiGame(g.id) && g.enabled) {
+                        multiChecked[g.id] = !multiChecked[g.id];
+                        if (g.id !== selectedGameId) selectGame(g.id); else renderDetail();
+                        updateCardSkins();
+                    } else {
+                        selectGame(g.id);
+                    }
+                });
+                cardEls.push({ id: g.id, panel: card, tick: tick });
             })(games[i]);
         }
+        updateCardSkins();
+
 
         // ── RIGHT: detail + actions for the selected game ──
         var right = $.CreatePanel("Panel", cols, "");
@@ -398,53 +414,48 @@
         // deliberately deferred; the normal Create/Join/Quick buttons enter a 2-seat room.
         var onlineReady = true;
 
-        if (onlineReady) {
-            // "Select Multiple" toggle: a small pill above Quick Match that flips the primary
-            // matchmaker between single-game and a multi-game set search. Durak can't join a
-            // multi set (its own room flow), so the toggle is hidden while durak is selected.
-            if (isMultiGame(g.id)) {
-                var toggleRow = $.CreatePanel("Panel", detailPanel, "");
-                toggleRow.AddClass("mg-multi-toggle-row");
-                var toggle = $.CreatePanel("Button", toggleRow, "");
-                toggle.AddClass("mg-multi-toggle");
-                if (multiSelect) toggle.AddClass("mg-on");
-                var tBox = $.CreatePanel("Panel", toggle, ""); tBox.AddClass("mg-check-box");
-                if (multiSelect) { var tMark = $.CreatePanel("Label", tBox, ""); tMark.AddClass("mg-check-mark"); tMark.text = "x"; }
-                var tLbl = $.CreatePanel("Label", toggle, ""); tLbl.AddClass("mg-multi-toggle-label");
-                tLbl.text = "Select multiple games";
-                toggle.SetPanelEvent("onactivate", function () {
-                    multiSelect = !multiSelect;
-                    if (multiSelect) {
-                        // Seed the ticked set with the currently-selected game so the button is
-                        // immediately usable; keep any previously-ticked games too.
-                        var any = false;
-                        for (var k in multiChecked) { if (multiChecked[k]) { any = true; break; } }
-                        if (!any) multiChecked[g.id] = true;
-                    }
-                    renderDetail();
-                });
-            } else if (multiSelect) {
-                // Durak selected while multi mode is on → single-game path applies here.
-                multiSelect = multiSelect; // (no-op; durak still uses its own quick button below)
+        // "Select multiple games" toggle — ALWAYS visible (even on durak), a single check.
+        // When ON, you TICK games directly on the LEFT picker (a corner check); Quick Match
+        // searches the whole ticked set and Create picks a random one from it. Durak can't
+        // join a multi-quick (its own room flow) so it's never ticked, but the toggle stays.
+        var toggleRow = $.CreatePanel("Panel", detailPanel, "");
+        toggleRow.AddClass("mg-multi-toggle-row");
+        var toggle = $.CreatePanel("Button", toggleRow, "");
+        toggle.AddClass("mg-multi-toggle");
+        if (multiSelect) toggle.AddClass("mg-on");
+        var tBox = $.CreatePanel("Panel", toggle, ""); tBox.AddClass("mg-check-box");
+        if (multiSelect) { var tMark = $.CreatePanel("Label", tBox, ""); tMark.AddClass("mg-check-mark"); tMark.text = "x"; }
+        var tLbl = $.CreatePanel("Label", toggle, ""); tLbl.AddClass("mg-multi-toggle-label");
+        tLbl.text = "Select multiple games";
+        toggle.SetPanelEvent("onactivate", function () {
+            multiSelect = !multiSelect;
+            if (multiSelect) {
+                // Seed the ticked set with the current game if it's multi-capable and nothing
+                // is ticked yet, so the button is usable immediately.
+                var any = false;
+                for (var k in multiChecked) { if (multiChecked[k]) { any = true; break; } }
+                if (!any && isMultiGame(selectedGameId)) multiChecked[selectedGameId] = true;
             }
+            updateCardSkins();     // reflect tick badges on the left picker
+            renderDetail();
+        });
 
-            if (multiSelect && isMultiGame(g.id)) {
-                renderMultiQuick(g);
-            } else {
-                // Primary: one-button public matchmaking. Wrapped in a .mg-btn-row so it uses
-                // fill-parent-flow width, NOT width:100% — the latter makes Panorama clip the button's
-                // right border (the PLAY VS BOT / QUICK MATCH "no right border" bug). Same structure as
-                // the working CREATE/JOIN row.
-                var quickRow = $.CreatePanel("Panel", detailPanel, "");
-                quickRow.AddClass("mg-btn-row");
-                var quickBtn = $.CreatePanel("Button", quickRow, "");
-                quickBtn.AddClass("mg-btn"); quickBtn.AddClass("mg-btn-primary"); quickBtn.AddClass("mg-btn-quick"); quickBtn.AddClass("mg-btn-solo");
-                var ql = $.CreatePanel("Label", quickBtn, ""); ql.text = "QUICK MATCH";
-                quickBtn.SetPanelEvent("onactivate", function () { startQuickMatch(); });
-                var quickCap = $.CreatePanel("Label", detailPanel, "");
-                quickCap.AddClass("mg-caption");
-                quickCap.text = "Public match against anyone online.";
-            }
+        if (multiSelect) {
+            renderMultiPanel();    // count + Quick Match(set) + Create(random) on the right
+        } else if (onlineReady) {
+            // Primary: one-button public matchmaking. Wrapped in a .mg-btn-row so it uses
+            // fill-parent-flow width, NOT width:100% — the latter makes Panorama clip the button's
+            // right border (the PLAY VS BOT / QUICK MATCH "no right border" bug). Same structure as
+            // the working CREATE/JOIN row.
+            var quickRow = $.CreatePanel("Panel", detailPanel, "");
+            quickRow.AddClass("mg-btn-row");
+            var quickBtn = $.CreatePanel("Button", quickRow, "");
+            quickBtn.AddClass("mg-btn"); quickBtn.AddClass("mg-btn-primary"); quickBtn.AddClass("mg-btn-quick"); quickBtn.AddClass("mg-btn-solo");
+            var ql = $.CreatePanel("Label", quickBtn, ""); ql.text = "QUICK MATCH";
+            quickBtn.SetPanelEvent("onactivate", function () { startQuickMatch(); });
+            var quickCap = $.CreatePanel("Label", detailPanel, "");
+            quickCap.AddClass("mg-caption");
+            quickCap.text = "Public match against anyone online.";
 
             // Secondary: private match with a friend via a shared code.
             var friendLbl = $.CreatePanel("Label", detailPanel, "");
@@ -462,25 +473,27 @@
             joinBtn.SetPanelEvent("onactivate", function () { renderJoin(); });
         }
 
-        // Offline practice vs the bot.
-        var practiceLbl = $.CreatePanel("Label", detailPanel, "");
-        practiceLbl.AddClass("mg-section-label");
-        practiceLbl.text = "Practice";
-        // Wrapped in a row for the same fill-parent-flow-vs-width:100% reason as QUICK MATCH.
-        var botRow = $.CreatePanel("Panel", detailPanel, "");
-        botRow.AddClass("mg-btn-row");
-        var botBtn = $.CreatePanel("Button", botRow, "");
-        botBtn.AddClass("mg-btn"); botBtn.AddClass("mg-btn-solo");
-        var bl = $.CreatePanel("Label", botBtn, ""); bl.text = "PLAY VS BOT";
-        botBtn.SetPanelEvent("onactivate", function () { startBotGame(); });
+        if (!multiSelect) {
+            // Offline practice vs the bot (single-game mode only).
+            var practiceLbl = $.CreatePanel("Label", detailPanel, "");
+            practiceLbl.AddClass("mg-section-label");
+            practiceLbl.text = "Practice";
+            var botRow = $.CreatePanel("Panel", detailPanel, "");
+            botRow.AddClass("mg-btn-row");
+            var botBtn = $.CreatePanel("Button", botRow, "");
+            botBtn.AddClass("mg-btn"); botBtn.AddClass("mg-btn-solo");
+            var bl = $.CreatePanel("Label", botBtn, ""); bl.text = "PLAY VS BOT";
+            botBtn.SetPanelEvent("onactivate", function () { startBotGame(); });
 
-        if (g.key === "durak") {
-            var durakNote = $.CreatePanel("Label", detailPanel, "");
-            durakNote.AddClass("mg-caption");
-            durakNote.text = "Online Durak is 2-player now; 3–4 players are deferred.";
+            if (g.key === "durak") {
+                var durakNote = $.CreatePanel("Label", detailPanel, "");
+                durakNote.AddClass("mg-caption");
+                durakNote.text = "Online Durak is 2-player now; 3–4 players are deferred.";
+            }
         }
 
         fadeInDetail();
+
     }
 
     // Nudge opacity 0→1 one frame after the rebuild so the column fades in on each
@@ -837,29 +850,31 @@
     }
 
     // ── multi-select quick match ──────────────────────────────────────────────
-    // Builds the checkbox list (one row per multi-capable game) + a single Quick Match
-    // button that searches the whole ticked set. Rendered in place of the single Quick
-    // Match button when "Select multiple games" is on.
-    function renderMultiQuick(g) {
-        var listWrap = $.CreatePanel("Panel", detailPanel, "");
-        listWrap.AddClass("mg-multi-list");
-        for (var i = 0; i < MULTI_GAME_IDS.length; i++) {
-            (function (id) {
-                var mg = MG.Games.byId(id);
-                if (!mg || !mg.enabled) return;              // only offer currently-playable games
-                var rowEl = $.CreatePanel("Button", listWrap, "");
-                rowEl.AddClass("mg-multi-item");
-                if (multiChecked[id]) rowEl.AddClass("mg-on");
-                var box = $.CreatePanel("Panel", rowEl, ""); box.AddClass("mg-check-box");
-                if (multiChecked[id]) { var mk = $.CreatePanel("Label", box, ""); mk.AddClass("mg-check-mark"); mk.text = "x"; }
-                var lbl = $.CreatePanel("Label", rowEl, ""); lbl.AddClass("mg-multi-item-label"); lbl.text = mg.name;
-                rowEl.SetPanelEvent("onactivate", function () {
-                    multiChecked[id] = !multiChecked[id];
-                    renderDetail();                          // re-skin the ticks + refresh the count
-                });
-            })(MULTI_GAME_IDS[i]);
+    // Reflect the ticked set on the LEFT picker: a card shows its corner check ONLY in
+    // multi-select mode when it's a ticked multi-capable game. Called after every toggle.
+    function updateCardSkins() {
+        for (var i = 0; i < cardEls.length; i++) {
+            var ce = cardEls[i];
+            var on = multiSelect && isMultiGame(ce.id) && !!multiChecked[ce.id];
+            if (ce.tick) { if (on) ce.tick.AddClass("mg-tick-on"); else ce.tick.RemoveClass("mg-tick-on"); }
+            if (multiSelect && isMultiGame(ce.id)) ce.panel.AddClass("mg-multi-mode");
+            else ce.panel.RemoveClass("mg-multi-mode");
         }
-        var n = multiCheckedCount();
+    }
+
+    // Right panel when Select-Multiple is ON: a hint, then QUICK MATCH (searches the whole
+    // ticked set) and CREATE (a private lobby in ONE randomly-picked ticked game). Games are
+    // ticked on the LEFT picker, so there's no checkbox list here — just the count + actions.
+    function renderMultiPanel() {
+        var ids = multiCheckedIds();
+        var n = ids.length;
+
+        var hint = $.CreatePanel("Label", detailPanel, "");
+        hint.AddClass("mg-caption");
+        hint.text = n > 0
+            ? ("Tick games on the left. Searching " + n + ": " + multiCheckedNames().join(", ") + ".")
+            : "Tick one or more games on the left to search.";
+
         var quickRow = $.CreatePanel("Panel", detailPanel, "");
         quickRow.AddClass("mg-btn-row");
         var quickBtn = $.CreatePanel("Button", quickRow, "");
@@ -870,9 +885,40 @@
         var quickCap = $.CreatePanel("Label", detailPanel, "");
         quickCap.AddClass("mg-caption");
         quickCap.text = "Public match in any of the ticked games.";
+
+        // Create a private lobby in a RANDOM ticked game (maintainer: "if you press create
+        // with several selected, just a random one is picked").
+        var friendLbl = $.CreatePanel("Label", detailPanel, "");
+        friendLbl.AddClass("mg-section-label");
+        friendLbl.text = "Play with a friend";
+        var friendRow = $.CreatePanel("Panel", detailPanel, "");
+        friendRow.AddClass("mg-btn-row");
+        var createBtn = $.CreatePanel("Button", friendRow, "");
+        createBtn.AddClass("mg-btn"); createBtn.AddClass("mg-btn-solo");
+        if (n === 0) createBtn.AddClass("mg-btn-disabled");
+        var cl = $.CreatePanel("Label", createBtn, ""); cl.text = "CREATE (RANDOM)";
+        createBtn.SetPanelEvent("onactivate", function () { startCreateRandom(); });
+    }
+
+    function multiCheckedNames() {
+        var ids = multiCheckedIds(), out = [];
+        for (var i = 0; i < ids.length; i++) { var mg = MG.Games.byId(ids[i]); if (mg) out.push(mg.name); }
+        return out;
+    }
+
+    // Create a private lobby in ONE randomly-chosen ticked game, then run the normal
+    // single-game waiting flow (the lobby is a fixed game, so Join/host work unchanged).
+    function startCreateRandom() {
+        var ids = multiCheckedIds();
+        if (ids.length === 0) { setStatus("Tick at least one game to create."); return; }
+        var pick = ids[Math.floor(Math.random() * ids.length)];
+        selectedGameId = pick;                 // the create flow uses selectedGameId
+        setStatus("Creating a " + (MG.Games.byId(pick) || {}).name + " lobby…");
+        startCreate();
     }
 
     function multiCheckedIds() {
+
         var ids = [];
         for (var i = 0; i < MULTI_GAME_IDS.length; i++) {
             var id = MULTI_GAME_IDS[i];
