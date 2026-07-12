@@ -18,9 +18,10 @@
  *   $.MG.Session.newToken()                     -> a fresh high-entropy seat token
  *   $.MG.Api.create(game, tok, cb(code), err)
  *   $.MG.Api.quick(game, tok, cb({role,code}), err)   role = "host" | "joiner"
+ *   $.MG.Api.mquick(games[], tok, cb({role,code}), err)   multi-select; game learned via status
  *   $.MG.Api.cancel(code, cb(ok), err)
  *   $.MG.Api.join(code, tok, cb({ok,game,reason}), err)
- *   $.MG.Api.status(code, cb({gone,players}), err)
+ *   $.MG.Api.status(code, cb({gone,players,game}), err)  game = fixed game (0 while undecided)
  *   $.MG.Api.move(code, from, to, end, tok, cb({ok,reason}), err)   reason: turn|illegal|token|gone
  *   $.MG.Api.poll(code, since, cb(move|null), err)      move = {from,to,end,seq}
  *   $.MG.Api.reset(code, game, tok, cb(ok), err)
@@ -412,6 +413,31 @@
             }, err);
         },
 
+        // Multi-select quick match: the caller offers a SET of games (games[] → "1,2,4,5").
+        // Same role/code encoding as quick (HOST flagged by +100 on the width). A JOINER is
+        // paired into a waiting host whose game (or undecided candidate set) intersects ours,
+        // and the server FIXES the shared lobby to the matched game — but the 2-int response
+        // can't also carry which game was chosen, so BOTH sides read it from status() (whose
+        // height now carries game+1). The caller resolves the game before mounting.
+        mquick: function (games, tok, cb, err) {
+            var list = (games || []).join(",");
+            request("/api/mquick", { games: list, tok: tok }, function (w, h) {
+                if (w === 9) {                                   // (9,6) no valid ids · (9,3) bad token
+                    suspectDecode("mquick w=" + w + " h=" + h);
+                    if (err) err(h === 6 ? "games" : h === 3 ? "token" : "error");
+                    return;
+                }
+                var isHost = w >= 100;
+                var code = (isHost ? w - 100 : w) * 100 + (h - 1);
+                if (code < 1000 || code > 9999) {
+                    suspectDecode("mquick w=" + w + " h=" + h);
+                    if (err) err("decode");
+                    return;
+                }
+                cb({ role: isHost ? "host" : "joiner", code: code });
+            }, err);
+        },
+
         // Drop a lobby we created but nobody joined yet (host pressed Cancel). Carries the
         // seat token: the server only honours a cancel from a SEATED player while the lobby is
         // still waiting, so a 4-digit-code guesser can't nuke someone else's active match.
@@ -449,7 +475,10 @@
                     if (err) err("decode");
                     return;
                 }
-                cb({ gone: false, players: w });
+                // h carries game+1 (1 = still-undecided multi lobby, game 0). Single-game
+                // callers ignore `game`; the multi-select flow reads it to learn which game a
+                // joiner picked once the lobby fixes (players === 2, game > 0).
+                cb({ gone: false, players: w, game: h - 1 });
             }, err);
         },
 
