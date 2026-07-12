@@ -99,12 +99,12 @@ export class Hub {
 
         if (waitCode) {
           const w = await this.storage.get("l:" + waitCode);
-          if (w && w.pub && w.players < 2) {
-            w.players = 2;
-            w.seats = w.seats || [null, null];
-            w.seats[1] = { tok: q.get("tok") || "" }; // joiner takes seat 1 (black/O/-1)
-            await this.storage.put("l:" + waitCode, w);
-            await this.storage.delete("pubq:" + game);
+          // Join a waiting host if it's this exact game OR a still-undecided multi-select
+          // lobby (game 0) whose candidate set includes this game. finalizeJoin fixes the
+          // game (for a multi-lobby), seats the joiner and clears the host's queue(s).
+          if (w && w.pub && w.players < 2 &&
+              (w.game === game || (w.game === 0 && w.games && w.games.indexOf(game) >= 0))) {
+            await this.finalizeJoin(waitCode, w, q.get("tok"), game);
             return png(Math.floor(waitCode / 100), (waitCode % 100) + 1); // JOINER (black)
           }
           // stale/closed slot — fall through and host a fresh lobby.
@@ -122,16 +122,49 @@ export class Hub {
         return png(Math.floor(newCode / 100) + 100, (newCode % 100) + 1);
       }
 
+      // Multi-select quick match. The caller sends a SET of games it will accept
+      // (games=1,2,4,5 — the uplink is unlimited, so the whole set rides up freely).
+      // A joiner takes any waiting host whose game (or candidate set) intersects ours,
+      // FIXING the lobby to the matched game. With no match, we host ONE undecided lobby
+      // (game 0) registered in EVERY selected per-game queue; the first joiner to pick one
+      // of them fixes the game. Both sides learn the chosen game from /api/status (its
+      // height carries game+1), so no extra downlink value is needed.
+      if (p === "/api/mquick") {
+        await this.maybeSweep();
+        if (!validTok(q.get("tok"))) return png(9, 3);     // reject empty/garbage seat token
+        const set = parseGameSet(q.get("games"));
+        if (set.length === 0) return png(9, 6);            // no valid multi-capable game ids
+        for (let i = 0; i < set.length; i++) {
+          const g = set[i];
+          const waitCode = await this.storage.get("pubq:" + g);
+          if (!waitCode) continue;
+          const w = await this.storage.get("l:" + waitCode);
+          if (w && w.pub && w.players < 2 &&
+              (w.game === g || (w.game === 0 && w.games && w.games.indexOf(g) >= 0))) {
+            await this.finalizeJoin(waitCode, w, q.get("tok"), g);
+            return png(Math.floor(waitCode / 100), (waitCode % 100) + 1); // JOINER
+          }
+        }
+        const newCode = await this.freshCode();
+        const lobby = {
+          game: 0, games: set, players: 1, moves: [], pub: 1, t: nowSeq(),
+          seats: [{ tok: q.get("tok") || "" }, null],      // host takes seat 0
+          turn: 0,
+          state: null                                      // fixed once a joiner picks a game
+        };
+        await this.storage.put("l:" + newCode, lobby);
+        for (let i = 0; i < set.length; i++) await this.storage.put("pubq:" + set[i], newCode);
+        // HOST: +100 on the width flags the role, exactly like /api/quick.
+        return png(Math.floor(newCode / 100) + 100, (newCode % 100) + 1);
+      }
+
       if (p === "/api/cancel") {
         const lobby = code ? await this.storage.get("l:" + code) : null;
         // Only a SEATED player (valid token) may cancel, and only while the lobby is still
         // waiting for the second player. Never let a 4-digit code-guesser nuke an active match.
         if (lobby && seatOf(lobby, q.get("tok")) >= 0 && lobby.players < 2) {
           await this.storage.delete("l:" + code);
-          const waitCode = await this.storage.get("pubq:" + lobby.game);
-          if (waitCode != null && Number(waitCode) === Number(code)) {
-            await this.storage.delete("pubq:" + lobby.game);
-          }
+          await this.clearQueuesFor(lobby, code); // clear every per-game queue this lobby holds
         }
         return png(1, 1);
       }
@@ -153,7 +186,10 @@ export class Hub {
       if (p === "/api/status") {
         const lobby = code ? await this.storage.get("l:" + code) : null;
         if (!lobby) return png(9, 1);              // gone
-        return png(lobby.players, 1);              // 1 or 2
+        // height carries the chosen game + 1 (1 while an mquick lobby is still undecided,
+        // game=0). A multi-select HOST reads it to learn which game a joiner picked; the
+        // single-game callers ignore it (they already know their game). Never (9,x).
+        return png(lobby.players, (lobby.game || 0) + 1); // w: 1|2 players · h: game+1
       }
 
       if (p === "/api/move") {
@@ -281,6 +317,32 @@ export class Hub {
     return 0; // server full (extremely unlikely); the client-side create just looks broken
   }
 
+  // Seat a joiner into a waiting host lobby, FIXING the game if the host was a still-
+  // undecided multi-select lobby (game 0 → the picked game, and initialise its board now
+  // that we know which engine it needs). Clears EVERY per-game queue the host held, so a
+  // multi-lobby registered under several games can never be double-joined.
+  async finalizeJoin(waitCode, w, tok, game) {
+    if (w.game === 0) { w.game = game; w.games = null; w.state = initState(game); }
+    w.players = 2;
+    w.seats = w.seats || [null, null];
+    w.seats[1] = { tok: tok || "" };           // joiner takes seat 1
+    await this.storage.put("l:" + waitCode, w);
+    await this.clearQueuesFor(w, waitCode);
+  }
+
+  // Remove a lobby's code from every per-game queue it registered under. A single-game
+  // lobby holds one queue (pubq:game); a multi-select lobby (games[]) holds several. Only
+  // deletes a queue entry that still points at THIS code (a newer host may have replaced it).
+  async clearQueuesFor(lobby, code) {
+    const ids = lobby.games && lobby.games.length ? lobby.games : [lobby.game];
+    for (let i = 0; i < ids.length; i++) {
+      const g = ids[i];
+      if (!g) continue;
+      const wc = await this.storage.get("pubq:" + g);
+      if (wc != null && Number(wc) === Number(code)) await this.storage.delete("pubq:" + g);
+    }
+  }
+
 
   // Opportunistic cleanup so a public relay's storage stays bounded. Runs at most
   // once a minute (guarded by a stored timestamp) and only off write paths
@@ -317,6 +379,22 @@ function validTok(tok) {
 // Game ids the server is authoritative for. 3 = durak (its own route set). An id outside
 // this set has no engine, so create/quick reject it up front and move never relays it.
 const SUPPORTED_GAMES = { 1: 1, 2: 1, 3: 1, 4: 1, 5: 1 };
+
+// Games eligible for MULTI-select quick match. Durak (3) is excluded: it uses a wholly
+// separate route set (room/start/dact/…), so it can't share the 2-int move/poll lobby a
+// multi-lobby becomes. Parse "1,2,4,5" → a de-duplicated, sorted array of valid ids.
+const MQUICK_GAMES = { 1: 1, 2: 1, 4: 1, 5: 1 };
+function parseGameSet(raw) {
+  if (!raw) return [];
+  const parts = String(raw).split(",");
+  const seen = {}, out = [];
+  for (let i = 0; i < parts.length; i++) {
+    const n = parseInt(parts[i], 10);
+    if (!isNaN(n) && MQUICK_GAMES[n] && !seen[n]) { seen[n] = 1; out.push(n); }
+  }
+  out.sort(function (a, b) { return a - b; });
+  return out;
+}
 
 
 function nowSeq() {

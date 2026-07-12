@@ -305,6 +305,72 @@ async function main() {
     var g2 = await req(h4, "/api/quick.png?game=2&tok=QGAME2BB");   // different game
     ok(g2.w >= 100, "quick for a different game hosts its own lobby (per-game queue)");
 
+    // ── multi-select quick match (mquick): intersection matching + status game ──
+    await (async function () {
+        var hm = new Hub({ storage: new FakeStorage() });
+        // Host offers {1,2,4}. No waiting host yet → becomes HOST of an undecided lobby.
+        var mh = await req(hm, "/api/mquick.png?games=1,2,4&tok=MQHOST01");
+        ok(mh.w >= 100, "mquick: first caller becomes HOST (role flag)");
+        var mc = (mh.w - 100) * 100 + (mh.h - 1);
+        ok(mc >= 1000 && mc <= 9999, "mquick: host code valid (" + mc + ")");
+        // While undecided, status reports game+1 = 1 (game 0).
+        var msu = await req(hm, "/api/status.png?code=" + mc);
+        ok(msu.w === 1 && msu.h === 1, "mquick: undecided lobby reports players=1, game=0 (h=1)");
+        // Joiner offers {4,5}. Intersection with host {1,2,4} = {4} → pairs, fixing game 4 (chess).
+        var mj = await req(hm, "/api/mquick.png?games=5,4&tok=MQJOIN01");
+        ok(mj.w < 100, "mquick: intersecting joiner becomes JOINER");
+        var mjc = mj.w * 100 + (mj.h - 1);
+        ok(mjc === mc, "mquick: joiner paired into the host's lobby (same code)");
+        // Both sides now learn the fixed game from status: players=2, h = game+1 = 5.
+        var msd = await req(hm, "/api/status.png?code=" + mc);
+        ok(msd.w === 2 && msd.h === 5, "mquick: decided lobby reports players=2, game=4 (h=5)");
+        // The fixed lobby is a real chess game: white e2-e4 is accepted.
+        var mv = await req(hm, "/api/move.png?code=" + mc + "&from=" + sq(6, 4) + "&to=" + sq(4, 4) + "&end=1&tok=MQHOST01");
+        ok(mv.w === 1 && mv.h === 1, "mquick: fixed game plays chess (e2-e4 accepted)");
+    })();
+
+    // ── mquick: non-intersecting sets do NOT pair ──
+    await (async function () {
+        var hm = new Hub({ storage: new FakeStorage() });
+        var a = await req(hm, "/api/mquick.png?games=1,2&tok=MQNOAA01");   // host offers {1,2}
+        ok(a.w >= 100, "mquick: host offers {1,2} (HOST)");
+        var ac = (a.w - 100) * 100 + (a.h - 1);
+        var b = await req(hm, "/api/mquick.png?games=4,5&tok=MQNOBB01");   // disjoint {4,5}
+        ok(b.w >= 100, "mquick: disjoint set does NOT pair — hosts its own lobby");
+        var bc = (b.w - 100) * 100 + (b.h - 1);
+        ok(bc !== ac, "mquick: the two disjoint hosts are separate lobbies");
+        // A third caller offering {2} takes the FIRST host (which still waits under queue 2).
+        var c = await req(hm, "/api/mquick.png?games=2&tok=MQNOCC01");
+        ok(c.w < 100 && (c.w * 100 + (c.h - 1)) === ac, "mquick: {2} joins the {1,2} host, fixing game 2");
+    })();
+
+    // ── mquick: cancel clears EVERY per-game queue the multi-lobby registered under ──
+    await (async function () {
+        var hm = new Hub({ storage: new FakeStorage() });
+        var a = await req(hm, "/api/mquick.png?games=1,2,5&tok=MQCANAA1");
+        var ac = (a.w - 100) * 100 + (a.h - 1);
+        await req(hm, "/api/cancel.png?code=" + ac + "&tok=MQCANAA1");
+        // Every queue is now free: a single-game quick on 1, 2 AND 5 each hosts fresh.
+        var g1 = await req(hm, "/api/quick.png?game=1&tok=MQFRSH11");
+        ok(g1.w >= 100, "mquick cancel: queue 1 freed (quick hosts fresh)");
+        var g2 = await req(hm, "/api/quick.png?game=2&tok=MQFRSH21");
+        ok(g2.w >= 100, "mquick cancel: queue 2 freed");
+        var g5 = await req(hm, "/api/quick.png?game=5&tok=MQFRSH51");
+        ok(g5.w >= 100, "mquick cancel: queue 5 freed");
+    })();
+
+    // ── mquick: a single /api/quick joiner can match a waiting multi-lobby ──
+    await (async function () {
+        var hm = new Hub({ storage: new FakeStorage() });
+        var a = await req(hm, "/api/mquick.png?games=2,5&tok=MQMIXAA1");   // multi-host {2,5}
+        var ac = (a.w - 100) * 100 + (a.h - 1);
+        // A plain single-game quick for game 5 should join the multi-host, fixing game 5.
+        var j = await req(hm, "/api/quick.png?game=5&tok=MQMIXBB1");
+        ok(j.w < 100 && (j.w * 100 + (j.h - 1)) === ac, "mquick: single quick(5) joins a {2,5} multi-host");
+        var msd = await req(hm, "/api/status.png?code=" + ac);
+        ok(msd.w === 2 && msd.h === 6, "mquick: mixed match fixed game 5 (status h=6)");
+    })();
+
     // ── cancel: only a SEATED player (with token), and only while waiting, may cancel ──
     var h3 = new Hub({ storage: new FakeStorage() });
     var qc = await req(h3, "/api/quick.png?game=1&tok=CANCELAA");
