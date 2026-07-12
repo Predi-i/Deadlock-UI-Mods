@@ -278,34 +278,8 @@
     transition-duration: 0.12s;
 }
 
-/* Corner tick badge — a small round accent check pinned to the card's TOP-RIGHT. Hidden by
-   default (collapse); it only shows in Select-Multiple mode when the card is ticked. Without
-   this rule the raw "x" Label parked at the card's top-LEFT (flow-children:none) — the stray
-   cross the maintainer saw on EVERY card regardless of mode (п3). */
-.mg-card-tick {
-    width: 26px;
-    height: 26px;
-    flow-children: none;
-    horizontal-align: right;
-    vertical-align: top;
-    margin: 6px;
-    background-color: #4f86d4;
-    border: 1px solid #7aa8e8;
-    border-radius: 50%;
-    box-shadow: 0px 2px 5px 0px #00000099;
-    visibility: collapse;
-}
-.mg-card-tick.mg-tick-on { visibility: visible; }
-.mg-card-tick-mark {
-    font-family: radiance !important;
-    font-weight: bold;
-    color: #ffffff !important;
-    font-size: 15px !important;
-    horizontal-align: center;
-    vertical-align: center;
-    margin-top: 1px;
-}
 /* A ticked card in Select-Multiple reads as SELECTED: accent border, tinted fill and a small
+
    scale-up so the pick is obvious (п4 — before this, ticking a game changed nothing visible;
    only the corner badge appeared). Mirrors .mg-selected but wins via the extra .mg-ticked. */
 .mg-game-card.mg-ticked {
@@ -947,35 +921,46 @@
 .mg-dk-deckcount { font-family: oracle !important; font-weight: bold; color: #eaf2ff !important; font-size: 40px !important; }
 
 /* ── UI-scale dropdown (header, left of the close X) ────────────────────────── */
-/* NATIVE Panorama DropDown widget (same one QOLLOCK's Default Hero picker uses). The widget
-   OWNS its popup — Panorama spawns a floating menu panel with id "<ddId>DropDownMenu" (here
-   MG_ScaleDDDropDownMenu) that already works with the game's base DropDownMenu styling, so it
-   actually opens on click (unlike the hand-rolled visibility-toggle Panel, which never opened
-   in the HUD context). We just restyle the resting widget + the popup in our palette. */
-.mg-scale { width: 84px; height: 30px; vertical-align: center; margin-right: 10px; }
-.mg-scale-dd {
+/* CUSTOM dropdown (button + popup), NOT the native Panorama DropDown widget. ⚠ TRAP: the
+   native `DropDown` was tried and reverted — in the HUD context it drags in the game's base
+   DropDownMenu styling (a paper-tile popup texture that clashes with our palette + a "…"
+   placeholder instead of the current value) and even shoved the header close X out of place.
+   So this is our own button whose label shows the current % + a popup LIST shown by toggling
+   .mg-scale-open on the flow-children:none wrapper. The wrapper's overflow:noclip lets the popup
+   overlap the body (no position:absolute); the popup's z-index paints it over the body. */
+.mg-scale { flow-children: none; width: 84px; height: 30px; vertical-align: center; margin-right: 10px; overflow: noclip; }
+.mg-scale-btn {
     width: 84px; height: 30px;
     background-color: #161f2b; border: 1px solid #2a3849; border-radius: 2px;
-    vertical-align: center;
+    flow-children: right; vertical-align: center;
     transition-property: background-color, border-color, brightness;
     transition-duration: 0.1s; transition-timing-function: ease-out;
 }
-.mg-scale-dd:hover { background-color: #1c2836; border-color: #3a5170; brightness: 1.08; }
-.mg-scale-dd Label {
+.mg-scale-btn:hover { background-color: #1c2836; border-color: #3a5170; brightness: 1.08; }
+.mg-scale-label {
     font-family: radiance !important; font-weight: semi-bold; color: #cdd9e7 !important;
     font-size: 15px !important; vertical-align: center; margin-left: 10px;
 }
-/* the floating popup the widget spawns (id = <dropdownId> + "DropDownMenu") + its options */
-#MG_ScaleDDDropDownMenu {
+.mg-scale-caret {
+    font-family: radiance !important; color: #7a8ea6 !important; font-size: 12px !important;
+    vertical-align: center; margin-left: 6px;
+}
+/* popup list — dropped below the button (margin-top clears the 30px button), collapsed by
+   default; the wrapper's .mg-scale-open class flips it visible. z-index lifts it over the body. */
+.mg-scale-menu {
+    margin-top: 33px; width: 84px; z-index: 200;
     background-color: #0f141c; border: 1px solid #2a3849; border-radius: 2px;
-    box-shadow: 0px 8px 20px 0px #000000aa;
+    flow-children: down; box-shadow: 0px 8px 20px 0px #000000aa;
+    visibility: collapse;
 }
-.mg-scale-opt {
-    width: 100%; height: 30px; background-color: #00000000;
-    font-family: radiance !important; color: #cdd9e7 !important; font-size: 15px !important;
-    vertical-align: center; padding-left: 10px;
-}
+.mg-scale-open > .mg-scale-menu { visibility: visible; }
+.mg-scale-opt { width: 100%; height: 30px; background-color: #00000000; }
 .mg-scale-opt:hover { background-color: #1c2836; }
+.mg-scale-opt-label {
+    font-family: radiance !important; color: #cdd9e7 !important; font-size: 15px !important;
+    horizontal-align: center; vertical-align: center;
+}
+
 
 
 /* ── connect four ────────────────────────────────────────────────────────────

@@ -45,8 +45,12 @@
     // flow). State persists across card selection so the mode stays put while browsing.
     var multiSelect = false;
     var multiChecked = {};   // { gameId: true } — games ticked for the multi-search
-    // Games eligible for multi-select (mirror of the worker's MQUICK_GAMES; durak=3 excluded).
-    var MULTI_GAME_IDS = [1, 2, 4, 5];
+    // Games that can be TICKED in Select-Multiple. Durak (3) is included so it can be picked
+    // too (maintainer). Public mquick still can't pair durak — its online path is a room — so
+    // ticking durak alone falls back to its Create/room flow; ticked alongside others it's just
+    // highlighted and the server matches the non-durak games.
+    var MULTI_GAME_IDS = [1, 2, 3, 4, 5];
+
     function isMultiGame(id) { for (var i = 0; i < MULTI_GAME_IDS.length; i++) if (MULTI_GAME_IDS[i] === id) return true; return false; }
 
 
@@ -206,51 +210,59 @@
     }
     function setTitle(t) { if (titleLabel) titleLabel.text = t; }
 
-    // ── UI-scale control (NATIVE DropDown) ────────────────────────────────────
-    // Use Panorama's built-in DropDown widget — the SAME one QOLLOCK's "Default Hero" picker
-    // uses ($.CreatePanel("DropDown"), AddOption(labelPanel), SetSelected(id), oninputsubmit).
-    // The widget owns its own popup, so it actually opens on click; the previous hand-rolled
-    // "toggle a Panel's visibility" approach never opened in the HUD context (why the last pass
-    // fell back to a cycler button). Each option is a Label with class DropDownChild whose id
-    // encodes the percent; on submit we read the selected child's id and apply it.
+    // ── UI-scale control (custom dropdown: button + popup) ────────────────────
+    // The native Panorama `DropDown` widget was tried and REJECTED: in the HUD context it drags
+    // in the game's base DropDown styling — a paper-tile popup texture that clashes with our
+    // palette, a "…" placeholder instead of the current value, and it even shoved the header's
+    // close X out. So we build our OWN: a button showing the current scale + a popup LIST toggled
+    // by a class (.mg-scale-open on the wrapper). The wrapper is flow-children:none + overflow:noclip
+    // so the popup overlaps the body (the proven overlap idiom, no position:absolute), and the popup
+    // carries a z-index so it paints over the body. Show/hide via a CLASS (not inline visibility) —
+    // that's the reliable toggle in this context.
     var SCALE_STEPS = [100, 125, 150, 175, 200];
-    var scaleDropDown = null;
+    var scaleWrap = null, scaleMenuOpen = false;
     function buildScaleControl(parent) {
         var wrap = $.CreatePanel("Panel", parent, "MG_ScaleWrap");
         wrap.AddClass("mg-scale");
+        scaleWrap = wrap;
 
-        var dd = $.CreatePanel("DropDown", wrap, "MG_ScaleDD");
-        dd.AddClass("mg-scale-dd");
-        scaleDropDown = dd;
+        var btn = $.CreatePanel("Button", wrap, "MG_ScaleBtn");
+        btn.AddClass("mg-scale-btn");
+        scaleLabel = $.CreatePanel("Label", btn, "");
+        scaleLabel.AddClass("mg-scale-label");
+        scaleLabel.text = uiScalePct + "%";
+        var caret = $.CreatePanel("Label", btn, "");
+        caret.AddClass("mg-scale-caret");
+        caret.text = "v";                                    // hints "opens a list"
+        btn.SetPanelEvent("onactivate", function () { toggleScaleMenu(); });
 
+        scaleMenu = $.CreatePanel("Panel", wrap, "MG_ScaleMenu");
+        scaleMenu.AddClass("mg-scale-menu");
         for (var i = 0; i < SCALE_STEPS.length; i++) {
-            var pct = SCALE_STEPS[i];
-            var optId = "mgscale_" + pct;                    // id encodes the value; read back on submit
-            var opt = $.CreatePanel("Label", dd, optId);
-            opt.AddClass("mg-scale-opt");
-            opt.AddClass("DropDownChild");                   // native class the widget expects for options
-            opt.text = pct + "%";
-            dd.AddOption(opt);
+            (function (pct) {
+                var opt = $.CreatePanel("Button", scaleMenu, "");
+                opt.AddClass("mg-scale-opt");
+                var ol = $.CreatePanel("Label", opt, ""); ol.AddClass("mg-scale-opt-label"); ol.text = pct + "%";
+                opt.SetPanelEvent("onactivate", function () { setUiScale(pct); closeScaleMenu(); });
+            })(SCALE_STEPS[i]);
         }
-        try { dd.SetSelected("mgscale_" + uiScalePct); } catch (e) {}
-
-        // Fires when the user picks an option. Read the selected child's id → percent → apply.
-        dd.SetPanelEvent("oninputsubmit", function () {
-            var pct = uiScalePct;
-            try {
-                var sel = dd.GetSelected && dd.GetSelected();
-                if (sel && sel.id) {
-                    var n = parseInt(String(sel.id).replace("mgscale_", ""), 10);
-                    if (!isNaN(n)) pct = n;
-                }
-            } catch (e2) {}
-            setUiScale(pct);
-        });
+        scaleMenuOpen = false;
+    }
+    function toggleScaleMenu() { if (scaleMenuOpen) closeScaleMenu(); else openScaleMenu(); }
+    function openScaleMenu() {
+        if (scaleWrap && scaleWrap.IsValid && scaleWrap.IsValid()) scaleWrap.AddClass("mg-scale-open");
+        scaleMenuOpen = true;
+    }
+    function closeScaleMenu() {
+        if (scaleWrap && scaleWrap.IsValid && scaleWrap.IsValid()) scaleWrap.RemoveClass("mg-scale-open");
+        scaleMenuOpen = false;
     }
     function setUiScale(pct) {
         uiScalePct = pct;
+        if (scaleLabel && scaleLabel.IsValid && scaleLabel.IsValid()) scaleLabel.text = pct + "%";
         applyUiScale();
     }
+
 
 
 
@@ -344,12 +356,9 @@
                     var ll = $.CreatePanel("Label", lock, "");
                     ll.text = "IN DEVELOPMENT";
                 }
-                // Corner tick badge — shown only in multi-select mode when this card is ticked.
-                var tick = $.CreatePanel("Panel", card, "");
-                tick.AddClass("mg-card-tick");
-                var tickMark = $.CreatePanel("Label", tick, ""); tickMark.AddClass("mg-card-tick-mark"); tickMark.text = "x";
-                // Click: in multi-select mode a multi-capable, enabled card TOGGLES its tick and
-                // focuses it; otherwise it just selects the card.
+                // Click: in multi-select mode a multi-capable, enabled card TOGGLES its ticked
+                // state (shown by the card's own accent highlight — no corner badge, per the
+                // maintainer); otherwise it just selects the card.
                 card.SetPanelEvent("onactivate", function () {
                     if (multiSelect && isMultiGame(g.id) && g.enabled) {
                         multiChecked[g.id] = !multiChecked[g.id];
@@ -359,7 +368,8 @@
                         selectGame(g.id);
                     }
                 });
-                cardEls.push({ id: g.id, panel: card, tick: tick });
+                cardEls.push({ id: g.id, panel: card });
+
             })(games[i]);
         }
         updateCardSkins();
@@ -857,20 +867,17 @@
     }
 
     // ── multi-select quick match ──────────────────────────────────────────────
-    // Reflect the ticked set on the LEFT picker: a card shows its corner check ONLY in
-    // multi-select mode when it's a ticked multi-capable game. Called after every toggle.
+    // Reflect the ticked set on the LEFT picker: a ticked multi-capable game gets the accent
+    // highlight (.mg-ticked). NO corner badge — the maintainer didn't want the round tick.
+    // Called after every toggle.
     function updateCardSkins() {
         for (var i = 0; i < cardEls.length; i++) {
             var ce = cardEls[i];
             var on = multiSelect && isMultiGame(ce.id) && !!multiChecked[ce.id];
-            // corner check badge AND the card itself (accent border + tint + scale-up) so a
-            // ticked game is unmistakably selected (п4 — the tick alone was too subtle).
-            if (ce.tick) { if (on) ce.tick.AddClass("mg-tick-on"); else ce.tick.RemoveClass("mg-tick-on"); }
             if (on) ce.panel.AddClass("mg-ticked"); else ce.panel.RemoveClass("mg-ticked");
-            if (multiSelect && isMultiGame(ce.id)) ce.panel.AddClass("mg-multi-mode");
-            else ce.panel.RemoveClass("mg-multi-mode");
         }
     }
+
 
 
     // Right panel when Select-Multiple is ON: a hint, then QUICK MATCH (searches the whole
