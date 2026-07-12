@@ -206,11 +206,12 @@
     }
     function setTitle(t) { if (titleLabel) titleLabel.text = t; }
 
-    // ── UI-scale dropdown ─────────────────────────────────────────────────────
-    // A tiny custom dropdown (button + popup list) — a native <DropDown> is fragile in the
-    // HUD context, and panels + onactivate are the proven idiom. The wrapper is
-    // flow-children:none so the popup can overlap the body below (overlap idiom, §6.1), NOT
-    // position:absolute (which Panorama ignores).
+    // ── UI-scale control (CYCLER button) ──────────────────────────────────────
+    // A popup dropdown proved fragile in the HUD context (the menu clips / doesn't paint
+    // over the body, even with overflow:noclip + z-index). Per DEVELOPMENT_PLAN §B1 the
+    // robust replacement is a CYCLER: one plain button that shows the current scale and,
+    // on each click, advances to the next step (100→125→…→200→100) and applies it. No
+    // popup, no overlap, no clipping — it's just a button + label, guaranteed to work.
     var SCALE_STEPS = [100, 125, 150, 175, 200];
     function buildScaleControl(parent) {
         var wrap = $.CreatePanel("Panel", parent, "MG_ScaleWrap");
@@ -222,31 +223,20 @@
         scaleLabel.text = uiScalePct + "%";
         var caret = $.CreatePanel("Label", btn, "");
         caret.AddClass("mg-scale-caret");
-        caret.text = "v";                                   // plain ASCII: no chevron glyph in the font
-        var menu = $.CreatePanel("Panel", wrap, "MG_ScaleMenu");
-        menu.AddClass("mg-scale-menu");
-        menu.style.visibility = "collapse";
-        scaleMenu = menu;
-        for (var i = 0; i < SCALE_STEPS.length; i++) {
-            (function (pct) {
-                var row = $.CreatePanel("Button", menu, "");
-                row.AddClass("mg-scale-opt");
-                var l = $.CreatePanel("Label", row, ""); l.text = pct + "%";
-                row.SetPanelEvent("onactivate", function () { setUiScale(pct); hideScaleMenu(); });
-            })(SCALE_STEPS[i]);
-        }
-        btn.SetPanelEvent("onactivate", function () {
-            var open = scaleMenu && scaleMenu.BHasClass && scaleMenu.BHasClass("mg-scale-open");
-            if (open) hideScaleMenu(); else showScaleMenu();
-        });
+        caret.text = "+";                                   // hints "click to change" (cycler)
+        btn.SetPanelEvent("onactivate", function () { cycleUiScale(); });
     }
-    function showScaleMenu() { if (scaleMenu) { scaleMenu.style.visibility = "visible"; scaleMenu.AddClass("mg-scale-open"); } }
-    function hideScaleMenu() { if (scaleMenu) { scaleMenu.style.visibility = "collapse"; scaleMenu.RemoveClass("mg-scale-open"); } }
+    function cycleUiScale() {
+        var idx = 0;
+        for (var i = 0; i < SCALE_STEPS.length; i++) if (SCALE_STEPS[i] === uiScalePct) { idx = i; break; }
+        setUiScale(SCALE_STEPS[(idx + 1) % SCALE_STEPS.length]);
+    }
     function setUiScale(pct) {
         uiScalePct = pct;
         if (scaleLabel) scaleLabel.text = pct + "%";
         applyUiScale();
     }
+
     // pre-transform-scale2d scales the modal in place (around its centre) AFTER layout, so the
     // full-screen dim behind it stays put. Every child (board/cards) scales with it.
     function applyUiScale() {
