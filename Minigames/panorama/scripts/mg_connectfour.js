@@ -87,6 +87,27 @@
         try { piecesLayer.SetAttributeString("hittest", "false"); } catch (e) {}
         try { piecesLayer.SetAttributeString("hittestchildren", "false"); } catch (e) {}
 
+        // FRONT rim layer: a blue ring over EACH hole, created AFTER the discs so it paints in
+        // FRONT of them. Panorama can't punch a real transparent hole in the solid blue plate, so
+        // instead of moving the discs behind the plate (impossible without alpha art) we tuck each
+        // disc's rim under a blue ring. Stack becomes: dark hole (back) < disc < blue rim (front),
+        // so a disc reads as SEATED in the board — behind the light-blue plate, in front of the
+        // black socket (п6: discs no longer float on top with max z-index). hittest off so clicks
+        // still fall through to the cells below.
+        var frontLayer = $.CreatePanel("Panel", wrap, "MG_C4Front");
+        frontLayer.AddClass("mg-cf-front");
+        try { frontLayer.SetAttributeString("hittest", "false"); } catch (e) {}
+        try { frontLayer.SetAttributeString("hittestchildren", "false"); } catch (e) {}
+        (function buildRims() {
+            for (var i = 0; i < COLS * ROWS; i++) {
+                var rim = $.CreatePanel("Panel", frontLayer, "");
+                rim.AddClass("mg-cf-rim");
+                var p = discXY(i);
+                rim.style.transform = "translate3d(" + p.x + "px, " + p.y + "px, 0px)";
+            }
+        })();
+
+
         function discXY(i) {
             var r = (i / COLS) | 0, c = i % COLS;
             return { x: c * CELL + INSET, y: r * CELL + INSET };
