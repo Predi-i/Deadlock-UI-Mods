@@ -206,36 +206,53 @@
     }
     function setTitle(t) { if (titleLabel) titleLabel.text = t; }
 
-    // ── UI-scale control (CYCLER button) ──────────────────────────────────────
-    // A popup dropdown proved fragile in the HUD context (the menu clips / doesn't paint
-    // over the body, even with overflow:noclip + z-index). Per DEVELOPMENT_PLAN §B1 the
-    // robust replacement is a CYCLER: one plain button that shows the current scale and,
-    // on each click, advances to the next step (100→125→…→200→100) and applies it. No
-    // popup, no overlap, no clipping — it's just a button + label, guaranteed to work.
+    // ── UI-scale control (NATIVE DropDown) ────────────────────────────────────
+    // Use Panorama's built-in DropDown widget — the SAME one QOLLOCK's "Default Hero" picker
+    // uses ($.CreatePanel("DropDown"), AddOption(labelPanel), SetSelected(id), oninputsubmit).
+    // The widget owns its own popup, so it actually opens on click; the previous hand-rolled
+    // "toggle a Panel's visibility" approach never opened in the HUD context (why the last pass
+    // fell back to a cycler button). Each option is a Label with class DropDownChild whose id
+    // encodes the percent; on submit we read the selected child's id and apply it.
     var SCALE_STEPS = [100, 125, 150, 175, 200];
+    var scaleDropDown = null;
     function buildScaleControl(parent) {
         var wrap = $.CreatePanel("Panel", parent, "MG_ScaleWrap");
         wrap.AddClass("mg-scale");
-        var btn = $.CreatePanel("Button", wrap, "MG_ScaleBtn");
-        btn.AddClass("mg-scale-btn");
-        scaleLabel = $.CreatePanel("Label", btn, "");
-        scaleLabel.AddClass("mg-scale-label");
-        scaleLabel.text = uiScalePct + "%";
-        var caret = $.CreatePanel("Label", btn, "");
-        caret.AddClass("mg-scale-caret");
-        caret.text = "+";                                   // hints "click to change" (cycler)
-        btn.SetPanelEvent("onactivate", function () { cycleUiScale(); });
-    }
-    function cycleUiScale() {
-        var idx = 0;
-        for (var i = 0; i < SCALE_STEPS.length; i++) if (SCALE_STEPS[i] === uiScalePct) { idx = i; break; }
-        setUiScale(SCALE_STEPS[(idx + 1) % SCALE_STEPS.length]);
+
+        var dd = $.CreatePanel("DropDown", wrap, "MG_ScaleDD");
+        dd.AddClass("mg-scale-dd");
+        scaleDropDown = dd;
+
+        for (var i = 0; i < SCALE_STEPS.length; i++) {
+            var pct = SCALE_STEPS[i];
+            var optId = "mgscale_" + pct;                    // id encodes the value; read back on submit
+            var opt = $.CreatePanel("Label", dd, optId);
+            opt.AddClass("mg-scale-opt");
+            opt.AddClass("DropDownChild");                   // native class the widget expects for options
+            opt.text = pct + "%";
+            dd.AddOption(opt);
+        }
+        try { dd.SetSelected("mgscale_" + uiScalePct); } catch (e) {}
+
+        // Fires when the user picks an option. Read the selected child's id → percent → apply.
+        dd.SetPanelEvent("oninputsubmit", function () {
+            var pct = uiScalePct;
+            try {
+                var sel = dd.GetSelected && dd.GetSelected();
+                if (sel && sel.id) {
+                    var n = parseInt(String(sel.id).replace("mgscale_", ""), 10);
+                    if (!isNaN(n)) pct = n;
+                }
+            } catch (e2) {}
+            setUiScale(pct);
+        });
     }
     function setUiScale(pct) {
         uiScalePct = pct;
-        if (scaleLabel) scaleLabel.text = pct + "%";
         applyUiScale();
     }
+
+
 
     // pre-transform-scale2d scales the modal in place (around its centre) AFTER layout, so the
     // full-screen dim behind it stays put. Every child (board/cards) scales with it.
