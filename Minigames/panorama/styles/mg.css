@@ -408,6 +408,63 @@
     width: 100%;
     margin-top: 8px;
 }
+
+/* ── Quick Match "Select Multiple" ─────────────────────────────────────────
+ * A toggle pill + a checkbox list over the multi-capable games, in the firm palette
+ * (#161f2b fill, #2a3849 hairline). Checkboxes are panel-drawn (no glyph reliance):
+ * a bordered box whose "x" mark shows only when ticked. */
+.mg-multi-toggle-row { width: 100%; margin-bottom: 8px; }
+.mg-multi-toggle {
+    width: 100%; height: 34px;
+    flow-children: right;
+    background-color: #161f2b;
+    border: 1px solid #2a3849;
+    vertical-align: center;
+}
+.mg-multi-toggle:hover { background-color: #1c2836; border-color: #3a5170; }
+.mg-multi-toggle.mg-on { border-color: #4f86d4; background-color: #16233a; }
+.mg-multi-toggle-label {
+    font-family: radiance !important; color: #cdd9e7 !important; font-size: 15px !important;
+    vertical-align: center; margin-left: 8px;
+}
+
+/* the vertical list of game checkboxes shown when the toggle is ON */
+.mg-multi-list { width: 100%; flow-children: down; margin-bottom: 6px; }
+.mg-multi-item {
+    width: 100%; height: 34px;
+    flow-children: right;
+    background-color: #131a24;
+    border: 1px solid #232f3e;
+    vertical-align: center;
+    margin-bottom: 4px;
+}
+.mg-multi-item:hover { background-color: #1c2836; border-color: #3a5170; }
+.mg-multi-item.mg-on { border-color: #4f86d4; background-color: #16233a; }
+.mg-multi-item-label {
+    font-family: radiance !important; color: #dbe6f2 !important; font-size: 16px !important;
+    vertical-align: center; margin-left: 8px;
+}
+
+/* shared checkbox square (used by the toggle + each list item) */
+.mg-check-box {
+    width: 18px; height: 18px;
+    flow-children: none;
+    background-color: #0d131b;
+    border: 1px solid #33455a;
+    margin-left: 8px;
+    vertical-align: center;
+}
+.mg-on > .mg-check-box { border-color: #4f86d4; background-color: #1d3350; }
+.mg-check-mark {
+    font-family: radiance !important; color: #82b4ff !important; font-size: 14px !important;
+    font-weight: bold;
+    horizontal-align: center; vertical-align: center;
+}
+
+/* the multi-search Quick Match button reads disabled until at least one game is ticked */
+.mg-btn-disabled { opacity: 0.5; }
+.mg-btn-disabled:hover { background-color: #4f86d4; brightness: 1.0; }
+
 /* public-match "searching" line */
 .mg-searching {
     font-family: radiance !important;
