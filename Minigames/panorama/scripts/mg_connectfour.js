@@ -13,6 +13,13 @@
  * Board model matches the engine: Array(42), idx = row*7+col, row 0 = TOP. Values 0 empty,
  * 1 = host (red, seat 0, moves first), 2 = joiner (yellow).
  *
+ * RENDERING: discs live on a single OVERLAY layer stacked over the grid (the checkers
+ * .mg-board-wrap / .mg-pieces-layer idiom), positioned by transform:translate3d — NOT as
+ * children of individual cells. A cell child is clipped by its own 60×60 box, which hid the
+ * fall animation and made resting discs vanish (the maintainer's "no falling animation /
+ * half the discs invisible" report). On the noclip overlay a disc is visible across the whole
+ * column as it slides down.
+ *
  * NONE of the rendering/input is verifiable from a shell — reasoned from the game's CSS
  * idioms + the checkers/ttt controllers, confirmed only after a VPK repack.
  */
@@ -23,7 +30,7 @@
     MG._c4Loaded = true;
 
     var C = MG.Rules && MG.Rules.connectfour;   // shared pure engine (rules/connectfour.js)
-    var COLS = 7, ROWS = 6, CELL = 60;
+    var COLS = 7, ROWS = 6, CELL = 60, DISC = 50, INSET = (CELL - DISC) / 2;
 
     function createConnectFour(container, session) {
         var Api = MG.Api;
@@ -42,13 +49,18 @@
 
         var root = $.CreatePanel("Panel", container, "MG_C4Root");
         root.AddClass("mg-cf");
-        var boardPanel = $.CreatePanel("Panel", root, "MG_C4Board");
+        // Grid + discs OVERLAY are stacked siblings under a flow-children:none wrap (checkers
+        // .mg-board-wrap idiom). Discs sit on the overlay, so a falling disc is visible over the
+        // whole column instead of being clipped by its own cell.
+        var wrap = $.CreatePanel("Panel", root, "MG_C4Wrap");
+        wrap.AddClass("mg-cf-wrap");
+        var boardPanel = $.CreatePanel("Panel", wrap, "MG_C4Board");
         boardPanel.AddClass("mg-cf-board");
 
         // Explicit rows/cols (NOT flow-wrap, trap ARCHITECTURE §6.8). Each cell owns a click
-        // that drops into its COLUMN; a disc is a child panel placed into the landed cell.
+        // that drops into its COLUMN + a hover tint; discs are placed on the overlay.
         var cells = [];       // cell index -> cell panel
-        var discEls = {};     // cell index -> disc panel (persistent so we don't rebuild on every render)
+        var discEls = {};     // cell index -> disc panel (persistent so we don't rebuild every render)
         (function buildCells() {
             for (var r = 0; r < ROWS; r++) {
                 var rowPanel = $.CreatePanel("Panel", boardPanel, "c4_row_" + r);
@@ -67,24 +79,41 @@
             }
         })();
 
-        // Place a disc panel in cell `i`. If animate, it starts a few cells ABOVE and slides
-        // down into place (the checkers .mg-anim arming trick: base class has no transition, add
-        // .mg-cf-anim one frame later after the start transform is committed).
+        // Discs overlay: sibling ABOVE the grid, offset by the board's 6px padding (margin) so a
+        // disc's translate3d(col*CELL+INSET, row*CELL+INSET) lands centred in its hole. hittest
+        // off so clicks pass through to the cells below.
+        var piecesLayer = $.CreatePanel("Panel", wrap, "MG_C4Pieces");
+        piecesLayer.AddClass("mg-cf-pieces");
+        try { piecesLayer.SetAttributeString("hittest", "false"); } catch (e) {}
+        try { piecesLayer.SetAttributeString("hittestchildren", "false"); } catch (e) {}
+
+        function discXY(i) {
+            var r = (i / COLS) | 0, c = i % COLS;
+            return { x: c * CELL + INSET, y: r * CELL + INSET };
+        }
+
+        // Place a disc on the OVERLAY at cell `i`. If animate, it starts just above the board's
+        // top edge and slides down the whole column into place (base class has no transition;
+        // add .mg-cf-anim one frame later after the start transform is committed — checkers idiom).
         function placeDisc(i, mark, animate) {
             if (discEls[i]) return discEls[i];
-            var cell = cells[i];
-            var disc = $.CreatePanel("Panel", cell, "");
+            var disc = $.CreatePanel("Panel", piecesLayer, "");
             disc.AddClass("mg-cf-disc");
             disc.AddClass(mark === RED ? "mg-cf-red" : "mg-cf-yellow");
             discEls[i] = disc;
+            var p = discXY(i);
             if (animate) {
-                var row = (i / COLS) | 0;
-                disc.style.transform = "translateY(" + (-(row + 1) * CELL) + "px)";
-                (function (d) {
+                disc.style.transform = "translate3d(" + p.x + "px, " + (-CELL + INSET) + "px, 0px)";
+                (function (d, px, py) {
                     $.Schedule(0.0, function () {
-                        if (d && d.IsValid && d.IsValid()) { d.AddClass("mg-cf-anim"); d.style.transform = "translateY(0px)"; }
+                        if (d && d.IsValid && d.IsValid()) {
+                            d.AddClass("mg-cf-anim");
+                            d.style.transform = "translate3d(" + px + "px, " + py + "px, 0px)";
+                        }
                     });
-                })(disc);
+                })(disc, p.x, p.y);
+            } else {
+                disc.style.transform = "translate3d(" + p.x + "px, " + p.y + "px, 0px)";
             }
             return disc;
         }
@@ -102,7 +131,10 @@
         }
         function highlightWin(mark) {
             var line = C.winningLine(board, mark);
-            if (line) for (var k = 0; k < line.length; k++) cells[line[k]].AddClass("mg-cf-win");
+            if (line) for (var k = 0; k < line.length; k++) {
+                cells[line[k]].AddClass("mg-cf-win");
+                if (discEls[line[k]]) discEls[line[k]].AddClass("mg-cf-win-disc");
+            }
         }
 
         // Apply a drop into `col` for `mark`: returns the landed cell index, or -1 if the

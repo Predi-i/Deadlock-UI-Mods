@@ -941,8 +941,16 @@
    translateY animation armed one frame after creation (.mg-cf-anim, checkers idiom).
    Geometry MUST match mg_connectfour.js: CELL 60, disc 50, 7x6. */
 .mg-cf { horizontal-align: center; flow-children: down; }
+/* board grid + discs OVERLAY stacked as siblings (checkers .mg-board-wrap idiom). Size =
+   7*60 + 2*6 padding = 432 wide, 6*60 + 12 = 372 tall. flow-children:none parks both at the
+   wrap's top-left; the overlay's translate3d places each disc. */
+.mg-cf-wrap {
+    flow-children: none;
+    width: 432px; height: 372px;
+    horizontal-align: center;
+}
 .mg-cf-board {
-    flow-children: down; horizontal-align: center; overflow: noclip;
+    flow-children: down; overflow: noclip;
     padding: 6px; border-radius: 10px;
     background-color: #23479e;
     box-shadow: 0px 6px 16px 0px #00000099;
@@ -957,17 +965,28 @@
     transition-property: background-color; transition-duration: 0.1s;
 }
 .mg-cf-cell:hover .mg-cf-hole { background-color: #16275c; }
-/* a played disc. BASE class carries NO transition so a rebuilt board snaps; the falling
-   disc gets .mg-cf-anim one frame later so only real drops animate (checkers arming). */
+/* discs overlay: sits over the grid, offset by the board's 6px padding so a disc's
+   translate3d(col*60+5, row*60+5) lands centred in its hole. noclip so a falling disc is
+   visible across the whole column. */
+.mg-cf-pieces {
+    width: 420px; height: 360px;
+    margin: 6px;
+    flow-children: none;
+    overflow: noclip;
+}
+/* a played disc — positioned by translate3d on the overlay (NOT a cell child). BASE class
+   carries NO transition so a rebuilt board snaps; the falling disc gets .mg-cf-anim one frame
+   later so only real drops animate (checkers arming). */
 .mg-cf-disc {
     width: 50px; height: 50px; border-radius: 50%;
-    horizontal-align: center; vertical-align: center;
     box-shadow: 0px 2px 4px 0px #00000099;
 }
 .mg-cf-disc.mg-cf-anim {
-    transition-property: transform; transition-duration: 0.28s; transition-timing-function: ease-in;
+    transition-property: transform; transition-duration: 0.42s; transition-timing-function: ease-in;
 }
 .mg-cf-red { background-color: gradient(radial, 50% 35%, 0% 0%, 75% 75%, from(#ff6b63), to(#c8352c)); border: 2px solid #a02820; }
 .mg-cf-yellow { background-color: gradient(radial, 50% 35%, 0% 0%, 75% 75%, from(#ffe06a), to(#e0b422)); border: 2px solid #b8901a; }
-/* winning four highlighted with a bright ring */
-.mg-cf-win .mg-cf-disc { border-color: #ffffff; box-shadow: 0px 0px 0px 3px #ffffffcc; }
+/* winning four highlighted with a bright ring on the discs themselves */
+.mg-cf-disc.mg-cf-win-disc { border-color: #ffffff; box-shadow: 0px 0px 0px 3px #ffffffcc; }
+
+
