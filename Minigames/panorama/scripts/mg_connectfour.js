@@ -111,7 +111,14 @@
             disc.AddClass(mark === RED ? "mg-cf-red" : "mg-cf-yellow");
             discEls[i] = disc;
             if (animate) {
-                disc.style.transform = "translate3d(" + INSET + "px, " + (-CELL + INSET) + "px, 0px)";
+                // Start ABOVE the whole board (full-column travel) so you can SEE the disc drop
+                // from the top through every cell above the landing one — the disc is a child of
+                // the landing cell, which (being lower in the column) is created LATER than the
+                // cells above it, so it paints OVER them during the fall. Starting only one cell
+                // up hid where the disc came from (п2). R = landing row; start (R+1) cells higher.
+                var R = (i / COLS) | 0;
+                var startY = INSET - (R + 1) * CELL;
+                disc.style.transform = "translate3d(" + INSET + "px, " + startY + "px, 0px)";
                 (function (d) {
                     $.Schedule(0.0, function () {
                         if (d && d.IsValid && d.IsValid()) {
@@ -125,6 +132,7 @@
             }
             return disc;
         }
+
 
 
         // Full rebuild of the disc layer from `board` (used on reset/resync). Clears then
