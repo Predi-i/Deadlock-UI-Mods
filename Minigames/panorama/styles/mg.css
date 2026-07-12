@@ -86,13 +86,25 @@
     z-index: 10;
 }
 
-/* title + "by Predi_i" credit sit together on the left; the close button is pushed right. */
+/* title + "by Predi_i" credit sit together on the left, hugging their content (fit-children).
+   A separate flexible spacer (.mg-header-spacer) eats the slack so the scale control + close X
+   sit at the far right at their fixed widths and BOTH stay visible. ⚠ Do NOT put
+   fill-parent-flow(1.0) on this cluster — it took 100% of the row and pushed the scale + X past
+   the modal's right edge, where the modal's overflow clipped the X (the "X missing, dropdown in
+   its place" bug). Mirror the footer's status+spacer+tools layout, which works. */
 .mg-header-left {
-    width: fill-parent-flow(1.0);
+    width: fit-children;
     flow-children: right;
     vertical-align: center;
     overflow: noclip;                    /* the Support pill sits taller than the title row */
 }
+/* flexible slack between the left cluster and the right controls (scale + close) */
+.mg-header-spacer {
+    width: fill-parent-flow(1.0);
+    height: 1px;
+    vertical-align: center;
+}
+
 .mg-title {
     font-family: oracle !important;
     font-weight: bold;
@@ -953,7 +965,8 @@
     flow-children: down; box-shadow: 0px 8px 20px 0px #000000aa;
     visibility: collapse;
 }
-.mg-scale-open > .mg-scale-menu { visibility: visible; }
+.mg-scale-menu.mg-open { visibility: visible; }
+
 .mg-scale-opt { width: 100%; height: 30px; background-color: #00000000; }
 .mg-scale-opt:hover { background-color: #1c2836; }
 .mg-scale-opt-label {
@@ -1019,25 +1032,9 @@
 }
 .mg-cf-red { background-color: gradient(radial, 50% 35%, 0% 0%, 75% 75%, from(#ff6b63), to(#c8352c)); border: 2px solid #a02820; }
 .mg-cf-yellow { background-color: gradient(radial, 50% 35%, 0% 0%, 75% 75%, from(#ffe06a), to(#e0b422)); border: 2px solid #b8901a; }
-/* winning four highlighted on the discs themselves. brightness lifts the whole disc (visible
-   through the front rim's transparent centre); the white ring is the outer accent. */
+/* winning four highlighted on the discs themselves: a bright white ring + brightness lift. */
 .mg-cf-disc.mg-cf-win-disc { border-color: #ffffff; box-shadow: 0px 0px 0px 3px #ffffffcc; brightness: 1.35; }
 
-/* FRONT rim layer — one blue ring per hole, painted OVER the discs (created after them). Each
-   rim is a transparent-centre circle with a thick board-blue border, so it tucks a disc's outer
-   edge UNDER the plate: the disc reads as seated BEHIND the light-blue plate but in front of the
-   dark socket (п6). Same geometry as .mg-cf-pieces so translate3d lands each ring on its hole. */
-.mg-cf-front {
-    width: 420px; height: 360px;
-    margin: 6px;
-    flow-children: none;
-    overflow: noclip;
-}
-.mg-cf-rim {
-    width: 50px; height: 50px; border-radius: 50%;
-    border: 6px solid #23479e;            /* the board-blue plate colour → looks like the hole's lip */
-    background-color: #00000000;          /* transparent centre so the disc/socket shows through */
-}
 
 
 

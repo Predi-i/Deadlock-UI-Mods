@@ -176,8 +176,13 @@
         sIcon.AddClass("mg-support-icon");   // background-image = icon_thumbsup.vsvg (CSS)
         var sLbl = $.CreatePanel("Label", supportBtn, ""); sLbl.AddClass("mg-support-label"); sLbl.text = "Support";
         supportBtn.SetPanelEvent("onactivate", function () { openSupport(); });
-        // UI-scale dropdown sits between the header's flexible left cluster and the close X.
+        // Flexible slack: the left cluster hugs its content, this spacer eats the rest of the
+        // row, so the scale control + close X sit at the far right and both stay on-screen.
+        var headerSpacer = $.CreatePanel("Panel", header, "");
+        headerSpacer.AddClass("mg-header-spacer");
+        // UI-scale dropdown sits between the spacer and the close X.
         buildScaleControl(header);
+
         // Close button, pushed to the far right by the header's flow.
         var close = $.CreatePanel("Button", header, "");
         close.AddClass("mg-close");
@@ -250,13 +255,14 @@
     }
     function toggleScaleMenu() { if (scaleMenuOpen) closeScaleMenu(); else openScaleMenu(); }
     function openScaleMenu() {
-        if (scaleWrap && scaleWrap.IsValid && scaleWrap.IsValid()) scaleWrap.AddClass("mg-scale-open");
+        if (scaleMenu && scaleMenu.IsValid && scaleMenu.IsValid()) scaleMenu.AddClass("mg-open");
         scaleMenuOpen = true;
     }
     function closeScaleMenu() {
-        if (scaleWrap && scaleWrap.IsValid && scaleWrap.IsValid()) scaleWrap.RemoveClass("mg-scale-open");
+        if (scaleMenu && scaleMenu.IsValid && scaleMenu.IsValid()) scaleMenu.RemoveClass("mg-open");
         scaleMenuOpen = false;
     }
+
     function setUiScale(pct) {
         uiScalePct = pct;
         if (scaleLabel && scaleLabel.IsValid && scaleLabel.IsValid()) scaleLabel.text = pct + "%";
