@@ -16,9 +16,10 @@ When you change layout/animation/input, say honestly which of the two it is.
 ## 1. What this mod is
 
 Online mini-games played **inside Deadlock's pause (Esc) menu**, without leaving the
-match. Shipping games: **Checkers** (Russian draughts), **Tic-Tac-Toe** and **Chess**.
-**Durak** is playable **vs bot only** for now (Stage 1); its online 2–4 player mode is
-Stage 2 (see §8.6). Connect Four is still a disabled placeholder in the picker.
+match. Shipping games (all online + vs bot): **Checkers** (Russian draughts),
+**Tic-Tac-Toe**, **Chess** and **Connect Four**. **Durak** plays vs bot for 2–4 players
+and **online for 2 players** (worker-as-dealer, §8.6); 3–4-seat online is deferred.
+
 
 Picker cards show a custom **`.vtex` image** (drawn by the maintainer, compiled from PNG)
 as the card background — `s2r://panorama/images/cards/<key>.vtex`, set inline in
@@ -67,10 +68,14 @@ panorama/
     rules/checkers.js      SHARED pure checkers engine (client predictor + server authority)
     rules/ttt.js           SHARED pure tic-tac-toe engine
     rules/chess.js         SHARED pure chess engine
+    rules/connectfour.js   SHARED pure connect-four engine
+    rules/durak.js         SHARED pure durak engine (offline bot + online dealer)
     mg_games.js            checkers + TTT + chess CONTROLLERS (render, input, net); aliases MG.Rules.*
                            and owns the $.MG.Games registry (list + register + mount).
-    mg_durak.js            Durak: pure rules + render + click input + bot; self-registers game id 3.
+    mg_connectfour.js      Connect Four CONTROLLER; self-registers game id 5 (§8.7).
+    mg_durak.js            Durak CONTROLLER (render + click/drag + bot + online); self-registers game id 3.
     mg_ui.js               Esc-menu button injection + full-screen lobby overlay ($.MG.UI)
+
 server/                    Cloudflare Worker (dev-only, NOT packed into the VPK)
   worker.core.js           AUTHORED relay + validators + PNG encoder (edit this)
   worker.js                GENERATED (rules/*.js + worker.core.js via tools/build_worker.js) — deploy artifact
@@ -276,6 +281,32 @@ These are the mistakes to NOT repeat. Every one was confirmed against the game's
    border always has room. This is the recurring "PLAY VS BOT has no right border" bug (п4);
    `padding-right: 0` reintroduces it.
 
+11. **The native `DropDown` widget drags in the game's base styling — avoid it for skinned popups.**
+   `$.CreatePanel("DropDown", …)` + `AddOption` + `SetSelected` is the QOLLOCK Default-Hero recipe
+   and it *does* open on click, BUT in our HUD/overlay context it inherits the game's base
+   `DropDownMenu` look: a **paper-tile popup texture** (`textures/paper_tile_1k_01_psd.vtex`) that
+   clashes with our palette, a **"…" placeholder** instead of the selected value, and it even
+   **shoved the header close-X out of place**. QOLLOCK gets away with it because it runs inside
+   `#SettingsWindow`, whose own CSS re-skins every `DropDownMenu`. We don't have that scope. Fix:
+   build a **custom dropdown** — a button whose label shows the current value + a popup `Panel` list,
+   toggled by a **class on the wrapper** (`.mg-scale-open`), the wrapper `flow-children:none` +
+   `overflow:noclip` so the list overlaps the body (trap 1), the list `z-index`'d over the body. See
+   `buildScaleControl` + `.mg-scale-*`.
+
+12. **Toggle a popup's visibility with a CLASS on an ancestor, not inline `style.visibility`.**
+   Flipping `panel.style.visibility = "visible"/"collapse"` from JS proved unreliable for the
+   scale popup in this context (it never showed). The robust pattern is a state **class** the CSS
+   keys off: `.mg-scale-menu { visibility: collapse }` + `.mg-scale-open > .mg-scale-menu { visibility: visible }`,
+   and JS just `AddClass/RemoveClass("mg-scale-open")` on the wrapper. Same idiom the game uses
+   (`ShowEscapeMenu`, `DropDownMenuVisible`).
+
+13. **A raw option/badge panel with no CSS parks at its parent's top-left and shows always.**
+   An un-styled `.mg-card-tick` (a Label "x") on a `flow-children:none` card sat as a **stray cross
+   at every card's top-left, in every mode** — it had no rule to hide/position it. Two lessons: any
+   decorative child on a `flow:none` parent needs explicit `align` + a default `visibility:collapse`
+   until it's meant to show; and prefer skinning the parent (`.mg-ticked` accent) over adding a
+   separate badge the maintainer didn't ask for.
+
 ---
 
 ## 7. Checkers internals (mg_games.js)
@@ -475,15 +506,65 @@ written once and reused by both.
   in during the attack phase (other attackers don't pile on — matters only at 3–4 players);
   throw-ins are allowed only while the table is fully covered. Full podkidnoy throw-in from
   all attackers is a Stage-2 concern.
-- **Stage 2 transport (planned, not built).** The public move log can't hide hands, so the
-  **worker becomes an authoritative dealer**: it owns the deck/hands, deals privately per seat
-  via an indexed `/api/ddraw` channel, and relays public actions (PLAY/COVER/TAKE/DONE/DRAW)
-  through an indexed `/api/dlog` — clients reconstruct table, trump, turn, roles, deck count
-  and every player's card *count* from the public log, learning only their OWN card identities
-  privately. A determined cheater could pull another seat's `ddraw` (no per-caller auth), an
-  accepted trust level identical to the existing client-authoritative games. UI gate: the
-  online buttons (Quick/Create/Join) are hidden for Durak in `mg_ui.js` (`onlineReady`) until
-  this lands.
+- **Stage 2 transport (BUILT — 2-player online).** The public move log can't hide hands, so the
+  **worker is an authoritative dealer**: it owns the deck/hands/seed, deals privately per seat
+  via an indexed `/api/ddraw` channel (gated by the seat token, so a caller can only read its
+  OWN cards → a foreign token gets `(9,3)`, closing `trust_refactor_plan §1 T3`), and relays
+  public actions through an indexed `/api/dlog`. Event encoding (TRUMP/OPEN/PLAY/COVER/TAKE/
+  BITO/DRAW/OVER) and the full route set (`room/start/dact/dlog/ddraw`) live in
+  `server/README.md`; private cards use `card+2` so id 0 can't collide with the `(1,1)`
+  "nothing new" marker. **Client (`createDurak`, online branch):** it holds NO authority —
+  it rebuilds `st` from `dlog` (opponent hands are placeholder *counts*, the deck is a count,
+  the table is public), pulls its own card identities from `ddraw`, and sends its own actions
+  via `dact` **without** optimistic local mutation (the echoed event is the single source of
+  truth, so a rejected action simply never lands — no rollback). Roles rotate deterministically
+  after each bout (2-player: Bito swaps attacker/defender, Take keeps them). The online buttons
+  (Quick/Create/Join) are enabled in `mg_ui.js`, entering a 2-seat **room** view with a host
+  **Start**; the offline bot branch is unchanged. **⚠ 2 players only** — 3–4-seat online
+  seating/throw-in is deliberately deferred (the pure rules + offline bot already handle 2/3/4).
+  Verified in Node: server routes/privacy/encoding (`mg_server_test`), client↔server rule parity
+  (`mg_parity_test`). Reasoned only (needs in-game repack): the online render/slide/sync itself.
+
+
+## 8.7 Connect Four internals (mg_connectfour.js)
+
+Connect Four is full-information 2-player, so it rides the **existing 2-int authoritative
+transport unchanged**: a move is a COLUMN `0..6` sent as `move(code, col, 7, end=1)`. The
+fixed marker `to=7` keeps `from != to` (like TTT's `to=9`), and the **server derives the
+gravity landing row** and validates. Pure engine `rules/connectfour.js` is shared byte-for-byte
+with the worker (`initialBoard/dropRow/drop/winner/winningLine/isFull/legalCols/cfBotMove`).
+
+- **Board model**: `Array(42)`, `idx = row*7+col`, **row 0 = TOP**. `0` empty, `1` host
+  (red, seat 0, moves first), `2` joiner (yellow). Self-registers game id 5 (`enabled:true`)
+  like durak.
+- **Three stacked layers** under a `flow-children:none` wrap (`.mg-cf-wrap`, trap §6.1),
+  painted back→front by CREATION order:
+  1. `boardPanel` (`.mg-cf-board`) — the solid blue plate; each cell holds a dark round
+     `.mg-cf-hole` (the empty socket) + owns the column's click + hover tint.
+  2. `piecesLayer` (`.mg-cf-pieces`) — discs, positioned by `translate3d(col*60+INSET,
+     row*60+INSET)`. `hittest:false` so clicks fall through to the cells.
+  3. `frontLayer` (`.mg-cf-front`) — one blue **rim ring** per hole (`.mg-cf-rim`,
+     transparent centre, thick board-blue border), created AFTER the discs so it paints in
+     FRONT of them. **Why:** Panorama can't cut a real transparent hole in the solid blue
+     plate, so a disc can't sit *behind* the plate. Instead the front rim tucks each disc's
+     outer edge under a blue ring → the disc reads as **seated** in the board (dark socket
+     behind, blue plate rim in front) instead of floating on top with max z-index (п6).
+- **Fall animation** (`.mg-cf-anim`): a fresh disc starts one cell above the top edge and
+  slides to its landing cell. ⚠ The timing-function matters — a plain `ease-in` over 0.42s
+  hung in the last frames right before landing (its velocity peaks at the very end and
+  Panorama's long-transform interpolation stutters there, п7). Use a symmetric
+  `cubic-bezier(0.45,0.05,0.55,0.95)` over ~0.36s: accelerate, then ease cleanly INTO the
+  floor with no end-of-curve spike. Arm the class one frame after the start transform is
+  committed (`$.Schedule(0.0)`), the checkers `.mg-anim` idiom.
+- **Winning four**: `winningLine` returns the 4 cell indices; the discs get `.mg-cf-win-disc`
+  (white ring + `brightness` lift so it reads through the rim's open centre).
+- **Bot** (`cfBotMove`): win-in-1 > block-opponent's-win > centre-weighted shallow search.
+  Perf is a guess for Panorama — tune depth in-game if it hitches.
+- Verified in Node: rules + bot (`mg_connectfour_test`), client↔server parity
+  (`mg_parity_test`), server validation (`mg_server_test`). Reasoned only: render / seating /
+  fall animation / online sync — needs a VPK repack.
+
+---
 
 ## 9. Turn/sync model (both games)
 
@@ -512,16 +593,21 @@ node tools/build_worker.js                     # regenerate server/worker.js fro
 node --check panorama/scripts/rules/checkers.js
 node --check panorama/scripts/rules/ttt.js
 node --check panorama/scripts/rules/chess.js
+node --check panorama/scripts/rules/connectfour.js
+node --check panorama/scripts/rules/durak.js
 node --check panorama/scripts/mg_games.js
+node --check panorama/scripts/mg_connectfour.js
 node --check panorama/scripts/mg_durak.js
 node --check panorama/scripts/mg_ui.js
 node --check panorama/scripts/mg_net.js
 node --check server/worker.js
 node tools/mg_rules_test.js
 node tools/mg_chess_test.js
+node tools/mg_connectfour_test.js
 node tools/mg_durak_test.js
 node tools/mg_server_test.js
 node tools/mg_parity_test.js                    # client predictor == server authority
+
 ```
 
 Then say plainly what is **verified** (syntax, pure rules, server protocol) vs what is
