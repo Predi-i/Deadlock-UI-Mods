@@ -1,19 +1,23 @@
 # Deadlock Minigames
 
-Online mini-games played inside Deadlock's pause (Esc) menu. Ships with **online
-Checkers** (Russian draughts rules); Tic-Tac-Toe and Durak are stubbed in the picker
-for later.
+Online mini-games played inside Deadlock's pause (Esc) menu. Shipping games (all online
+**and** vs bot): **Checkers** (Russian draughts), **Tic-Tac-Toe**, **Chess** and
+**Connect Four**. **Durak** plays vs bot for 2–4 players and **online for 2 players**
+(the worker acts as an authoritative dealer); 3–4-seat online is deferred.
 
-Three ways to play:
+Four ways to play:
 
 - **Quick Match** — public matchmaking: the server pairs you with anyone else online
   who pressed Quick Match. No code needed.
+- **Quick Match → Select Multiple** — tick several games at once; the server pairs you
+  with anyone whose ticked set overlaps yours and fixes the shared lobby to a matched game.
 - **Create Game / Join** — private match with a friend: one player clicks **Create Game**
   and reads out the 4-digit code, the other clicks **Join** and types it in.
 - **Play vs Bot** — offline, no server.
 
 Many pairs can play at once — each match is its own lobby, so the mod scales to lots of
 simultaneous 1-on-1 games.
+
 
 ## How it talks to a server without networking APIs
 
