@@ -278,6 +278,34 @@
     transition-duration: 0.12s;
 }
 
+/* Corner tick badge — a small round accent check pinned to the card's TOP-RIGHT. Hidden by
+   default (collapse); it only shows in Select-Multiple mode when the card is ticked. Without
+   this rule the raw "x" Label parked at the card's top-LEFT (flow-children:none) — the stray
+   cross the maintainer saw on EVERY card regardless of mode (п3). */
+.mg-card-tick {
+    width: 26px;
+    height: 26px;
+    flow-children: none;
+    horizontal-align: right;
+    vertical-align: top;
+    margin: 6px;
+    background-color: #4f86d4;
+    border: 1px solid #7aa8e8;
+    border-radius: 50%;
+    box-shadow: 0px 2px 5px 0px #00000099;
+    visibility: collapse;
+}
+.mg-card-tick.mg-tick-on { visibility: visible; }
+.mg-card-tick-mark {
+    font-family: radiance !important;
+    font-weight: bold;
+    color: #ffffff !important;
+    font-size: 15px !important;
+    horizontal-align: center;
+    vertical-align: center;
+    margin-top: 1px;
+}
+
 /* ── right column: detail + actions ──────────────────────────────────────── */
 /* min-height reserves the tallest (enabled) layout, so switching between games — or to a
    disabled game with fewer elements — never resizes the modal (kills the "jump"). */
@@ -398,7 +426,7 @@
    — deterministic full-row width that matches the CREATE/JOIN right edge exactly. Declared after
    the fill-parent-flow rule so it wins at equal specificity; the right border survives because
    .mg-col-right reserves padding-right:5px. */
-.mg-btn-row .mg-btn-solo { width: 100%; }
+.mg-btn-row .mg-btn-solo { width: 99.8%; } /* maintainer: without this the right border of this button is being cut off idk why */
 
 /* caption under the Quick Match button */
 .mg-caption {
