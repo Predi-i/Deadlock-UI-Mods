@@ -1312,6 +1312,7 @@ export class Hub {
         if (seat < 0) return png(9, 3);
         const r = durakStart(lobby, seat);
         if (!r.ok) return png(9, r.code);
+        lobby.t = nowSeq();                                  // keep-alive: TTL from last activity
         await this.storage.put("l:" + code, lobby);
         return png(1, 1);
       }
@@ -1325,6 +1326,7 @@ export class Hub {
         const c = clampInt(q.get("c"), 0, 0, 35);
         const r = durakAct(lobby, seat, a, pr, c);
         if (!r.ok) return png(9, r.code);
+        lobby.t = nowSeq();                                  // keep-alive: TTL from last activity
         await this.storage.put("l:" + code, lobby);
         return png(1, 1);
       }
