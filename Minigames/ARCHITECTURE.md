@@ -293,12 +293,21 @@ These are the mistakes to NOT repeat. Every one was confirmed against the game's
    `overflow:noclip` so the list overlaps the body (trap 1), the list `z-index`'d over the body. See
    `buildScaleControl` + `.mg-scale-*`.
 
-12. **Toggle a popup's visibility with a CLASS on an ancestor, not inline `style.visibility`.**
-   Flipping `panel.style.visibility = "visible"/"collapse"` from JS proved unreliable for the
-   scale popup in this context (it never showed). The robust pattern is a state **class** the CSS
-   keys off: `.mg-scale-menu { visibility: collapse }` + `.mg-scale-open > .mg-scale-menu { visibility: visible }`,
-   and JS just `AddClass/RemoveClass("mg-scale-open")` on the wrapper. Same idiom the game uses
-   (`ShowEscapeMenu`, `DropDownMenuVisible`).
+12. **Toggle a popup's visibility with a SINGLE-CLASS state on the panel itself.** Two things
+   proved unreliable here: (a) inline `panel.style.visibility = "visible"/"collapse"` from JS, and
+   (b) a **child-combinator** rule `.mg-scale-open > .mg-scale-menu { visibility: visible }`. The
+   robust pattern is a same-element class the CSS keys off: `.mg-scale-menu { visibility: collapse }`
+   + `.mg-scale-menu.mg-open { visibility: visible }`, and JS just `AddClass/RemoveClass("mg-open")`
+   on the menu panel. Same idiom the game uses (`ShowEscapeMenu`, `DropDownMenuVisible`).
+
+12b. **A `fill-parent-flow(1.0)` left cluster pushes right-aligned siblings off the edge.**
+   The header's left cluster (title + credit + support) had `width: fill-parent-flow(1.0)`, which
+   ate the ENTIRE row — the scale control and the close X flowed past the modal's right edge and
+   the X got clipped away (leaving only the dropdown visible where the X should be). Fix: make the
+   left cluster `width: fit-children` and add a separate flexible `.mg-header-spacer`
+   (`fill-parent-flow(1.0)`) between it and the right controls — exactly how the footer's
+   status+spacer+tools row works. Then fixed-width right controls always stay on-screen.
+
 
 13. **A raw option/badge panel with no CSS parks at its parent's top-left and shows always.**
    An un-styled `.mg-card-tick` (a Label "x") on a `flow-children:none` card sat as a **stray cross
@@ -537,18 +546,15 @@ with the worker (`initialBoard/dropRow/drop/winner/winningLine/isFull/legalCols/
 - **Board model**: `Array(42)`, `idx = row*7+col`, **row 0 = TOP**. `0` empty, `1` host
   (red, seat 0, moves first), `2` joiner (yellow). Self-registers game id 5 (`enabled:true`)
   like durak.
-- **Three stacked layers** under a `flow-children:none` wrap (`.mg-cf-wrap`, trap §6.1),
+- **Two stacked layers** under a `flow-children:none` wrap (`.mg-cf-wrap`, trap §6.1),
   painted back→front by CREATION order:
   1. `boardPanel` (`.mg-cf-board`) — the solid blue plate; each cell holds a dark round
      `.mg-cf-hole` (the empty socket) + owns the column's click + hover tint.
   2. `piecesLayer` (`.mg-cf-pieces`) — discs, positioned by `translate3d(col*60+INSET,
-     row*60+INSET)`. `hittest:false` so clicks fall through to the cells.
-  3. `frontLayer` (`.mg-cf-front`) — one blue **rim ring** per hole (`.mg-cf-rim`,
-     transparent centre, thick board-blue border), created AFTER the discs so it paints in
-     FRONT of them. **Why:** Panorama can't cut a real transparent hole in the solid blue
-     plate, so a disc can't sit *behind* the plate. Instead the front rim tucks each disc's
-     outer edge under a blue ring → the disc reads as **seated** in the board (dark socket
-     behind, blue plate rim in front) instead of floating on top with max z-index (п6).
+     row*60+INSET)`. `hittest:false` so clicks fall through to the cells. A disc sits inside
+     its hole and reads fine as-is. ⚠ A previous attempt at a THIRD "front rim" layer of blue
+     rings over the discs (to fake seating them behind the plate) drew stray rings around every
+     hole in-game and was reverted — the plain two-layer stack is correct.
 - **Fall animation** (`.mg-cf-anim`): a fresh disc starts one cell above the top edge and
   slides to its landing cell. ⚠ The timing-function matters — a plain `ease-in` over 0.42s
   hung in the last frames right before landing (its velocity peaks at the very end and
@@ -557,7 +563,7 @@ with the worker (`initialBoard/dropRow/drop/winner/winningLine/isFull/legalCols/
   floor with no end-of-curve spike. Arm the class one frame after the start transform is
   committed (`$.Schedule(0.0)`), the checkers `.mg-anim` idiom.
 - **Winning four**: `winningLine` returns the 4 cell indices; the discs get `.mg-cf-win-disc`
-  (white ring + `brightness` lift so it reads through the rim's open centre).
+  (white ring + `brightness` lift).
 - **Bot** (`cfBotMove`): win-in-1 > block-opponent's-win > centre-weighted shallow search.
   Perf is a guess for Panorama — tune depth in-game if it hitches.
 - Verified in Node: rules + bot (`mg_connectfour_test`), client↔server parity
