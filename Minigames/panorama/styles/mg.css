@@ -305,6 +305,17 @@
     vertical-align: center;
     margin-top: 1px;
 }
+/* A ticked card in Select-Multiple reads as SELECTED: accent border, tinted fill and a small
+   scale-up so the pick is obvious (п4 — before this, ticking a game changed nothing visible;
+   only the corner badge appeared). Mirrors .mg-selected but wins via the extra .mg-ticked. */
+.mg-game-card.mg-ticked {
+    border-color: #4f86d4;
+    background-color: #16233a;
+    pre-transform-scale2d: 1.05;
+}
+.mg-game-card.mg-ticked:hover { border-color: #6499e0; background-color: #1a2a44; pre-transform-scale2d: 1.07; }
+.mg-game-card.mg-ticked .mg-game-name { color: #82b4ff !important; }
+
 
 /* ── right column: detail + actions ──────────────────────────────────────── */
 /* min-height reserves the tallest (enabled) layout, so switching between games — or to a

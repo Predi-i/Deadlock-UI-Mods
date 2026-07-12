@@ -846,11 +846,15 @@
         for (var i = 0; i < cardEls.length; i++) {
             var ce = cardEls[i];
             var on = multiSelect && isMultiGame(ce.id) && !!multiChecked[ce.id];
+            // corner check badge AND the card itself (accent border + tint + scale-up) so a
+            // ticked game is unmistakably selected (п4 — the tick alone was too subtle).
             if (ce.tick) { if (on) ce.tick.AddClass("mg-tick-on"); else ce.tick.RemoveClass("mg-tick-on"); }
+            if (on) ce.panel.AddClass("mg-ticked"); else ce.panel.RemoveClass("mg-ticked");
             if (multiSelect && isMultiGame(ce.id)) ce.panel.AddClass("mg-multi-mode");
             else ce.panel.RemoveClass("mg-multi-mode");
         }
     }
+
 
     // Right panel when Select-Multiple is ON: a hint, then QUICK MATCH (searches the whole
     // ticked set) and CREATE (a private lobby in ONE randomly-picked ticked game). Games are
