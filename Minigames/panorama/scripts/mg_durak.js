@@ -147,15 +147,17 @@
             var t = "translate3d(" + Math.round(x) + "px, " + Math.round(y) + "px, 0px)";
             return rot ? (t + " rotateZ(" + rot + "deg)") : t;
         }
-        // Deck stack on the LEFT, at the table row's height. The trump card sits UPRIGHT just
-        // to the RIGHT of the stack and MOSTLY visible (only its left edge tucked under the
-        // deck), so its suit reads clearly. NO rotation — rotateZ was the source of the "300%
-        // scale" trump glitch and sometimes culled the card off-screen entirely.
+        // Deck stack on the LEFT, at the table row's height. The trump card lies UNDER the deck,
+        // rotated 90° (see trumpSlot + .mg-dk-trump), with its right half poking clear so the suit
+        // reads. ⚠ The old "300% scale" trump glitch was NOT the rotation — it was
+        // `background-size: contain` painting the undecoded .vtex at native px on frame 1. Fixed in
+        // mg.css (.mg-dk-card → background-size: 100% 100%). The rotation is correct and stays.
         var DECK_X = 32, DECK_Y = 150;
         function deckSlot() { return { x: DECK_X, y: DECK_Y }; }
         // Trump lies HORIZONTAL (rotateZ 90) UNDER the deck via a wrapper (translate) + inner
         // card (rotateZ only in CSS .mg-dk-trump). NEVER translate3d+rotateZ in one inline
-        // string: that mix was the "300% scale" + off-screen-cull glitch (scale3d trap family).
+        // string: mixing them multiplies the translate offset and hurls the card off-screen
+        // (the scale3d trap family). Keep the translate on the wrapper, the rotate on the inner.
         function trumpSlot() { return { x: DECK_X + 46, y: DECK_Y + 20 }; }
         // Big deck-count number centred BELOW the stack (not cramped against its side).
         function deckCountSlot() { return { x: DECK_X + 30, y: DECK_Y + CARD_H + 10 }; }
@@ -172,7 +174,12 @@
         }
         // Attack/defense pairs centred in the felt's middle band (centre x = STAGE_W/2), clear
         // of the deck/trump column on the left and well below the top opponent tile.
-        var TABLE_CX = STAGE_W / 2, TABLE_ATK_Y = 178;
+        // ⚠ TABLE_ATK_Y math (STAGE_H 500, CARD_H 140): a defence card sits at atk+34, so its
+        // BOTTOM = TABLE_ATK_Y + 34 + 140. My hand top = 500 − 140 − 16 = 344. At the old 178 the
+        // defence bottom was 352 → it overlapped my hand by ~8px ("карты в середине лезут на мои").
+        // 150 → defence bottom 324 (20px gap above the hand) while the attack top still clears the
+        // top opponent tile (~110) by 40px.
+        var TABLE_CX = STAGE_W / 2, TABLE_ATK_Y = 150;
         function tableAtkSlot(i, m) {
             var pairStep = Math.min(CARD_W + 30, (460 - CARD_W) / Math.max(m - 1, 1));
             var totalW = CARD_W + pairStep * (m - 1);

@@ -221,19 +221,19 @@
     overflow: noclip;
 }
 
-/* ── game picker — scrolls vertically (9 games, 3 per row) ─────────────────── */
-/* max-height matches the right column's min-height (380) so the divider spans the same
-   height as the picker grid (no stub tail). Card row = 148 + 2*5 margin = 158px, so 380
-   shows 2 full rows (316) + a 64px peek of row 3 → a clear "scroll for more" affordance. */
+/* ── game picker — 3 per row ─────────────────────────────────────────────── */
+/* max-height 430 matches the right column's .mg-detail height, so the divider spans the same
+   height as the grid AND all 9 square cards (3 rows × 142px = 426) show without a scroll — the
+   old 380 clipped the 3rd row into a dead "unused space" strip. Card row = 132 + 2*5 margin = 142px. */
 .mg-picker {
     width: 100%;
-    max-height: 380px;
+    max-height: 430px;
     flow-children: right-wrap;
     overflow: clip scroll;              /* NATIVE Panorama vertical-scroll idiom */
 }
 .mg-game-card {
     width: 132px;
-    height: 148px;
+    height: 132px;                      /* SQUARE — art is square, so no stretch; was 148 (portrait) */
     margin: 5px;
     flow-children: none;
     background-color: #151c27;
@@ -286,7 +286,13 @@
     height: 100%;
     flow-children: none;
     background-color: #0c121b;           /* fallback while the .vtex art isn't compiled yet */
-    background-size: cover;
+    /* ⚠ 100% 100%, NOT cover/contain. cover/contain need the .vtex INTRINSIC size to compute
+       the fit; on the first layout pass the texture isn't decoded yet, so Panorama paints it at
+       native px (checkers 480² / chess 720²) inside this small box → a ~300% zoom that only
+       "snaps right" on hover (a restyle after the texture is known). 100% 100% never reads the
+       intrinsic, so it's correct on frame 1 — the game's own idiom (element_gun.css, 100s of uses).
+       All card art is square, so no distortion. */
+    background-size: 100% 100%;
     background-position: center;
     background-repeat: no-repeat;
 }
@@ -714,6 +720,26 @@
 .mg-cell.mg-target { background-color: #4b8f5a; }   /* green "you can move here" (semantic) */
 .mg-cell.mg-sel { background-color: #3d5a7a; }      /* accent-blue selected square */
 
+/* ── board coordinates (lichess style) ──────────────────────────────────────
+   Files a–h on the bottom row, ranks 1–8 down the left column. Each label is placed by
+   translate3d into a cell corner (rank: top-left, file: bottom-right; offsets in addCoord)
+   and coloured OPPOSITE the square's shade so it reads on light or dark. The layer is
+   hittest:false so it never eats a cell click. flow-children:none so each label sits purely
+   where its transform puts it (same idiom as the pieces overlay). */
+.mg-coords-layer {
+    width: 480px;
+    height: 480px;
+    margin: 3px;                        /* line up inside the board's 3px border, like the pieces layer */
+    flow-children: none;
+}
+.mg-coord {
+    font-family: radiance !important;
+    font-weight: bold;
+    font-size: 12px !important;
+}
+.mg-coord-onlight { color: #6e5138 !important; }    /* dark ink on a light square */
+.mg-coord-ondark  { color: #d8c6a8 !important; }    /* light ink on a dark square  */
+
 /* Pieces sit in an overlay above the cells, placed by JS via transform: translate3d(...),
    so a move animates as a slide. The 3px margin lines the layer up inside the board border.
    Its children use flow:none so each piece parks top-left and is moved purely by transform. */
@@ -773,7 +799,7 @@
     border-radius: 0px;
     box-shadow: 0px 0px 0px 0px #00000000;
     background-color: #00000000;
-    background-size: contain;
+    background-size: 100% 100%;           /* 100% 100%, not contain — see .mg-card-art (intrinsic-free) */
     background-position: center;
     background-repeat: no-repeat;
 }
@@ -867,7 +893,9 @@
     width: 100px;
     height: 140px;
     background-color: #151c27;
-    background-size: contain;
+    background-size: 100% 100%;           /* 100% 100%, not contain — kills the ~300% first-frame
+                                             zoom (PNG 367×512 in a 100×140 box). Aspect 367:512 ≈
+                                             100:140, so <1% distortion. See .mg-card-art. */
     background-repeat: no-repeat;
     background-position: 50% 50%;
     border-radius: 6px;
@@ -946,7 +974,9 @@
     height: 76px;
     background-image: url("s2r://panorama/images/deck/BACK.vtex");
     background-color: #16233a;
-    background-size: contain;
+    background-size: 100% 100%;           /* 100% 100%, not contain — these bunched backs were the
+                                             giant "scattered cards" behind opponents (367×512 in
+                                             54×76). See .mg-card-art for the intrinsic-size trap. */
     background-repeat: no-repeat;
     border-radius: 5px;
 }
