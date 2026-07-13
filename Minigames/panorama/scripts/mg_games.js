@@ -142,6 +142,13 @@
                     cells[i] = cell;
                 }
             }
+            // Coordinate labels (lichess style): files a–h along the bottom row, ranks 1–8 down
+            // the left column, each tucked into the cell corner and coloured the OPPOSITE of the
+            // square so it reads on either shade. Built on its own hittest:false overlay (created
+            // BEFORE the pieces layer so pieces paint over it) and positioned by transform, so it
+            // never interferes with cell clicks. File/rank come from the REAL square (fromDisplay),
+            // so the labels flip automatically when the board is drawn from Black's side.
+            buildCoords();
             // Pieces live in an overlay ABOVE the cells so they can slide across squares
             // (transform transition). It is a SIBLING of the board inside the flow:none
             // wrap — NOT a child of boardPanel (whose flow:down would push it below the
@@ -155,6 +162,37 @@
             piecesLayer = $.CreatePanel("Panel", boardWrap, "MG_PiecesLayer");
             piecesLayer.AddClass("mg-pieces-layer");
             try { piecesLayer.SetAttributeString("hittest", "false"); } catch (e) {}
+        }
+
+        // Draw the a–h / 1–8 coordinate labels on a dedicated overlay. SQ=60; a label sits in
+        // the cell corner (file: bottom-right of the bottom row; rank: top-left of the left col).
+        function buildCoords() {
+            var layer = $.CreatePanel("Panel", boardWrap, "MG_CoordsLayer");
+            layer.AddClass("mg-coords-layer");
+            try { layer.SetAttributeString("hittest", "false"); } catch (e) {}
+            for (var d = 0; d < 64; d++) {
+                var dr = (d / 8) | 0, dc = d % 8;
+                if (dr !== 7 && dc !== 0) continue;           // only bottom row + left column
+                var i = fromDisplay(d);
+                var onDark = isDark(rowOf(i), colOf(i));
+                if (dc === 0) {                                // rank number, top-left corner
+                    addCoord(layer, dc * SQ, dr * SQ, String(8 - rowOf(i)), onDark, "rank");
+                }
+                if (dr === 7) {                                // file letter, bottom-right corner
+                    addCoord(layer, dc * SQ, dr * SQ, String.fromCharCode(97 + colOf(i)), onDark, "file");
+                }
+            }
+        }
+        function addCoord(layer, x, y, text, onDark, kind) {
+            var lbl = $.CreatePanel("Label", layer, "");
+            lbl.AddClass("mg-coord");
+            lbl.AddClass(onDark ? "mg-coord-ondark" : "mg-coord-onlight");
+            lbl.text = text;
+            // Place the small glyph directly in the cell corner by transform (flow:none parent,
+            // same idiom as the pieces). rank → top-left; file → bottom-right of the 60px cell.
+            var ox = kind === "file" ? (SQ - 14) : 3;
+            var oy = kind === "file" ? (SQ - 17) : 2;
+            lbl.style.transform = "translate3d(" + (x + ox) + "px, " + (y + oy) + "px, 0px)";
         }
 
         function makePiece(realIdx, v) {
@@ -997,9 +1035,36 @@
                     cells[i] = cell;
                 }
             }
+            buildCoords();     // a–h / 1–8 labels, opposite-shade, on their own hittest:false overlay
             piecesLayer = $.CreatePanel("Panel", boardWrap, "MG_ChessPieces");
             piecesLayer.AddClass("mg-pieces-layer");
             try { piecesLayer.SetAttributeString("hittest", "false"); } catch (e) {}
+        }
+
+        // lichess-style coordinates: files a–h on the bottom row, ranks 1–8 down the left column,
+        // coloured opposite the square. File/rank derive from the REAL square (fromDisplay) so the
+        // labels flip with the board when drawn from Black's side. See createCheckers.buildCoords.
+        function buildCoords() {
+            var layer = $.CreatePanel("Panel", boardWrap, "MG_ChessCoordsLayer");
+            layer.AddClass("mg-coords-layer");
+            try { layer.SetAttributeString("hittest", "false"); } catch (e) {}
+            for (var d = 0; d < 64; d++) {
+                var dr = (d / 8) | 0, dc = d % 8;
+                if (dr !== 7 && dc !== 0) continue;
+                var i = fromDisplay(d);
+                var onDark = ((cRow(i) + cCol(i)) & 1) === 1;   // same parity test buildCells uses
+                if (dc === 0) addCoord(layer, dc * SQ, dr * SQ, String(8 - cRow(i)), onDark, "rank");
+                if (dr === 7) addCoord(layer, dc * SQ, dr * SQ, String.fromCharCode(97 + cCol(i)), onDark, "file");
+            }
+        }
+        function addCoord(layer, x, y, text, onDark, kind) {
+            var lbl = $.CreatePanel("Label", layer, "");
+            lbl.AddClass("mg-coord");
+            lbl.AddClass(onDark ? "mg-coord-ondark" : "mg-coord-onlight");
+            lbl.text = text;
+            var ox = kind === "file" ? (SQ - 14) : 3;      // rank → top-left; file → bottom-right
+            var oy = kind === "file" ? (SQ - 17) : 2;
+            lbl.style.transform = "translate3d(" + (x + ox) + "px, " + (y + oy) + "px, 0px)";
         }
 
         function makePiece(realIdx, v) {

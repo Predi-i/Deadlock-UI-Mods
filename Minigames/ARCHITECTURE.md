@@ -316,6 +316,25 @@ These are the mistakes to NOT repeat. Every one was confirmed against the game's
    until it's meant to show; and prefer skinning the parent (`.mg-ticked` accent) over adding a
    separate badge the maintainer didn't ask for.
 
+14. **`background-size: cover` / `contain` gives a ~300% zoom on the FIRST frame.** Both need the
+   texture's INTRINSIC pixel size to compute the fit. A `.vtex` isn't decoded on the first layout
+   pass, so Panorama paints it at NATIVE px 1:1 inside the (small) panel — a card face PNG 367×512
+   in a 100×140 box reads as ~3.6× ("300% scale"), and it only "snaps right" on hover (a restyle
+   that runs after the texture is known). This was the maintainer's trump-card and picker-card and
+   "scattered opponent backs" zoom, all at once. **Fix: `background-size: 100% 100%`** — it sizes to
+   the panel and never reads the intrinsic, so it's correct on frame 1. The game uses `100% 100%` in
+   hundreds of places (`element_gun.css`) for exactly this reason. Only safe when the art's aspect
+   matches the panel (ours are square or ~portrait-matched, so no visible stretch). NOT a rotation
+   bug — an old comment blamed `rotateZ`; the rotated trump is correct.
+
+15. **The UI-scale header control is a NATIVE `DropDown` and it WORKS — do not revert it.** After
+   several failed custom button+popup attempts (trap 11/12), the native `DropDown` (`buildScaleControl`
+   in `mg_ui.js`, skinned via `.mg-scale-dd` + `#MG_ScaleDropDownMenu` in `mg.css`) finally opens
+   reliably AND keeps the close X on-screen (the fixed-width `.mg-header-right` cluster, trap 12b).
+   Confirmed in-game by the maintainer. Do NOT swap it back to a custom popup to "fix the X" — that
+   trade reintroduces the popup-won't-open bug. If the X ever regresses, adjust the right-cluster
+   width, not the widget.
+
 ---
 
 ## 7. Checkers internals (mg_games.js)
