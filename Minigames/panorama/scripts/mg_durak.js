@@ -48,11 +48,26 @@
 
     var DECK_DIR = "s2r://panorama/images/deck/";
     function cardFaceUrl(id) { return DECK_DIR + SUIT_CHARS[suitOf(id)] + RANK_CHARS[rankOf(id)] + ".vtex"; }
-    // Always build the CSS url() string ourselves. NEVER read it back off style.backgroundImage:
-    // Panorama returns it UNQUOTED (`url( s2r://... )`), and re-assigning that throws
-    // "Invalid value for property 'background-image'" — which used to abort DragStart and leak
-    // orphaned "phantom" ghost cards. We stash the quoted string on the panel (`_dkFace`).
-    function faceCss(id) { return "url('" + cardFaceUrl(id) + "')"; }
+    var BACK_URL = DECK_DIR + "BACK.vtex";
+    // Draw a card face/back with a CHILD <Image> (SetImage + scaling), NOT the container's
+    // style.backgroundImage. A Panel background paints the .vtex at its NATIVE pixel size
+    // (367×512) until the panel is re-laid-out, which is the ~300% first-frame zoom on the
+    // trump / hand / opponent backs. An <Image> fills its CSS box from frame 1 (game idiom:
+    // hud_ability_icon.xml, QOLLOCK ArcadeFlappyBird). SetImage takes the BARE s2r:// url.
+    // The container keeps ALL of its state (transform slide, .mg-dk-anim, .mg-dk-trump
+    // rotateZ, playable frame); the Image just fills it and is transparent to input, so drag
+    // hit-testing still lands on the card panel.
+    function setFace(container, url) {
+        var img = container._faceImg;
+        if (!img) {
+            img = $.CreatePanel("Image", container, "", { scaling: "stretch-to-fit-preserve-aspect" });
+            img.AddClass("mg-face-img");
+            try { img.SetAttributeString("hittest", "false"); } catch (e) {}
+            container._faceImg = img;
+        }
+        img.SetImage(url);
+    }
+    function setBack(container) { setFace(container, BACK_URL); }
 
     // Where each opponent sits on MY screen, given their offset from me around the table.
     // Everyone renders themselves at the bottom; opponents are placed by relative seat, so
@@ -149,9 +164,10 @@
         }
         // Deck stack on the LEFT, at the table row's height. The trump card lies UNDER the deck,
         // rotated 90° (see trumpSlot + .mg-dk-trump), with its right half poking clear so the suit
-        // reads. ⚠ The old "300% scale" trump glitch was NOT the rotation — it was
-        // `background-size: contain` painting the undecoded .vtex at native px on frame 1. Fixed in
-        // mg.css (.mg-dk-card → background-size: 100% 100%). The rotation is correct and stays.
+        // reads. ⚠ The old "300% scale" trump glitch was NOT the rotation — it was a Panel
+        // background painting the undecoded .vtex at native px on frame 1. Fixed by drawing the
+        // face with a child <Image> (setFace) that sizes to its CSS box. The rotation is correct
+        // and stays (it's on the container; the Image fills it).
         var DECK_X = 32, DECK_Y = 150;
         function deckSlot() { return { x: DECK_X, y: DECK_Y }; }
         // Trump lies HORIZONTAL (rotateZ 90) UNDER the deck via a wrapper (translate) + inner
@@ -200,11 +216,12 @@
                 twrap.style.transform = xform(ts.x, ts.y, 0);
                 var tc = $.CreatePanel("Panel", twrap, "");
                 tc.AddClass("mg-dk-card"); tc.AddClass("mg-dk-trump");
-                tc.style.backgroundImage = faceCss(st.trumpCard);
+                setFace(tc, cardFaceUrl(st.trumpCard));
                 var backs = Math.min(st.deck.length, 6);
                 for (var i = 0; i < backs; i++) {
                     var b = $.CreatePanel("Panel", decorLayer, "");
                     b.AddClass("mg-dk-card"); b.AddClass("mg-dk-cardback");
+                    setBack(b);
                     b.style.transform = xform(deckSlot().x + i * 2, deckSlot().y - i * 2, 0);
                 }
                 // Big remaining-deck count below the stack.
@@ -246,6 +263,7 @@
                 var d = i - mid;
                 var bk = $.CreatePanel("Panel", decorLayer, "");
                 bk.AddClass("mg-dk-card"); bk.AddClass("mg-opp-back");
+                setBack(bk);
                 bk.style.transform = xform(center.x - 27 + d * 7, center.y - 22, Math.round(d * 3));
             }
         }
@@ -325,8 +343,7 @@
             if (!el) {
                 el = $.CreatePanel("Panel", cardLayer, "");
                 el.AddClass("mg-dk-card");
-                el._dkFace = faceCss(w.id);                 // stash the QUOTED url for the ghost
-                el.style.backgroundImage = el._dkFace;
+                setFace(el, cardFaceUrl(w.id));
                 el.style.zIndex = String(w.z);
                 // A brand-new TABLE card was just played by an opponent → glide it in from the
                 // top-centre. A new HAND card is one I drew → glide from the deck.
@@ -434,7 +451,7 @@
                 if (!el._dkPlayable || !myTurn()) return;
                 var ghost = $.CreatePanel("Panel", cardLayer, "");
                 ghost.AddClass("mg-dk-card"); ghost.AddClass("mg-dk-dragging");
-                ghost.style.backgroundImage = el._dkFace;   // reuse the stashed quoted url (never read it back off style)
+                setFace(ghost, cardFaceUrl(cid));           // ghost gets its own child <Image>
                 ghost.style.zIndex = "900";
                 try { ghost.SetAttributeString("hittest", "false"); } catch (e) {}
                 dragEvent.displayPanel = ghost;

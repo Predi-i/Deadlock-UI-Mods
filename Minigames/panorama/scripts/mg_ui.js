@@ -309,10 +309,27 @@
     }
 
     // ── card art ────────────────────────────────────────────────────────────
-    // Each picker card's motif is a compiled .vtex image set as the art panel's
-    // background (see renderMenu). The maintainer draws these; PNG→VTEX is compiled
-    // externally into panorama/images/cards/<key>.vtex. The old pure-panel motifs
-    // (mini board / X-O / card fan) were removed in favour of real card art.
+    // Each picker card's motif is a compiled .vtex image drawn by a CHILD <Image> panel
+    // (see renderMenu). The maintainer draws these; PNG→VTEX is compiled externally into
+    // panorama/images/cards/<key>.vtex. The old pure-panel motifs (mini board / X-O /
+    // card fan) were removed in favour of real card art.
+    //
+    // ⚠ We use an <Image> panel (SetImage + scaling), NOT Panel+style.backgroundImage.
+    // A Panel background paints the .vtex at its NATIVE pixel size until the panel is
+    // re-laid-out (hover = restyle = relayout), which is the ~300% first-frame zoom the
+    // maintainer kept seeing. An <Image> sizes to its CSS box from frame 1 — the game's
+    // own idiom (hud_ability_icon.xml, QOLLOCK ArcadeFlappyBird). SetImage wants the BARE
+    // s2r:// url, never a url('…') wrapper.
+    function setFace(container, url) {
+        var img = container._faceImg;
+        if (!img) {
+            img = $.CreatePanel("Image", container, "", { scaling: "stretch-to-fit-preserve-aspect" });
+            img.AddClass("mg-face-img");
+            try { img.SetAttributeString("hittest", "false"); } catch (e) {}
+            container._faceImg = img;
+        }
+        img.SetImage(url);
+    }
 
     // ── views ───────────────────────────────────────────────────────────────
     // The lobby is a two-column layout: LEFT is the game picker grid, RIGHT is the
@@ -349,7 +366,7 @@
                 art.AddClass("mg-card-art");
                 // Custom card image (compiled .vtex). soon1-4 have no art → plain bg.
                 if (g.key.indexOf("soon") !== 0)
-                    art.style.backgroundImage = "url('s2r://panorama/images/cards/" + g.key + ".vtex')";
+                    setFace(art, "s2r://panorama/images/cards/" + g.key + ".vtex");
 
                 var bar = $.CreatePanel("Panel", card, "");
                 bar.AddClass("mg-card-namebar");

@@ -984,9 +984,25 @@
         function toDisplay(i) { return myColor === 1 ? i : 63 - i; }
         function fromDisplay(i) { return myColor === 1 ? i : 63 - i; }
 
-        function pieceImg(v) {
+        function pieceUrl(v) {
             var name = (v > 0 ? "White" : "Black") + ["", "Pawn", "Knight", "Bishop", "Rook", "Queen", "King"][cType(v)];
-            return "url('s2r://panorama/images/" + name + ".vtex')";
+            return "s2r://panorama/images/" + name + ".vtex";
+        }
+        // Draw a piece sprite with a CHILD <Image> (SetImage + scaling), NOT the container's
+        // style.backgroundImage. A Panel background paints the .vtex at its NATIVE pixel size
+        // (250²) until the panel is re-laid-out, the same first-frame zoom the cards hit. An
+        // <Image> fills its CSS box from frame 1 (game idiom: hud_ability_icon.xml). The piece
+        // panel keeps its transform/anim/drag-source state; the Image just fills it and is
+        // transparent to input. SetImage takes the BARE s2r:// url.
+        function setFace(container, url) {
+            var img = container._faceImg;
+            if (!img) {
+                img = $.CreatePanel("Image", container, "", { scaling: "stretch-to-fit-preserve-aspect" });
+                img.AddClass("mg-face-img");
+                try { img.SetAttributeString("hittest", "false"); } catch (e) {}
+                container._faceImg = img;
+            }
+            img.SetImage(url);
         }
 
         var root = $.CreatePanel("Panel", container, "MG_ChessRoot");
@@ -1071,7 +1087,7 @@
             var piece = $.CreatePanel("Panel", piecesLayer, "");
             piece.AddClass("mg-piece");
             piece.AddClass("mg-chess-piece");
-            piece.style.backgroundImage = pieceImg(v);
+            setFace(piece, pieceUrl(v));
             piece.style.transform = transformFor(realIdx);
             $.Schedule(0.0, function () {
                 if (piece && piece.IsValid && piece.IsValid()) piece.AddClass("mg-anim");
@@ -1096,7 +1112,7 @@
                 ghost.AddClass("mg-piece");
                 ghost.AddClass("mg-chess-piece");
                 ghost.AddClass("mg-dragging");
-                ghost.style.backgroundImage = pieceImg(board[sq]);
+                setFace(ghost, pieceUrl(board[sq]));
                 try { ghost.SetAttributeString("hittest", "false"); } catch (e) {}
                 dragGhost = ghost;
                 dragEvent.displayPanel = ghost;
@@ -1257,7 +1273,7 @@
             slidePiece(from, to);
             if (t === C_PAWN && (tr === 0 || tr === 7)) {
                 var pp = pieceEls[to];
-                if (pp && pp.IsValid && pp.IsValid()) pp.style.backgroundImage = pieceImg(color * C_QUEEN);
+                if (pp && pp.IsValid && pp.IsValid()) setFace(pp, pieceUrl(color * C_QUEEN));
             }
             if (t === C_KING && Math.abs(tc - fc) === 2) {
                 if (tc - fc === 2) slidePiece(cSq(fr, 7), cSq(fr, 5));   // O-O  rook h→f
