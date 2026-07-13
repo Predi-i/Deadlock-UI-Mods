@@ -976,29 +976,32 @@
 
 
 /* ── connect four ────────────────────────────────────────────────────────────
-   Blue board with round holes; a disc is a child of the landed cell and falls in via a
-   translateY animation armed one frame after creation (.mg-cf-anim, checkers idiom).
+   Opaque blue plate (.mg-cf-board, #23479e) with dark round sockets (.mg-cf-hole, #0d1b3e); discs
+   live on a SEPARATE overlay (.mg-cf-pieces) stacked ON TOP of the plate (checkers .mg-board-wrap
+   idiom) and placed by translate3d. The overlay is overflow:CLIP and sized to the plate's inner
+   window, so a falling disc is visible ONLY inside the plate: it drops in from the top slot and is
+   never seen floating above the board or over the modal's dark windows (the maintainer's
+   "падение внутрь", п3). A resting disc + its 3px win-ring stay 2px inside the clip box (INSET 5),
+   so only the mid-fall portion above the top edge is hidden — nothing at rest is clipped.
    Geometry MUST match mg_connectfour.js: CELL 60, disc 50, 7x6. */
 .mg-cf { horizontal-align: center; flow-children: down; }
-/* board grid + discs OVERLAY stacked as siblings (checkers .mg-board-wrap idiom). Size =
-   7*60 + 2*6 padding = 432 wide, 6*60 + 12 = 372 tall. flow-children:none parks both at the
-   wrap's top-left; the overlay's translate3d places each disc. */
+/* plate + discs overlay stacked as siblings (flow-children:none parks both at the wrap's
+   top-left). Size = 7*60 + 2*6 padding = 432 wide, 6*60 + 12 = 372 tall. */
 .mg-cf-wrap {
     flow-children: none;
     width: 432px; height: 372px;
     horizontal-align: center;
 }
+/* the solid blue plate — created FIRST so it paints BEHIND the discs. 6px padding frames the grid. */
 .mg-cf-board {
     flow-children: down; overflow: noclip;
     padding: 6px; border-radius: 10px;
     background-color: #23479e;
     box-shadow: 0px 6px 16px 0px #00000099;
 }
-.mg-cf-row { flow-children: right; height: 60px; overflow: noclip; }
-.mg-cf-cell { width: 60px; height: 60px; flow-children: none; overflow: noclip; }
-
-
-/* the empty hole the discs sit in; a hover tints the whole cell to hint the drop column */
+.mg-cf-row { flow-children: right; height: 60px; }
+.mg-cf-cell { width: 60px; height: 60px; flow-children: none; }
+/* the empty dark socket the discs sit in; a hover tints the whole cell to hint the drop column. */
 .mg-cf-hole {
     width: 50px; height: 50px; border-radius: 50%;
     background-color: #0d1b3e;
@@ -1006,14 +1009,16 @@
     transition-property: background-color; transition-duration: 0.1s;
 }
 .mg-cf-cell:hover .mg-cf-hole { background-color: #16275c; }
-/* discs overlay: sits over the grid, offset by the board's 6px padding so a disc's
-   translate3d(col*60+5, row*60+5) lands centred in its hole. noclip so a falling disc is
-   visible across the whole column. */
+/* discs overlay: sibling created AFTER the plate → paints OVER it. Offset by the plate's 6px
+   padding (margin) so a disc's translate3d(col*60+5, row*60+5) lands centred in its socket.
+   overflow:CLIP bounds every disc to the plate window: a disc starting one cell ABOVE the top edge
+   is hidden until it crosses into the plate, so the fall reads as dropping INSIDE the board rather
+   than flying above it (п3). hittest is disabled on the JS panel so clicks fall through to cells. */
 .mg-cf-pieces {
     width: 420px; height: 360px;
     margin: 6px;
     flow-children: none;
-    overflow: noclip;
+    overflow: clip;
 }
 /* a played disc — positioned by translate3d on the overlay (NOT a cell child). BASE class
    carries NO transition so a rebuilt board snaps; the falling disc gets .mg-cf-anim one frame
@@ -1022,6 +1027,9 @@
     width: 50px; height: 50px; border-radius: 50%;
     box-shadow: 0px 2px 4px 0px #00000099;
 }
+
+
+
 /* Fall = pure gravity: accelerate the whole way and hit the floor at MAX speed, with NO
    end-of-curve slowdown (any deceleration reads as the disc "floating" just before landing —
    the maintainer's ~0.2s hover). cubic-bezier(0.55,0,1,1) keeps the end control point at y=1
