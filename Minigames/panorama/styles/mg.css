@@ -104,13 +104,17 @@
     height: 1px;
     vertical-align: center;
 }
-/* RIGHT CLUSTER: the scale control + close X together in ONE fit-children block after the
-   spacer. Grouping them means Panorama measures them as a single unit that always lands fully
-   on-screen — the two-loose-siblings layout let the spacer push the trailing X off the clipped
-   right edge (the "X gone, scale in its place" bug). overflow:noclip so the scale popup can
-   still drop below. */
+/* RIGHT CLUSTER: the scale control + close X together in one block after the spacer.
+   ⚠ FIXED width, NOT fit-children. The native `DropDown` widget reports the game's base
+   `width: 352px` (citadel_base_styles.css) as its PREFERRED size during a parent's fit-children
+   measurement — even though our `.mg-scale-dd` caps the RENDER at 90px via max-width. So a
+   fit-children cluster measured ~392px wide, overflowed the modal's right edge, and the modal's
+   clip shaved the trailing close X down to ~1px (the maintainer's "крестик не видно, на его месте
+   дропдаун" bug, trap 11). A FIXED width = dropdown 90 + its 10px margin-right + close 30 = 130px
+   ignores the widget's bogus 352 and always seats the X on-screen. overflow:noclip so the scale
+   popup can still drop below. */
 .mg-header-right {
-    width: fit-children;
+    width: 130px;
     flow-children: right;
     vertical-align: center;
     overflow: noclip;
@@ -956,7 +960,7 @@
    control AND the auto-created popup `#MG_ScaleDropDownMenu` (+ its option Labels). The engine
    opens/closes the popup itself (it toggles `DropDownMenuVisible`); no JS toggle needed. */
 .mg-scale-dd {
-    width: 84px; min-width: 84px; max-width: 84px;
+    width: 90px; min-width: 90px; max-width: 90px;
     height: 30px; min-height: 30px; max-height: 30px;
     margin-right: 10px;
     padding: 1px 8px;
@@ -969,16 +973,20 @@
     transition-duration: 0.1s; transition-timing-function: ease-out;
 }
 .mg-scale-dd:hover { brightness: 1.08; border-color: #3a5170; }
-/* the value shown in the CLOSED control is a clone of the selected option Label */
+/* the value shown in the CLOSED control is a clone of the selected option Label. The game's base
+   `DropDown Label` sets `width:100%; margin:0 29px 0 6px` — that offset shoves our short "100%"
+   off-centre and steals width; zero it and centre in our fixed 90px box. */
 .mg-scale-dd Label {
     font-family: radiance !important; font-weight: semi-bold; color: #cdd9e7 !important;
-    font-size: 15px !important; vertical-align: center;
+    font-size: 15px !important;
+    margin: 0px; padding: 0px;
+    horizontal-align: center; vertical-align: center;
 }
 /* the popup list — auto-created by the engine at the context root, id = "<ddId>DropDownMenu".
    Override the paper texture the same way (background-image:none + our fill). z-index lifts it
    over the modal body. */
 #MG_ScaleDropDownMenu {
-    width: 84px; min-width: 84px; max-width: 84px;
+    width: 90px; min-width: 90px; max-width: 90px;
     background-image: none;
     background-color: #0f141c;
     border: 1px solid #2a3849; border-radius: 2px;
