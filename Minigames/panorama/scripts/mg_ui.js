@@ -22,8 +22,9 @@
 
     var overlay = null, modalBody = null, statusLabel = null, titleLabel = null;
     // UI-scale control (dropdown left of the close X): scales the WHOLE modal — picker,
-    // boards, Durak felt & cards — via pre-transform-scale2d on .mg-modal. Kept for the
-    // session; the drag maths in the games are already relative so any scale is safe.
+    // boards, Durak felt & cards — via the `ui-scale` LAYOUT-scale on .mg-modal (crisp re-layout,
+    // NOT the blurry pre-transform raster; see applyUiScale). Kept for the session; the drag maths
+    // in the games are already relative so any scale is safe.
     var modalPanel = null, uiScalePct = 100, scaleDropdown = null;
     // In the MENU view the status text lives on the LEFT of the footer row (same line as the
     // dev tools) instead of on its own line below — shorter panel, and the message sits level
@@ -298,11 +299,19 @@
     }
 
 
-    // pre-transform-scale2d scales the modal in place (around its centre) AFTER layout, so the
-    // full-screen dim behind it stays put. Every child (board/cards) scales with it.
+    // ⚠ SCALE with `ui-scale`, NOT `pre-transform-scale2d`. pre-transform-scale2d is a member of
+    // the TRANSFORM family — it runs AFTER layout and stretches the panel's already-rendered
+    // texture, so text and .vtex art blow up as a blurry bitmap when scaled >100% (the "растровое
+    // мыло" the maintainer saw). `ui-scale` scales at the LAYOUT level: the modal is re-laid-out at
+    // the new size and fonts/vectors/.vtex are re-rasterised crisply. This is the game's own idiom
+    // for sizing text UI — CitadelButton.Large/Medium/Small/XSmall are just ui-scale 125/100/80/65%
+    // (citadel_base_styles.css) — and QOLLOCK sets it from JS the same way (panel.style.uiScale).
+    // The full-screen dim (#MG_Dim) is a separate sibling, and the modal stays centre-aligned in the
+    // overlay, so growing the modal's layout box keeps it centred. Drag maths read window px and
+    // divide by the rendered layer width, so the scale cancels either way (unchanged from before).
     function applyUiScale() {
         if (modalPanel && modalPanel.IsValid && modalPanel.IsValid()) {
-            try { modalPanel.style.preTransformScale2d = (uiScalePct / 100).toFixed(3); } catch (e) {}
+            try { modalPanel.style.uiScale = uiScalePct + "%"; } catch (e) {}
         }
     }
 
