@@ -254,17 +254,24 @@
             if (zone === "right") return { x: STAGE_W - 66, y: STAGE_H * 0.44 };
             return { x: STAGE_W / 2, y: 46 };               // top
         }
-        // A neat, tightly-overlapped stack of backs behind a tile (gentle 3° fan, not scattered).
+        // A FLAT horizontal row of backs behind an opponent tile — mirrors MY hand (handSlot:
+        // rot 0, a plain left-to-right row), per the maintainer. The old version stepped only 7px
+        // (cards 54px wide → heavy overlap) AND rotateZ'd each by 3°, so the backs read as a
+        // tilted VERTICAL pile instead of a hand. Now: no rotation, centred on center.x, spaced
+        // like the hand so they lie side by side. Capped at 6 shown like a real hand.
         function buildBackBunch(center, count) {
-            var shown = Math.min(count, 4);
+            var shown = Math.min(count, 6);
             if (shown <= 0) return;
-            var mid = (shown - 1) / 2;
+            var BK_W = 54;
+            var step = shown > 1 ? Math.min(30, 160 / (shown - 1)) : 0;
+            var totalW = BK_W + step * (shown - 1);
+            var x0 = center.x - totalW / 2;
+            var y = center.y - 76 / 2;          // vertically centred on the tile
             for (var i = 0; i < shown; i++) {
-                var d = i - mid;
                 var bk = $.CreatePanel("Panel", decorLayer, "");
-                bk.AddClass("mg-dk-card"); bk.AddClass("mg-opp-back");
+                bk.AddClass("mg-opp-back");
                 setBack(bk);
-                bk.style.transform = xform(center.x - 27 + d * 7, center.y - 22, Math.round(d * 3));
+                bk.style.transform = xform(x0 + i * step, y, 0);   // flat row, no tilt
             }
         }
         function buildTile(seat, center) {
@@ -291,17 +298,27 @@
         }
         function buildOpponents() {
             for (var seat = 0; seat < numPlayers; seat++) {
-                var center;
                 if (seat === mySeat) {
                     // Bottom-left corner: well away from the centred hand and mirrors the top
                     // opponent tile so the table reads symmetrically.
-                    center = { x: 60, y: STAGE_H - 54 };
-                } else {
-                    var rel = (seat - mySeat + numPlayers) % numPlayers;
-                    center = avatarCenter(seatZone(rel, numPlayers));
-                    buildBackBunch(center, st.hands[seat].length);   // opponents' hands are hidden
+                    buildTile(seat, { x: 60, y: STAGE_H - 54 });
+                    continue;
                 }
-                buildTile(seat, center);
+                var rel = (seat - mySeat + numPlayers) % numPlayers;
+                var zone = seatZone(rel, numPlayers);
+                if (zone === "top") {
+                    // Mirror MY side: the hand (a flat centred row of backs) at the top-centre,
+                    // the avatar TILE off to the top-LEFT so it never sits over the middle of the
+                    // row (exactly how "You" is bottom-left with my hand centred). The old code put
+                    // the tile AND the pile at the same top-centre point, so the avatar landed on
+                    // the backs and the tightly-tilted pile read as a vertical stack.
+                    buildBackBunch({ x: STAGE_W / 2, y: 60 }, st.hands[seat].length);
+                    buildTile(seat, { x: 60, y: 54 });
+                } else {
+                    var center = avatarCenter(zone);
+                    buildBackBunch(center, st.hands[seat].length);   // opponents' hands are hidden
+                    buildTile(seat, center);
+                }
             }
         }
 

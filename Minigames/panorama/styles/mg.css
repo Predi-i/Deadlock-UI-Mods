@@ -1005,14 +1005,18 @@
     color: #cdd9e7 !important; font-size: 14px !important;
     horizontal-align: center; vertical-align: center;
 }
-/* small card backs bunched behind an opponent tile (positioned by transform in JS). The
-   BACK.vtex is drawn by a child <Image> (.mg-face-img, setBack); this box is 54×76 and the
-   image fills it — no native-pixel blow-up (the old "scattered giant cards" bug). */
+/* small card backs bunched behind an opponent tile (positioned by transform in JS). SELF-
+   CONTAINED — must NOT also carry .mg-dk-card, whose width:100px/height:140px won the cascade
+   at equal specificity and rendered these at full size (the "scattered giant backs" overlap the
+   maintainer saw). The BACK.vtex is drawn by a child <Image> (.mg-face-img, setBack) that fills
+   this 54×76 box. flow-children:none so the image fills; keeps its own fill/radius/shadow. */
 .mg-opp-back {
     width: 54px;
     height: 76px;
+    flow-children: none;
     background-color: #16233a;
     border-radius: 5px;
+    box-shadow: 0px 2px 4px 0px #00000088;
 }
 /* big remaining-deck count to the right of the stack */
 .mg-dk-deckcount { font-family: oracle !important; font-weight: bold; color: #eaf2ff !important; font-size: 40px !important; }
