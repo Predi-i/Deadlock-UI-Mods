@@ -61,6 +61,21 @@
         var dragGhost = null;          // panel that follows the cursor
         var dragOverSq = -1;           // square the cursor is currently over (DragEnter / mouseover)
         var dragEnterCount = 0;        // how many DragEnter events landed this drag (is that channel alive?)
+        var dragSourcePiece = null;    // the real piece being dragged (so we can un-dim it even if it's since been deleted)
+
+        // Tear the drag state down from ANY exit path, not just DragEnd. The DragEnd handler is
+        // bound to the PIECE panel; if the opponent captures that piece while you hold it (a
+        // polled hop → animateHop deletes the panel), the panel — and its DragEnd handler — is
+        // gone, the engine never synthesises DragEnd on a dead panel, and the ghost + dragActive
+        // leak forever (the "zависший ghost при съедении" bug). Calling clearDrag() from the
+        // capture/rebuild paths covers that. Idempotent: a no-op once already cleared (own move,
+        // click move), so it's safe to call unconditionally.
+        function clearDrag() {
+            if (dragGhost) { try { dragGhost.DeleteAsync(0); } catch (e) {} dragGhost = null; }
+            dragActive = false;
+            dragOverSq = -1;
+            if (dragSourcePiece) { try { dragSourcePiece.RemoveClass("mg-drag-source"); } catch (e) {} dragSourcePiece = null; }
+        }
 
         // TEMP diagnostic. When true, every DragEnd writes what each drop channel actually
         // produced to the on-screen status line — so ONE in-game test reveals which signal
@@ -255,6 +270,7 @@
                 dragActive = true;
                 dragOverSq = -1;
                 dragEnterCount = 0;
+                dragSourcePiece = piece;
                 piece.AddClass("mg-drag-source"); // dim the real piece while it's "lifted"
 
                 // Light up this piece's legal targets as drop hints — but only when it may
@@ -275,13 +291,9 @@
                 // authoritative when present — this is how QOLLOCK's ql_hero_testing works).
                 commitDropMultimethod(droppedPanel);
 
-                // Tear down the ghost + dim regardless of outcome.
-                if (dragGhost) { try { dragGhost.DeleteAsync(0); } catch (e) {} dragGhost = null; }
-                piece.RemoveClass("mg-drag-source");
-                dragActive = false;
-                dragOverSq = -1;
-                // A drop on empty space (no legal target) just snaps back — the real piece
-                // never moved, so there is nothing to restore.
+                // Tear the ghost + dim + drag state down regardless of outcome. A drop on empty
+                // space (no legal target) just snaps back — the real piece never moved.
+                clearDrag();
             });
         }
 
@@ -427,6 +439,7 @@
         // Full rebuild of the piece layer (initial deal, board flip, game end). No slide.
         function layoutPieces() {
             if (!piecesLayer) return;
+            clearDrag();                 // a full rebuild deletes the ghost with the layer; also reset the vars
             piecesLayer.RemoveAndDeleteChildren();
             pieceEls = {};
             for (var i = 0; i < 64; i++) { if (board[i]) makePiece(i, board[i]); }
@@ -462,6 +475,11 @@
 
         // Slide the piece from->to; shrink-fade a captured piece; crown on promotion.
         function animateHop(from, to, capIdx, promoted) {
+            // ANY hop can capture the very piece you're mid-drag on (an opponent's polled hop, or
+            // a bot move). That capture deletes the piece panel, taking its DragEnd handler with
+            // it, so the ghost would hang forever. Clear the drag up front. For your OWN move the
+            // drag already ended (ghost null), so this is a harmless no-op.
+            clearDrag();
             if (capIdx >= 0 && pieceEls[capIdx]) {
                 var dead = pieceEls[capIdx];
                 delete pieceEls[capIdx];
@@ -727,7 +745,7 @@
         }
 
         return {
-            destroy: function () { destroyed = true; pollToken++; try { root.DeleteAsync(0); } catch (e) {} }
+            destroy: function () { destroyed = true; pollToken++; clearDrag(); try { root.DeleteAsync(0); } catch (e) {} }
         };
     }
 
@@ -971,7 +989,20 @@
         var gameOver = false;
 
         var dragActive = false, dragGhost = null, dragOverSq = -1, dragEnterCount = 0;
+        var dragSourcePiece = null;    // the real piece being dragged (un-dim even if it's since been deleted)
         var DRAG_DEBUG = false;        // drag path is the proven checkers recipe; flip on only to debug
+
+        // Tear the drag state down from ANY exit path, not just DragEnd (bound to the piece panel).
+        // If the opponent captures the piece you're holding (a polled move → applyChessMove deletes
+        // the panel), the panel and its DragEnd handler vanish, the engine never fires DragEnd on a
+        // dead panel, and the ghost + dragActive leak forever. clearDrag() from the capture/rebuild
+        // paths covers that. Idempotent, so safe to call unconditionally (own/click move = no-op).
+        function clearDrag() {
+            if (dragGhost) { try { dragGhost.DeleteAsync(0); } catch (e) {} dragGhost = null; }
+            dragActive = false;
+            dragOverSq = -1;
+            if (dragSourcePiece) { try { dragSourcePiece.RemoveClass("mg-drag-source"); } catch (e) {} dragSourcePiece = null; }
+        }
 
         function status(t) { if (session.onStatus) session.onStatus(t); }
         function parsePx(v) {
@@ -1122,6 +1153,7 @@
                 dragActive = true;
                 dragOverSq = -1;
                 dragEnterCount = 0;
+                dragSourcePiece = piece;
                 piece.AddClass("mg-drag-source");
 
                 if (!destroyed && myTurn() && selected !== sq) onCellClick(sq);
@@ -1129,10 +1161,7 @@
 
             $.RegisterEventHandler("DragEnd", piece, function (_p, droppedPanel) {
                 commitDropMultimethod(droppedPanel);
-                if (dragGhost) { try { dragGhost.DeleteAsync(0); } catch (e) {} dragGhost = null; }
-                piece.RemoveClass("mg-drag-source");
-                dragActive = false;
-                dragOverSq = -1;
+                clearDrag();
             });
         }
 
@@ -1218,6 +1247,7 @@
         // ── rendering ───────────────────────────────────────────────────────────────
         function layoutPieces() {
             if (!piecesLayer) return;
+            clearDrag();                 // a full rebuild deletes the ghost with the layer; also reset the vars
             piecesLayer.RemoveAndDeleteChildren();
             pieceEls = {};
             for (var i = 0; i < 64; i++) { if (board[i] !== 0) makePiece(i, board[i]); }
@@ -1254,6 +1284,10 @@
         // Apply from→to to the model and mirror it visually: slide the mover, fade any capture
         // (incl. en passant), swap the sprite on promotion, and slide the rook on a castle.
         function applyChessMove(from, to) {
+            // Any move (opponent's polled move or bot) can capture the piece you're mid-drag on,
+            // deleting its panel + DragEnd handler and leaking the ghost. Clear the drag first;
+            // for your own move the drag already ended (no-op).
+            clearDrag();
             var mover = board[from], t = cType(mover), color = cSign(mover);
             var fr = cRow(from), fc = cCol(from), tr = cRow(to), tc = cCol(to);
             var capSq = -1;
@@ -1452,7 +1486,7 @@
         }
 
         return {
-            destroy: function () { destroyed = true; pollToken++; try { root.DeleteAsync(0); } catch (e) {} }
+            destroy: function () { destroyed = true; pollToken++; clearDrag(); try { root.DeleteAsync(0); } catch (e) {} }
         };
     }
 
