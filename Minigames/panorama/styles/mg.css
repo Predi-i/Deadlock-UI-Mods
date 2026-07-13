@@ -104,6 +104,18 @@
     height: 1px;
     vertical-align: center;
 }
+/* RIGHT CLUSTER: the scale control + close X together in ONE fit-children block after the
+   spacer. Grouping them means Panorama measures them as a single unit that always lands fully
+   on-screen — the two-loose-siblings layout let the spacer push the trailing X off the clipped
+   right edge (the "X gone, scale in its place" bug). overflow:noclip so the scale popup can
+   still drop below. */
+.mg-header-right {
+    width: fit-children;
+    flow-children: right;
+    vertical-align: center;
+    overflow: noclip;
+}
+
 
 .mg-title {
     font-family: oracle !important;
@@ -133,19 +145,24 @@
 .mg-header-credit:hover Label { color: #82b4ff !important; }
 
 /* Close: a 30px square. The single glyph is centred, then nudged +1px right / +3px down
-   per the maintainer's in-game measurement (an odd box can't land perfectly on center). */
+   per the maintainer's in-game measurement (an odd box can't land perfectly on center).
+   ⚠ NO `horizontal-align: right` — that made the X an align-override child pinned to the
+   header's right edge and REMOVED from the flow, so the scale control (a normal flow child
+   after the spacer) flowed to the same right edge and painted OVER the X (the "dropdown sits
+   where the X should be" bug, trap 12b). The spacer already pushes both to the right, so the
+   X just flows AFTER the scale control and lands rightmost on its own. */
 .mg-close {
     width: 30px;
     height: 30px;
     background-color: #161f2b;
     border: 1px solid #2a3849;
     border-radius: 2px;
-    horizontal-align: right;
     vertical-align: center;
     transition-property: background-color, border-color;
     transition-duration: 0.1s;
     transition-timing-function: ease-out;
 }
+
 .mg-close Label {
     font-family: oracle !important;
     font-weight: bold;
@@ -933,42 +950,56 @@
 .mg-dk-deckcount { font-family: oracle !important; font-weight: bold; color: #eaf2ff !important; font-size: 40px !important; }
 
 /* ── UI-scale dropdown (header, left of the close X) ────────────────────────── */
-/* CUSTOM control (button + popup), NOT the native DropDown. ⚠ The native `DropDown` was tried
-   THREE times and always failed in this HUD context: it drags in the game's base DropDownMenu
-   look — a `paper_tile` popup texture we could NOT override away, a "…" placeholder instead of
-   the value — and it shoved the close X out. So this is our own: a fixed-84px button whose label
-   shows the current % (no "…"), + a popup Panel in our palette (no paper), shown/hidden from JS
-   via the `.visible` property. Wrapper is flow-children:none + overflow:noclip so the popup can
-   overlap the body (no position:absolute); the popup's z-index paints it over the body. */
-.mg-scale { flow-children: none; width: 84px; height: 30px; vertical-align: center; margin-right: 10px; overflow: noclip; }
-.mg-scale-btn {
-    width: 84px; height: 30px;
-    background-color: #161f2b; border: 1px solid #2a3849; border-radius: 2px;
-    flow-children: right; vertical-align: center;
-    transition-property: background-color, border-color, brightness;
+/* NATIVE `DropDown` widget (QOLLOCK Default-Hero recipe, mg_ui.js buildScaleControl). The game's
+   base `DropDownMenu` look — a `paper_tile` popup texture + a "…" placeholder — is overridden the
+   way QOLLOCK does it: `background-image:none` + our own `background-color` on BOTH the closed
+   control AND the auto-created popup `#MG_ScaleDropDownMenu` (+ its option Labels). The engine
+   opens/closes the popup itself (it toggles `DropDownMenuVisible`); no JS toggle needed. */
+.mg-scale-dd {
+    width: 84px; min-width: 84px; max-width: 84px;
+    height: 30px; min-height: 30px; max-height: 30px;
+    margin-right: 10px;
+    padding: 1px 8px;
+    vertical-align: center;
+    background-image: none;                         /* kill the paper-tile texture */
+    background-color: #161f2b;
+    border: 1px solid #2a3849;
+    border-radius: 2px;
+    transition-property: brightness, border-color;
     transition-duration: 0.1s; transition-timing-function: ease-out;
 }
-.mg-scale-btn:hover { background-color: #1c2836; border-color: #3a5170; brightness: 1.08; }
-.mg-scale-label {
+.mg-scale-dd:hover { brightness: 1.08; border-color: #3a5170; }
+/* the value shown in the CLOSED control is a clone of the selected option Label */
+.mg-scale-dd Label {
     font-family: radiance !important; font-weight: semi-bold; color: #cdd9e7 !important;
-    font-size: 15px !important; vertical-align: center; margin-left: 10px;
+    font-size: 15px !important; vertical-align: center;
 }
-.mg-scale-caret {
-    font-family: radiance !important; color: #7a8ea6 !important; font-size: 12px !important;
-    vertical-align: center; margin-left: 6px;
+/* the popup list — auto-created by the engine at the context root, id = "<ddId>DropDownMenu".
+   Override the paper texture the same way (background-image:none + our fill). z-index lifts it
+   over the modal body. */
+#MG_ScaleDropDownMenu {
+    width: 84px; min-width: 84px; max-width: 84px;
+    background-image: none;
+    background-color: #0f141c;
+    border: 1px solid #2a3849; border-radius: 2px;
+    box-shadow: 0px 8px 20px 0px #000000aa;
+    z-index: 200;
 }
-/* popup list — dropped below the 30px button (margin-top clears it). z-index lifts it over the
-   body; JS toggles its `.visible` property. */
-.mg-scale-menu {
-    margin-top: 33px; width: 84px; z-index: 200;
-    background-color: #0f141c; border: 1px solid #2a3849; border-radius: 2px;
-    flow-children: down; box-shadow: 0px 8px 20px 0px #000000aa;
-}
-.mg-scale-opt { width: 100%; height: 30px; background-color: #00000000; }
-.mg-scale-opt:hover { background-color: #1c2836; }
-.mg-scale-opt-label {
+#MG_ScaleDropDownMenu Label,
+#MG_ScaleDropDownMenu .mg-scale-opt {
+    width: 100%; height: 30px;
+    padding: 0px 10px;
     font-family: radiance !important; color: #cdd9e7 !important; font-size: 15px !important;
-    horizontal-align: center; vertical-align: center;
+    vertical-align: center;
+    background-image: none;
+    background-color: #00000000;
+    border: 0px solid transparent;
+    transition-property: background-color, color;
+    transition-duration: 0.1s; transition-timing-function: ease-out;
+}
+#MG_ScaleDropDownMenu Label:hover,
+#MG_ScaleDropDownMenu .mg-scale-opt:hover {
+    background-color: #1c2836; color: #eef3fa !important;
 }
 
 

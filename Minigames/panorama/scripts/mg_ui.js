@@ -24,7 +24,7 @@
     // UI-scale control (dropdown left of the close X): scales the WHOLE modal — picker,
     // boards, Durak felt & cards — via pre-transform-scale2d on .mg-modal. Kept for the
     // session; the drag maths in the games are already relative so any scale is safe.
-    var modalPanel = null, uiScalePct = 100, scaleMenu = null, scaleLabel = null;
+    var modalPanel = null, uiScalePct = 100, scaleDropdown = null;
     // In the MENU view the status text lives on the LEFT of the footer row (same line as the
     // dev tools) instead of on its own line below — shorter panel, and the message sits level
     // with Test Connection / Self-Test. Other views keep the centred bottom statusLabel.
@@ -177,18 +177,28 @@
         var sLbl = $.CreatePanel("Label", supportBtn, ""); sLbl.AddClass("mg-support-label"); sLbl.text = "Support";
         supportBtn.SetPanelEvent("onactivate", function () { openSupport(); });
         // Flexible slack: the left cluster hugs its content, this spacer eats the rest of the
-        // row, so the scale control + close X sit at the far right and both stay on-screen.
+        // row, so the RIGHT CLUSTER (scale + close) sits at the far right.
         var headerSpacer = $.CreatePanel("Panel", header, "");
         headerSpacer.AddClass("mg-header-spacer");
-        // UI-scale dropdown sits between the spacer and the close X.
-        buildScaleControl(header);
 
-        // Close button, pushed to the far right by the header's flow.
-        var close = $.CreatePanel("Button", header, "");
+        // ⚠ RIGHT CLUSTER: scale control + close X live TOGETHER in one fit-children group after
+        // the spacer — NOT as two separate trailing siblings of the header. When they were two
+        // loose siblings, Panorama's fill-parent-flow spacer mismeasured the remaining width and
+        // pushed the LAST sibling (the close X) off the modal's right edge, where it was clipped —
+        // so the scale control ended up sitting where the X should be, and the X vanished (the
+        // maintainer's recurring "нет крестика, на его месте скейл" bug across 4 attempts). One
+        // fit-children cluster is measured as a single block and always stays on-screen — exactly
+        // how the footer's status+spacer+tools row works.
+        var headerRight = $.CreatePanel("Panel", header, "");
+        headerRight.AddClass("mg-header-right");
+        // UI-scale dropdown, then the close X, inside the cluster.
+        buildScaleControl(headerRight);
+        var close = $.CreatePanel("Button", headerRight, "");
         close.AddClass("mg-close");
         var closeLbl = $.CreatePanel("Label", close, "");
         closeLbl.text = "X"; // plain ASCII: the ✕ glyph isn't in the game font
         close.SetPanelEvent("onactivate", function () { hideOverlay(); });
+
 
         modalBody = $.CreatePanel("Panel", modal, "MG_Body");
         modalBody.AddClass("mg-body");
@@ -215,64 +225,53 @@
     }
     function setTitle(t) { if (titleLabel) titleLabel.text = t; }
 
-    // ── UI-scale control (CUSTOM button + popup) ──────────────────────────────
-    // FINAL approach after the native DropDown kept failing in this HUD context (it dragged in
-    // the game's `paper_tile` popup texture that we could NOT override, showed a "…" instead of
-    // the value, and shoved the close X out). This is our OWN control:
-    //   • a button whose label ALWAYS shows the current % (fixes the "…" — п2),
-    //   • a popup Panel of options in OUR palette (no paper texture — п3),
-    //   • fixed 84px width so the close X keeps its place (п1/п4),
-    //   • shown/hidden by the `.visible` PROPERTY (the most reliable toggle in Panorama —
-    //     class/inline-visibility toggles proved flaky here).
-    // The wrapper is flow-children:none + overflow:noclip so the popup overlaps the body (no
-    // position:absolute), and the popup carries a z-index to paint over it.
+    // ── UI-scale control (NATIVE DropDown, QOLLOCK Default-Hero recipe) ────────
+    // Uses the game's own `DropDown` widget — the SAME control QOLLOCK ships for "Default Hero".
+    // Earlier custom button+popup attempts never reliably opened in this HUD context; the native
+    // widget opens itself (the engine toggles the popup's `DropDownMenuVisible` class on click)
+    // and its popup is auto-created at the panel-context root with id `<dropdownId>DropDownMenu`.
+    //
+    // The two things that bit the previous native attempt, both fixed here:
+    //   • "…" instead of the current %: the DropDown shows a CLONE of the SELECTED option Label.
+    //     If SetSelected is never called with a VALID option-panel id, it renders the "…"
+    //     placeholder. So each option Label is created with a unique id and we SetSelected the
+    //     one matching uiScalePct.
+    //   • paper-tile popup texture: killed in CSS by `background-image:none` on BOTH the control
+    //     (`.mg-scale-dd`) AND the popup `#MG_ScaleDropDownMenu` + its Labels (mg.css).
+    // Fixed width (set in CSS) so the close X keeps its place in the right cluster.
     var SCALE_STEPS = [100, 125, 150, 175, 200];
-    var scaleMenuOpen = false;
+    var SCALE_DD_ID = "MG_ScaleDropDown";        // popup auto-id = SCALE_DD_ID + "DropDownMenu"
     function buildScaleControl(parent) {
-        var wrap = $.CreatePanel("Panel", parent, "MG_ScaleWrap");
-        wrap.AddClass("mg-scale");
-
-        var btn = $.CreatePanel("Button", wrap, "MG_ScaleBtn");
-        btn.AddClass("mg-scale-btn");
-        scaleLabel = $.CreatePanel("Label", btn, "");
-        scaleLabel.AddClass("mg-scale-label");
-        scaleLabel.text = uiScalePct + "%";
-        var caret = $.CreatePanel("Label", btn, "");
-        caret.AddClass("mg-scale-caret");
-        caret.text = "v";
-        btn.SetPanelEvent("onactivate", function () { toggleScaleMenu(); });
-
-        scaleMenu = $.CreatePanel("Panel", wrap, "MG_ScaleMenu");
-        scaleMenu.AddClass("mg-scale-menu");
-        scaleMenu.visible = false;
+        var dd = $.CreatePanel("DropDown", parent, SCALE_DD_ID);
+        dd.AddClass("mg-scale-dd");
+        scaleDropdown = dd;
+        var selectedId = "";
         for (var i = 0; i < SCALE_STEPS.length; i++) {
-            (function (pct) {
-                var opt = $.CreatePanel("Button", scaleMenu, "");
-                opt.AddClass("mg-scale-opt");
-                var ol = $.CreatePanel("Label", opt, ""); ol.AddClass("mg-scale-opt-label"); ol.text = pct + "%";
-                opt.SetPanelEvent("onactivate", function () { setUiScale(pct); closeScaleMenu(); });
-            })(SCALE_STEPS[i]);
+            var pct = SCALE_STEPS[i];
+            var optId = "MG_Scale_" + pct;
+            var opt = $.CreatePanel("Label", dd, optId);
+            opt.AddClass("mg-scale-opt");
+            opt.text = pct + "%";
+            dd.AddOption(opt);
+            if (pct === uiScalePct) selectedId = optId;
         }
-        scaleMenuOpen = false;
-    }
-    function toggleScaleMenu() { if (scaleMenuOpen) closeScaleMenu(); else openScaleMenu(); }
-    function openScaleMenu() {
-        if (scaleMenu && scaleMenu.IsValid && scaleMenu.IsValid()) scaleMenu.visible = true;
-        scaleMenuOpen = true;
-    }
-    function closeScaleMenu() {
-        if (scaleMenu && scaleMenu.IsValid && scaleMenu.IsValid()) scaleMenu.visible = false;
-        scaleMenuOpen = false;
+        // SetSelected wants the option-panel ID (NOT an index) — this is what puts the real
+        // "100%" in the closed control instead of the "…" placeholder.
+        try { dd.SetSelected(selectedId || ("MG_Scale_" + SCALE_STEPS[0])); } catch (e) {}
+        // The engine fires oninputsubmit when the user picks an option. Read the % from the
+        // selected option's id (the numeric suffix), apply it.
+        dd.SetPanelEvent("oninputsubmit", function () {
+            var sel = null;
+            try { sel = dd.GetSelected ? dd.GetSelected() : null; } catch (e) {}
+            if (!sel) return;
+            var pctNum = parseInt(String(sel.id || "").replace("MG_Scale_", ""), 10);
+            if (isFinite(pctNum) && pctNum > 0) setUiScale(pctNum);
+        });
     }
     function setUiScale(pct) {
         uiScalePct = pct;
-        if (scaleLabel && scaleLabel.IsValid && scaleLabel.IsValid()) scaleLabel.text = pct + "%";
         applyUiScale();
     }
-
-
-
-
 
 
     // pre-transform-scale2d scales the modal in place (around its centre) AFTER layout, so the
