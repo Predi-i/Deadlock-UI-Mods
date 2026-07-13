@@ -104,15 +104,15 @@
     height: 1px;
     vertical-align: center;
 }
-/* RIGHT CLUSTER: the scale control + close X together in one block after the spacer.
+/* RIGHT CLUSTER: the close X + scale control together in one block after the spacer.
    ⚠ FIXED width, NOT fit-children. The native `DropDown` widget reports the game's base
    `width: 352px` (citadel_base_styles.css) as its PREFERRED size during a parent's fit-children
    measurement — even though our `.mg-scale-dd` caps the RENDER at 90px via max-width. So a
    fit-children cluster measured ~392px wide, overflowed the modal's right edge, and the modal's
-   clip shaved the trailing close X down to ~1px (the maintainer's "крестик не видно, на его месте
-   дропдаун" bug, trap 11). A FIXED width = dropdown 90 + its 10px margin-right + close 30 = 130px
-   ignores the widget's bogus 352 and always seats the X on-screen. overflow:noclip so the scale
-   popup can still drop below. */
+   clip shaved the trailing control. A FIXED width = close 30 + its 10px margin-right + dropdown
+   90 = 130px ignores the widget's bogus 352. The X is FIRST in flow so the DropDown (the control
+   that over-reports) is rightmost and overflows only its own invisible slack. overflow:noclip so
+   the scale popup can still drop below. */
 .mg-header-right {
     width: 130px;
     flow-children: right;
@@ -152,12 +152,13 @@
    per the maintainer's in-game measurement (an odd box can't land perfectly on center).
    ⚠ NO `horizontal-align: right` — that made the X an align-override child pinned to the
    header's right edge and REMOVED from the flow, so the scale control (a normal flow child
-   after the spacer) flowed to the same right edge and painted OVER the X (the "dropdown sits
-   where the X should be" bug, trap 12b). The spacer already pushes both to the right, so the
-   X just flows AFTER the scale control and lands rightmost on its own. */
+   after the spacer) flowed to the same right edge and painted OVER the X (trap 12b). The X
+   is created BEFORE the dropdown (see mg_ui.js buildOverlay), so in the right-flowing cluster
+   it sits to the LEFT of the dropdown; its margin-right is the gap between them. */
 .mg-close {
     width: 30px;
     height: 30px;
+    margin-right: 10px;                  /* gap to the scale dropdown on its right */
     background-color: #161f2b;
     border: 1px solid #2a3849;
     border-radius: 2px;
@@ -987,7 +988,6 @@
 .mg-scale-dd {
     width: 90px; min-width: 90px; max-width: 90px;
     height: 30px; min-height: 30px; max-height: 30px;
-    margin-right: 10px;
     padding: 1px 8px;
     vertical-align: center;
     background-image: none;                         /* kill the paper-tile texture */

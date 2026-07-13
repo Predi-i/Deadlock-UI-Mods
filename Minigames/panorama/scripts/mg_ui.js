@@ -181,23 +181,28 @@
         var headerSpacer = $.CreatePanel("Panel", header, "");
         headerSpacer.AddClass("mg-header-spacer");
 
-        // ⚠ RIGHT CLUSTER: scale control + close X live TOGETHER in one fit-children group after
-        // the spacer — NOT as two separate trailing siblings of the header. When they were two
-        // loose siblings, Panorama's fill-parent-flow spacer mismeasured the remaining width and
-        // pushed the LAST sibling (the close X) off the modal's right edge, where it was clipped —
-        // so the scale control ended up sitting where the X should be, and the X vanished (the
-        // maintainer's recurring "нет крестика, на его месте скейл" bug across 4 attempts). One
-        // fit-children cluster is measured as a single block and always stays on-screen — exactly
-        // how the footer's status+spacer+tools row works.
+        // ⚠ RIGHT CLUSTER: close X + scale control together in one fixed-width group after the
+        // spacer — NOT as two loose trailing siblings of the header (which mismeasured the width
+        // and pushed the last sibling off the clipped modal edge). The close X is created FIRST so
+        // the native DropDown (which over-reports its width) is the rightmost, overflowing control
+        // and the X is always safely to its left — see the ordering note below.
         var headerRight = $.CreatePanel("Panel", header, "");
         headerRight.AddClass("mg-header-right");
-        // UI-scale dropdown, then the close X, inside the cluster.
-        buildScaleControl(headerRight);
+        // ⚠ ORDER MATTERS: the close X is created FIRST, the scale dropdown SECOND, so in the
+        // right-flowing cluster the dropdown ends up RIGHTMOST. The native DropDown widget reports
+        // the game's base width:352px as its PREFERRED size (citadel_base_styles.css) even though
+        // our CSS caps its RENDER at 90px; when it was the FIRST child it overflowed the cluster to
+        // the right and shoved the trailing X off the modal's clipped edge (the maintainer's
+        // recurring "нет крестика, на его месте дропдаун" bug). With the dropdown LAST, it is the
+        // one that overflows its own invisible slack (harmless, exactly as in QOLLOCK where the
+        // dropdown is always the far-right control), and the X sits safely to its LEFT on screen.
         var close = $.CreatePanel("Button", headerRight, "");
         close.AddClass("mg-close");
         var closeLbl = $.CreatePanel("Label", close, "");
         closeLbl.text = "X"; // plain ASCII: the ✕ glyph isn't in the game font
         close.SetPanelEvent("onactivate", function () { hideOverlay(); });
+        // UI-scale dropdown after the X so it's the rightmost (overflowing) control.
+        buildScaleControl(headerRight);
 
 
         modalBody = $.CreatePanel("Panel", modal, "MG_Body");
