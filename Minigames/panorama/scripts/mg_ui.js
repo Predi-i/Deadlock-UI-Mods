@@ -72,6 +72,13 @@
         catch (e) { setStatus("Couldn't open the browser."); }
     }
 
+    // Opens the community Discord invite in the external browser (same proven channel as
+    // openSupport — no fetch in Panorama).
+    function openDiscord() {
+        try { $.DispatchEvent("ExternalBrowserGoToURL", "https://discord.gg/vY9PEAWHuh"); }
+        catch (e) { setStatus("Couldn't open the browser."); }
+    }
+
     // ── escape-menu button injection ────────────────────────────────────────
     function topRoot() {
         var root = $.GetContextPanel();
@@ -123,7 +130,7 @@
         btn.AddClass("mg-escape-button");
         var lbl = $.CreatePanel("Label", btn, "");
         lbl.AddClass("menuButtonLabel");
-        lbl.text = "Minigames";
+        lbl.text = "DL Arcade";
         btn.SetPanelEvent("onactivate", function () { showOverlay(); });
         // Leave it appended (bottom of the list); CSS lifts it up and out of the way of
         // the native items — forcing it to the top made it overlap "Swap Hero".
@@ -164,7 +171,7 @@
         headerLeft.AddClass("mg-header-left");
         titleLabel = $.CreatePanel("Label", headerLeft, "");
         titleLabel.AddClass("mg-title");
-        titleLabel.text = "Minigames";
+        titleLabel.text = "DL Arcade";
         var credit = $.CreatePanel("Button", headerLeft, "");
         credit.AddClass("mg-header-credit");
         var creditLbl = $.CreatePanel("Label", credit, ""); creditLbl.text = "by Predi_i";
@@ -176,6 +183,18 @@
         sIcon.AddClass("mg-support-icon");   // background-image = icon_thumbsup.vsvg (CSS)
         var sLbl = $.CreatePanel("Label", supportBtn, ""); sLbl.AddClass("mg-support-label"); sLbl.text = "Support";
         supportBtn.SetPanelEvent("onactivate", function () { openSupport(); });
+        // Discord pill sits just right of Support — same shape, Discord blurple palette. The
+        // logo is a .vtex (raster), so it MUST be drawn by a child <Image> (setFace), NOT a
+        // Panel background-image: a raster background paints at native px until relayout (the
+        // ~300% first-frame zoom). The .vsvg thumbsup on Support is a vector and doesn't suffer
+        // it, but this logo would.
+        var discordBtn = $.CreatePanel("Button", headerLeft, "");
+        discordBtn.AddClass("mg-discord-btn");
+        var dIcon = $.CreatePanel("Panel", discordBtn, "");
+        dIcon.AddClass("mg-discord-icon");
+        setFace(dIcon, "s2r://panorama/images/discord_logo.vtex");
+        var dLbl = $.CreatePanel("Label", discordBtn, ""); dLbl.AddClass("mg-discord-label"); dLbl.text = "Discord";
+        discordBtn.SetPanelEvent("onactivate", function () { openDiscord(); });
         // Flexible slack: the left cluster hugs its content, this spacer eats the rest of the
         // row, so the RIGHT CLUSTER (scale + close) sits at the far right.
         var headerSpacer = $.CreatePanel("Panel", header, "");
@@ -344,7 +363,7 @@
     function renderMenu() {
         cleanupCurrentView(true);
         view = "menu";
-        setTitle("Minigames");
+        setTitle("DL Arcade");
         clearBody();
 
         var cols = $.CreatePanel("Panel", modalBody, "");

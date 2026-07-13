@@ -604,6 +604,44 @@
     vertical-align: center;
 }
 
+/* Discord pill — right of Support, same shape, Discord blurple palette (primary #5865F2,
+   secondary #2C3462). The logo is a .vtex raster drawn by a child <Image> (.mg-face-img via
+   setFace), so .mg-discord-icon is JUST a sized box — NO background-image / wash-color (the
+   logo keeps its own colours; a raster background would 300%-zoom on frame 1, trap 14). */
+.mg-discord-btn {
+    height: 32px;
+    width: fit-children;
+    margin-left: 10px;
+    margin-top: 1px;
+    padding-left: 11px;
+    padding-right: 12px;
+    background-color: #2c3462;
+    border: 1px solid #5865f2;
+    border-radius: 2px;
+    flow-children: right;
+    vertical-align: center;
+    transition-property: background-color, border-color, brightness;
+    transition-duration: 0.1s;
+    transition-timing-function: ease-out;
+}
+.mg-discord-btn:hover { background-color: #3a4488; border-color: #7983f5; brightness: 1.08; }
+.mg-discord-btn:active { brightness: 0.97; }
+.mg-discord-icon {
+    width: 19px;
+    height: 19px;
+    margin-right: 7px;
+    vertical-align: center;
+}
+.mg-discord-label {
+    font-family: radiance !important;
+    font-weight: semi-bold;
+    color: #c7ccff !important;
+    font-size: 17px !important;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    vertical-align: center;
+}
+
 /* discreet dev tools, pushed to the right of the footer */
 .mg-tools {
     width: fit-children;
