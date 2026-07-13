@@ -21,9 +21,9 @@ match. Shipping games (all online + vs bot): **Checkers** (Russian draughts),
 and **online for 2 players** (worker-as-dealer, §8.6); 3–4-seat online is deferred.
 
 
-Picker cards show a custom **`.vtex` image** (drawn by the maintainer, compiled from PNG)
-as the card background — `s2r://panorama/images/cards/<key>.vtex`, set inline in
-`renderMenu`. Missing art falls back to a plain dark card.
+Picker cards show a custom **`.vtex` image** (drawn by the maintainer, compiled from PNG),
+drawn by a child `<Image>` via `setFace()` in `renderMenu` (trap 14) — `s2r://panorama/
+images/cards/<key>.vtex`. Missing art falls back to a plain dark card.
 
 Three ways to play (see `mg_ui.js`):
 - **Quick Match** — public matchmaking; server pairs you with anyone else who pressed it.
@@ -316,24 +316,58 @@ These are the mistakes to NOT repeat. Every one was confirmed against the game's
    until it's meant to show; and prefer skinning the parent (`.mg-ticked` accent) over adding a
    separate badge the maintainer didn't ask for.
 
-14. **`background-size: cover` / `contain` gives a ~300% zoom on the FIRST frame.** Both need the
-   texture's INTRINSIC pixel size to compute the fit. A `.vtex` isn't decoded on the first layout
-   pass, so Panorama paints it at NATIVE px 1:1 inside the (small) panel — a card face PNG 367×512
-   in a 100×140 box reads as ~3.6× ("300% scale"), and it only "snaps right" on hover (a restyle
-   that runs after the texture is known). This was the maintainer's trump-card and picker-card and
-   "scattered opponent backs" zoom, all at once. **Fix: `background-size: 100% 100%`** — it sizes to
-   the panel and never reads the intrinsic, so it's correct on frame 1. The game uses `100% 100%` in
-   hundreds of places (`element_gun.css`) for exactly this reason. Only safe when the art's aspect
-   matches the panel (ours are square or ~portrait-matched, so no visible stretch). NOT a rotation
-   bug — an old comment blamed `rotateZ`; the rotated trump is correct.
+14. **A fixed-size texture must be drawn by an `<Image>` panel, NOT `Panel` + `background-image`.**
+   A `<Panel>` with `style.backgroundImage` paints the `.vtex` at its NATIVE pixel size until the
+   panel is next re-laid-out. A `.vtex` isn't decoded on the first layout pass, so a card face PNG
+   367×512 in a 100×140 box, or a 250² chess sprite in a 56px box, reads as a ~300% zoom that only
+   "snaps right" on hover (hover = restyle = relayout). This hit the trump card, picker cards,
+   "scattered opponent backs" and chess pieces at once. **`background-size` does NOT fix it** — any
+   value (`100% 100%`, `cover`, `contain`) is still a Panel background and still blows up on frame 1;
+   an earlier revision of this trap claimed `100% 100%` worked, and it did not. **Fix: a child
+   `<Image>` panel** created with `{ scaling: "stretch-to-fit-preserve-aspect" }`, sized to its CSS
+   box (`.mg-face-img { width:100%; height:100% }`), image set via `img.SetImage("s2r://…")` (the
+   BARE url, never a `url('…')` wrapper). An `<Image>` sizes to its box from frame 1 — the game's own
+   idiom (`hud_ability_icon.xml`, QOLLOCK `ArcadeFlappyBird`, `ModIconImage`). The container keeps all
+   its state (transform slide, `.mg-dk-anim`, `.mg-dk-trump` rotateZ, drag-source dim, playable
+   frame); the `<Image>` is `hittest:false` so drag hit-testing still lands on the card/piece panel.
+   Helper `setFace(container, url)` lives (copied, not shared) in `mg_ui.js`, `mg_durak.js`,
+   `mg_games.js`. NOT a rotation bug — an old comment blamed `rotateZ`; the rotated trump is correct.
+   (This also retired the `_dkFace` crutch in `mg_durak.js`, which existed only to re-feed
+   `background-image`.)
 
 15. **The UI-scale header control is a NATIVE `DropDown` and it WORKS — do not revert it.** After
    several failed custom button+popup attempts (trap 11/12), the native `DropDown` (`buildScaleControl`
    in `mg_ui.js`, skinned via `.mg-scale-dd` + `#MG_ScaleDropDownMenu` in `mg.css`) finally opens
-   reliably AND keeps the close X on-screen (the fixed-width `.mg-header-right` cluster, trap 12b).
-   Confirmed in-game by the maintainer. Do NOT swap it back to a custom popup to "fix the X" — that
-   trade reintroduces the popup-won't-open bug. If the X ever regresses, adjust the right-cluster
-   width, not the widget.
+   reliably. Do NOT swap it back to a custom popup to "fix the X" — that trade reintroduces the
+   popup-won't-open bug.
+
+15b. **The close X must be created BEFORE the scale `DropDown`, so the DropDown is rightmost.**
+   The native `DropDown` reports the game's base `width: 352px` (`citadel_base_styles.css`) as its
+   PREFERRED size during layout, even though `.mg-scale-dd` caps its RENDER at 90px via `max-width`.
+   In the right-flowing `.mg-header-right` cluster, whichever control is LAST in flow inherits the
+   overflow; when the DropDown was first, its 352px layout width shoved the trailing close X past the
+   modal's right edge, where the modal's default clip erased it (the maintainer's recurring "нет
+   крестика, на его месте дропдаун" bug — survived a fixed-width cluster because the 352 is a
+   per-child measurement, not the parent's). **Fix: create the close X first and the DropDown second
+   in `buildOverlay`.** Then the DropDown is the rightmost control (as in QOLLOCK, where the dropdown
+   is always the far-right widget) and overflows only its own invisible slack; the X sits safely to
+   its left, ~100px inside the modal edge. The 10px gap lives on `.mg-close`'s `margin-right`. If the
+   X ever still clips, the documented fallback is `.mg-modal { overflow: noclip }` — NOT applied by
+   default, because global noclip would let board/ghost overlays paint outside the modal.
+
+16. **Drag cleanup must not live only in the piece's `DragEnd` handler.** `DragEnd` is bound to the
+   PIECE panel (checkers `setupPieceInput`, chess likewise). If the opponent captures the piece you
+   are mid-drag on — a polled hop → `animateHop` (checkers) / `applyChessMove` (chess) deletes that
+   panel ~220ms later — the panel and its `DragEnd` handler are gone. The engine does NOT synthesise
+   `DragEnd` on a deleted panel, so releasing the mouse fires nothing, and the ghost + `dragActive`
+   (a sibling of the piece in `piecesLayer`, so the capture doesn't cascade to it) leak forever.
+   **Fix: a `clearDrag()` in each controller** (own closure — the drag state is per-controller, not
+   shared) called from `DragEnd`, the START of `animateHop`/`applyChessMove` (covers any capture or
+   polled move while a piece is held — the key path), `layoutPieces` (full rebuild), and `destroy`.
+   It deletes the ghost, resets `dragActive`/`dragOverSq`, and un-dims the source via a tracked
+   `dragSourcePiece` ref (the original panel may already be deleted). Idempotent, so own/click moves
+   make it a no-op. TTT has no drag; durak drags only your own hand cards (the opponent can't capture
+   from your hand mid-drag), so neither needs it.
 
 ---
 
@@ -456,11 +490,11 @@ input recipe, and the move/poll transport.
   reaching the last rank ⇒ **auto-queen** (MVP: no under-promotion). Same "derive, don't
   transmit" idiom as checkers `applyHop` — so **from/to alone travels the wire**. Promotion,
   castling and en passant need NO protocol change.
-- **Pieces are `.vtex` sprites**, not drawn shapes: a `.mg-chess-piece` panel with
-  `background-image: url("s2r://panorama/images/<Colour><Piece>.vtex")` set in `makePiece`
-  (e.g. `WhiteKnight.vtex`). It reuses `.mg-piece` for the slide transition + drag classes,
-  overriding only the disc look. The 12 source PNGs live in `panorama/images/`; the
-  maintainer compiles them to `.vtex`.
+- **Pieces are `.vtex` sprites**, not drawn shapes: a `.mg-chess-piece` container whose sprite
+  (`<Colour><Piece>.vtex`, e.g. `WhiteKnight.vtex`) is drawn by a child `<Image>` via
+  `setFace()` in `makePiece` (trap 14 — NOT `background-image`, which zooms on frame 1). It
+  reuses `.mg-piece` for the slide transition + drag classes, overriding only the disc look.
+  The 12 source PNGs live in `panorama/images/`; the maintainer compiles them to `.vtex`.
 - **A turn is ONE move** (no multi-jump chains), so every move is `end = 1`; after applying
   a polled move the turn always hands straight back. Poll `validate` = `0..63, from != to`.
 - **Check** highlights the king's square (`.mg-cell.mg-check`); `chessResult` ends the game
@@ -493,7 +527,8 @@ written once and reused by both.
 - **Card model.** id `0..35` = `suit*9 + rank`. suit `0..3` = S,H,D,C; rank `0..8` =
   6,7,8,9,T,J,Q,K,A (**higher rank index = stronger**). Trump = suit of the deck's bottom
   card. Art is a compiled `.vtex` per card, `deck/<S><R>.vtex` (e.g. `SA.vtex`), backs via
-  `.mg-card-back` → `deck/BACK.vtex`. Faces set inline in JS, same idiom as chess sprites.
+  `deck/BACK.vtex`. Faces/backs are drawn by a child `<Image>` (`setFace`/`setBack`, trap 14),
+  same idiom as chess sprites — the container keeps its slide/rotate/playable state.
 - **Deterministic deal.** `makeRng(seed)` (mulberry32) → `freshDeck` → `deal`. A seed fully
   determines the game (the test relies on it; online the **server** will own the seed). Deck
   is drawn from the FRONT; the bottom card (trump) is drawn last. Lowest-trump holder opens.
