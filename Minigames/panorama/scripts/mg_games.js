@@ -341,23 +341,42 @@
             return { x: x, y: y };
         }
 
-        // Map the ghost's window position to a board square. Everything is in window pixels,
-        // so the UI scale cancels: cell size in window px = pieces-layer rendered width / 8.
-        // Ghost centre (top-left + half its RENDERED width) relative to the layer origin,
-        // divided by the window cell size, gives the display col/row → real square.
+        // Render scale = WINDOW px per LAYOUT px. Panorama scales the whole UI by one uniform
+        // factor, but a panel's actuallayoutwidth stays in LAYOUT px while GetPositionWithinWindow
+        // returns WINDOW px. The old squareFromWindow divided a window-px delta by a layout-px cell
+        // size (=60) — they only agree at 100% UI scale; at 125% the drop landed a square or two off
+        // (the maintainer's "DROP MISS win=30 … targets=[21]" trace: 1.25× off). We DERIVE the scale
+        // from two board cells a known layout distance apart, using ONLY GetPositionWithinWindow
+        // (proven in-game 2026-07-07). actualuiscale_x IS in the engine property table but neither
+        // the game nor QOLLOCK reads it from JS, so we measure instead of trusting it (property
+        // fallback only if the cell measurement fails).
+        function uiScale() {
+            var a = cells[fromDisplay(0)];   // display (row 0, col 0)
+            var b = cells[fromDisplay(7)];   // display (row 0, col 7) — 7 cells to the right
+            var pa = winPos(a), pb = winPos(b);
+            if (pa && pb) {
+                var dx = Math.abs(pb.x - pa.x);       // = 7 * SQ * scale in window px
+                if (dx > 1) return dx / (7 * SQ);
+            }
+            var s = piecesLayer ? Number(piecesLayer.actualuiscale_x) : NaN;
+            if (isFinite(s) && s > 0.1 && s < 10) return s;
+            return 1;
+        }
+
+        // Map the ghost's window position to a board square. Convert the window-space ghost→layer
+        // delta into LAYOUT-space cells via uiScale(): cell size in window px = SQ * scale, the
+        // ghost's half-width in window px = PIECE_SZ * scale (its layout size scaled up). Ghost
+        // centre relative to the layer origin ÷ the window cell size → display col/row → real square.
         function squareFromWindow() {
             var lp = winPos(piecesLayer);
             var gp = winPos(dragGhost);
             if (!lp || !gp) return -1;
-            var layerW = (piecesLayer && isFinite(piecesLayer.actuallayoutwidth) && piecesLayer.actuallayoutwidth > 0)
-                ? piecesLayer.actuallayoutwidth : 480;
-            var cellPx = layerW / 8;
-            var pieceW = (dragGhost && isFinite(dragGhost.actuallayoutwidth) && dragGhost.actuallayoutwidth > 0
-                          && dragGhost.actuallayoutwidth < 100000)
-                ? dragGhost.actuallayoutwidth : (PIECE_SZ * cellPx / SQ);
-            var cx = (gp.x - lp.x) + pieceW / 2;
-            var cy = (gp.y - lp.y) + pieceW / 2;
-            var dcol = Math.floor(cx / cellPx), drow = Math.floor(cy / cellPx);
+            var scale = uiScale();
+            var cellW = SQ * scale;                 // one cell, in window px
+            var half = (PIECE_SZ * scale) / 2;      // ghost half-width, in window px
+            var cx = (gp.x - lp.x) + half;
+            var cy = (gp.y - lp.y) + half;
+            var dcol = Math.floor(cx / cellW), drow = Math.floor(cy / cellW);
             if (dcol < 0 || dcol > 7 || drow < 0 || drow > 7) return -1;
             return fromDisplay(drow * 8 + dcol);
         }
@@ -1193,19 +1212,32 @@
             if (Math.abs(x) > 100000 || Math.abs(y) > 100000) return null;
             return { x: x, y: y };
         }
+        // Render scale = WINDOW px per LAYOUT px — see the checkers copy for the full rationale.
+        // GetPositionWithinWindow is window px; actuallayoutwidth is layout px; dividing one by the
+        // other only agreed at 100% UI scale, so drops landed off at 125%. Derive scale from two
+        // board cells a known layout distance apart, via the proven GetPositionWithinWindow only.
+        function uiScale() {
+            var a = cells[fromDisplay(0)];
+            var b = cells[fromDisplay(7)];
+            var pa = winPos(a), pb = winPos(b);
+            if (pa && pb) {
+                var dx = Math.abs(pb.x - pa.x);
+                if (dx > 1) return dx / (7 * SQ);
+            }
+            var s = piecesLayer ? Number(piecesLayer.actualuiscale_x) : NaN;
+            if (isFinite(s) && s > 0.1 && s < 10) return s;
+            return 1;
+        }
         function squareFromWindow() {
             var lp = winPos(piecesLayer);
             var gp = winPos(dragGhost);
             if (!lp || !gp) return -1;
-            var layerW = (piecesLayer && isFinite(piecesLayer.actuallayoutwidth) && piecesLayer.actuallayoutwidth > 0)
-                ? piecesLayer.actuallayoutwidth : 480;
-            var cellPx = layerW / 8;
-            var pieceW = (dragGhost && isFinite(dragGhost.actuallayoutwidth) && dragGhost.actuallayoutwidth > 0
-                          && dragGhost.actuallayoutwidth < 100000)
-                ? dragGhost.actuallayoutwidth : (PIECE_SZ * cellPx / SQ);
-            var cx = (gp.x - lp.x) + pieceW / 2;
-            var cy = (gp.y - lp.y) + pieceW / 2;
-            var dcol = Math.floor(cx / cellPx), drow = Math.floor(cy / cellPx);
+            var scale = uiScale();
+            var cellW = SQ * scale;
+            var half = (PIECE_SZ * scale) / 2;
+            var cx = (gp.x - lp.x) + half;
+            var cy = (gp.y - lp.y) + half;
+            var dcol = Math.floor(cx / cellW), drow = Math.floor(cy / cellW);
             if (dcol < 0 || dcol > 7 || drow < 0 || drow > 7) return -1;
             return fromDisplay(drow * 8 + dcol);
         }
