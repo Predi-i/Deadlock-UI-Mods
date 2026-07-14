@@ -420,6 +420,70 @@ async function main() {
         ok(r3.w === 2 && r3.h === 3, "rematch: second rematch at live gen → (2, gen2+1)");
     })();
 
+    // ── authoritative clocks (time controls + flag-fall) ───────────────────────
+    await (async function () {
+        // create with tc=60 → the host lobby carries a 60s bank per seat.
+        var hub = new Hub({ storage: new FakeStorage() });
+        var c = await req(hub, "/api/create.png?game=4&tok=CLKHOST01&tc=60");
+        var code = c.w * 100 + (c.h - 1);
+        // join learns the time control from the height (tc seconds + 1).
+        var j = await req(hub, "/api/join.png?code=" + code + "&tok=CLKJOIN01");
+        ok(j.w === 4 && j.h === 61, "join reports the host's time control (tc=60 → h=61)");
+        // clocks route returns both banks; freshly-armed so both ~60s (601 raw = 600 cap? no: 60+1).
+        var ck = await req(hub, "/api/clocks.png?code=" + code);
+        ok(ck.w === 61 && ck.h === 61, "clocks: both seats start at the full 60s bank (61,61)");
+
+        // an UNTIMED lobby (no tc) reports the untimed sentinel, never a bogus clock.
+        var u = await seatedLobby(4, "UNTMHOST1", "UNTMJOIN1");
+        var uc = await req(u.hub, "/api/clocks.png?code=" + u.code);
+        ok(uc.w === 9 && uc.h === 998, "clocks: untimed lobby → (9,998) sentinel");
+
+        // a missing lobby reports the gone sentinel.
+        var gc = await req(hub, "/api/clocks.png?code=1");
+        ok(gc.w === 9 && gc.h === 999, "clocks: missing lobby → (9,999) sentinel");
+
+        // tc off the menu (e.g. 42s) is rejected → untimed lobby.
+        var hub2 = new Hub({ storage: new FakeStorage() });
+        var c2 = await req(hub2, "/api/create.png?game=4&tok=BADTCHOST&tc=42");
+        var code2 = c2.w * 100 + (c2.h - 1);
+        var j2 = await req(hub2, "/api/join.png?code=" + code2 + "&tok=BADTCJOIN");
+        ok(j2.h === 1, "create: off-menu tc (42s) is rejected → untimed (join h=1)");
+
+        // tc is ignored for a non-clock game (TTT) → untimed.
+        var hub3 = new Hub({ storage: new FakeStorage() });
+        var c3 = await req(hub3, "/api/create.png?game=2&tok=TTTTCHOST&tc=300");
+        var code3 = c3.w * 100 + (c3.h - 1);
+        var j3 = await req(hub3, "/api/join.png?code=" + code3 + "&tok=TTTTCJOIN");
+        ok(j3.h === 1, "create: tc ignored for a non-clock game (TTT) → untimed");
+
+        // ── time charging + flag-fall (deterministic: rewind clkStart in storage) ──
+        // A clock only advances by wall time. To test without sleeping, we reach into the
+        // fake storage and move the running seat's clkStart back by N ms, then read /clocks.
+        var fhub = new Hub({ storage: new FakeStorage() });
+        var fc = await req(fhub, "/api/create.png?game=4&tok=FLAGHOST1&tc=60");
+        var fcode = fc.w * 100 + (fc.h - 1);
+        await req(fhub, "/api/join.png?code=" + fcode + "&tok=FLAGJOIN1");
+        var L = await fhub.storage.get("l:" + fcode);
+        // Seat 0 (host) is on the move. Pretend 25s elapsed since its turn began.
+        L.clkStart = L.clkStart - 25000;
+        await fhub.storage.put("l:" + fcode, L);
+        var ck2 = await req(fhub, "/api/clocks.png?code=" + fcode);
+        ok(ck2.w === 36 && ck2.h === 61, "clocks: 25s charged to the running seat only (36,61)");
+
+        // Now blow past the bank: rewind 70s > 60s → running seat flags and loses.
+        L = await fhub.storage.get("l:" + fcode);
+        L.clkStart = L.clkStart - 70000;
+        await fhub.storage.put("l:" + fcode, L);
+        var ck3 = await req(fhub, "/api/clocks.png?code=" + fcode);
+        ok(ck3.w === 1 && ck3.h === 61, "clocks: running seat's bank hits 0 → (1,61) flag-fall");
+        // The flag is now persisted: a move by EITHER seat is refused (game over on time).
+        var mv = await req(fhub, "/api/move.png?code=" + fcode + "&from=" + sq(6, 4) + "&to=" + sq(4, 4) + "&end=1&tok=FLAGHOST1");
+        ok(mv.w === 9 && mv.h === 2, "move after flag-fall is refused → (9,2)");
+        // A later /clocks re-read still shows the flagged seat at 0 (sticks, doesn't tick back up).
+        var ck4 = await req(fhub, "/api/clocks.png?code=" + fcode);
+        ok(ck4.w === 1 && ck4.h === 61, "clocks: flag sticks on later reads (1,61)");
+    })();
+
     console.log("\nALL SERVER TESTS PASSED (" + passed + " checks)");
 }
 

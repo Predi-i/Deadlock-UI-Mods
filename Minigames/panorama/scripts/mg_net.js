@@ -449,7 +449,10 @@
         join: function (code, tok, cb, err) {
             request("/api/join", { code: code, tok: tok }, function (w, h) {
                 log("join decoded w=" + w + " h=" + h);
-                if (w >= 1 && w <= 9) cb({ ok: true, game: w });
+                // h carries the host's time control (seconds+1): the joiner learns the bank
+                // without picking it (0 = untimed). Squares/games can't collide — join's width
+                // is the game id (1..9) here, tc rides the height.
+                if (w >= 1 && w <= 9) cb({ ok: true, game: w, tc: Math.max(0, (h | 0) - 1) });
                 else if (w === 20) cb({ ok: false, reason: "missing" });
                 else if (w === 21) cb({ ok: false, reason: "full" });
                 else {
@@ -530,6 +533,28 @@
         reset: function (code, game, tok, cb, err) {
             request("/api/reset", { code: code, game: game, tok: tok },
                 function (w, h) { if (cb) cb(w < 9); }, err);
+        },
+
+        // Authoritative clocks. The server holds each seat's time bank and decides flag-fall,
+        // so both players read the SAME remaining seconds and can never drift apart. Response:
+        //   (seat0_sec+1, seat1_sec+1)   remaining whole seconds per seat (0 = flagged)
+        //   (9,9) lobby gone · (9,1) this lobby is untimed (no clock configured)
+        // `run` (which seat is ticking) and `flag` (who ran out, -1 = nobody) ride in the
+        // hundreds digit of each int server-side; here we just surface the seconds + flag.
+        // cb({ sec:[s0,s1], flag }) — flag is the seat that ran out of time, or -1.
+        clocks: function (code, cb, err) {
+            request("/api/clocks", { code: code }, function (w, h) {
+                // Sentinels live at height >= 900 (gone=999, untimed=998), which a real reading
+                // (height <= 601) can never reach — so unlike a bare (9,x) they don't collide with
+                // a legitimate "9 seconds left" clock value. Anything else is two live banks.
+                if (h >= 900) { if (cb) cb(null); return; }
+                var s0 = w - 1, s1 = h - 1;                  // seconds = int - 1 (0 = flagged)
+                if (s0 < 0 || s1 < 0) { if (cb) cb(null); return; }
+                // The running seat that hits 0 is the flag-fall loser; the server floors it at 0
+                // and never lets the other side tick past it, so at most one seat reads 0.
+                var flag = s0 === 0 ? 0 : (s1 === 0 ? 1 : -1);
+                if (cb) cb({ sec: [s0, s1], flag: flag });
+            }, err);
         },
 
         // Rematch handshake. Poll this from the game-over screen with your CURRENT gen

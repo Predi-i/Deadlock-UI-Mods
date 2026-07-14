@@ -30,6 +30,18 @@
  *   /api/move?code=C&from=F&to=T&end=E&tok=T       -> (1,1) ok · (9,1) not-your-turn · (9,2) illegal · (9,3) bad-token · (9,9) gone
  *   /api/poll?code=C&since=S                       -> (from+1[+100 if end], to+1) · (1,1) nothing new
  *   /api/reset?code=C&game=G&tok=T                 -> (1,1)
+ *   /api/clocks?code=C                             -> (sec0+1, sec1+1)  · (9,9) no lobby / no clock
+ *
+ * CLOCKS (server-authoritative chess-clock banks, chess/checkers only). The lobby holds a
+ * per-seat remaining bank (ms) and the wall-clock timestamp at which the RUNNING seat's bank
+ * last started draining; the running seat is always the one to move. Both clients poll
+ * /api/clocks and read the SAME two numbers, so there is no drift to reconcile and flag-fall
+ * is decided by the server: when a seat's remaining reaches 0 the route reports 0 for it and
+ * BOTH clients agree that seat lost on time — no separate timeout route is needed. The bank
+ * (60/180/300/600 s) fits one dimension (max 601 ≤ downlink cap). tc is chosen at create time
+ * (create?tc=SEC), forced to 300 for a chess/checkers quick match, and carried to the joiner
+ * in the /api/join height (game, tc+1). Games without a bank (tc=0, incl. TTT/Durak which use
+ * a purely client-side 20 s per-move timer) get (9,9) from /api/clocks and never poll it.
  *
  * CODE = CODE_HI*100 + CODE_LO (4-digit). Squares are 0..63; from != to always, so a
  * real poll move can never decode to (1,1) — that's why (1,1) is a safe "nothing" marker.
@@ -78,12 +90,15 @@ export class Hub {
         if (!validTok(q.get("tok"))) return png(9, 3);     // reject empty/garbage seat token
         const newCode = await this.freshCode();
 
+        const tc = clockSecFor(game, q.get("tc"));         // 0 unless chess/checkers with a bank
         const lobby = {
           game, players: 1, moves: [], pub: 0, t: nowSeq(),
           seats: [{ tok: q.get("tok") || "" }, null], // seat 0 = host = white/X/+1, moves first
           turn: 0,                                     // seat index whose turn it is
+          tc: tc,                                      // per-seat bank in SECONDS (0 = no clock)
           state: initState(game)                       // authoritative board/state
         };
+        initClock(lobby);
         await this.storage.put("l:" + newCode, lobby);
         // Split the 4-digit code across both dimensions to keep them small.
         return png(Math.floor(newCode / 100), (newCode % 100) + 1);
@@ -114,8 +129,10 @@ export class Hub {
           game, players: 1, moves: [], pub: 1, t: nowSeq(),
           seats: [{ tok: q.get("tok") || "" }, null], // host takes seat 0 (white/X/+1)
           turn: 0,
+          tc: QUICK_CLOCK_SEC[game] || 0,              // chess/checkers quick = fixed 5 min (both sides know)
           state: initState(game)
         };
+        initClock(lobby);
         await this.storage.put("l:" + newCode, lobby);
         await this.storage.put("pubq:" + game, newCode);
         // HOST (white): +100 on the width flags the role without a fragile extra value.
@@ -179,8 +196,11 @@ export class Hub {
         lobby.players = 2;
         lobby.seats = lobby.seats || [null, null];
         lobby.seats[1] = { tok: q.get("tok") || "" }; // joiner takes seat 1
+        initClock(lobby);                          // arm the bank now that both seats are present
         await this.storage.put("l:" + code, lobby);
-        return png(lobby.game, 1);                 // ok: which game the host picked (1..9)
+        // height carries the time control (seconds+1) so the joiner learns the host's chosen
+        // bank without picking it. tc=0 → height 1 (no clock), a plain "which game" reply.
+        return png(lobby.game, (lobby.tc || 0) + 1); // w: game (1..9) · h: tc seconds + 1
       }
 
       if (p === "/api/status") {
@@ -204,10 +224,18 @@ export class Hub {
         // Authoritative validation: the server owns the board, enforces whose turn it is,
         // and rejects any illegal move with a (9,x) code. The stored `end` is the one the
         // SERVER computes (never the client's), so a cheat can't forge the turn hand-off.
+        // A seat that has already flagged (bank ran out) is out of moves — the game is over on
+        // time and the server refuses further play from either side.
+        if (clockCheckFlag(lobby) >= 0) { await this.storage.put("l:" + code, lobby); return png(9, 2); }
         const v = validateMove(lobby, seat, from, to, end);
         if (!v.ok) return png(9, v.code);          // (9,1) not your turn · (9,2) illegal
         lobby.moves.push(v.move);
         lobby.t = nowSeq();                        // keep-alive: TTL is measured from last activity
+        // Clock accounting: bill the elapsed time to the seat that just moved, and (only when
+        // the move ENDS the turn) start the opponent's clock. Mid-chain hops (checkers multi-
+        // jump, v.move.e === 0) keep the SAME clock running — the turn hasn't handed off yet.
+        // validateMove already advanced lobby.turn on a hand-off, so it names the next seat.
+        clockCharge(lobby, v.move.e === 1, lobby.turn);
         await this.storage.put("l:" + code, lobby);
         return png(1, 1);                          // accepted
       }
@@ -225,6 +253,26 @@ export class Hub {
         return png(mv.f + 1 + (mv.e ? 100 : 0), mv.t + 1);
       }
 
+      // Authoritative clocks. Returns each seat's remaining SECONDS right now:
+      //   -> (sec0 + 1, sec1 + 1)     both banks; sec in [0,600] so each int is in [1,601]
+      //   -> (9, 999)                 lobby gone
+      //   -> (9, 998)                 lobby is UNTIMED (no bank configured)
+      // The sentinels live at height >= 900, which a real reading can never reach (max height
+      // 601), so they never collide with a genuine clock value the way a bare (9,x) would (9 s
+      // left is a perfectly normal reading). Both clients poll this ~1/s and render it verbatim,
+      // so they can't disagree on the time or on who flagged: the running seat reaching 0 IS the
+      // flag-fall signal (that seat loses), decided by the server clock alone — no /api/timeout.
+      if (p === "/api/clocks") {
+        const lobby = code ? await this.storage.get("l:" + code) : null;
+        if (!lobby) return png(9, 999);            // gone
+        if (!lobby.clkMs) return png(9, 998);      // untimed game → no clocks
+        // Persist a freshly-detected flag so the outcome sticks for later polls / moves.
+        if (clockCheckFlag(lobby) >= 0) await this.storage.put("l:" + code, lobby);
+        const s0 = Math.min(600, Math.max(0, clockSec(lobby, 0)));
+        const s1 = Math.min(600, Math.max(0, clockSec(lobby, 1)));
+        return png(s0 + 1, s1 + 1);
+      }
+
       if (p === "/api/reset") {
         const lobby = code ? await this.storage.get("l:" + code) : null;
         if (!lobby) return png(9, 9);
@@ -234,6 +282,7 @@ export class Hub {
         lobby.moves = [];
         lobby.turn = 0;
         lobby.state = initState(lobby.game);
+        initClock(lobby);                          // fresh banks for the rematch
         lobby.t = nowSeq();
         await this.storage.put("l:" + code, lobby);
         return png(1, 1);
@@ -264,6 +313,7 @@ export class Hub {
           lobby.moves = [];
           lobby.turn = 0;
           lobby.state = initState(lobby.game);
+          initClock(lobby);                        // fresh banks for the rematch
           lobby.gen++;
           lobby.rm = [false, false];
           await this.storage.put("l:" + code, lobby);
@@ -362,6 +412,8 @@ export class Hub {
     w.players = 2;
     w.seats = w.seats || [null, null];
     w.seats[1] = { tok: tok || "" };           // joiner takes seat 1
+    initClock(w);                              // (re)anchor the bank to the JOIN moment, so a host that
+                                               // waited in the public queue isn't billed for idle matchmaking
     await this.storage.put("l:" + waitCode, w);
     await this.clearQueuesFor(w, waitCode);
   }
@@ -432,6 +484,58 @@ function parseGameSet(raw) {
   return out;
 }
 
+
+// ── authoritative game clocks ────────────────────────────────────────────────
+// Only chess (4) and checkers (1) run a time bank; the picker offers 1/3/5/10 min. tc is
+// stored in SECONDS (fits one downlink int: 600 < ~1000). Any other value / game → 0 = no
+// clock (TTT/Durak/C4 use their own per-move rule client-side). QUICK forces a fixed 5 min.
+const CLOCK_GAMES = { 1: 1, 4: 1 };
+const CLOCK_CHOICES = { 60: 1, 180: 1, 300: 1, 600: 1 };
+const QUICK_CLOCK_SEC = { 1: 300, 4: 300 };
+function clockSecFor(game, raw) {
+  if (!CLOCK_GAMES[game]) return 0;
+  const n = parseInt(raw, 10);
+  return CLOCK_CHOICES[n] ? n : 0;   // reject anything not on the menu (0 = play untimed)
+}
+
+// The bank is stored as remaining MILLISECONDS per seat plus, while a side is on the move,
+// the wall-clock ms at which its turn began (runStart). remaining(seat) = stored ms minus
+// the elapsed run of the active seat, floored at 0. Because both clients read the SAME
+// server time via /api/clocks, neither can drift out of agreement and the server alone
+// decides flag-fall (remaining hits 0). No clock → clkMs stays null and everything is a no-op.
+function initClock(lobby) {
+  if (!lobby.tc) { lobby.clkMs = null; return; }
+  lobby.clkMs = [lobby.tc * 1000, lobby.tc * 1000];
+  lobby.clkRun = 0;                 // seat currently ticking (seat 0 = host moves first)
+  lobby.clkStart = Date.now();      // wall-clock ms when the running seat's turn began
+  lobby.clkFlag = -1;               // seat that flagged (-1 = nobody yet)
+}
+// Charge the running seat for the time elapsed since its turn began, and (if `handoff`)
+// start the other seat's turn. Call on every accepted move BEFORE reading/persisting.
+function clockCharge(lobby, handoff, nextSeat) {
+  if (!lobby.clkMs) return;
+  const now = Date.now();
+  const run = lobby.clkRun;
+  lobby.clkMs[run] = Math.max(0, lobby.clkMs[run] - (now - lobby.clkStart));
+  if (lobby.clkMs[run] === 0 && lobby.clkFlag < 0) lobby.clkFlag = run;
+  if (handoff) { lobby.clkRun = nextSeat; lobby.clkStart = now; }
+  else lobby.clkStart = now;        // mid-chain: same seat keeps running, reset the anchor
+}
+// Remaining SECONDS for a seat right now (rounded up so a live "0:01" isn't shown as flagged
+// until it truly hits 0). Reflects the running seat's elapsed time without mutating storage.
+function clockSec(lobby, seat) {
+  if (!lobby.clkMs) return -1;      // -1 = untimed (client shows no clock)
+  let ms = lobby.clkMs[seat];
+  if (seat === lobby.clkRun && lobby.clkFlag < 0) ms = Math.max(0, ms - (Date.now() - lobby.clkStart));
+  return Math.ceil(ms / 1000);
+}
+// Has the running seat's bank expired as of now? Persist the flag so the result sticks.
+function clockCheckFlag(lobby) {
+  if (!lobby.clkMs || lobby.clkFlag >= 0) return lobby.clkFlag;
+  const run = lobby.clkRun;
+  if (lobby.clkMs[run] - (Date.now() - lobby.clkStart) <= 0) { lobby.clkMs[run] = 0; lobby.clkFlag = run; }
+  return lobby.clkFlag;
+}
 
 function nowSeq() {
   // Monotonic-ish tag for debugging; not used for logic.
