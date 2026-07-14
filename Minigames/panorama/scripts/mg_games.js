@@ -101,13 +101,33 @@
 
         var root = $.CreatePanel("Panel", container, "MG_CheckersRoot");
         root.AddClass("mg-checkers");
+        // Two-column game screen: the board on the left, a move-list panel on the right (the
+        // modal is 900px, the board only 486px, so ~360px sit unused to its right). The columns
+        // flow right; the board keeps its own centred/flow:none internals unchanged.
+        var twoCol = $.CreatePanel("Panel", root, "MG_CheckersCols");
+        twoCol.AddClass("mg-game-2col");
         // The board grid and the pieces overlay must OCCUPY THE SAME SPACE. Panorama has
         // no `position: absolute`; instead the wrap uses `flow-children: none` so both its
         // children stack at the top-left, and the pieces layer (added last) paints on top.
-        var boardWrap = $.CreatePanel("Panel", root, "MG_BoardWrap");
+        var boardWrap = $.CreatePanel("Panel", twoCol, "MG_BoardWrap");
         boardWrap.AddClass("mg-board-wrap");
         var boardPanel = $.CreatePanel("Panel", boardWrap, "MG_Board");
         boardPanel.AddClass("mg-board");
+        // Move-list side panel (right column). Populated in renderMoveList(); the history model
+        // + navigation land in the next commit — for now it shows a header and an empty state.
+        var moveListRows = null;
+        (function buildSidePanel() {
+            var panel = $.CreatePanel("Panel", twoCol, "MG_CheckersMoves");
+            panel.AddClass("mg-movelist");
+            var head = $.CreatePanel("Label", panel, "");
+            head.AddClass("mg-movelist-head");
+            head.text = "Moves";
+            moveListRows = $.CreatePanel("Panel", panel, "");
+            moveListRows.AddClass("mg-movelist-rows");
+            var empty = $.CreatePanel("Label", moveListRows, "");
+            empty.AddClass("mg-move-empty");
+            empty.text = "No moves yet.";
+        })();
 
         // ── board geometry (must match mg.css: 60px cells, 46px pieces) ──────
         var SQ = 60, PIECE_SZ = 46, INSET = (SQ - PIECE_SZ) / 2;
@@ -1078,10 +1098,26 @@
 
         var root = $.CreatePanel("Panel", container, "MG_ChessRoot");
         root.AddClass("mg-chess");
-        var boardWrap = $.CreatePanel("Panel", root, "MG_ChessWrap");
+        // Two-column game screen (see createCheckers): board left, move list right.
+        var twoCol = $.CreatePanel("Panel", root, "MG_ChessCols");
+        twoCol.AddClass("mg-game-2col");
+        var boardWrap = $.CreatePanel("Panel", twoCol, "MG_ChessWrap");
         boardWrap.AddClass("mg-board-wrap");
         var boardPanel = $.CreatePanel("Panel", boardWrap, "MG_ChessBoard");
         boardPanel.AddClass("mg-board");
+        var moveListRows = null;
+        (function buildSidePanel() {
+            var panel = $.CreatePanel("Panel", twoCol, "MG_ChessMoves");
+            panel.AddClass("mg-movelist");
+            var head = $.CreatePanel("Label", panel, "");
+            head.AddClass("mg-movelist-head");
+            head.text = "Moves";
+            moveListRows = $.CreatePanel("Panel", panel, "");
+            moveListRows.AddClass("mg-movelist-rows");
+            var empty = $.CreatePanel("Label", moveListRows, "");
+            empty.AddClass("mg-move-empty");
+            empty.text = "No moves yet.";
+        })();
 
         var SQ = 60, PIECE_SZ = 56, INSET = (SQ - PIECE_SZ) / 2;
         function transformFor(realIdx) {

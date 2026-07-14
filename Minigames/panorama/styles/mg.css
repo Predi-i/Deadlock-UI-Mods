@@ -724,6 +724,88 @@
 /* ── checkers board ──────────────────────────────────────────────────────── */
 .mg-game-host { width: 100%; horizontal-align: center; }
 .mg-checkers { horizontal-align: center; flow-children: down; }
+.mg-chess { horizontal-align: center; flow-children: down; }
+
+/* Two-column game screen: board (486px) on the left, move list on the right. The row hugs
+   its children and centres in the 900px modal, so the pair sits balanced with the ~340px
+   list filling the space that used to be dead to the board's right. */
+.mg-game-2col {
+    flow-children: right;
+    width: fit-children;
+    horizontal-align: center;
+}
+/* Move-list side panel. Fixed height = board height (486px) so the two columns line up top
+   and bottom; the row list inside scrolls when moves overflow. Neutral card, hairline border,
+   no gradient/glow (house style). */
+.mg-movelist {
+    width: 300px;
+    height: 486px;
+    margin-left: 12px;
+    flow-children: down;
+    background-color: #0c1118;
+    border: 1px solid #263445;
+    border-radius: 2px;
+}
+.mg-movelist-head {
+    font-family: radiance !important;
+    font-weight: bold;
+    color: #cdd9e7 !important;
+    font-size: 16px !important;
+    width: 100%;
+    padding: 8px 10px 6px 10px;
+    border-bottom: 1px solid #263445;
+}
+/* Scrollable list of move rows; takes all the height left under the header and above the
+   navigation bar. Panorama scrolls a flow:down panel that overflows its fixed height. */
+.mg-movelist-rows {
+    width: 100%;
+    height: fill-parent-flow(1.0);
+    flow-children: down;
+    overflow: squish scroll;
+}
+/* One move row: a half-move index (chess) or turn number (checkers) is baked into the label
+   text by the controller, so the row is a single label. Alternating hover/selected states
+   let a click jump to that position (wired in the history commit). */
+.mg-move-row {
+    font-family: radiance !important;
+    color: #9fb1c6 !important;
+    font-size: 15px !important;
+    width: 100%;
+    padding: 4px 10px 4px 10px;
+}
+.mg-move-row:hover { background-color: #16202c; color: #cdd9e7 !important; }
+.mg-move-row.mg-move-current { background-color: #21344a; color: #eaf1f8 !important; }
+.mg-move-empty {
+    font-family: radiance !important;
+    color: #5d6f84 !important;
+    font-size: 15px !important;
+    width: 100%;
+    padding: 8px 10px 8px 10px;
+}
+/* Navigation bar pinned to the bottom of the panel: Prev / Next / Live (ASCII, no glyphs —
+   the game font lacks ◀▶). Live returns to the current position; Prev/Next step the review. */
+.mg-movelist-nav {
+    width: 100%;
+    height: 38px;
+    flow-children: right;
+    vertical-align: bottom;
+    border-top: 1px solid #263445;
+}
+.mg-nav-btn {
+    width: fill-parent-flow(1.0);
+    height: 38px;
+    flow-children: none;
+}
+.mg-nav-btn:hover { background-color: #16202c; }
+.mg-nav-btn Label {
+    font-family: radiance !important;
+    color: #9fb1c6 !important;
+    font-size: 15px !important;
+    horizontal-align: center;
+    vertical-align: center;
+}
+.mg-nav-btn:hover Label { color: #cdd9e7 !important; }
+.mg-nav-btn.mg-nav-disabled Label { color: #445468 !important; }
 /* Board grid + pieces overlay are stacked siblings (flow-children:none parks both at the
    wrap's top-left; Panorama has no position:absolute). Size = 8*60 + 2*3 border = 486px. */
 .mg-board-wrap {
