@@ -341,19 +341,27 @@ These are the mistakes to NOT repeat. Every one was confirmed against the game's
    reliably. Do NOT swap it back to a custom popup to "fix the X" — that trade reintroduces the
    popup-won't-open bug.
 
-15b. **The close X must be created BEFORE the scale `DropDown`, so the DropDown is rightmost.**
-   The native `DropDown` reports the game's base `width: 352px` (`citadel_base_styles.css`) as its
-   PREFERRED size during layout, even though `.mg-scale-dd` caps its RENDER at 90px via `max-width`.
-   In the right-flowing `.mg-header-right` cluster, whichever control is LAST in flow inherits the
-   overflow; when the DropDown was first, its 352px layout width shoved the trailing close X past the
-   modal's right edge, where the modal's default clip erased it (the maintainer's recurring "нет
-   крестика, на его месте дропдаун" bug — survived a fixed-width cluster because the 352 is a
-   per-child measurement, not the parent's). **Fix: create the close X first and the DropDown second
-   in `buildOverlay`.** Then the DropDown is the rightmost control (as in QOLLOCK, where the dropdown
-   is always the far-right widget) and overflows only its own invisible slack; the X sits safely to
-   its left, ~100px inside the modal edge. The 10px gap lives on `.mg-close`'s `margin-right`. If the
-   X ever still clips, the documented fallback is `.mg-modal { overflow: noclip }` — NOT applied by
-   default, because global noclip would let board/ghost overlays paint outside the modal.
+15b. **Right-header controls: push right with a flexible spacer, box the DropDown in a fixed 80px
+   wrapper, and give the X a higher z-index.** Three separate facts had to line up; missing any one
+   made the close X vanish or land in the wrong place:
+   - **`horizontal-align: right` is IGNORED on a child of a `flow-children: right` parent.** The
+     scale dropdown + X just flow in a row stuck against the left cluster. To move them to the far
+     right, a `fill-parent-flow(1.0)` spacer (`.mg-header-spacer`) eats the row's slack — the same
+     idiom as the footer's status+spacer+tools row. (An earlier attempt that relied on
+     `horizontal-align:right` left both controls floating mid-row, ~124px short of the edge.)
+   - **Phantom width.** The native `DropDown` reports the game's base `width: 352px`
+     (`citadel_base_styles.css:2839`) as its PREFERRED size even though `.mg-scale-dd` renders at 80px.
+     As a direct flow child that 352 advanced the cursor and shoved the trailing X off the modal's
+     clipped edge. Boxing the DropDown in a `min/max-width: 80px` wrapper (`.mg-scale-wrap`) pins its
+     flow footprint to 80px, so the X flows right after it and stays on-screen.
+   - **z-index.** The X gets a higher `z-index` (12) than the dropdown (10); otherwise the native
+     widget paints OVER the X and it's invisible behind the dropdown (the "на месте крестика дропдаун"
+     symptom). QOLLOCK's `#SettingsHeader #CloseBtn` carries `z-index: 12` for the same reason.
+   Order: spacer → scale wrap → close X, so the X is the rightmost control. The DropDown's arrow is
+   its own `background-image` (`:2832`, `background-size: 32px 32px`), so it can't be removed but CAN
+   be resized — `.mg-scale-dd { background-size: 19px 19px }` shrinks it to ~60%. If the X ever still
+   clips, the documented fallback is `.mg-modal { overflow: noclip }` — NOT applied by default,
+   because global noclip would let board/ghost overlays paint outside the modal.
 
 16. **Drag cleanup must not live only in the piece's `DragEnd` handler.** `DragEnd` is bound to the
    PIECE panel (checkers `setupPieceInput`, chess likewise). If the opponent captures the piece you

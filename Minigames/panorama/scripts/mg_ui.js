@@ -196,33 +196,28 @@
         setFace(dIcon, "s2r://panorama/images/discord_logo.vtex");
         var dLbl = $.CreatePanel("Label", discordBtn, ""); dLbl.AddClass("mg-discord-label"); dLbl.text = "Discord";
         discordBtn.SetPanelEvent("onactivate", function () { openDiscord(); });
-        // Flexible slack: the left cluster hugs its content, this spacer eats the rest of the
-        // row, so the RIGHT CLUSTER (scale + close) sits at the far right.
+        // Flexible spacer: eats the row's slack so the two right controls flow to the far right edge.
+        // (horizontal-align:right is IGNORED on a child of a flow-children:right parent — the controls
+        // just flow in a row and stay stuck next to the left cluster. A fill-parent-flow spacer is the
+        // reliable way to push them right, mirroring the footer's status+spacer+tools layout.)
         var headerSpacer = $.CreatePanel("Panel", header, "");
         headerSpacer.AddClass("mg-header-spacer");
-
-        // ⚠ RIGHT CLUSTER: close X + scale control together in one fixed-width group after the
-        // spacer — NOT as two loose trailing siblings of the header (which mismeasured the width
-        // and pushed the last sibling off the clipped modal edge). The close X is created FIRST so
-        // the native DropDown (which over-reports its width) is the rightmost, overflowing control
-        // and the X is always safely to its left — see the ordering note below.
-        var headerRight = $.CreatePanel("Panel", header, "");
-        headerRight.AddClass("mg-header-right");
-        // ⚠ ORDER MATTERS: the close X is created FIRST, the scale dropdown SECOND, so in the
-        // right-flowing cluster the dropdown ends up RIGHTMOST. The native DropDown widget reports
-        // the game's base width:352px as its PREFERRED size (citadel_base_styles.css) even though
-        // our CSS caps its RENDER at 90px; when it was the FIRST child it overflowed the cluster to
-        // the right and shoved the trailing X off the modal's clipped edge (the maintainer's
-        // recurring "нет крестика, на его месте дропдаун" bug). With the dropdown LAST, it is the
-        // one that overflows its own invisible slack (harmless, exactly as in QOLLOCK where the
-        // dropdown is always the far-right control), and the X sits safely to its LEFT on screen.
-        var close = $.CreatePanel("Button", headerRight, "");
+        // ⚠ RIGHT CONTROLS: scale dropdown (in a fixed 80px WRAPPER), then close X — both in flow.
+        // The WRAPPER is the fix for the vanishing X: the native DropDown reports the game's base
+        // width:352px as its PREFERRED size (citadel_base_styles.css); as a direct flow child that
+        // phantom 352 advanced the cursor and shoved the trailing X off the modal's clipped edge
+        // (ARCHITECTURE trap 15b). Boxed in an 80px `min/max-width` wrapper, the DropDown's flow
+        // footprint is a fixed 80px, so the X flows right after it and stays on-screen. The X keeps a
+        // higher z-index so the native widget can never paint over it (the "на месте крестика
+        // дропдаун" symptom). Order: dropdown then X, so the X is the rightmost control.
+        var scaleWrap = $.CreatePanel("Panel", header, "");
+        scaleWrap.AddClass("mg-scale-wrap");
+        buildScaleControl(scaleWrap);
+        var close = $.CreatePanel("Button", header, "");
         close.AddClass("mg-close");
         var closeLbl = $.CreatePanel("Label", close, "");
         closeLbl.text = "X"; // plain ASCII: the ✕ glyph isn't in the game font
         close.SetPanelEvent("onactivate", function () { hideOverlay(); });
-        // UI-scale dropdown after the X so it's the rightmost (overflowing) control.
-        buildScaleControl(headerRight);
 
 
         modalBody = $.CreatePanel("Panel", modal, "MG_Body");

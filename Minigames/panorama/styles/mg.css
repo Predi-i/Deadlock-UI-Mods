@@ -86,38 +86,24 @@
     z-index: 10;
 }
 
-/* title + "by Predi_i" credit sit together on the left, hugging their content (fit-children).
-   A separate flexible spacer (.mg-header-spacer) eats the slack so the scale control + close X
-   sit at the far right at their fixed widths and BOTH stay visible. ⚠ Do NOT put
-   fill-parent-flow(1.0) on this cluster — it took 100% of the row and pushed the scale + X past
-   the modal's right edge, where the modal's overflow clipped the X (the "X missing, dropdown in
-   its place" bug). Mirror the footer's status+spacer+tools layout, which works. */
+/* title + "by Predi_i" credit + Support/Discord pills sit together on the left, hugging their
+   content (fit-children) and flowing normally. The scale dropdown + close X are align-override
+   controls pinned to the header's right edge (see the NOTE below), so no spacer is needed to push
+   them right — they float over the row's right end regardless of this cluster's width. */
 .mg-header-left {
     width: fit-children;
     flow-children: right;
     vertical-align: center;
     overflow: noclip;                    /* the Support pill sits taller than the title row */
 }
-/* flexible slack between the left cluster and the right controls (scale + close) */
+/* flexible slack between the left cluster and the two right controls (scale dropdown + close X):
+   it eats the row's free space so the controls FLOW to the far right edge. Needed because
+   horizontal-align:right is ignored on a child of a flow-children:right parent — the controls flow
+   in a row and would otherwise sit stuck against the left cluster. Mirrors the footer layout. */
 .mg-header-spacer {
     width: fill-parent-flow(1.0);
     height: 1px;
     vertical-align: center;
-}
-/* RIGHT CLUSTER: the close X + scale control together in one block after the spacer.
-   ⚠ FIXED width, NOT fit-children. The native `DropDown` widget reports the game's base
-   `width: 352px` (citadel_base_styles.css) as its PREFERRED size during a parent's fit-children
-   measurement — even though our `.mg-scale-dd` caps the RENDER at 90px via max-width. So a
-   fit-children cluster measured ~392px wide, overflowed the modal's right edge, and the modal's
-   clip shaved the trailing control. A FIXED width = close 30 + its 10px margin-right + dropdown
-   90 = 130px ignores the widget's bogus 352. The X is FIRST in flow so the DropDown (the control
-   that over-reports) is rightmost and overflows only its own invisible slack. overflow:noclip so
-   the scale popup can still drop below. */
-.mg-header-right {
-    width: 130px;
-    flow-children: right;
-    vertical-align: center;
-    overflow: noclip;
 }
 
 
@@ -150,15 +136,16 @@
 
 /* Close: a 30px square. The single glyph is centred, then nudged +1px right / +3px down
    per the maintainer's in-game measurement (an odd box can't land perfectly on center).
-   ⚠ NO `horizontal-align: right` — that made the X an align-override child pinned to the
-   header's right edge and REMOVED from the flow, so the scale control (a normal flow child
-   after the spacer) flowed to the same right edge and painted OVER the X (trap 12b). The X
-   is created BEFORE the dropdown (see mg_ui.js buildOverlay), so in the right-flowing cluster
-   it sits to the LEFT of the dropdown; its margin-right is the gap between them. */
+   ⚠ In FLOW as the last (rightmost) control after the spacer + scale dropdown. It keeps a HIGHER
+   z-index (12) than the dropdown (10) so the native DropDown widget can never paint over it (the "на
+   месте крестика дропдаун" symptom — the missing z-index was one of the two real bugs; the fixed
+   80px dropdown wrapper is the other, see .mg-scale-wrap / trap 15b). margin-right is the gap from
+   the header's right edge. */
 .mg-close {
     width: 30px;
     height: 30px;
-    margin-right: 10px;                  /* gap to the scale dropdown on its right */
+    margin-right: 40px;                  /* gap from the header's right edge (pulls the group ~35px left) */
+    z-index: 12;                         /* ABOVE the dropdown (z 10) so it can't paint over the X */
     background-color: #161f2b;
     border: 1px solid #2a3849;
     border-radius: 2px;
@@ -1021,18 +1008,33 @@
 /* big remaining-deck count to the right of the stack */
 .mg-dk-deckcount { font-family: oracle !important; font-weight: bold; color: #eaf2ff !important; font-size: 40px !important; }
 
-/* ── UI-scale dropdown (header, left of the close X) ────────────────────────── */
+/* ── UI-scale dropdown (header, RIGHT of nothing, LEFT of the close X) ───────── */
 /* NATIVE `DropDown` widget (QOLLOCK Default-Hero recipe, mg_ui.js buildScaleControl). The game's
-   base `DropDownMenu` look — a `paper_tile` popup texture + a "…" placeholder — is overridden the
-   way QOLLOCK does it: `background-image:none` + our own `background-color` on BOTH the closed
-   control AND the auto-created popup `#MG_ScaleDropDownMenu` (+ its option Labels). The engine
-   opens/closes the popup itself (it toggles `DropDownMenuVisible`); no JS toggle needed. */
+   base `DropDownMenu` paper-tile popup texture + "…" placeholder are overridden the way QOLLOCK
+   does it: `background-image:none` + our own `background-color` on the auto-created popup
+   `#MG_ScaleDropDownMenu` (+ its option Labels). The base `DropDown` arrow .vtex IS its own
+   `background-image` (citadel_base_styles.css:2832 + `background-size:32px 32px`), so we keep it but
+   shrink it to 60% (~19px). The engine opens/closes the popup itself (it toggles
+   `DropDownMenuVisible`); no JS toggle needed. */
+/* the scale dropdown wrapper: a FIXED 80px box in the header flow. min/max-width:80 pin its flow
+   footprint to 80px, containing the native DropDown's phantom 352px preferred width so the close X
+   flows right after it instead of being shoved off the modal edge (mg_ui.js buildOverlay,
+   ARCHITECTURE trap 15b). margin-right is the gap to the X. */
+.mg-scale-wrap {
+    width: 80px; min-width: 80px; max-width: 80px;
+    vertical-align: center;
+    margin-right: 10px;                  /* gap to the close X on its right */
+    flow-children: right;
+    overflow: noclip;
+    z-index: 10;
+}
 .mg-scale-dd {
-    width: 90px; min-width: 90px; max-width: 90px;
+    width: 80px; min-width: 80px; max-width: 80px;
     height: 30px; min-height: 30px; max-height: 30px;
     padding: 1px 8px;
     vertical-align: center;
-    background-image: none;                         /* kill the paper-tile texture */
+    background-size: 19px 19px;           /* shrink the base 32px dropdown arrow to ~60% */
+    background-position: right 29px 35%;   /* base is `right 38px`; −9px offset = arrow 9px further right */
     background-color: #161f2b;
     border: 1px solid #2a3849;
     border-radius: 2px;
@@ -1053,7 +1055,7 @@
    Override the paper texture the same way (background-image:none + our fill). z-index lifts it
    over the modal body. */
 #MG_ScaleDropDownMenu {
-    width: 90px; min-width: 90px; max-width: 90px;
+    width: 80px; min-width: 80px; max-width: 80px;
     background-image: none;
     background-color: #0f141c;
     border: 1px solid #2a3849; border-radius: 2px;
