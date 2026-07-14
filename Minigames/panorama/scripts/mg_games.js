@@ -53,6 +53,8 @@
         var pollToken = 0;             // invalidates stale poll loops
         var destroyed = false;
         var gameOver = false;
+        var lastFrom = -1, lastTo = -1; // last COMPLETED move's endpoints (for the last-move wash)
+        var oppSeqFrom = -1;            // first `from` of the opponent's in-progress (multi-hop) turn
 
         // Drag-and-drop state (native Panorama drag; recipe proven in QOLLOCK):
         // a piece is a drag SOURCE, each cell a drop TARGET. While dragging, a throwaway
@@ -472,7 +474,10 @@
                 if (!cell) continue;
                 cell.RemoveClass("mg-sel");
                 cell.RemoveClass("mg-target");
+                cell.RemoveClass("mg-lastmove");
             }
+            if (lastFrom >= 0 && cells[lastFrom]) cells[lastFrom].AddClass("mg-lastmove");
+            if (lastTo >= 0 && cells[lastTo]) cells[lastTo].AddClass("mg-lastmove");
             if (selected >= 0 && cells[selected]) cells[selected].AddClass("mg-sel");
             for (var t = 0; t < legalTargets.length; t++) {
                 var tc = cells[legalTargets[t].to];
@@ -593,9 +598,10 @@
             // Turn complete — mark last hop as turn-ending and relay the whole sequence.
             chaining = false;
             clearSelection();
-            refreshHighlights();
             var hops = pendingHops.slice();
             pendingHops = [];
+            lastFrom = hops[0].from; lastTo = hops[hops.length - 1].to; // first from, last to
+            refreshHighlights();
             for (var h = 0; h < hops.length; h++) hops[h].end = (h === hops.length - 1) ? 1 : 0;
 
             turn = (myColor === WHITE ? BLACK : WHITE); // hand off locally right away
@@ -624,6 +630,8 @@
             if (destroyed) return;
             if (h >= seq.length) {
                 turn = myColor;
+                lastFrom = seq[0].from; lastTo = seq[seq.length - 1].to;
+                refreshHighlights();
                 checkEnd();
                 if (!gameOver) status("Your turn.");
                 return;
@@ -715,10 +723,12 @@
                     appliedSeq++;
                     animateHop(mv.from, mv.to, res.capIdx, res.promoted);
                     sfx(res.promoted ? "Promote" : "MoveOpp");
+                    if (oppSeqFrom < 0) oppSeqFrom = mv.from; // first hop of this opponent turn
                     if (mv.end) {
                         turn = myColor;
+                        lastFrom = oppSeqFrom; lastTo = mv.to; oppSeqFrom = -1;
                         checkEnd();
-                        if (!gameOver) status("Your turn.");
+                        if (!gameOver) { refreshHighlights(); status("Your turn."); }
                         return; // stop polling; wait for player input
                     }
                     $.Schedule(0.05, function () { pollOnce(myToken); }); // drain chain fast
@@ -1012,6 +1022,7 @@
         var pollToken = 0;
         var destroyed = false;
         var gameOver = false;
+        var lastFrom = -1, lastTo = -1;   // opponent's (or last applied) move, for board highlight
 
         var dragActive = false, dragGhost = null, dragOverSq = -1, dragEnterCount = 0;
         var dragSourcePiece = null;    // the real piece being dragged (un-dim even if it's since been deleted)
@@ -1296,10 +1307,13 @@
             for (var i = 0; i < 64; i++) {
                 var cell = cells[i];
                 if (!cell) continue;
+                cell.RemoveClass("mg-lastmove");
                 cell.RemoveClass("mg-sel");
                 cell.RemoveClass("mg-target");
                 cell.RemoveClass("mg-check");
             }
+            if (lastFrom >= 0 && cells[lastFrom]) cells[lastFrom].AddClass("mg-lastmove");
+            if (lastTo >= 0 && cells[lastTo]) cells[lastTo].AddClass("mg-lastmove");
             if (selected >= 0 && cells[selected]) cells[selected].AddClass("mg-sel");
             for (var t = 0; t < legalTargets.length; t++) {
                 var tc = cells[legalTargets[t].to];
@@ -1392,6 +1406,7 @@
 
         function doLocalMove(from, to) {
             var fx = applyChessMove(from, to);
+            lastFrom = from; lastTo = to;
             clearSelection();
             turn = -myColor;               // hand off locally
             refreshHighlights();
@@ -1414,6 +1429,7 @@
             var mv = chessBotMove(board, cst, botColor);
             if (!mv) { checkEnd(); return; }
             var fx = applyChessMove(mv.from, mv.to);
+            lastFrom = mv.from; lastTo = mv.to;
             turn = myColor;
             refreshHighlights();
             sfx(inCheck(board, myColor) ? "Check" : (fx.promoted ? "Promote" : "MoveOpp"));
@@ -1482,6 +1498,7 @@
                 if (mv) {
                     appliedSeq++;
                     var fx = applyChessMove(mv.from, mv.to);
+                    lastFrom = mv.from; lastTo = mv.to;
                     turn = myColor;                 // every chess move ends the turn (end always 1)
                     refreshHighlights();
                     sfx(inCheck(board, myColor) ? "Check" : (fx.promoted ? "Promote" : "MoveOpp"));

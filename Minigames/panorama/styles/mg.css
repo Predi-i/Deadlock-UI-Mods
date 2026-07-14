@@ -746,6 +746,10 @@
 }
 .mg-cell-light { background-color: #d8c6a8; }
 .mg-cell-dark { background-color: #6e5138; }
+/* Last move played (opponent's or ours): both endpoints get a warm translucent wash.
+   Declared BEFORE sel/target/check so those win at equal specificity via source order —
+   an active selection or a check must always read over the passive last-move hint. */
+.mg-cell.mg-lastmove { background-color: #b9a24a66; }
 .mg-cell.mg-target { background-color: #4b8f5a; }   /* green "you can move here" (semantic) */
 .mg-cell.mg-sel { background-color: #3d5a7a; }      /* accent-blue selected square */
 
