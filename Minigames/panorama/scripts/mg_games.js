@@ -84,6 +84,7 @@
         var DRAG_DEBUG = true;
 
         function status(t) { if (session.onStatus) session.onStatus(t); }
+        function sfx(n) { if (MG.Sound) MG.Sound.play(n); }
 
         // Parse a Panorama px-like style value ("123px", "123.0px") to a number, else null.
         function parsePx(v) {
@@ -575,6 +576,7 @@
         function doLocalHop(from, mv) {
             var res = applyHopFx(from, mv.to);
             animateHop(from, mv.to, res.capIdx, res.promoted);
+            sfx(res.promoted ? "Promote" : "MoveSelf");
             pendingHops.push({ from: from, to: mv.to });
 
             // Can the same piece keep jumping? (only after a capture, and not if just crowned)
@@ -628,6 +630,7 @@
             }
             var res = applyHopFx(seq[h].from, seq[h].to);
             animateHop(seq[h].from, seq[h].to, res.capIdx, res.promoted);
+            sfx(res.promoted ? "Promote" : "MoveOpp");
             $.Schedule(0.35, function () { applyBotSeq(seq, h + 1); }); // step hops for visibility
         }
 
@@ -655,6 +658,7 @@
         // authoritative sequence drives us again. A cheat's illegal hop dies here; an
         // honest desync self-heals instead of wedging.
         function rejectAndResync(reason) {
+            sfx("Illegal");
             pendingHops = [];
             chaining = false;
             clearSelection();
@@ -710,6 +714,7 @@
                     var res = applyHopFx(mv.from, mv.to);
                     appliedSeq++;
                     animateHop(mv.from, mv.to, res.capIdx, res.promoted);
+                    sfx(res.promoted ? "Promote" : "MoveOpp");
                     if (mv.end) {
                         turn = myColor;
                         checkEnd();
@@ -752,6 +757,7 @@
         buildCells();
         layoutPieces();
         refreshHighlights();
+        sfx("GameStart");
         if (myTurn()) {
             status("Your turn. You play " + (myColor === WHITE ? "white (bottom)." : "black (bottom)."));
         } else if (session.bot) {
@@ -1024,6 +1030,7 @@
         }
 
         function status(t) { if (session.onStatus) session.onStatus(t); }
+        function sfx(n) { if (MG.Sound) MG.Sound.play(n); }
         function parsePx(v) {
             if (typeof v !== "string" || !v.length) return null;
             var m = v.match(/-?\d+(\.\d+)?/);
@@ -1337,7 +1344,9 @@
                 (function (d) { $.Schedule(0.22, function () { try { d.DeleteAsync(0); } catch (e) {} }); })(dead);
             }
             slidePiece(from, to);
+            var promoted = false;
             if (t === C_PAWN && (tr === 0 || tr === 7)) {
+                promoted = true;
                 var pp = pieceEls[to];
                 if (pp && pp.IsValid && pp.IsValid()) setFace(pp, pieceUrl(color * C_QUEEN));
             }
@@ -1345,6 +1354,7 @@
                 if (tc - fc === 2) slidePiece(cSq(fr, 7), cSq(fr, 5));   // O-O  rook h→f
                 else slidePiece(cSq(fr, 0), cSq(fr, 3));                 // O-O-O rook a→d
             }
+            return { promoted: promoted };
         }
 
         // ── input / move flow ────────────────────────────────────────────────────────
@@ -1381,10 +1391,11 @@
         }
 
         function doLocalMove(from, to) {
-            applyChessMove(from, to);
+            var fx = applyChessMove(from, to);
             clearSelection();
             turn = -myColor;               // hand off locally
             refreshHighlights();
+            sfx(inCheck(board, turn) ? "Check" : (fx.promoted ? "Promote" : "MoveSelf"));
 
             if (session.bot) {
                 if (!checkEnd()) { status("Bot is thinking…"); scheduleBotTurn(); }
@@ -1402,9 +1413,10 @@
             var botColor = -myColor;
             var mv = chessBotMove(board, cst, botColor);
             if (!mv) { checkEnd(); return; }
-            applyChessMove(mv.from, mv.to);
+            var fx = applyChessMove(mv.from, mv.to);
             turn = myColor;
             refreshHighlights();
+            sfx(inCheck(board, myColor) ? "Check" : (fx.promoted ? "Promote" : "MoveOpp"));
             if (!checkEnd()) status(inCheck(board, myColor) ? "Check! Your turn." : "Your turn.");
         }
 
@@ -1426,6 +1438,7 @@
         // Server rejected our move — rebuild the position from the accepted log (which
         // encodes castling / en passant / promotion via makeMove) and resume polling.
         function rejectAndResync(reason) {
+            sfx("Illegal");
             gameOver = false;
             clearSelection();
             board = initialChessBoard();
@@ -1468,9 +1481,10 @@
                 if (destroyed || myToken !== pollToken) return;
                 if (mv) {
                     appliedSeq++;
-                    applyChessMove(mv.from, mv.to);
+                    var fx = applyChessMove(mv.from, mv.to);
                     turn = myColor;                 // every chess move ends the turn (end always 1)
                     refreshHighlights();
+                    sfx(inCheck(board, myColor) ? "Check" : (fx.promoted ? "Promote" : "MoveOpp"));
                     if (!checkEnd()) status(inCheck(board, myColor) ? "Check! Your turn." : "Your turn.");
                 } else {
                     $.Schedule(0.4, function () { pollOnce(myToken); });
@@ -1507,6 +1521,7 @@
         buildCells();
         layoutPieces();
         refreshHighlights();
+        sfx("GameStart");
         if (myTurn()) {
             status("Your turn. You play " + (myColor === 1 ? "white (bottom)." : "black (bottom)."));
         } else if (session.bot) {
