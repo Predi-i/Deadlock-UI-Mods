@@ -37,6 +37,8 @@
     var currentCode = 0;
     var currentTok = "";          // seat token for the CURRENT online game (see mg_net MG.Session)
     var statusPollToken = 0;
+    var rematchGen = 0;           // our view of the online lobby's rematch generation (0 = fresh)
+    var rematchPollToken = 0;     // guards the rematch poll loop, like statusPollToken
     var selfTestToken = 0;
     var cardEls = [];        // [{ id, panel }] — picker cards, so selection can re-skin them without a full rebuild
     var detailPanel = null;  // right-column detail container (title + description + action buttons)
@@ -852,9 +854,19 @@
         var g = MG.Games.byId(gameId);
         setTitle((g ? g.name : "Game") + (bot ? " (bot)" : ""));
         clearBody();
+        rematchPollToken++;   // invalidate any handshake from the previous game
 
         var host = $.CreatePanel("Panel", modalBody, "");
         host.AddClass("mg-game-host");
+
+        // The controller calls onGameOver(result) the moment its game ends (win/lose/draw).
+        // We use it only to reveal Play Again — the result string is not needed for the flow.
+        var playAgainBtn = null;
+        function onGameOver() {
+            if (playAgainBtn && playAgainBtn.IsValid && playAgainBtn.IsValid()) {
+                playAgainBtn.style.visibility = "visible";
+            }
+        }
 
         activeGame = MG.Games.mount(gameId, host, {
             code: code,
@@ -863,15 +875,65 @@
             tok: currentTok,          // seat token: authorises this client's moves (unused offline)
             seat: opts && opts.seat,
             numPlayers: opts && opts.numPlayers,
-            onStatus: setStatus
+            onStatus: setStatus,
+            onGameOver: onGameOver
         });
 
         var row = $.CreatePanel("Panel", modalBody, "");
         row.AddClass("mg-actions");
+
+        // Play Again: hidden until the game ends. Bot = instant restart with sides flipped;
+        // online = a server rematch handshake (both players must ask; see startRematch).
+        playAgainBtn = $.CreatePanel("Button", row, "");
+        playAgainBtn.AddClass("mg-btn"); playAgainBtn.AddClass("mg-btn-primary");
+        playAgainBtn.style.visibility = "collapse";
+        var pal = $.CreatePanel("Label", playAgainBtn, ""); pal.text = "Play Again";
+        playAgainBtn.SetPanelEvent("onactivate", function () {
+            if (bot) {
+                // Offline: no server, just re-mount the same game with the side flipped so the
+                // player alternates who moves first (mirrors startBotGame's botGamesStarted parity).
+                renderGame(gameId, 0, !isHost, true, opts);
+                return;
+            }
+            startRematch(gameId, code, isHost, opts, playAgainBtn);
+        });
+
         var leave = $.CreatePanel("Button", row, "");
         leave.AddClass("mg-btn");
         var ll = $.CreatePanel("Label", leave, ""); ll.text = "Leave";
         leave.SetPanelEvent("onactivate", function () { renderMenu(); });
+    }
+
+    // Online rematch: both seats poll /api/rematch from the game-over screen. The server bumps
+    // its `gen` and resets the board once BOTH have asked (mg_net Api.rematch, worker.core.js).
+    // We pass our current gen up so a stale poll from before a restart can't re-arm the next
+    // rematch. When state==2 (we completed the pair) OR the server's gen outran ours (the
+    // opponent completed it), the lobby state is already fresh — re-mount the SAME game, same
+    // seat/side; the sides never swap online (host stays seat 0).
+    function startRematch(gameId, code, isHost, opts, btn) {
+        rematchPollToken++;
+        var token = rematchPollToken;
+        var baseGen = rematchGen;
+        if (btn && btn.IsValid && btn.IsValid()) btn.style.visibility = "collapse"; // one press
+        setStatus("Rematch: waiting for opponent…");
+
+        function restart() {
+            if (token !== rematchPollToken || view !== "game") return;
+            if (MG.Sound) MG.Sound.play("GameStart");
+            renderGame(gameId, code, isHost, false, opts);
+        }
+        function tick() {
+            if (token !== rematchPollToken || view !== "game") return;
+            MG.Api.rematch(code, currentTok, baseGen, function (r) {
+                if (token !== rematchPollToken || view !== "game") return;
+                if (r.state === 9) { kickToMenu("Opponent left."); return; } // (9,9) gone / (9,3) bad token
+                if (r.state === 2 || r.gen > baseGen) { rematchGen = r.gen; restart(); return; }
+                $.Schedule(0.6, tick);   // still waiting for the opponent
+            }, function () {
+                $.Schedule(0.8, tick);   // transport hiccup: retry
+            });
+        }
+        tick();
     }
 
     // ── lobby flow ────────────────────────────────────────────────────────────

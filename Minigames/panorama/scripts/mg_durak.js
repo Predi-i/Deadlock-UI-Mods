@@ -594,6 +594,7 @@
             if (st.loser < 0) status("Draw.");
             else if (st.loser === mySeat) status("You lose.");
             else status("You win.");
+            if (session.onGameOver) session.onGameOver(st.loser < 0 ? "draw" : (st.loser === mySeat ? "lose" : "win"));
         }
 
         // ── online sync (worker-as-dealer) ───────────────────────────────────────────

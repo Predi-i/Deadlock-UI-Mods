@@ -390,6 +390,36 @@ async function main() {
     d = await req(h3, "/api/status.png?code=" + cc);
     ok(d.w === 9, "cancelled lobby is gone");
 
+    // ── rematch handshake ──────────────────────────────────────────────────────
+    await (async function () {
+        var L = await seatedLobby(1, "RMHOST01", "RMJOIN01");
+        // Play a couple of moves so the board is non-initial before the rematch resets it.
+        await req(L.hub, "/api/move.png?code=" + L.code + "&from=" + sq(5, 0) + "&to=" + sq(4, 1) + "&end=1&tok=RMHOST01");
+        await req(L.hub, "/api/move.png?code=" + L.code + "&from=" + sq(2, 1) + "&to=" + sq(3, 0) + "&end=1&tok=RMJOIN01");
+        // Foreign token can't rematch.
+        var bad = await req(L.hub, "/api/rematch.png?code=" + L.code + "&tok=STRANGER0&gen=0");
+        ok(bad.w === 9 && bad.h === 3, "rematch: foreign token → (9,3)");
+        // Host asks first: armed, still gen 0 → (1, gen+1) = (1,1).
+        var r1 = await req(L.hub, "/api/rematch.png?code=" + L.code + "&tok=RMHOST01&gen=0");
+        ok(r1.w === 1 && r1.h === 1, "rematch: host armed, waiting → (1, gen0+1)");
+        // Host polling again is idempotent — still waiting, no double-arm side effect.
+        var r1b = await req(L.hub, "/api/rematch.png?code=" + L.code + "&tok=RMHOST01&gen=0");
+        ok(r1b.w === 1 && r1b.h === 1, "rematch: host re-poll stays waiting (idempotent)");
+        // Joiner asks: both armed → reset + gen++ → (2, gen1+1) = (2,2).
+        var r2 = await req(L.hub, "/api/rematch.png?code=" + L.code + "&tok=RMJOIN01&gen=0");
+        ok(r2.w === 2 && r2.h === 2, "rematch: both ready → (2, gen1+1)");
+        // The board is fresh: poll from 0 sees nothing (moves cleared), status back to 2 players.
+        var pl = await req(L.hub, "/api/poll.png?code=" + L.code + "&since=0");
+        ok(pl.w === 1 && pl.h === 1, "rematch: state reset — poll(since=0) → (1,1) nothing new");
+        // Host's stale gen-0 poll after the bump can't re-arm the next rematch; it just reads gen 1.
+        var stale = await req(L.hub, "/api/rematch.png?code=" + L.code + "&tok=RMHOST01&gen=0");
+        ok(stale.w === 1 && stale.h === 2, "rematch: stale gen-0 poll reads gen 1, does not arm");
+        // A second full rematch at the live gen works and bumps to gen 2.
+        await req(L.hub, "/api/rematch.png?code=" + L.code + "&tok=RMHOST01&gen=1");
+        var r3 = await req(L.hub, "/api/rematch.png?code=" + L.code + "&tok=RMJOIN01&gen=1");
+        ok(r3.w === 2 && r3.h === 3, "rematch: second rematch at live gen → (2, gen2+1)");
+    })();
+
     console.log("\nALL SERVER TESTS PASSED (" + passed + " checks)");
 }
 

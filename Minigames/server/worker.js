@@ -1291,6 +1291,40 @@ export class Hub {
         return png(1, 1);
       }
 
+      // Rematch handshake. Both seats poll this from the game-over screen; when BOTH have
+      // asked, the server performs the same reset as /api/reset, bumps `gen`, clears the
+      // ready flags, and reports (2, gen+1). Until then it reports (1, gen+1) = "waiting".
+      //   -> (1, gen+1) I'm marked, waiting for the opponent
+      //   -> (2, gen+1) both ready: state was reset THIS call, restart now
+      //   -> (9,3) bad/foreign token · (9,9) no lobby
+      // The caller passes &gen=<its current generation>. We only ARM a seat's flag when that
+      // matches the lobby's live `gen`; a stale poll from BEFORE a restart (old gen) can't
+      // re-arm the next rematch, it just reads the bumped gen and the client restarts. This is
+      // what stops the flag "sticking" across consecutive rematches (no extra clear round-trip).
+      if (p === "/api/rematch") {
+        const lobby = code ? await this.storage.get("l:" + code) : null;
+        if (!lobby) return png(9, 9);
+        const seat = seatOf(lobby, q.get("tok"));
+        if (seat < 0) return png(9, 3);
+        if (lobby.players < 2) return png(1, (lobby.gen || 0) + 1); // opponent already left/never joined
+        lobby.gen = lobby.gen || 0;
+        lobby.rm = lobby.rm || [false, false];
+        const callerGen = clampInt(q.get("gen"), 0, 0, 100000);
+        if (callerGen === lobby.gen) lobby.rm[seat] = true; // only arm against the live generation
+        lobby.t = nowSeq();                                 // keep-alive
+        if (lobby.rm[0] && lobby.rm[1]) {
+          lobby.moves = [];
+          lobby.turn = 0;
+          lobby.state = initState(lobby.game);
+          lobby.gen++;
+          lobby.rm = [false, false];
+          await this.storage.put("l:" + code, lobby);
+          return png(2, lobby.gen + 1);                     // both ready: reset done, gen bumped
+        }
+        await this.storage.put("l:" + code, lobby);
+        return png(1, lobby.gen + 1);                       // waiting for the opponent
+      }
+
 
       // ── Durak (authoritative dealer, 2 players) ────────────────────────────
       // Separate route set from the 2-int move/poll games: the worker OWNS the deck,

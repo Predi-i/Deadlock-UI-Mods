@@ -532,6 +532,18 @@
                 function (w, h) { if (cb) cb(w < 9); }, err);
         },
 
+        // Rematch handshake. Poll this from the game-over screen with your CURRENT gen
+        // (0 for a fresh lobby, then the last gen the server reported). The server arms this
+        // seat's rematch flag only when gen matches (so a stale detect-poll can't re-arm after
+        // a restart), and once BOTH seats are armed it resets the board and bumps gen.
+        //   cb({ state, gen }): state 1 = armed, waiting for opponent · 2 = both ready (reset done)
+        //                       9 = lobby gone / bad token (gen carries 3=bad-token, 9=gone)
+        //   gen = the lobby's current generation (grows by 1 each rematch).
+        rematch: function (code, tok, gen, cb, err) {
+            request("/api/rematch", { code: code, tok: tok, gen: gen || 0 },
+                function (w, h) { if (cb) cb({ state: w, gen: h - 1 }); }, err);
+        },
+
         // ── Durak online (authoritative 2-player dealer) ────────────────────
         // These routes use the same image side-channel but a separate indexed public
         // event log (`dlog`) plus a private per-seat draw stream (`ddraw`). All writes and

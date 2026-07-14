@@ -157,11 +157,13 @@
                 gameOver = true;
                 highlightWin(w);
                 status(w === myMark ? "🏆 You win!" : "You lose.");
+                if (session.onGameOver) session.onGameOver(w === myMark ? "win" : "lose");
                 return true;
             }
             if (C.isFull(board)) {
                 gameOver = true;
                 status("Draw.");
+                if (session.onGameOver) session.onGameOver("draw");
                 return true;
             }
             return false;

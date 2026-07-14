@@ -761,6 +761,7 @@
             clearSelection();
             refreshHighlights();
             status(winner === myColor ? "🏆 You win!" : "You lose.");
+            if (session.onGameOver) session.onGameOver(winner === myColor ? "win" : "lose");
         }
 
         // ── boot ────────────────────────────────────────────────────────────
@@ -860,12 +861,14 @@
                 gameOver = true;
                 render(w.line);
                 status(w.mark === myMark ? "🏆 You win!" : "You lose.");
+                if (session.onGameOver) session.onGameOver(w.mark === myMark ? "win" : "lose");
                 return true;
             }
             if (tttFull(board)) {
                 gameOver = true;
                 render(null);
                 status("Draw.");
+                if (session.onGameOver) session.onGameOver("draw");
                 return true;
             }
             return false;
@@ -1526,12 +1529,14 @@
             clearSelection();
             refreshHighlights();
             status(winner === myColor ? "🏆 Checkmate — you win!" : "Checkmate — you lose.");
+            if (session.onGameOver) session.onGameOver(winner === myColor ? "win" : "lose");
         }
         function finishDraw() {
             gameOver = true;
             clearSelection();
             refreshHighlights();
             status("Stalemate — it's a draw.");
+            if (session.onGameOver) session.onGameOver("draw");
         }
 
         // ── boot ──────────────────────────────────────────────────────────────────────
