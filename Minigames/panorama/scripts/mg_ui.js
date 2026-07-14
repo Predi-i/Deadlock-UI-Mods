@@ -210,6 +210,9 @@
         // footprint is a fixed 80px, so the X flows right after it and stays on-screen. The X keeps a
         // higher z-index so the native widget can never paint over it (the "на месте крестика
         // дропдаун" symptom). Order: dropdown then X, so the X is the rightmost control.
+        var soundWrap = $.CreatePanel("Panel", header, "");
+        soundWrap.AddClass("mg-vol-wrap");
+        buildSoundControl(soundWrap);
         var scaleWrap = $.CreatePanel("Panel", header, "");
         scaleWrap.AddClass("mg-scale-wrap");
         buildScaleControl(scaleWrap);
@@ -291,6 +294,90 @@
     function setUiScale(pct) {
         uiScalePct = pct;
         applyUiScale();
+    }
+
+    // ── sound control (volume + instant mute), left of the scale dropdown ──────────
+    // Panorama has no reliable drag/cursor-position read (ARCHITECTURE: GameUI.GetCursorPosition
+    // is absent, native-widget drag is flaky in our HUD context), so a true drag-slider is a dead
+    // end here. Instead the picker is a VERTICAL column of clickable level segments (pure
+    // `onactivate`, the only robust input primitive) — it opens downward and reads like a volume
+    // bar you tap. The closed control has two hit targets: the level-bars icon toggles mute
+    // instantly (maintainer's §4 requirement), the value opens the picker. Popup visibility is a
+    // single class on the panel (trap 12); the wrapper is flow-children:none + overflow:noclip so
+    // the popup escapes the header row without resizing it (trap 1/11), z-index over the body.
+    var VOL_STEPS = [100, 90, 80, 70, 60, 50, 40, 30, 20, 10, 0]; // top→bottom in the popup
+    var soundWrapEl = null, soundMenu = null, soundValLbl = null, soundBars = [], soundStepEls = {};
+    function buildSoundControl(wrap) {
+        soundWrapEl = wrap;
+        // closed control: [level-bars icon | value%]
+        var ctl = $.CreatePanel("Panel", wrap, "");
+        ctl.AddClass("mg-vol");
+        var icon = $.CreatePanel("Button", ctl, "");
+        icon.AddClass("mg-vol-icon");
+        soundBars = [];
+        for (var b = 0; b < 4; b++) {
+            var bar = $.CreatePanel("Panel", icon, "");
+            bar.AddClass("mg-vol-bar");
+            bar.AddClass("mg-vol-bar-" + b);      // per-bar height via CSS
+            soundBars.push(bar);
+        }
+        var slash = $.CreatePanel("Panel", icon, "");  // red "muted" slash, shown only when muted
+        slash.AddClass("mg-vol-slash");
+        icon.SetPanelEvent("onactivate", function () {
+            if (MG.Sound) MG.Sound.toggleMute();
+            renderSoundState();
+        });
+        var val = $.CreatePanel("Button", ctl, "");
+        val.AddClass("mg-vol-val");
+        soundValLbl = $.CreatePanel("Label", val, "");
+        soundValLbl.AddClass("mg-vol-val-lbl");
+        val.SetPanelEvent("onactivate", function () {
+            if (soundMenu) soundMenu.ToggleClass("mg-open");
+        });
+
+        // vertical popup: one clickable segment per level
+        soundMenu = $.CreatePanel("Panel", wrap, "");
+        soundMenu.AddClass("mg-vol-menu");
+        soundStepEls = {};
+        for (var s = 0; s < VOL_STEPS.length; s++) {
+            (function (pct) {
+                var seg = $.CreatePanel("Button", soundMenu, "");
+                seg.AddClass("mg-vol-seg");
+                var lbl = $.CreatePanel("Label", seg, "");
+                lbl.AddClass("mg-vol-seg-lbl");
+                lbl.text = pct + "%";
+                seg.SetPanelEvent("onactivate", function () {
+                    if (MG.Sound) { MG.Sound.setVol(pct); MG.Sound.setMuted(false); }
+                    if (soundMenu) soundMenu.RemoveClass("mg-open");
+                    renderSoundState();
+                });
+                soundStepEls[pct] = seg;
+            })(VOL_STEPS[s]);
+        }
+        renderSoundState();
+    }
+    // Reflect MG.Sound state onto the control: value text, lit bars, muted slash/dim, and which
+    // popup segment is the current level.
+    function renderSoundState() {
+        if (!MG.Sound) return;
+        var vol = MG.Sound.getVol(), muted = MG.Sound.isMuted();
+        if (soundValLbl) soundValLbl.text = muted ? "off" : (vol + "%");
+        var lit = muted ? 0 : Math.round(vol / 100 * soundBars.length);
+        for (var i = 0; i < soundBars.length; i++) {
+            if (i < lit) soundBars[i].AddClass("mg-vol-bar-on");
+            else soundBars[i].RemoveClass("mg-vol-bar-on");
+        }
+        if (soundWrapEl) {
+            if (muted) soundWrapEl.AddClass("mg-vol-muted");
+            else soundWrapEl.RemoveClass("mg-vol-muted");
+        }
+        // nearest popup step to the current volume (steps are every 10)
+        var near = Math.round(vol / 10) * 10;
+        for (var p in soundStepEls) {
+            if (!soundStepEls.hasOwnProperty(p)) continue;
+            if (!muted && parseInt(p, 10) === near) soundStepEls[p].AddClass("mg-on");
+            else soundStepEls[p].RemoveClass("mg-on");
+        }
     }
 
 

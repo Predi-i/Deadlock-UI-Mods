@@ -1083,6 +1083,102 @@
     background-color: #1c2836; color: #eef3fa !important;
 }
 
+/* ── sound control (volume + mute), left of the scale dropdown ───────────────────
+   Wrapper is a FIXED 64px box in the header flow. flow-children:none parks the closed
+   control and the popup both at top-left; the popup is pushed DOWN with margin-top and
+   escapes the header via overflow:noclip (trap 1/11), so opening it never resizes the
+   header row. z-index lifts it over the body (same idiom as the scale wrapper). */
+.mg-vol-wrap {
+    width: 64px; min-width: 64px; max-width: 64px;
+    height: 30px;
+    vertical-align: center;
+    margin-right: 10px;                  /* gap to the scale dropdown on its right */
+    flow-children: none;
+    overflow: noclip;
+    z-index: 10;
+}
+/* closed control: [level-bars icon | value%] */
+.mg-vol {
+    width: 64px; height: 30px;
+    flow-children: right;
+    vertical-align: center;
+    background-color: #161f2b;
+    border: 1px solid #2a3849;
+    border-radius: 2px;
+}
+/* the level-bars icon doubles as the MUTE toggle. flow:none so the 4 bars sit purely by
+   their own vertical-align:bottom + margin, stacked left→right by width offset. */
+.mg-vol-icon {
+    width: 26px; height: 28px;
+    flow-children: none;
+    vertical-align: center;
+    overflow: noclip;                    /* the rotated muted-slash overhangs the 26px box */
+    transition-property: brightness; transition-duration: 0.1s; transition-timing-function: ease-out;
+}
+.mg-vol-icon:hover { brightness: 1.15; }
+/* 4 bars of growing height, aligned to the icon's bottom. Base = dim (unlit); .mg-vol-bar-on
+   lights them. Each bar's x-offset via margin-left, height via the per-index class. */
+.mg-vol-bar {
+    width: 4px;
+    vertical-align: bottom;
+    background-color: #3a4859;           /* unlit */
+    border-radius: 1px;
+}
+.mg-vol-bar-0 { height: 7px;  margin-left: 3px;  }
+.mg-vol-bar-1 { height: 12px; margin-left: 9px;  }
+.mg-vol-bar-2 { height: 17px; margin-left: 15px; }
+.mg-vol-bar-3 { height: 22px; margin-left: 21px; }
+.mg-vol-bar.mg-vol-bar-on { background-color: #4f86d4; }   /* lit — accent blue */
+/* red "muted" slash across the icon (a thin bar rotated 45°, trap 6), shown only when muted. */
+.mg-vol-slash {
+    width: 30px; height: 3px;
+    background-color: #cf4a42;
+    border-radius: 1px;
+    vertical-align: center; horizontal-align: center;
+    transform: rotateZ(-45deg);
+    visibility: collapse;
+}
+.mg-vol-muted .mg-vol-slash { visibility: visible; }
+.mg-vol-muted .mg-vol-bar { background-color: #4a3336; }   /* bars go muted-grey when muted */
+/* value % — click opens the popup */
+.mg-vol-val {
+    width: fill-parent-flow(1.0); height: 28px;
+    vertical-align: center;
+    transition-property: brightness; transition-duration: 0.1s; transition-timing-function: ease-out;
+}
+.mg-vol-val:hover { brightness: 1.12; }
+.mg-vol-val-lbl {
+    font-family: radiance !important; font-weight: semi-bold;
+    color: #cdd9e7 !important; font-size: 13px !important;
+    horizontal-align: center; vertical-align: center;
+}
+.mg-vol-muted .mg-vol-val-lbl { color: #7d8794 !important; }
+/* vertical popup: one clickable segment per level. Pushed below the closed control; visibility
+   toggled by a single .mg-open class on THIS panel (trap 12), never inline JS visibility. */
+.mg-vol-menu {
+    width: 64px; min-width: 64px; max-width: 64px;
+    margin-top: 32px;                    /* sit just below the 30px control */
+    flow-children: down;
+    background-color: #0f141c;
+    border: 1px solid #2a3849; border-radius: 2px;
+    box-shadow: 0px 8px 20px 0px #000000aa;
+    z-index: 200;
+    visibility: collapse;
+}
+.mg-vol-menu.mg-open { visibility: visible; }
+.mg-vol-seg {
+    width: 100%; height: 22px;
+    background-color: #00000000;
+    transition-property: background-color; transition-duration: 0.1s; transition-timing-function: ease-out;
+}
+.mg-vol-seg:hover { background-color: #1c2836; }
+.mg-vol-seg.mg-on { background-color: #1d3350; }   /* current level */
+.mg-vol-seg-lbl {
+    font-family: radiance !important; color: #cdd9e7 !important; font-size: 13px !important;
+    horizontal-align: center; vertical-align: center;
+}
+.mg-vol-seg.mg-on .mg-vol-seg-lbl { color: #eef3fa !important; }
+
 
 
 
