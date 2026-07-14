@@ -7,6 +7,7 @@
 	</styles>
 	<scripts>
 		<include src="s2r://panorama/scripts/mg_net.vjs_c" />
+		<include src="s2r://panorama/scripts/mg_sound.vjs_c" />
 		<include src="s2r://panorama/scripts/rules/checkers.vjs_c" />
 		<include src="s2r://panorama/scripts/rules/ttt.vjs_c" />
 		<include src="s2r://panorama/scripts/rules/chess.vjs_c" />
