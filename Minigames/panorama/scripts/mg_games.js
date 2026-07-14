@@ -56,6 +56,18 @@
         var lastFrom = -1, lastTo = -1; // last COMPLETED move's endpoints (for the last-move wash)
         var oppSeqFrom = -1;            // first `from` of the opponent's in-progress (multi-hop) turn
 
+        // Move history + local review (§8 commit 2.2). Each finished TURN pushes one entry
+        // { from, to, cap, boardAfter, label }. reviewIndex === null means "live" (board shows
+        // the real position); an integer k means we are REVIEWING: -1 = initial position,
+        // 0..history.length-1 = the position right after that turn. Reviewing is read-only —
+        // input handlers bail while reviewing and live moves keep updating the model + list
+        // silently without disturbing the shown snapshot.
+        var history = [];
+        var reviewIndex = null;
+        // Captures accumulate across the multi-hop chain of ONE turn (a turn's label is "x" if
+        // any hop in it was a capture). Reset when each side begins a fresh turn.
+        var myTurnCapture = false, oppTurnCapture = false, botTurnCapture = false;
+
         // Drag-and-drop state (native Panorama drag; recipe proven in QOLLOCK):
         // a piece is a drag SOURCE, each cell a drop TARGET. While dragging, a throwaway
         // "ghost" panel follows the cursor and the real piece is dimmed in place.
@@ -113,9 +125,11 @@
         boardWrap.AddClass("mg-board-wrap");
         var boardPanel = $.CreatePanel("Panel", boardWrap, "MG_Board");
         boardPanel.AddClass("mg-board");
-        // Move-list side panel (right column). Populated in renderMoveList(); the history model
-        // + navigation land in the next commit — for now it shows a header and an empty state.
-        var moveListRows = null;
+        // Move-list side panel (right column): a header, a scrollable list of completed turns,
+        // and a Prev/Next/Live navigation bar. renderMoveList() fills the list; the nav buttons
+        // step a purely LOCAL review of past positions (see navPrev/navNext/navLive) — the live
+        // game keeps running underneath and the model board is never touched by a review.
+        var moveListRows = null, navPrevBtn = null, navNextBtn = null, navLiveBtn = null;
         (function buildSidePanel() {
             var panel = $.CreatePanel("Panel", twoCol, "MG_CheckersMoves");
             panel.AddClass("mg-movelist");
@@ -124,10 +138,20 @@
             head.text = "Moves";
             moveListRows = $.CreatePanel("Panel", panel, "");
             moveListRows.AddClass("mg-movelist-rows");
-            var empty = $.CreatePanel("Label", moveListRows, "");
-            empty.AddClass("mg-move-empty");
-            empty.text = "No moves yet.";
+            var nav = $.CreatePanel("Panel", panel, "");
+            nav.AddClass("mg-movelist-nav");
+            navPrevBtn = makeNavBtn(nav, "< Prev", function () { navPrev(); });
+            navLiveBtn = makeNavBtn(nav, "Live", function () { navLive(); });
+            navNextBtn = makeNavBtn(nav, "Next >", function () { navNext(); });
+            renderMoveList();
         })();
+        function makeNavBtn(parent, text, onClick) {
+            var b = $.CreatePanel("Button", parent, "");
+            b.AddClass("mg-nav-btn");
+            var l = $.CreatePanel("Label", b, ""); l.text = text;
+            b.SetPanelEvent("onactivate", onClick);
+            return b;
+        }
 
         // ── board geometry (must match mg.css: 60px cells, 46px pieces) ──────
         var SQ = 60, PIECE_SZ = 46, INSET = (SQ - PIECE_SZ) / 2;
@@ -233,7 +257,9 @@
             lbl.style.transform = "translate3d(" + (x + ox) + "px, " + (y + oy) + "px, 0px)";
         }
 
-        function makePiece(realIdx, v) {
+        // interactive defaults to true (live board). Review renders pass false so the snapshot
+        // pieces are inert (no drag/select) — you're looking at a past position, not playing it.
+        function makePiece(realIdx, v, interactive) {
             var piece = $.CreatePanel("Panel", piecesLayer, "");
             piece.AddClass("mg-piece");
             piece.AddClass(colorOf(v) === WHITE ? "mg-white" : "mg-black");
@@ -249,7 +275,7 @@
             });
             piece._sq = realIdx;          // live square this piece sits on (updated on slide)
             pieceEls[realIdx] = piece;
-            setupPieceInput(piece);
+            if (interactive !== false) setupPieceInput(piece);
             return piece;
         }
 
@@ -272,6 +298,7 @@
             piece.SetDraggable(true);
 
             $.RegisterEventHandler("DragStart", piece, function (_p, dragEvent) {
+                if (destroyed || reviewIndex !== null) return; // no dragging while reviewing history
                 var sq = piece._sq;
                 // ALWAYS provide a ghost as the drag visual so the engine never drags the
                 // real piece around (QOLLOCK sets dragEvent.displayPanel for exactly this).
@@ -487,8 +514,11 @@
             for (var i = 0; i < 64; i++) { if (board[i]) makePiece(i, board[i]); }
         }
 
-        // Selection + legal-target highlighting only (cheap; touches no pieces).
+        // Selection + legal-target highlighting only (cheap; touches no pieces). Suppressed
+        // while reviewing — renderReview() owns the cell classes then, and a live move landing
+        // during a review must not repaint the board the player is studying.
         function refreshHighlights() {
+            if (reviewIndex !== null) return;
             for (var i = 0; i < 64; i++) {
                 var cell = cells[i];
                 if (!cell) continue;
@@ -503,6 +533,102 @@
                 var tc = cells[legalTargets[t].to];
                 if (tc) tc.AddClass("mg-target");
             }
+        }
+
+        // ── move history + local review ──────────────────────────────────────
+        // Coordinate name of a REAL square (a1..h8). rank counts up from White's side; matches
+        // the board coordinate labels (buildCoords), so a move reads the same as the printed grid.
+        function sqName(i) { return String.fromCharCode(97 + colOf(i)) + (8 - rowOf(i)); }
+        function moveLabel(from, to, cap) { return sqName(from) + (cap ? "x" : "-") + sqName(to); }
+
+        // Record one COMPLETED turn (checkers: the whole multi-hop sequence collapses to
+        // first-from → last-to). Snapshots the resulting board so the position can be replayed
+        // read-only later. Called from every turn-completion path (own move, opponent, bot).
+        function pushHistory(from, to, cap) {
+            history.push({ from: from, to: to, boardAfter: board.slice(), label: moveLabel(from, to, cap) });
+            renderMoveList();
+        }
+
+        // Rebuild the move list. Highlights the row for the position currently shown (the last
+        // row while live). Rows are clickable to jump to that position. Auto-scrolls to the
+        // newest row while live so the latest move stays visible.
+        function renderMoveList() {
+            if (!moveListRows || !(moveListRows.IsValid && moveListRows.IsValid())) return;
+            moveListRows.RemoveAndDeleteChildren();
+            if (history.length === 0) {
+                var e = $.CreatePanel("Label", moveListRows, "");
+                e.AddClass("mg-move-empty");
+                e.text = "No moves yet.";
+            } else {
+                var cur = (reviewIndex === null) ? history.length - 1 : reviewIndex;
+                for (var i = 0; i < history.length; i++) {
+                    (function (idx) {
+                        var row = $.CreatePanel("Label", moveListRows, "");
+                        row.AddClass("mg-move-row");
+                        if (idx === cur) row.AddClass("mg-move-current");
+                        row.text = (idx + 1) + ". " + history[idx].label;
+                        row.SetPanelEvent("onactivate", function () { gotoReview(idx); });
+                    })(i);
+                }
+            }
+            updateNav();
+            if (reviewIndex === null) { try { moveListRows.ScrollToBottom(); } catch (e2) {} }
+        }
+
+        function setNavState(btn, enabled) {
+            if (!btn) return;
+            if (enabled) btn.RemoveClass("mg-nav-disabled"); else btn.AddClass("mg-nav-disabled");
+        }
+        function updateNav() {
+            var shown = (history.length === 0) ? -2 : (reviewIndex === null ? history.length - 1 : reviewIndex);
+            setNavState(navPrevBtn, shown > -1);           // something earlier to step back to
+            setNavState(navNextBtn, reviewIndex !== null); // only meaningful while reviewing
+            setNavState(navLiveBtn, reviewIndex !== null);
+        }
+
+        // Render the pieces of an ARBITRARY board snapshot as inert (non-interactive) pieces.
+        function layoutPiecesFrom(src) {
+            if (!piecesLayer) return;
+            clearDrag();
+            piecesLayer.RemoveAndDeleteChildren();
+            pieceEls = {};
+            for (var i = 0; i < 64; i++) { if (src[i]) makePiece(i, src[i], false); }
+        }
+
+        // Show the position after review move `idx` (idx === -1 = initial position). Read-only:
+        // no selection, only that move's from/to washed. Does NOT touch the live model.
+        function renderReview() {
+            var idx = reviewIndex;
+            var snap = (idx < 0) ? initialBoard() : history[idx].boardAfter;
+            layoutPiecesFrom(snap);
+            for (var i = 0; i < 64; i++) {
+                var c = cells[i];
+                if (!c) continue;
+                c.RemoveClass("mg-sel"); c.RemoveClass("mg-target"); c.RemoveClass("mg-lastmove");
+            }
+            if (idx >= 0) {
+                var e = history[idx];
+                if (cells[e.from]) cells[e.from].AddClass("mg-lastmove");
+                if (cells[e.to]) cells[e.to].AddClass("mg-lastmove");
+            }
+        }
+
+        function shownIndex() { return reviewIndex === null ? history.length - 1 : reviewIndex; }
+        function setReview(idx) { reviewIndex = idx; renderReview(); renderMoveList(); }
+        function gotoReview(idx) { if (idx >= 0 && idx < history.length) setReview(idx); }
+        function navPrev() { if (history.length === 0) return; var t = shownIndex() - 1; if (t < -1) return; setReview(t); }
+        function navNext() {
+            if (reviewIndex === null) return;              // already live (latest)
+            var t = reviewIndex + 1;
+            if (t >= history.length - 1) { navLive(); return; }
+            setReview(t);
+        }
+        // Resume following the live game: drop review, rebuild the interactive board + highlights.
+        function navLive() {
+            reviewIndex = null;
+            layoutPieces();
+            refreshHighlights();
+            renderMoveList();
         }
 
         // Apply a hop to the model AND report the captured square (for the fade fx).
@@ -520,6 +646,10 @@
 
         // Slide the piece from->to; shrink-fade a captured piece; crown on promotion.
         function animateHop(from, to, capIdx, promoted) {
+            // While reviewing, the pieces layer shows a past snapshot, not the live model —
+            // so skip the visual (the model already advanced via applyHopFx). navLive() rebuilds
+            // the current position from the model when the player returns to the live game.
+            if (reviewIndex !== null) { clearDrag(); return; }
             // ANY hop can capture the very piece you're mid-drag on (an opponent's polled hop, or
             // a bot move). That capture deletes the piece panel, taking its DragEnd handler with
             // it, so the ghost would hang forever. Clear the drag up front. For your OWN move the
@@ -563,7 +693,7 @@
         }
 
         function onCellClick(i) {
-            if (destroyed || !myTurn()) return;
+            if (destroyed || reviewIndex !== null || !myTurn()) return;
 
             // Clicking a legal target of the currently selected piece = execute a hop.
             if (selected >= 0) {
@@ -586,7 +716,7 @@
         // A piece was dropped onto square `i`. Play the hop if `i` is a legal target of
         // the piece we're dragging; otherwise it's a no-op and the ghost just snaps back.
         function onCellDrop(i) {
-            if (destroyed || !myTurn() || !dragActive || selected < 0) return;
+            if (destroyed || reviewIndex !== null || !myTurn() || !dragActive || selected < 0) return;
             for (var t = 0; t < legalTargets.length; t++) {
                 if (legalTargets[t].to === i) {
                     doLocalHop(selected, legalTargets[t]);
@@ -599,7 +729,9 @@
         var pendingHops = [];
 
         function doLocalHop(from, mv) {
+            if (pendingHops.length === 0) myTurnCapture = false; // first hop of a fresh turn
             var res = applyHopFx(from, mv.to);
+            if (res.captured) myTurnCapture = true;
             animateHop(from, mv.to, res.capIdx, res.promoted);
             sfx(res.promoted ? "Promote" : "MoveSelf");
             pendingHops.push({ from: from, to: mv.to });
@@ -622,6 +754,7 @@
             pendingHops = [];
             lastFrom = hops[0].from; lastTo = hops[hops.length - 1].to; // first from, last to
             refreshHighlights();
+            pushHistory(lastFrom, lastTo, myTurnCapture);
             for (var h = 0; h < hops.length; h++) hops[h].end = (h === hops.length - 1) ? 1 : 0;
 
             turn = (myColor === WHITE ? BLACK : WHITE); // hand off locally right away
@@ -643,6 +776,7 @@
             var botColor = (myColor === WHITE ? BLACK : WHITE);
             var seq = chooseBotMove(board, botColor);
             if (!seq) { checkEnd(); return; } // no legal move → checkEnd declares winner
+            botTurnCapture = false;
             applyBotSeq(seq, 0);
         }
 
@@ -652,11 +786,13 @@
                 turn = myColor;
                 lastFrom = seq[0].from; lastTo = seq[seq.length - 1].to;
                 refreshHighlights();
+                pushHistory(lastFrom, lastTo, botTurnCapture);
                 checkEnd();
                 if (!gameOver) status("Your turn.");
                 return;
             }
             var res = applyHopFx(seq[h].from, seq[h].to);
+            if (res.captured) botTurnCapture = true;
             animateHop(seq[h].from, seq[h].to, res.capIdx, res.promoted);
             sfx(res.promoted ? "Promote" : "MoveOpp");
             $.Schedule(0.35, function () { applyBotSeq(seq, h + 1); }); // step hops for visibility
@@ -692,6 +828,10 @@
             clearSelection();
             board = initialBoard();
             turn = WHITE;
+            // The rejected turn was optimistically pushed to history; the rebuilt board no longer
+            // matches it. Rather than reconstruct multi-hop labels from raw hops (this path is a
+            // rare cheat/desync recovery), drop the list and let it repopulate from live turns.
+            history = []; reviewIndex = null;
             replayAccepted(0);
         }
 
@@ -702,6 +842,7 @@
             if (seq >= appliedSeq) {
                 layoutPieces();
                 refreshHighlights();
+                renderMoveList();
                 if (myTurn()) status("Move rejected — resynced. Your turn.");
                 else { status("Move rejected — resyncing…"); startPolling(); }
                 return;
@@ -739,14 +880,18 @@
             Api.poll(code, appliedSeq, function (mv) {
                 if (destroyed || myToken !== pollToken) return;
                 if (mv) {
+                    if (oppSeqFrom < 0) oppTurnCapture = false; // first hop of this opponent turn
                     var res = applyHopFx(mv.from, mv.to);
                     appliedSeq++;
                     animateHop(mv.from, mv.to, res.capIdx, res.promoted);
                     sfx(res.promoted ? "Promote" : "MoveOpp");
+                    if (res.captured) oppTurnCapture = true;
                     if (oppSeqFrom < 0) oppSeqFrom = mv.from; // first hop of this opponent turn
                     if (mv.end) {
                         turn = myColor;
-                        lastFrom = oppSeqFrom; lastTo = mv.to; oppSeqFrom = -1;
+                        lastFrom = oppSeqFrom; lastTo = mv.to;
+                        pushHistory(oppSeqFrom, mv.to, oppTurnCapture);
+                        oppSeqFrom = -1;
                         checkEnd();
                         if (!gameOver) { refreshHighlights(); status("Your turn."); }
                         return; // stop polling; wait for player input
@@ -1047,6 +1192,12 @@
         var gameOver = false;
         var lastFrom = -1, lastTo = -1;   // opponent's (or last applied) move, for board highlight
 
+        // Move history + local review (§8 commit 2.2), mirrors createCheckers. Each move pushes
+        // one entry { from, to, boardAfter, label }. reviewIndex === null = live; -1 = initial
+        // position; 0..history.length-1 = the position after that move. Review is read-only.
+        var history = [];
+        var reviewIndex = null;
+
         var dragActive = false, dragGhost = null, dragOverSq = -1, dragEnterCount = 0;
         var dragSourcePiece = null;    // the real piece being dragged (un-dim even if it's since been deleted)
         var DRAG_DEBUG = false;        // drag path is the proven checkers recipe; flip on only to debug
@@ -1105,7 +1256,9 @@
         boardWrap.AddClass("mg-board-wrap");
         var boardPanel = $.CreatePanel("Panel", boardWrap, "MG_ChessBoard");
         boardPanel.AddClass("mg-board");
-        var moveListRows = null;
+        // Move-list side panel + Prev/Next/Live navigation bar (see createCheckers). The nav
+        // steps a purely LOCAL review of past positions; the live game runs underneath.
+        var moveListRows = null, navPrevBtn = null, navNextBtn = null, navLiveBtn = null;
         (function buildSidePanel() {
             var panel = $.CreatePanel("Panel", twoCol, "MG_ChessMoves");
             panel.AddClass("mg-movelist");
@@ -1114,10 +1267,20 @@
             head.text = "Moves";
             moveListRows = $.CreatePanel("Panel", panel, "");
             moveListRows.AddClass("mg-movelist-rows");
-            var empty = $.CreatePanel("Label", moveListRows, "");
-            empty.AddClass("mg-move-empty");
-            empty.text = "No moves yet.";
+            var nav = $.CreatePanel("Panel", panel, "");
+            nav.AddClass("mg-movelist-nav");
+            navPrevBtn = makeNavBtn(nav, "< Prev", function () { navPrev(); });
+            navLiveBtn = makeNavBtn(nav, "Live", function () { navLive(); });
+            navNextBtn = makeNavBtn(nav, "Next >", function () { navNext(); });
+            renderMoveList();
         })();
+        function makeNavBtn(parent, text, onClick) {
+            var b = $.CreatePanel("Button", parent, "");
+            b.AddClass("mg-nav-btn");
+            var l = $.CreatePanel("Label", b, ""); l.text = text;
+            b.SetPanelEvent("onactivate", onClick);
+            return b;
+        }
 
         var SQ = 60, PIECE_SZ = 56, INSET = (SQ - PIECE_SZ) / 2;
         function transformFor(realIdx) {
@@ -1190,7 +1353,7 @@
             lbl.style.transform = "translate3d(" + (x + ox) + "px, " + (y + oy) + "px, 0px)";
         }
 
-        function makePiece(realIdx, v) {
+        function makePiece(realIdx, v, interactive) {
             var piece = $.CreatePanel("Panel", piecesLayer, "");
             piece.AddClass("mg-piece");
             piece.AddClass("mg-chess-piece");
@@ -1201,7 +1364,7 @@
             });
             piece._sq = realIdx;
             pieceEls[realIdx] = piece;
-            setupPieceInput(piece);
+            if (interactive !== false) setupPieceInput(piece);
             return piece;
         }
 
@@ -1214,6 +1377,7 @@
             piece.SetDraggable(true);
 
             $.RegisterEventHandler("DragStart", piece, function (_p, dragEvent) {
+                if (destroyed || reviewIndex !== null) return; // no dragging while reviewing history
                 var sq = piece._sq;
                 var ghost = $.CreatePanel("Panel", piecesLayer, "");
                 ghost.AddClass("mg-piece");
@@ -1343,6 +1507,7 @@
         }
 
         function refreshHighlights() {
+            if (reviewIndex !== null) return;   // renderReview() owns the cells while reviewing
             for (var i = 0; i < 64; i++) {
                 var cell = cells[i];
                 if (!cell) continue;
@@ -1364,6 +1529,91 @@
             }
         }
 
+        // ── move history + local review (mirrors createCheckers) ─────────────
+        function sqName(i) { return String.fromCharCode(97 + cCol(i)) + (8 - cRow(i)); }
+        function moveLabel(from, to, cap) { return sqName(from) + (cap ? "x" : "-") + sqName(to); }
+        // Capture test on the CURRENT (pre-move) board: an occupied target, or a pawn stepping
+        // diagonally onto an empty square (en passant). Call before applyChessMove replaces board.
+        function isCaptureMove(from, to) {
+            if (board[to] !== 0) return true;
+            if (cType(board[from]) === C_PAWN && cCol(from) !== cCol(to) && board[to] === 0) return true;
+            return false;
+        }
+        function pushHistory(from, to, cap) {
+            history.push({ from: from, to: to, boardAfter: board.slice(), label: moveLabel(from, to, cap) });
+            renderMoveList();
+        }
+        function renderMoveList() {
+            if (!moveListRows || !(moveListRows.IsValid && moveListRows.IsValid())) return;
+            moveListRows.RemoveAndDeleteChildren();
+            if (history.length === 0) {
+                var e = $.CreatePanel("Label", moveListRows, "");
+                e.AddClass("mg-move-empty");
+                e.text = "No moves yet.";
+            } else {
+                var cur = (reviewIndex === null) ? history.length - 1 : reviewIndex;
+                for (var i = 0; i < history.length; i++) {
+                    (function (idx) {
+                        var row = $.CreatePanel("Label", moveListRows, "");
+                        row.AddClass("mg-move-row");
+                        if (idx === cur) row.AddClass("mg-move-current");
+                        row.text = (idx + 1) + ". " + history[idx].label;
+                        row.SetPanelEvent("onactivate", function () { gotoReview(idx); });
+                    })(i);
+                }
+            }
+            updateNav();
+            if (reviewIndex === null) { try { moveListRows.ScrollToBottom(); } catch (e2) {} }
+        }
+        function setNavState(btn, enabled) {
+            if (!btn) return;
+            if (enabled) btn.RemoveClass("mg-nav-disabled"); else btn.AddClass("mg-nav-disabled");
+        }
+        function updateNav() {
+            var shown = (history.length === 0) ? -2 : (reviewIndex === null ? history.length - 1 : reviewIndex);
+            setNavState(navPrevBtn, shown > -1);
+            setNavState(navNextBtn, reviewIndex !== null);
+            setNavState(navLiveBtn, reviewIndex !== null);
+        }
+        function layoutPiecesFrom(src) {
+            if (!piecesLayer) return;
+            clearDrag();
+            piecesLayer.RemoveAndDeleteChildren();
+            pieceEls = {};
+            for (var i = 0; i < 64; i++) { if (src[i] !== 0) makePiece(i, src[i], false); }
+        }
+        function renderReview() {
+            var idx = reviewIndex;
+            var snap = (idx < 0) ? initialChessBoard() : history[idx].boardAfter;
+            layoutPiecesFrom(snap);
+            for (var i = 0; i < 64; i++) {
+                var c = cells[i];
+                if (!c) continue;
+                c.RemoveClass("mg-sel"); c.RemoveClass("mg-target"); c.RemoveClass("mg-lastmove"); c.RemoveClass("mg-check");
+            }
+            if (idx >= 0) {
+                var e = history[idx];
+                if (cells[e.from]) cells[e.from].AddClass("mg-lastmove");
+                if (cells[e.to]) cells[e.to].AddClass("mg-lastmove");
+            }
+        }
+        function shownIndex() { return reviewIndex === null ? history.length - 1 : reviewIndex; }
+        function setReview(idx) { reviewIndex = idx; renderReview(); renderMoveList(); }
+        function gotoReview(idx) { if (idx >= 0 && idx < history.length) setReview(idx); }
+        function navPrev() { if (history.length === 0) return; var t = shownIndex() - 1; if (t < -1) return; setReview(t); }
+        function navNext() {
+            if (reviewIndex === null) return;
+            var t = reviewIndex + 1;
+            if (t >= history.length - 1) { navLive(); return; }
+            setReview(t);
+        }
+        function navLive() {
+            reviewIndex = null;
+            layoutPieces();
+            refreshHighlights();
+            renderMoveList();
+        }
+
         function slidePiece(from, to) {
             var piece = pieceEls[from];
             delete pieceEls[from];
@@ -1376,6 +1626,14 @@
         // Apply from→to to the model and mirror it visually: slide the mover, fade any capture
         // (incl. en passant), swap the sprite on promotion, and slide the rook on a castle.
         function applyChessMove(from, to) {
+            // While reviewing, the pieces layer shows a past snapshot — advance the MODEL only and
+            // skip all visuals; navLive() rebuilds the current position from the model on return.
+            if (reviewIndex !== null) {
+                var wasPawnEdge = cType(board[from]) === C_PAWN && (cRow(to) === 0 || cRow(to) === 7);
+                var rr = makeMove(board, cst, from, to);
+                board = rr[0]; cst = rr[1];
+                return { promoted: wasPawnEdge };
+            }
             // Any move (opponent's polled move or bot) can capture the piece you're mid-drag on,
             // deleting its panel + DragEnd handler and leaking the ghost. Clear the drag first;
             // for your own move the drag already ended (no-op).
@@ -1421,7 +1679,7 @@
         }
 
         function onCellClick(i) {
-            if (destroyed || !myTurn()) return;
+            if (destroyed || reviewIndex !== null || !myTurn()) return;
             if (selected >= 0) {
                 for (var t = 0; t < legalTargets.length; t++) {
                     if (legalTargets[t].to === i) { doLocalMove(selected, i); return; }
@@ -1437,18 +1695,20 @@
         }
 
         function onCellDrop(i) {
-            if (destroyed || !myTurn() || !dragActive || selected < 0) return;
+            if (destroyed || reviewIndex !== null || !myTurn() || !dragActive || selected < 0) return;
             for (var t = 0; t < legalTargets.length; t++) {
                 if (legalTargets[t].to === i) { doLocalMove(selected, i); return; }
             }
         }
 
         function doLocalMove(from, to) {
+            var cap = isCaptureMove(from, to);   // test BEFORE the board mutates
             var fx = applyChessMove(from, to);
             lastFrom = from; lastTo = to;
             clearSelection();
             turn = -myColor;               // hand off locally
             refreshHighlights();
+            pushHistory(from, to, cap);
             sfx(inCheck(board, turn) ? "Check" : (fx.promoted ? "Promote" : "MoveSelf"));
 
             if (session.bot) {
@@ -1467,10 +1727,12 @@
             var botColor = -myColor;
             var mv = chessBotMove(board, cst, botColor);
             if (!mv) { checkEnd(); return; }
+            var cap = isCaptureMove(mv.from, mv.to);
             var fx = applyChessMove(mv.from, mv.to);
             lastFrom = mv.from; lastTo = mv.to;
             turn = myColor;
             refreshHighlights();
+            pushHistory(mv.from, mv.to, cap);
             sfx(inCheck(board, myColor) ? "Check" : (fx.promoted ? "Promote" : "MoveOpp"));
             if (!checkEnd()) status(inCheck(board, myColor) ? "Check! Your turn." : "Your turn.");
         }
@@ -1506,6 +1768,7 @@
             if (seq >= appliedSeq) {
                 layoutPieces();
                 refreshHighlights();
+                renderMoveList();
                 if (myTurn()) status("Move rejected — resynced. Your turn.");
                 else { status("Move rejected — resyncing…"); startPolling(); }
                 return;
@@ -1536,10 +1799,12 @@
                 if (destroyed || myToken !== pollToken) return;
                 if (mv) {
                     appliedSeq++;
+                    var oppCap = isCaptureMove(mv.from, mv.to);   // test the pre-move board
                     var fx = applyChessMove(mv.from, mv.to);
                     lastFrom = mv.from; lastTo = mv.to;
                     turn = myColor;                 // every chess move ends the turn (end always 1)
                     refreshHighlights();
+                    pushHistory(mv.from, mv.to, oppCap);
                     sfx(inCheck(board, myColor) ? "Check" : (fx.promoted ? "Promote" : "MoveOpp"));
                     if (!checkEnd()) status(inCheck(board, myColor) ? "Check! Your turn." : "Your turn.");
                 } else {
