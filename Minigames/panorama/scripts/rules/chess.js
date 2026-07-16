@@ -266,12 +266,35 @@
         return best;
     }
 
+    // Resumable variant of chessBotMove: SAME depth-3 alpha-beta, but one root move per step so the
+    // caller can yield between them. Panorama JS is single-threaded — the one-shot search froze the
+    // whole HUD (the "лаги при ходе бота") and that freeze swallowed the premove-grab window.
+    // Stepping across frames keeps the UI responsive; the node budget is shared across steps so the
+    // total work (and playing strength) is unchanged.
+    // Usage: var d = chessBotMovePrep(b,st,color); while(!d.done()) d.step(); var mv = d.result();
+    function chessBotMovePrep(b, st, color) {
+        var moves = legalMoves(b, st, color);
+        orderChessMoves(b, moves);
+        var budget = { n: 0, max: 120000 }, DEPTH = 3, i = 0, best = null, bestScore = -1e9;
+        return {
+            done: function () { return i >= moves.length; },
+            step: function () {
+                if (i >= moves.length) return;
+                var r = makeMove(b, st, moves[i].from, moves[i].to);
+                var sc = -negamax(r[0], r[1], -color, DEPTH - 1, -1e9, 1e9, budget) + Math.random() * 8;
+                if (sc > bestScore) { bestScore = sc; best = moves[i]; }
+                i++;
+            },
+            result: function () { return best; }
+        };
+    }
+
     R.chess = {
         C_PAWN: C_PAWN, C_KNIGHT: C_KNIGHT, C_BISHOP: C_BISHOP, C_ROOK: C_ROOK, C_QUEEN: C_QUEEN, C_KING: C_KING,
         cSq: cSq, cRow: cRow, cCol: cCol, cSign: cSign, cType: cType,
         initialChessBoard: initialChessBoard, initialChessState: initialChessState, cloneChessState: cloneChessState,
         findKing: findKing, attacksSquare: attacksSquare, inCheck: inCheck,
         makeMove: makeMove, pseudoMoves: pseudoMoves, legalMoves: legalMoves, chessResult: chessResult,
-        chessBotMove: chessBotMove
+        chessBotMove: chessBotMove, chessBotMovePrep: chessBotMovePrep
     };
 })();

@@ -257,6 +257,29 @@
         return pick;
     }
 
+    // Resumable variant of chooseBotMove: the SAME depth-5 search, but exposed as a driver so
+    // the caller can evaluate ONE root move per frame and yield between them. Panorama JS is
+    // single-threaded, so the old one-shot call froze the whole HUD for the length of the search
+    // (the "лаги при ходе бота"); worse, that freeze ate the only window in which a premove could
+    // be grabbed. Stepping across frames keeps the UI live and the bot exactly as strong.
+    // Usage: var d = chooseBotMovePrep(b,color); while(!d.done()) d.step(); var seq = d.result();
+    function chooseBotMovePrep(b, color) {
+        var seqs = legalSequences(b, color);
+        var opp = color === WHITE ? BLACK : WHITE;
+        var DEPTH = 5, i = 0, best = -1e9, pick = seqs.length ? seqs[0] : null;
+        return {
+            done: function () { return i >= seqs.length; },
+            step: function () {
+                if (i >= seqs.length) return;
+                var nb = b.slice(); applySequence(nb, seqs[i]);
+                var sc = minimax(nb, opp, color, DEPTH - 1, -1e9, 1e9) + Math.random() * 0.5;
+                if (sc > best) { best = sc; pick = seqs[i]; }
+                i++;
+            },
+            result: function () { return pick; }
+        };
+    }
+
     R.checkers = {
         WHITE: WHITE, BLACK: BLACK,
         idx: idx, rowOf: rowOf, colOf: colOf, isDark: isDark,
@@ -264,6 +287,6 @@
         initialBoard: initialBoard,
         simpleMoves: simpleMoves, captureMoves: captureMoves,
         anyCaptureFor: anyCaptureFor, applyHop: applyHop, hasAnyMove: hasAnyMove,
-        legalSequences: legalSequences, chooseBotMove: chooseBotMove
+        legalSequences: legalSequences, chooseBotMove: chooseBotMove, chooseBotMovePrep: chooseBotMovePrep
     };
 })();

@@ -403,6 +403,52 @@ These are the mistakes to NOT repeat. Every one was confirmed against the game's
      new files in the working tree, so "I rolled back and it STILL crashes" can be a false signal —
      you're still building the new code. Verify with `git status` / `git diff <commit>` before trusting a rollback.
 
+18. **A synchronous bot search freezes the whole HUD — and silently kills premoves.** Panorama JS is
+   single-threaded. The offline bots run a deep search (`chooseBotMove` = depth-5 minimax, checkers;
+   `chessBotMove` = depth-3 alpha-beta, up to 120k nodes) and the old code called it in ONE blocking
+   invocation inside `botTurn`. That call holds the JS thread for its whole duration, so the entire
+   HUD stops painting and accepting input until it returns — the maintainer's "лаги когда бот делает
+   ход". Two knock-on effects made it worse than "just laggy":
+   - **It ate the premove window.** A premove can only be grabbed while it's NOT your turn (during the
+     bot's think). But the only live moment was the ~0.45s `$.Schedule` delay BEFORE the search; once
+     `botTurn` fired, the frame locked for the search's full length, so you physically could not pick
+     up a piece. Premoves "не работают против бота" was a symptom of the freeze, not of the premove
+     code.
+   - **Fix = step the search across frames.** Each rules module exposes a resumable driver next to the
+     one-shot fn: `chooseBotMovePrep(b,color)` (checkers) / `chessBotMovePrep(b,st,color)` (chess),
+     returning `{ done(), step(), result() }`. `step()` evaluates ONE root move (its full subtree is
+     still synchronous, but one root's subtree is cheap); the controller loops `if(!done){step();
+     $.Schedule(0, drive)}` so a frame is yielded between roots. Same depth, same node budget (shared
+     across steps for chess), so **playing strength is byte-for-byte identical** — only the scheduling
+     changed. The bot tests (`mg_rules_test.js`, `mg_chess_test.js`) still call the one-shot fns and
+     pass unchanged.
+   - **Rule going forward:** never call a multi-hundred-ms compute synchronously in a controller. If a
+     search/eval can exceed a frame, expose it as a step driver and yield with `$.Schedule(0, …)`. If
+     one root's subtree is itself too heavy (deeper future bots), the same pattern nests one level down
+     (yield inside `negamax`/`minimax` at the root ply). The rules modules stay shared byte-for-byte
+     with the worker, so run `node tools/build_worker.js` after touching `rules/*.js` — the new prep
+     fns get embedded too (harmless server-side; it never calls them).
+
+19. **Premove must hook the DRAG path, not just clicks — and both the online-poll AND bot-completion
+   turn-handoffs.** The pieces are primarily moved by native drag (trap 16), so a premove that only
+   listens on `onCellClick` is dead on arrival: grabbing a piece during the opponent's turn goes
+   through `DragStart`/`DragEnd`, and `commitDropMultimethod` bails on `!myTurn()` → the piece snaps
+   back and nothing is queued. The working design (checkers + chess, `mg_games.js`):
+   - `dragFromSq` is recorded in `DragStart` **regardless of whose turn it is** (the piece is
+     `SetDraggable(true)` once at creation, so it stays grabbable during the opponent's turn).
+   - `DragEnd` branches: if `!myTurn() && canPremove()`, resolve the drop square via `dropSquare()`
+     (the same window-geometry channels as `commitDropMultimethod` but WITHOUT the legal-target filter
+     — a premove is validated later, against the post-opponent board) and store `premove = {from,to}`.
+   - The queued move is replayed by `tryPremove()`, which must be called from **every** path that
+     hands the turn back to me: the online poll (`pollOnce`, at `end=1`) AND the bot-completion paths
+     (`applyBotSeq` end, checkers; `botApply`, chess). Miss one and premoves work online but not vs
+     bot, or vice-versa. `tryPremove` re-derives legality on the NEW board via `targetsFor` and either
+     plays it or silently drops it.
+   - `canPremove()` deliberately does NOT exclude bot games — the bot has a think window too (now that
+     it doesn't freeze, trap 18), so premoves are testable offline.
+   - Highlight: `.mg-premove` (orange wash) is a distinct class from `.mg-sel` (live selection) and the
+     green `.mg-target` dots, cleared/rebuilt in `refreshHighlights`.
+
 ---
 
 ## 7. Checkers internals (mg_games.js)

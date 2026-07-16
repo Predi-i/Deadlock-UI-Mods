@@ -36,7 +36,7 @@
     var initialBoard = RC.initialBoard;
     var simpleMoves = RC.simpleMoves, captureMoves = RC.captureMoves;
     var anyCaptureFor = RC.anyCaptureFor, applyHop = RC.applyHop, hasAnyMove = RC.hasAnyMove;
-    var legalSequences = RC.legalSequences, chooseBotMove = RC.chooseBotMove;
+    var legalSequences = RC.legalSequences, chooseBotMove = RC.chooseBotMove, chooseBotMovePrep = RC.chooseBotMovePrep;
     var tttWinner = RT.tttWinner, tttFull = RT.tttFull, tttBotMove = RT.tttBotMove;
 
     // ── shared game clock (chess & checkers) ─────────────────────────────────
@@ -176,6 +176,14 @@
         // any hop in it was a capture). Reset when each side begins a fresh turn.
         var myTurnCapture = false, oppTurnCapture = false, botTurnCapture = false;
 
+        // Premove (online only, ONE queued move): while it's the opponent's turn you may click/drag
+        // your piece to a square; we remember {from,to}, glow both cells orange, and the instant the
+        // opponent's move lands (turn flips to us) we try to play it. It's validated against the NEW
+        // position via targetsFor — an illegal queued move (piece captured, target blocked, a forced
+        // jump elsewhere) is simply discarded. preSelected holds the from-square mid-selection.
+        var premove = null;            // { from, to } or null
+        var preSelected = -1;          // my piece picked for a premove, awaiting a destination click
+
         // Drag-and-drop state (native Panorama drag; recipe proven in QOLLOCK):
         // a piece is a drag SOURCE, each cell a drop TARGET. While dragging, a throwaway
         // "ghost" panel follows the cursor and the real piece is dimmed in place.
@@ -184,6 +192,7 @@
         var dragOverSq = -1;           // square the cursor is currently over (DragEnter / mouseover)
         var dragEnterCount = 0;        // how many DragEnter events landed this drag (is that channel alive?)
         var dragSourcePiece = null;    // the real piece being dragged (so we can un-dim it even if it's since been deleted)
+        var dragFromSq = -1;           // square the current drag STARTED on (set in DragStart regardless of turn, so a drag made during the opponent's turn can queue a premove)
 
         // Tear the drag state down from ANY exit path, not just DragEnd. The DragEnd handler is
         // bound to the PIECE panel; if the opponent captures that piece while you hold it (a
@@ -432,6 +441,9 @@
 
             $.RegisterEventHandler("DragStart", piece, function (_p, dragEvent) {
                 if (destroyed || reviewIndex !== null) return; // no dragging while reviewing history
+                // Allow a drag both on my turn (a real move) AND on the opponent's turn (to queue a
+                // premove). Only block it when neither is possible (game over etc.).
+                if (!myTurn() && !canPremove()) return;
                 var sq = piece._sq;
                 // ALWAYS provide a ghost as the drag visual so the engine never drags the
                 // real piece around (QOLLOCK sets dragEvent.displayPanel for exactly this).
@@ -454,6 +466,7 @@
                 dragOverSq = -1;
                 dragEnterCount = 0;
                 dragSourcePiece = piece;
+                dragFromSq = sq;                  // remember where this drag began (used by the premove drop path)
                 piece.AddClass("mg-drag-source"); // dim the real piece while it's "lifted"
 
                 // Light up this piece's legal targets as drop hints — but only when it may
@@ -472,6 +485,14 @@
                 // back. No false move is possible, and nothing here touches the server.
                 // `droppedPanel` is DragEnd's 2nd arg: the panel released onto (native,
                 // authoritative when present — this is how QOLLOCK's ql_hero_testing works).
+                if (!myTurn() && canPremove()) {
+                    // Dragged during the opponent's turn → queue a PREMOVE to the dropped square.
+                    var pmTo = dropSquare(droppedPanel);
+                    if (pmTo >= 0 && pmTo !== dragFromSq) { premove = { from: dragFromSq, to: pmTo }; preSelected = -1; }
+                    clearDrag();
+                    refreshHighlights();
+                    return;
+                }
                 commitDropMultimethod(droppedPanel);
 
                 // Tear the ghost + dim + drag state down regardless of outcome. A drop on empty
@@ -598,6 +619,18 @@
             return fromDisplay(drow * 8 + dcol);
         }
 
+        // Resolve the raw board square a drop landed on (no legal-target filter — used by the
+        // premove path, which validates later against the post-opponent board). Same multi-channel
+        // geometry as commitDropMultimethod: window position first, then the native drop panel.
+        function dropSquare(droppedPanel) {
+            var wSq = squareFromWindow();
+            if (wSq >= 0) return wSq;
+            var aPanel = squareFromPanel(droppedPanel);
+            if (aPanel >= 0) return aPanel;
+            if (dragOverSq >= 0) return dragOverSq;
+            return squareFromGhost();
+        }
+
         // Try each candidate in priority order; commit the first that is a legal target.
         // `droppedPanel` is DragEnd's authoritative 2nd arg (the panel released onto).
         function commitDropMultimethod(droppedPanel) {
@@ -658,13 +691,23 @@
                 cell.RemoveClass("mg-sel");
                 cell.RemoveClass("mg-target");
                 cell.RemoveClass("mg-lastmove");
+                cell.RemoveClass("mg-lastmove-to");
+                cell.RemoveClass("mg-premove");
             }
+            // FROM = light wash, TO = darker wash (maintainer: the destination must read darker).
             if (lastFrom >= 0 && cells[lastFrom]) cells[lastFrom].AddClass("mg-lastmove");
-            if (lastTo >= 0 && cells[lastTo]) cells[lastTo].AddClass("mg-lastmove");
+            if (lastTo >= 0 && cells[lastTo]) cells[lastTo].AddClass("mg-lastmove-to");
             if (selected >= 0 && cells[selected]) cells[selected].AddClass("mg-sel");
             for (var t = 0; t < legalTargets.length; t++) {
                 var tc = cells[legalTargets[t].to];
                 if (tc) tc.AddClass("mg-target");
+            }
+            // Queued premove (opponent's turn): glow the picked piece and, once a destination is
+            // set, both ends. A distinct class from the live selection so it reads as "pending".
+            if (preSelected >= 0 && cells[preSelected]) cells[preSelected].AddClass("mg-premove");
+            if (premove) {
+                if (cells[premove.from]) cells[premove.from].AddClass("mg-premove");
+                if (cells[premove.to]) cells[premove.to].AddClass("mg-premove");
             }
         }
 
@@ -853,8 +896,40 @@
         // A click/drop that couldn't be a legal move: sound + (if forced) the must-capture flash.
         function rejectMove() { sfx("Illegal"); flashMustCapture(); }
 
+        // A premove can be queued only online (a bot moves instantly, so there's no waiting
+        // window), when the game's live and it's NOT my turn yet.
+        function canPremove() { return !gameOver && !destroyed && reviewIndex === null && !myTurn(); }
+        function clearPremove() { premove = null; preSelected = -1; refreshHighlights(); }
+        // A click while it's the opponent's turn: pick one of my pieces as the premove source,
+        // then a second click sets the destination. We DON'T validate against the current board
+        // (the position will change after the opponent moves — e.g. a recapture lands on a square
+        // that's still occupied by my own piece right now); the queued {from,to} is validated when
+        // it's actually my turn (tryPremove) and silently dropped if it's no longer legal.
+        function premoveClick(i) {
+            if (colorOf(board[i]) === myColor) { preSelected = i; premove = null; refreshHighlights(); return; }
+            if (preSelected >= 0 && i !== preSelected) { premove = { from: preSelected, to: i }; preSelected = -1; refreshHighlights(); return; }
+            clearPremove();
+        }
+        // Called the instant the turn flips to me (opponent's move just landed). Replays the
+        // queued premove if it's legal on the NEW board, else discards it.
+        function tryPremove() {
+            if (!premove) return;
+            var pm = premove; premove = null; preSelected = -1;
+            if (!myTurn()) { refreshHighlights(); return; }
+            var tg = targetsFor(pm.from);
+            for (var t = 0; t < tg.length; t++) {
+                if (tg[t].to === pm.to) {
+                    selected = pm.from; legalTargets = tg; refreshHighlights();
+                    doLocalHop(pm.from, tg[t]);
+                    return;
+                }
+            }
+            refreshHighlights();   // premove no longer legal — just drop it
+        }
+
         function onCellClick(i) {
-            if (destroyed || reviewIndex !== null || !myTurn()) return;
+            if (destroyed || reviewIndex !== null) return;
+            if (!myTurn()) { if (canPremove()) premoveClick(i); return; }
 
             // Clicking a legal target of the currently selected piece = execute a hop.
             if (selected >= 0) {
@@ -938,13 +1013,27 @@
         // ── bot turn (offline mode) ─────────────────────────────────────────
         function scheduleBotTurn() { $.Schedule(0.45, botTurn); }
 
+        // Drive the resumable bot search ONE root move per frame, yielding with $.Schedule(0)
+        // between steps. The old chooseBotMove() ran the whole depth-5 minimax in one blocking
+        // call, which froze the HUD (the "лаги при ходе бота") AND swallowed the window in which a
+        // premove could be grabbed. Stepping keeps the board live the whole time the bot "thinks".
         function botTurn() {
             if (destroyed || gameOver) return;
             var botColor = (myColor === WHITE ? BLACK : WHITE);
-            var seq = chooseBotMove(board, botColor);
-            if (!seq) { checkEnd(); return; } // no legal move → checkEnd declares winner
-            botTurnCapture = false;
-            applyBotSeq(seq, 0);
+            if (!chooseBotMovePrep) {   // older rules bundle: one-shot fallback
+                var s = chooseBotMove(board, botColor);
+                if (!s) { checkEnd(); return; }
+                botTurnCapture = false; applyBotSeq(s, 0); return;
+            }
+            var driver = chooseBotMovePrep(board, botColor);
+            (function drive() {
+                if (destroyed || gameOver) return;
+                if (!driver.done()) { driver.step(); $.Schedule(0.0, drive); return; }
+                var seq = driver.result();
+                if (!seq) { checkEnd(); return; } // no legal move → checkEnd declares winner
+                botTurnCapture = false;
+                applyBotSeq(seq, 0);
+            })();
         }
 
         function applyBotSeq(seq, h) {
@@ -956,7 +1045,7 @@
                 refreshHighlights();
                 pushHistory(lastFrom, lastTo, botTurnCapture);
                 checkEnd();
-                if (!gameOver) status("Your turn.");
+                if (!gameOver) { status("Your turn."); tryPremove(); }
                 return;
             }
             var res = applyHopFx(seq[h].from, seq[h].to);
@@ -1062,7 +1151,7 @@
                         pushHistory(oppSeqFrom, mv.to, oppTurnCapture);
                         oppSeqFrom = -1;
                         checkEnd();
-                        if (!gameOver) { refreshHighlights(); status("Your turn."); }
+                        if (!gameOver) { refreshHighlights(); status("Your turn."); tryPremove(); }
                         return; // stop polling; wait for player input
                     }
                     $.Schedule(0.05, function () { pollOnce(myToken); }); // drain chain fast
@@ -1345,6 +1434,7 @@
     var initialChessBoard = RX.initialChessBoard, initialChessState = RX.initialChessState;
     var makeMove = RX.makeMove, legalMoves = RX.legalMoves, inCheck = RX.inCheck;
     var findKing = RX.findKing, chessResult = RX.chessResult, chessBotMove = RX.chessBotMove;
+    var chessBotMovePrep = RX.chessBotMovePrep;
 
     // ── chess controller ─────────────────────────────────────────────────────────
     // Mirrors createCheckers: same board geometry, same proven click+drag input, same
@@ -1366,6 +1456,13 @@
         var gameOver = false;
         var lastFrom = -1, lastTo = -1;   // opponent's (or last applied) move, for board highlight
 
+        // Premove (online only, ONE queued move), mirrors createCheckers: while it's the opponent's
+        // turn you click your piece then a destination; we remember {from,to}, glow both cells, and
+        // the instant the opponent's move lands (turn flips to us) we validate against the NEW
+        // position via targetsFor and play it, or silently discard it if it's no longer legal.
+        var premove = null;            // { from, to } or null
+        var preSelected = -1;          // my piece picked for a premove, awaiting a destination click
+
         // Move history + local review (§8 commit 2.2), mirrors createCheckers. Each move pushes
         // one entry { from, to, boardAfter, label }. reviewIndex === null = live; -1 = initial
         // position; 0..history.length-1 = the position after that move. Review is read-only.
@@ -1380,6 +1477,7 @@
 
         var dragActive = false, dragGhost = null, dragOverSq = -1, dragEnterCount = 0;
         var dragSourcePiece = null;    // the real piece being dragged (un-dim even if it's since been deleted)
+        var dragFromSq = -1;           // square the current drag STARTED on (set in DragStart regardless of turn → a drag during the opponent's turn can queue a premove)
         var DRAG_DEBUG = false;        // drag path is the proven checkers recipe; flip on only to debug
 
         // Tear the drag state down from ANY exit path, not just DragEnd (bound to the piece panel).
@@ -1595,12 +1693,21 @@
                 dragOverSq = -1;
                 dragEnterCount = 0;
                 dragSourcePiece = piece;
+                dragFromSq = sq;                  // where this drag began (used by the premove drop path)
                 piece.AddClass("mg-drag-source");
 
                 if (!destroyed && myTurn() && selected !== sq) onCellClick(sq);
             });
 
             $.RegisterEventHandler("DragEnd", piece, function (_p, droppedPanel) {
+                if (!myTurn() && canPremove()) {
+                    // Dragged during the opponent's turn → queue a PREMOVE to the dropped square.
+                    var pmTo = dropSquare(droppedPanel);
+                    if (pmTo >= 0 && pmTo !== dragFromSq) { premove = { from: dragFromSq, to: pmTo }; preSelected = -1; }
+                    clearDrag();
+                    refreshHighlights();
+                    return;
+                }
                 commitDropMultimethod(droppedPanel);
                 clearDrag();
             });
@@ -1698,6 +1805,15 @@
             if (DRAG_DEBUG) status("DROP MISS win=" + wSq + " panel=" + aPanel + " over=" + bOver + " ghost=" + cGhost);
         }
 
+        // Raw dropped square (any of 0..63) with NO legal-target filter — used to queue a premove
+        // while it's the opponent's turn (validated later by tryPremove). Same channels as
+        // commitDropMultimethod, first valid one wins.
+        function dropSquare(droppedPanel) {
+            var cands = [squareFromWindow(), squareFromPanel(droppedPanel), dragOverSq, squareFromGhost()];
+            for (var k = 0; k < cands.length; k++) if (cands[k] >= 0) return cands[k];
+            return -1;
+        }
+
         // ── rendering ───────────────────────────────────────────────────────────────
         function layoutPieces() {
             if (!piecesLayer) return;
@@ -1713,16 +1829,25 @@
                 var cell = cells[i];
                 if (!cell) continue;
                 cell.RemoveClass("mg-lastmove");
+                cell.RemoveClass("mg-lastmove-to");
                 cell.RemoveClass("mg-sel");
                 cell.RemoveClass("mg-target");
                 cell.RemoveClass("mg-check");
+                cell.RemoveClass("mg-premove");
             }
+            // FROM = light wash, TO = darker wash (maintainer: the destination must read darker).
             if (lastFrom >= 0 && cells[lastFrom]) cells[lastFrom].AddClass("mg-lastmove");
-            if (lastTo >= 0 && cells[lastTo]) cells[lastTo].AddClass("mg-lastmove");
+            if (lastTo >= 0 && cells[lastTo]) cells[lastTo].AddClass("mg-lastmove-to");
             if (selected >= 0 && cells[selected]) cells[selected].AddClass("mg-sel");
             for (var t = 0; t < legalTargets.length; t++) {
                 var tc = cells[legalTargets[t].to];
                 if (tc) tc.AddClass("mg-target");
+            }
+            // Queued premove (opponent's turn): glow the picked piece and, once set, both ends.
+            if (preSelected >= 0 && cells[preSelected]) cells[preSelected].AddClass("mg-premove");
+            if (premove) {
+                if (cells[premove.from]) cells[premove.from].AddClass("mg-premove");
+                if (cells[premove.to]) cells[premove.to].AddClass("mg-premove");
             }
             if (!gameOver && inCheck(board, turn)) {
                 var ks = findKing(board, turn);
@@ -1879,8 +2004,34 @@
             return out;
         }
 
+        // Premove (online only): pick a piece then a destination while it's the opponent's turn.
+        // Not validated now (the position changes after the opponent moves); tryPremove replays it
+        // when it's actually my turn and drops it if illegal on the new board. Mirrors createCheckers.
+        function canPremove() { return !gameOver && !destroyed && reviewIndex === null && !myTurn(); }
+        function clearPremove() { premove = null; preSelected = -1; refreshHighlights(); }
+        function premoveClick(i) {
+            if (cSign(board[i]) === myColor) { preSelected = i; premove = null; refreshHighlights(); return; }
+            if (preSelected >= 0 && i !== preSelected) { premove = { from: preSelected, to: i }; preSelected = -1; refreshHighlights(); return; }
+            clearPremove();
+        }
+        function tryPremove() {
+            if (!premove) return;
+            var pm = premove; premove = null; preSelected = -1;
+            if (!myTurn()) { refreshHighlights(); return; }
+            var tg = targetsFor(pm.from);
+            for (var t = 0; t < tg.length; t++) {
+                if (tg[t].to === pm.to) {
+                    selected = pm.from; legalTargets = tg; refreshHighlights();
+                    doLocalMove(pm.from, pm.to);
+                    return;
+                }
+            }
+            refreshHighlights();   // premove no longer legal — just drop it
+        }
+
         function onCellClick(i) {
-            if (destroyed || reviewIndex !== null || !myTurn()) return;
+            if (destroyed || reviewIndex !== null) return;
+            if (!myTurn()) { if (canPremove()) premoveClick(i); return; }
             if (selected >= 0) {
                 for (var t = 0; t < legalTargets.length; t++) {
                     if (legalTargets[t].to === i) { doLocalMove(selected, i); return; }
@@ -1929,10 +2080,24 @@
 
         // ── bot (offline) ─────────────────────────────────────────────────────────────
         function scheduleBotTurn() { $.Schedule(0.45, botTurn); }
+        // Drive the resumable search ONE root move per frame so the HUD never freezes (the
+        // "лаги при ходе бота") and a premove can be grabbed while the bot thinks. Same depth-3
+        // alpha-beta, same strength — only the scheduling changed. Falls back to the one-shot
+        // chessBotMove if the prep driver isn't present (older rules bundle).
         function botTurn() {
             if (destroyed || gameOver) return;
             var botColor = -myColor;
-            var mv = chessBotMove(board, cst, botColor);
+            if (!chessBotMovePrep) { botApply(chessBotMove(board, cst, botColor)); return; }
+            var driver = chessBotMovePrep(board, cst, botColor);
+            (function stepOnce() {
+                if (destroyed || gameOver) return;
+                if (driver.done()) { botApply(driver.result()); return; }
+                driver.step();
+                $.Schedule(0.0, stepOnce);   // yield a frame between root moves
+            })();
+        }
+        function botApply(mv) {
+            if (destroyed || gameOver) return;
             if (!mv) { checkEnd(); return; }
             var cap = isCaptureMove(mv.from, mv.to);
             var fx = applyChessMove(mv.from, mv.to);
@@ -1942,7 +2107,7 @@
             refreshHighlights();
             pushHistory(mv.from, mv.to, cap);
             sfx(inCheck(board, myColor) ? "Check" : (fx.promoted ? "Promote" : "MoveOpp"));
-            if (!checkEnd()) status(inCheck(board, myColor) ? "Check! Your turn." : "Your turn.");
+            if (!checkEnd()) { status(inCheck(board, myColor) ? "Check! Your turn." : "Your turn."); tryPremove(); }
         }
 
         // ── networking ─────────────────────────────────────────────────────────────────
@@ -2015,7 +2180,7 @@
                     refreshHighlights();
                     pushHistory(mv.from, mv.to, oppCap);
                     sfx(inCheck(board, myColor) ? "Check" : (fx.promoted ? "Promote" : "MoveOpp"));
-                    if (!checkEnd()) status(inCheck(board, myColor) ? "Check! Your turn." : "Your turn.");
+                    if (!checkEnd()) { status(inCheck(board, myColor) ? "Check! Your turn." : "Your turn."); tryPremove(); }
                 } else {
                     $.Schedule(0.4, function () { pollOnce(myToken); });
                 }
