@@ -377,6 +377,32 @@ These are the mistakes to NOT repeat. Every one was confirmed against the game's
    make it a no-op. TTT has no drag; durak drags only your own hand cards (the opponent can't capture
    from your hand mid-drag), so neither needs it.
 
+17. **`@keyframes` (and `animation-*`) in a HUD `.vcss` bricks the WHOLE stylesheet — silently.**
+   This one cost a full debugging session. `resourcecompiler.exe` accepts `@keyframes` without a
+   warning (`OK: 1 compiled, 0 failed`), so the build looks clean and the `.vcss_c` ships. But the
+   runtime CSS parser in the HUD context **rejects the entire compiled stylesheet** when it hits the
+   unsupported `@keyframes` at-rule — not just the one rule. `base_hud.xml` `<include>`s `mg.vcss_c`,
+   so a dead stylesheet takes the whole layout down: **`Unable to load layout file panorama/layout/base_hud.xml`**,
+   a black/blank HUD, and every mod panel gone. The failure looks like a layout/XML problem, which
+   sends you hunting in the wrong file for hours.
+   - **Not all `@`-rules are equal.** `@import` and `@define` (the `oracle`/`radiance` font aliases,
+     see the top of `mg.css`) ARE supported and are used throughout. Only `@keyframes` was fatal.
+     An unsupported *property* (e.g. a typo'd `animation-foo`) is merely skipped with a warning; an
+     unsupported *at-rule* nukes the file. Big difference.
+   - **Diagnosis that worked:** git-bisect the BUILD, not just the source. `Bridge-Buff-Reminder`
+     (a working mod) kept loading because it ships no `@keyframes`; bisecting Minigames commits
+     narrowed it to `mg.css`, then diffing every new CSS construct against the last-known-good
+     `mg.css` surfaced `@keyframes`/`animation-*` as the only brand-new at-rule (radial `gradient()`,
+     `fit-children`, `brightness` were all already in use and safe).
+   - **Fix / rule going forward:** animate with a **`transition` on a JS-toggled class** instead.
+     The forced-capture flash (`.mg-cell.mg-mustcap`, checkers) is `background-color` + a
+     `transition`; `flashMustCapture()` in `mg_games.js` does `AddClass` then `RemoveClass` on a
+     `$.Schedule` timer. No `@keyframes` anywhere in the mod. If you ever *must* have a keyframed
+     animation, it has to live in a stylesheet the game itself loads, never in a modded HUD `.vcss`.
+   - **Also watch:** a mixed (`--mixed`, the default) `git reset` moves the branch pointer but leaves
+     new files in the working tree, so "I rolled back and it STILL crashes" can be a false signal —
+     you're still building the new code. Verify with `git status` / `git diff <commit>` before trusting a rollback.
+
 ---
 
 ## 7. Checkers internals (mg_games.js)

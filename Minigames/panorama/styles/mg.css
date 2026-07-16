@@ -210,12 +210,15 @@
 }
 
 /* ── game picker — 3 per row ─────────────────────────────────────────────── */
-/* max-height 430 matches the right column's .mg-detail height, so the divider spans the same
+/* max-height matches the right column's .mg-detail height, so the divider spans the same
    height as the grid AND all 9 square cards (3 rows × 142px = 426) show without a scroll — the
    old 380 clipped the 3rd row into a dead "unused space" strip. Card row = 132 + 2*5 margin = 142px. */
 .mg-picker {
     width: 100%;
-    max-height: 430px;
+    max-height: 500px;                  /* matches .mg-detail height so the column divider spans the
+                                           same height on both sides (was 430; detail grew to 500 for
+                                           the time-control block). 9 cards (3×142) still show without
+                                           a scroll; extra space sits below them. */
     flow-children: right-wrap;
     overflow: clip scroll;              /* NATIVE Panorama vertical-scroll idiom */
 }
@@ -331,10 +334,13 @@
    the tallest layout (single-game durak) with headroom. */
 .mg-detail {
     width: 100%;
-    height: fit-children;                 /* grow for the extra time-control block (chess/checkers);
-                                             min-height keeps untimed games at the old 430 so the
-                                             divider still spans the picker grid. */
-    min-height: 430px;
+    height: 500px;                        /* FIXED (not fit-children/min): the modal is vertically
+                                             centred, so ANY per-game height change re-centres the
+                                             whole modal → a jump when you switch chess/checkers (which
+                                             add the ~70px time-control block) vs untimed games. 500
+                                             = old 430 + the timer block, fits the tallest layout with
+                                             the same headroom the 430 gave durak. fit-children brought
+                                             the jump back (maintainer 2026-07-16). */
     flow-children: down;
     overflow: noclip;                     /* don't clip the full-width buttons' borders (п4) */
     transition-property: opacity;         /* fades in on each game switch (fadeInDetail) */
@@ -437,6 +443,16 @@
 /* full-width buttons inside the right detail column. margin:0 (the default side margin was
    letting the right border run past the column edge → "border cut off" on PLAY VS BOT, п4). */
 .mg-detail .mg-btn { width: 100%; margin: 0px; }
+/* Flexible filler in the fixed-height detail column: takes all the height left between the top
+   cluster and the action buttons so the buttons sink to the bottom instead of leaving a dead
+   strip under them on untimed games (the "подбородок"). fill-parent-flow is the proven idiom
+   here (see .mg-movelist-rows / .mg-header-spacer); it shrinks to ~0 when the time-control block
+   makes the top cluster tall. min-height 0 so it never forces the column past 500px. */
+.mg-detail-spacer {
+    width: 100%;
+    height: fill-parent-flow(1.0);
+    min-height: 0px;
+}
 .mg-btn-row {
     width: 100%;
     flow-children: right;
@@ -726,26 +742,38 @@
 
 /* ── checkers board ──────────────────────────────────────────────────────── */
 .mg-game-host { width: 100%; horizontal-align: center; }
-.mg-checkers { horizontal-align: center; flow-children: down; }
-.mg-chess { horizontal-align: center; flow-children: down; }
+/* width:100% so the flow:none .mg-game-2col child below inherits the full 844px inner zone and
+   can centre the board / right-pin the list against it (not against a shrunk fit-children box). */
+.mg-checkers { width: 100%; horizontal-align: center; flow-children: down; }
+.mg-chess { width: 100%; horizontal-align: center; flow-children: down; }
 
-/* Two-column game screen: board (486px) on the left, move list on the right. The row hugs
-   its children and centres in the 900px modal, so the pair sits balanced with the ~340px
-   list filling the space that used to be dead to the board's right. */
+/* Game screen: the BOARD is centred in the modal, the move list floats to its right. A
+   flow-children:right ROW would centre the board+list GROUP, not the board itself — so the
+   board reads off-centre. Instead this is a flow-children:NONE overlay (the .mg-board-wrap
+   idiom): each child parks by its OWN align in the full 844px inner zone. The board takes
+   horizontal-align:center (line ~906) → truly centred, spanning [179,665]. The list takes
+   horizontal-align:right at 160px wide → spans [684,844], a 19px gap past the board, and its
+   right edge lands INSIDE the modal (the 200px list right-of-centre used to overflow — maintainer
+   2026-07-16: "доску в центр ты так и не перевёл"). Height = board height so both columns line
+   up top and bottom. */
 .mg-game-2col {
-    flow-children: right;
-    width: fit-children;
+    flow-children: none;
+    width: 100%;
+    height: 486px;
     horizontal-align: center;
 }
-/* Move-list side panel. Fixed height = board height (486px) so the two columns line up top
-   and bottom; the row list inside scrolls when moves overflow. Neutral card, hairline border,
-   no gradient/glow (house style). Narrowed 300→200 (maintainer 2026-07-15): the wide panel with
-   full-width nav buttons read as a big empty expanse and shoved the board too far left. A
-   narrower panel shrinks the centred board+panel group, pulling the board back toward centre. */
+/* Move-list side panel. RIGHT-pinned in the flow:none .mg-game-2col overlay (horizontal-align:
+   right in the 844px inner zone → spans [684,844]); the board is centred at [179,665], so a 19px
+   gap sits between them and the list's right edge stays inside the modal. Fixed height = board
+   height (486px) so the two columns line up top and bottom; the row list inside scrolls when moves
+   overflow. Narrowed 200→160 (maintainer 2026-07-16): with the board CENTRED (not left-aligned),
+   a 200px list right-pinned would overlap the board's right edge — 160px clears it. Neutral card,
+   hairline border, no gradient/glow (house style). */
 .mg-movelist {
-    width: 200px;
+    width: 160px;
     height: 486px;
-    margin-left: 14px;
+    horizontal-align: right;
+    vertical-align: top;
     flow-children: down;
     background-color: #0c1118;
     border: 1px solid #263445;
@@ -917,26 +945,26 @@
    you picked still reads distinctly from the from/to wash. */
 .mg-cell.mg-lastmove { background-color: #f2d24b7a; }   /* yellow wash, ~48% alpha */
 .mg-cell.mg-sel { background-color: #f2d24bc0; }        /* same yellow, denser (selected) */
-/* legal move = a small dark dot centred in the cell, NOT a full-cell fill. Panorama has no
-   background-image gradient layering here, so we keep the square's own shade at the dot's
-   edge: a radial gradient from a translucent-dark centre out to the cell colour (#d8c6a8
-   light / #6e5138 dark). Two variants so the dot sits on the right base per shade. */
-.mg-cell-light.mg-target { background-color: gradient(radial, 50% 50%, 0% 0%, 30% 30%, from(#00000055), to(#d8c6a8)); }
-.mg-cell-dark.mg-target  { background-color: gradient(radial, 50% 50%, 0% 0%, 30% 30%, from(#00000066), to(#6e5138)); }
+/* legal move = a soft NEUTRAL-GREY dot centred in the cell, lichess/chess.com style — a flat
+   translucent grey disc, NOT the old dark radial "glow" (maintainer 2026-07-16: "некрасивые
+   чёрные точки глоу, это не lichess-like"). A hard-edged radial (grey out to 22%, then a 1px
+   step to the square's own shade) reads as a clean circle, not a fuzzy halo. Two variants so
+   the ring lands on the right base per shade (#d8c6a8 light / #6e5138 dark). */
+.mg-cell-light.mg-target { background-color: gradient(radial, 50% 50%, 0% 0%, 22% 22%, from(#3b3b3b55), color-stop(0.85, #3b3b3b55), to(#d8c6a8)); }
+.mg-cell-dark.mg-target  { background-color: gradient(radial, 50% 50%, 0% 0%, 22% 22%, from(#1a1a1a66), color-stop(0.85, #1a1a1a66), to(#6e5138)); }
 /* forced-capture flash (checkers): after an illegal try while a jump is mandatory, the
-   piece(s) that MUST capture pulse a warm amber for ~0.9s (JS toggles .mg-mustcap, then
-   removes it). animation-* is the game's own idiom (citadel element CSS). The pulse rides
-   OVER any base shade because it's the most specific .mg-cell rule active during the flash. */
-@keyframes MgMustCap {
-    0%   { background-color: #6e5138; }
-    50%  { background-color: #e8873c; }
-    100% { background-color: #6e5138; }
-}
+   piece(s) that MUST capture flash a warning RED for ~0.9s (JS AddClass then RemoveClass on a
+   timer — see flashMustCapture). Red, not the old amber #e8873c, reads unambiguously as "wrong /
+   not allowed" (maintainer 2026-07-16: "цвет подсветки нелегального хода пусть будет красный").
+   A background-color transition eases the red in/out so it reads as a soft pulse without a
+   @keyframes rule (Panorama's HUD CSS parser rejects the whole stylesheet on an unsupported
+   @-rule; a plain transition is the safe, house-style idiom). Rides OVER any base shade because
+   it's the most specific .mg-cell rule active during the flash. */
 .mg-cell.mg-mustcap {
-    animation-name: MgMustCap;
-    animation-duration: 0.45s;
-    animation-iteration-count: 2;
-    animation-timing-function: ease-in-out;
+    background-color: #d23b34;
+    transition-property: background-color;
+    transition-duration: 0.15s;
+    transition-timing-function: ease-in-out;
 }
 
 /* ── board coordinates (lichess style) ──────────────────────────────────────

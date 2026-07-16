@@ -96,8 +96,20 @@
         // Place a disc on the OVERLAY at cell `i`. If animate, it starts one cell above the
         // plate's top edge and slides down into place. The overlay CLIPS to the plate window, so
         // the disc only becomes visible as it crosses the top slot and falls "inside" the board —
-        // it is never seen above the plate or over the modal's dark windows (п3). Base class has no
-        // transition; add .mg-cf-anim one frame later after the start transform is committed (checkers idiom).
+        // it is never seen above the plate or over the modal's dark windows (п3).
+        //
+        // ARMING (why not $.Schedule(0.0)): the disc starts OFF-SCREEN (y ≈ -55, above the clip
+        // box). If arming relies on a next-frame Schedule, the very FIRST disc — the bot's opening
+        // move, placed at boot (session.bot + $.Schedule(0.35, botTurn)) BEFORE any user click and
+        // before the overlay's first layout pass — can have its off-screen START transform commit
+        // as the resting value while the deferred callback races the initial layout, stranding the
+        // disc above the clip box = INVISIBLE (maintainer 2026-07-16: "когда первым ходит бот его
+        // фишку не видно"). Discs placed after a click never hit this because the panel is already
+        // laid out. Checkers dodges it too: its pieces START at their final on-screen spot, so a
+        // missed arming still leaves them visible. FIX: commit the start transform SYNCHRONOUSLY by
+        // reading a layout property (the QOLLOCK actuallayout* flush idiom), THEN arm + set final in
+        // the same call. No Schedule race; worst case the disc snaps straight to final — still
+        // VISIBLE, never off-screen. Reasoned from the codebase, not yet rendered in-game.
         function placeDisc(i, mark, animate) {
             if (discEls[i]) return discEls[i];
             var disc = $.CreatePanel("Panel", piecesLayer, "");
@@ -107,14 +119,11 @@
             var p = discXY(i);
             if (animate) {
                 disc.style.transform = "translate3d(" + p.x + "px, " + (-CELL + INSET) + "px, 0px)";
-                (function (d, px, py) {
-                    $.Schedule(0.0, function () {
-                        if (d && d.IsValid && d.IsValid()) {
-                            d.AddClass("mg-cf-anim");
-                            d.style.transform = "translate3d(" + px + "px, " + py + "px, 0px)";
-                        }
-                    });
-                })(disc, p.x, p.y);
+                // Force the off-screen start to commit before we arm the transition, so the slide
+                // has a real from-value regardless of layout timing (avoids the boot race above).
+                try { var _flush = disc.actuallayoutheight; } catch (e) {}
+                disc.AddClass("mg-cf-anim");
+                disc.style.transform = "translate3d(" + p.x + "px, " + p.y + "px, 0px)";
             } else {
                 disc.style.transform = "translate3d(" + p.x + "px, " + p.y + "px, 0px)";
             }

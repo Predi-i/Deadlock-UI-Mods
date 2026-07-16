@@ -574,6 +574,15 @@
             renderTimeControl();
         }
 
+        // Flexible spacer between the top cluster (title/blurb/toggle/time-control) and the action
+        // buttons. .mg-detail is a FIXED 500px column so the divider stays even and the modal never
+        // jumps between games; untimed games have no time-control block, which used to leave a dead
+        // strip UNDER the buttons. The spacer eats that slack into the MIDDLE instead, sinking the
+        // buttons to the bottom (maintainer 2026-07-16: "огромный подбородок снизу … прижать кнопки
+        // к низу"). Timed games have a taller top cluster, so the spacer just shrinks toward 0.
+        var detailSpacer = $.CreatePanel("Panel", detailPanel, "");
+        detailSpacer.AddClass("mg-detail-spacer");
+
         if (multiSelect) {
             renderMultiPanel();    // count + Quick Match(set) + Create(random) on the right
         } else if (onlineReady) {
