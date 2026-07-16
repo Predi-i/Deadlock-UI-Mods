@@ -380,8 +380,13 @@
             lbl.text = text;
             // Place the small glyph directly in the cell corner by transform (flow:none parent,
             // same idiom as the pieces). rank → top-left; file → bottom-right of the 60px cell.
-            var ox = kind === "file" ? (SQ - 14) : 3;
-            var oy = kind === "file" ? (SQ - 17) : 2;
+            // The file letter is shoved HARD into the bottom-right corner: the piece is a 46px
+            // circle centred in the 60px cell (radius 23 about (30,30)); the old (46,43) offset put
+            // the glyph ~20px from that centre — INSIDE the circle — so the piece painted over it and
+            // the letter vanished under knights/rooks/bishops (maintainer 2026-07-16: "букв не видно").
+            // (51,46) lands the glyph ~32px out, clear of the circle, and still inside the 60px cell.
+            var ox = kind === "file" ? (SQ - 9) : 3;
+            var oy = kind === "file" ? (SQ - 14) : 2;
             lbl.style.transform = "translate3d(" + (x + ox) + "px, " + (y + oy) + "px, 0px)";
         }
 
@@ -823,8 +828,8 @@
         // Illegal-move feedback (maintainer 2026-07-15): a wrong click/drop plays the Illegal
         // cue and, when a capture is available, briefly flashes the piece(s) that MUST jump —
         // Russian checkers forces the capture and it isn't always obvious which piece is obliged.
-        // The flash is a JS-toggled class (.mg-mustcap) removed after ~0.9s; a @keyframes drives
-        // the pulse (mg.css). Squares with a mandatory capture right now, for my colour.
+        // The flash is a JS-toggled class (.mg-mustcap) removed after ~0.9s; a background-color
+        // transition eases the amber in/out (mg.css). Squares with a mandatory capture right now, for my colour.
         function mustCaptureSquares() {
             if (!anyCaptureFor(board, myColor)) return [];
             var out = [];
@@ -1540,8 +1545,12 @@
             lbl.AddClass("mg-coord");
             lbl.AddClass(onDark ? "mg-coord-ondark" : "mg-coord-onlight");
             lbl.text = text;
-            var ox = kind === "file" ? (SQ - 14) : 3;      // rank → top-left; file → bottom-right
-            var oy = kind === "file" ? (SQ - 17) : 2;
+            // Shoved into the bottom-right corner so the letter clears the piece. Chess sprites are
+            // 56px (nearly the whole 60px cell) but transparent in the corners, so (51,46) tucks the
+            // glyph past the visible figure — knights/rooks/bishops no longer cover it (maintainer
+            // 2026-07-16). Matches createCheckers.addCoord.
+            var ox = kind === "file" ? (SQ - 9) : 3;       // rank → top-left; file → bottom-right
+            var oy = kind === "file" ? (SQ - 14) : 2;
             lbl.style.transform = "translate3d(" + (x + ox) + "px, " + (y + oy) + "px, 0px)";
         }
 
