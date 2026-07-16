@@ -627,12 +627,6 @@
             botBtn.AddClass("mg-btn"); botBtn.AddClass("mg-btn-solo");
             var bl = $.CreatePanel("Label", botBtn, ""); bl.text = "PLAY VS BOT";
             botBtn.SetPanelEvent("onactivate", function () { startBotGame(); });
-
-            if (g.key === "durak") {
-                var durakNote = $.CreatePanel("Label", detailPanel, "");
-                durakNote.AddClass("mg-caption");
-                durakNote.text = "Online Durak is 2-player now; 3–4 players are deferred.";
-            }
         }
 
         fadeInDetail();
