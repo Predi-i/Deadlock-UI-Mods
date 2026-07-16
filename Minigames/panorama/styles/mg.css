@@ -941,17 +941,29 @@
 /* Highlights, lichess palette (maintainer 2026-07-15). Declared BEFORE sel/target/check so
    those win at equal specificity via source order — an active selection or a check must
    always read over the passive last-move hint.
-   last-move + selected are the SAME warm yellow (#f2d24b); selected is denser so the piece
-   you picked still reads distinctly from the from/to wash. */
-.mg-cell.mg-lastmove { background-color: #f2d24b7a; }   /* yellow wash, ~48% alpha */
-.mg-cell.mg-sel { background-color: #f2d24bc0; }        /* same yellow, denser (selected) */
-/* legal move = a soft NEUTRAL-GREY dot centred in the cell, lichess/chess.com style — a flat
-   translucent grey disc, NOT the old dark radial "glow" (maintainer 2026-07-16: "некрасивые
-   чёрные точки глоу, это не lichess-like"). A hard-edged radial (grey out to 22%, then a 1px
-   step to the square's own shade) reads as a clean circle, not a fuzzy halo. Two variants so
-   the ring lands on the right base per shade (#d8c6a8 light / #6e5138 dark). */
-.mg-cell-light.mg-target { background-color: gradient(radial, 50% 50%, 0% 0%, 22% 22%, from(#3b3b3b55), color-stop(0.85, #3b3b3b55), to(#d8c6a8)); }
-.mg-cell-dark.mg-target  { background-color: gradient(radial, 50% 50%, 0% 0%, 22% 22%, from(#1a1a1a66), color-stop(0.85, #1a1a1a66), to(#6e5138)); }
+   last-move FROM (where the piece stood) is a LIGHT wash; last-move TO (where it landed) is a
+   DARKER, denser wash so the two ends of the move read differently (maintainer 2026-07-16: "там
+   куда поставили должно быть темнее"). Cleaner warm gold (#ffd452 / #f0b429) replaces the old
+   muddy #f2d24b ("неприятный болотный жёлтый"). Selected uses the light hue, dense, so the piece
+   you picked reads distinctly from the from/to wash. */
+.mg-cell.mg-lastmove { background-color: #ffd45266; }        /* FROM: light gold wash, ~40% alpha */
+.mg-cell.mg-lastmove-to { background-color: #f0b429c8; }     /* TO: darker amber, denser */
+.mg-cell.mg-sel { background-color: #ffd452d0; }             /* light gold, dense (selected) */
+/* queued premove (online): a click made during the opponent's turn glows its from/to cells (and
+   the picked piece before you set a destination) a translucent ORANGE — distinct from the yellow
+   live selection and the green legal dots, and NOT the red illegal flash. Cleared or replayed the
+   instant the opponent's move lands (tryPremove). Declared after mg-sel so it wins on the from cell
+   when a premove is staged during the opponent's turn (there's no live selection then anyway). */
+.mg-cell.mg-premove { background-color: #e8873cb0; }    /* orange wash, ~69% alpha */
+/* legal move = a small GREEN, semi-transparent dot centred in the cell (maintainer 2026-07-16:
+   "сделай их чуть поменьше + сделай их зелёными и полупрозрачными"; superseded the earlier neutral
+   grey). A hard-edged radial (green out to 18%, then a 1px step to the square's own shade) reads
+   as a clean circle, not a fuzzy halo — smaller radius than the old 22%. A softer, muted sage
+   green (#6bbf83, less saturated than the old toxic #3fb950 — maintainer 2026-07-16: "этот зелёный
+   слишком зелёный") at 0x8c (~55% alpha) reads calmly on both wood tones while staying translucent.
+   Two variants only so the outer step lands on the right base per shade. */
+.mg-cell-light.mg-target { background-color: gradient(radial, 50% 50%, 0% 0%, 18% 18%, from(#6bbf838c), color-stop(0.85, #6bbf838c), to(#d8c6a8)); }
+.mg-cell-dark.mg-target  { background-color: gradient(radial, 50% 50%, 0% 0%, 18% 18%, from(#6bbf838c), color-stop(0.85, #6bbf838c), to(#6e5138)); }
 /* forced-capture flash (checkers): after an illegal try while a jump is mandatory, the
    piece(s) that MUST capture flash a warning RED for ~0.9s (JS AddClass then RemoveClass on a
    timer — see flashMustCapture). Red, not the old amber #e8873c, reads unambiguously as "wrong /
