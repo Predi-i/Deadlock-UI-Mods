@@ -27,9 +27,10 @@ var OUT = path.join(ROOT, "soundevents", "world_ambient_emitters.vsndevts");
 var HEADER = "<!-- kv3 encoding:text:version{e21c7f3c-8a33-41c5-9977-a76d3a32aa0d} format:generic:version{7412167c-06e9-4698-aff2-e63eb59037e7} -->";
 
 var STEPS = 20;        // _V0.._V20 — MUST match mg_sound.js
-var VOL_MAX = 2.0;     // volume at V20. The base WAVs are quiet, so 100% maps to ×2 gain
+var VOL_MAX = 4.0;     // volume at V20. The base WAVs are quiet, so 100% maps to ×4 gain
                        // (the vsndevts `volume` is a linear gain multiplier, >1 is allowed)
-                       // — maintainer 2026-07-15: "all sounds too quiet even at 100%, 2× them".
+                       // — maintainer 2026-07-15: "too quiet even at 100%, 2× them" → still quiet,
+                       //   doubled again 2026-07-16 (1.0 → 2.0 → 4.0).
 
 // event-name suffix -> wav file (in panorama/sounds/mods/, compiled to .vsnd by build_mod.ps1)
 var SOUNDS = [
