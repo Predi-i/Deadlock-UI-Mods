@@ -2106,7 +2106,10 @@
             { id: 6, key: "soon1", name: "Coming Soon", enabled: false },
             { id: 7, key: "soon2", name: "Coming Soon", enabled: false },
             { id: 8, key: "soon3", name: "Coming Soon", enabled: false },
-            { id: 9, key: "soon4", name: "Coming Soon", enabled: false }
+            { id: 9, key: "soon4", name: "Coming Soon", enabled: false },
+            { id: 10, key: "soon5", name: "Coming Soon", enabled: false },
+            { id: 11, key: "soon6", name: "Coming Soon", enabled: false },
+            { id: 12, key: "soon7", name: "Coming Soon", enabled: false }
         ],
         _factories: {},
         byId: function (id) {
