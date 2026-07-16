@@ -331,7 +331,10 @@
    the tallest layout (single-game durak) with headroom. */
 .mg-detail {
     width: 100%;
-    height: 430px;
+    height: fit-children;                 /* grow for the extra time-control block (chess/checkers);
+                                             min-height keeps untimed games at the old 430 so the
+                                             divider still spans the picker grid. */
+    min-height: 430px;
     flow-children: down;
     overflow: noclip;                     /* don't clip the full-width buttons' borders (п4) */
     transition-property: opacity;         /* fades in on each game switch (fadeInDetail) */
@@ -736,11 +739,13 @@
 }
 /* Move-list side panel. Fixed height = board height (486px) so the two columns line up top
    and bottom; the row list inside scrolls when moves overflow. Neutral card, hairline border,
-   no gradient/glow (house style). */
+   no gradient/glow (house style). Narrowed 300→200 (maintainer 2026-07-15): the wide panel with
+   full-width nav buttons read as a big empty expanse and shoved the board too far left. A
+   narrower panel shrinks the centred board+panel group, pulling the board back toward centre. */
 .mg-movelist {
-    width: 300px;
+    width: 200px;
     height: 486px;
-    margin-left: 12px;
+    margin-left: 14px;
     flow-children: down;
     background-color: #0c1118;
     border: 1px solid #263445;
@@ -806,6 +811,83 @@
 }
 .mg-nav-btn:hover Label { color: #cdd9e7 !important; }
 .mg-nav-btn.mg-nav-disabled Label { color: #445468 !important; }
+
+/* ── game clocks (chess/checkers) ────────────────────────────────────────────
+   Two side clocks sit at the TOP of the move-list panel (opponent's above, mine below).
+   Each row = a name on the left, the mm:ss bank on the right. The row to move carries
+   .mg-clock-active (accent bar); a bank under 10s pulses .mg-clock-low; the seat that ran
+   out of time locks in .mg-clock-flagged. Built by createClock in mg_games.js. */
+.mg-clocks {
+    width: 100%;
+    flow-children: down;
+    border-bottom: 1px solid #263445;
+}
+.mg-clock-row {
+    width: 100%;
+    height: 34px;
+    flow-children: right;
+    padding: 0 10px 0 10px;
+    border-left: 3px solid #0c1118;   /* transparent placeholder; .mg-clock-active tints it */
+}
+.mg-clock-name {
+    font-family: radiance !important;
+    color: #9fb1c6 !important;
+    font-size: 15px !important;
+    vertical-align: center;
+    width: fill-parent-flow(1.0);
+}
+.mg-clock-time {
+    font-family: radiance !important;
+    font-weight: bold;
+    color: #cdd9e7 !important;
+    font-size: 17px !important;
+    vertical-align: center;
+    horizontal-align: right;
+}
+.mg-clock-row.mg-clock-active {
+    background-color: #16202c;
+    border-left-color: #3f78c8;
+}
+.mg-clock-row.mg-clock-active .mg-clock-name { color: #cdd9e7 !important; }
+.mg-clock-row.mg-clock-low .mg-clock-time { color: #e8b64c !important; }
+.mg-clock-row.mg-clock-flagged .mg-clock-time { color: #d15b5b !important; }
+.mg-clock-row.mg-clock-flagged .mg-clock-name { color: #d15b5b !important; }
+
+/* ── time-control segmented picker (detail column, chess/checkers) ───────────
+   One row of segments (1/3/5/10 min + Off); the picked one carries .mg-on. Mirrors the
+   button palette but reads as a compact toggle strip. Rendered by renderTimeControl. */
+.mg-tc-seg {
+    width: 100%;
+    flow-children: right;
+    margin-bottom: 4px;
+}
+/* the "Time control" label sits tighter than a normal section label so the extra picker
+   block doesn't crowd the Practice button out of the detail column. */
+.mg-tc-label { margin-top: 12px; margin-bottom: 6px; }
+.mg-tc-opt {
+    width: fill-parent-flow(1.0);
+    height: 30px;
+    flow-children: none;
+    background-color: #10161f;
+    border: 1px solid #263445;
+    margin-right: -1px;               /* collapse the shared edge between adjacent segments */
+}
+.mg-tc-opt:hover { background-color: #16202c; border-color: #3a5170; }
+.mg-tc-opt Label {
+    font-family: radiance !important;
+    color: #9fb1c6 !important;
+    font-size: 13px !important;
+    horizontal-align: center;
+    vertical-align: center;
+}
+.mg-tc-opt:hover Label { color: #cdd9e7 !important; }
+.mg-tc-opt.mg-on {
+    background-color: #21344a;
+    border-color: #3f78c8;
+    z-index: 1;                       /* keep the active border above its neighbours' -1px overlap */
+}
+.mg-tc-opt.mg-on Label { color: #eaf1f8 !important; }
+
 /* Board grid + pieces overlay are stacked siblings (flow-children:none parks both at the
    wrap's top-left; Panorama has no position:absolute). Size = 8*60 + 2*3 border = 486px. */
 .mg-board-wrap {
@@ -828,12 +910,34 @@
 }
 .mg-cell-light { background-color: #d8c6a8; }
 .mg-cell-dark { background-color: #6e5138; }
-/* Last move played (opponent's or ours): both endpoints get a warm translucent wash.
-   Declared BEFORE sel/target/check so those win at equal specificity via source order —
-   an active selection or a check must always read over the passive last-move hint. */
-.mg-cell.mg-lastmove { background-color: #b9a24a66; }
-.mg-cell.mg-target { background-color: #4b8f5a; }   /* green "you can move here" (semantic) */
-.mg-cell.mg-sel { background-color: #3d5a7a; }      /* accent-blue selected square */
+/* Highlights, lichess palette (maintainer 2026-07-15). Declared BEFORE sel/target/check so
+   those win at equal specificity via source order — an active selection or a check must
+   always read over the passive last-move hint.
+   last-move + selected are the SAME warm yellow (#f2d24b); selected is denser so the piece
+   you picked still reads distinctly from the from/to wash. */
+.mg-cell.mg-lastmove { background-color: #f2d24b7a; }   /* yellow wash, ~48% alpha */
+.mg-cell.mg-sel { background-color: #f2d24bc0; }        /* same yellow, denser (selected) */
+/* legal move = a small dark dot centred in the cell, NOT a full-cell fill. Panorama has no
+   background-image gradient layering here, so we keep the square's own shade at the dot's
+   edge: a radial gradient from a translucent-dark centre out to the cell colour (#d8c6a8
+   light / #6e5138 dark). Two variants so the dot sits on the right base per shade. */
+.mg-cell-light.mg-target { background-color: gradient(radial, 50% 50%, 0% 0%, 30% 30%, from(#00000055), to(#d8c6a8)); }
+.mg-cell-dark.mg-target  { background-color: gradient(radial, 50% 50%, 0% 0%, 30% 30%, from(#00000066), to(#6e5138)); }
+/* forced-capture flash (checkers): after an illegal try while a jump is mandatory, the
+   piece(s) that MUST capture pulse a warm amber for ~0.9s (JS toggles .mg-mustcap, then
+   removes it). animation-* is the game's own idiom (citadel element CSS). The pulse rides
+   OVER any base shade because it's the most specific .mg-cell rule active during the flash. */
+@keyframes MgMustCap {
+    0%   { background-color: #6e5138; }
+    50%  { background-color: #e8873c; }
+    100% { background-color: #6e5138; }
+}
+.mg-cell.mg-mustcap {
+    animation-name: MgMustCap;
+    animation-duration: 0.45s;
+    animation-iteration-count: 2;
+    animation-timing-function: ease-in-out;
+}
 
 /* ── board coordinates (lichess style) ──────────────────────────────────────
    Files a–h on the bottom row, ranks 1–8 down the left column. Each label is placed by
@@ -903,8 +1007,8 @@
    / .mg-pieces-layer) and the .mg-piece transition + drag machinery. Only the piece LOOK
    differs: a compiled .vtex sprite (set inline in JS) instead of a drawn disc. */
 .mg-chess { horizontal-align: center; flow-children: down; }
-/* the checking king's square, so a player sees why they must respond */
-.mg-cell.mg-check { background-color: #7a2f2f; }
+/* the checking king's square, so a player sees why they must respond (lichess red) */
+.mg-cell.mg-check { background-color: #d1495b; }
 /* Chess piece = image sprite. Overrides the disc look of .mg-piece (declared later so it wins
    at equal specificity): bigger, square, no radius, no box shadow, transparent fill. The sprite
    (WhitePawn.vtex …) is drawn by a child <Image> (.mg-face-img), assigned in makePiece. */
@@ -1165,101 +1269,67 @@
     background-color: #1c2836; color: #eef3fa !important;
 }
 
-/* ── sound control (volume + mute), left of the scale dropdown ───────────────────
-   Wrapper is a FIXED 64px box in the header flow. flow-children:none parks the closed
-   control and the popup both at top-left; the popup is pushed DOWN with margin-top and
-   escapes the header via overflow:noclip (trap 1/11), so opening it never resizes the
-   header row. z-index lifts it over the body (same idiom as the scale wrapper). */
+/* ── sound control (volume), left of the scale dropdown ──────────────────────────
+   Just a native DropDown (no icon — maintainer 2026-07-15: the "Off" option IS the mute, so
+   the bars icon was dropped). Same proven widget as the UI-scale control (the custom
+   click-popup didn't open reliably in our HUD context). overflow:noclip + z-index let the
+   auto-created popup escape the header and paint over the body, like the scale wrapper. */
 .mg-vol-wrap {
-    width: 64px; min-width: 64px; max-width: 64px;
+    width: 80px; min-width: 80px; max-width: 80px;
     height: 30px;
     vertical-align: center;
     margin-right: 10px;                  /* gap to the scale dropdown on its right */
-    flow-children: none;
+    flow-children: right;
     overflow: noclip;
     z-index: 10;
 }
-/* closed control: [level-bars icon | value%] */
-.mg-vol {
-    width: 64px; height: 30px;
-    flow-children: right;
+/* the volume DropDown — a clone of .mg-scale-dd (same 30px height, arrow shrink, palette). */
+.mg-vol-dd {
+    width: 80px; min-width: 80px; max-width: 80px;
+    height: 30px; min-height: 30px; max-height: 30px;
+    padding: 1px 8px;
     vertical-align: center;
+    background-size: 19px 19px;           /* shrink the base 32px dropdown arrow to ~60% */
+    background-position: right 29px 35%;   /* match .mg-scale-dd (80px box) */
     background-color: #161f2b;
     border: 1px solid #2a3849;
     border-radius: 2px;
+    transition-property: brightness, border-color;
+    transition-duration: 0.1s; transition-timing-function: ease-out;
 }
-/* the level-bars icon doubles as the MUTE toggle. flow:none so the 4 bars sit purely by
-   their own vertical-align:bottom + margin, stacked left→right by width offset. */
-.mg-vol-icon {
-    width: 26px; height: 28px;
-    flow-children: none;
-    vertical-align: center;
-    overflow: noclip;                    /* the rotated muted-slash overhangs the 26px box */
-    transition-property: brightness; transition-duration: 0.1s; transition-timing-function: ease-out;
-}
-.mg-vol-icon:hover { brightness: 1.15; }
-/* 4 bars of growing height, aligned to the icon's bottom. Base = dim (unlit); .mg-vol-bar-on
-   lights them. Each bar's x-offset via margin-left, height via the per-index class. */
-.mg-vol-bar {
-    width: 4px;
-    vertical-align: bottom;
-    background-color: #3a4859;           /* unlit */
-    border-radius: 1px;
-}
-.mg-vol-bar-0 { height: 7px;  margin-left: 3px;  }
-.mg-vol-bar-1 { height: 12px; margin-left: 9px;  }
-.mg-vol-bar-2 { height: 17px; margin-left: 15px; }
-.mg-vol-bar-3 { height: 22px; margin-left: 21px; }
-.mg-vol-bar.mg-vol-bar-on { background-color: #4f86d4; }   /* lit — accent blue */
-/* red "muted" slash across the icon (a thin bar rotated 45°, trap 6), shown only when muted. */
-.mg-vol-slash {
-    width: 30px; height: 3px;
-    background-color: #cf4a42;
-    border-radius: 1px;
-    vertical-align: center; horizontal-align: center;
-    transform: rotateZ(-45deg);
-    visibility: collapse;
-}
-.mg-vol-muted .mg-vol-slash { visibility: visible; }
-.mg-vol-muted .mg-vol-bar { background-color: #4a3336; }   /* bars go muted-grey when muted */
-/* value % — click opens the popup */
-.mg-vol-val {
-    width: fill-parent-flow(1.0); height: 28px;
-    vertical-align: center;
-    transition-property: brightness; transition-duration: 0.1s; transition-timing-function: ease-out;
-}
-.mg-vol-val:hover { brightness: 1.12; }
-.mg-vol-val-lbl {
-    font-family: radiance !important; font-weight: semi-bold;
-    color: #cdd9e7 !important; font-size: 13px !important;
+.mg-vol-dd:hover { brightness: 1.08; border-color: #3a5170; }
+.mg-vol-dd Label {
+    font-family: radiance !important; font-weight: semi-bold; color: #cdd9e7 !important;
+    font-size: 14px !important;
+    margin: 0px; padding: 0px;
     horizontal-align: center; vertical-align: center;
 }
-.mg-vol-muted .mg-vol-val-lbl { color: #7d8794 !important; }
-/* vertical popup: one clickable segment per level. Pushed below the closed control; visibility
-   toggled by a single .mg-open class on THIS panel (trap 12), never inline JS visibility. */
-.mg-vol-menu {
-    width: 64px; min-width: 64px; max-width: 64px;
-    margin-top: 32px;                    /* sit just below the 30px control */
-    flow-children: down;
+.mg-vol-muted .mg-vol-dd Label { color: #7d8794 !important; }
+/* the popup list — auto-created by the engine at the context root, id = "<ddId>DropDownMenu". */
+#MG_VolDropDownMenu {
+    width: 80px; min-width: 80px; max-width: 80px;
+    background-image: none;
     background-color: #0f141c;
     border: 1px solid #2a3849; border-radius: 2px;
     box-shadow: 0px 8px 20px 0px #000000aa;
     z-index: 200;
-    visibility: collapse;
 }
-.mg-vol-menu.mg-open { visibility: visible; }
-.mg-vol-seg {
-    width: 100%; height: 22px;
+#MG_VolDropDownMenu Label,
+#MG_VolDropDownMenu .mg-vol-opt {
+    width: 100%; height: 30px;
+    padding: 0px 10px;
+    font-family: radiance !important; color: #cdd9e7 !important; font-size: 14px !important;
+    vertical-align: center;
+    background-image: none;
     background-color: #00000000;
-    transition-property: background-color; transition-duration: 0.1s; transition-timing-function: ease-out;
+    border: 0px solid transparent;
+    transition-property: background-color, color;
+    transition-duration: 0.1s; transition-timing-function: ease-out;
 }
-.mg-vol-seg:hover { background-color: #1c2836; }
-.mg-vol-seg.mg-on { background-color: #1d3350; }   /* current level */
-.mg-vol-seg-lbl {
-    font-family: radiance !important; color: #cdd9e7 !important; font-size: 13px !important;
-    horizontal-align: center; vertical-align: center;
+#MG_VolDropDownMenu Label:hover,
+#MG_VolDropDownMenu .mg-vol-opt:hover {
+    background-color: #1c2836; color: #eef3fa !important;
 }
-.mg-vol-seg.mg-on .mg-vol-seg-lbl { color: #eef3fa !important; }
 
 
 

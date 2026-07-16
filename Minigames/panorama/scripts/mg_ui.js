@@ -48,6 +48,19 @@
     // flow). State persists across card selection so the mode stays put while browsing.
     var multiSelect = false;
     var multiChecked = {};   // { gameId: true } — games ticked for the multi-search
+    // Time control (§8 commit 2.3), chess/checkers only. selectedTimeControl = seconds per side:
+    // a concrete 60/180/300/600, or -1 = "Any" (quick-match wildcard). For Create / vs-Bot the
+    // room needs a concrete bank so "Any" collapses to TC_ANY_DEFAULT (5 min); the joiner reads
+    // the host's bank back from join(). For Quick Match a concrete pick pools by that bank and
+    // "Any" rides up as tc="any" (server pairs it with any waiter, else 5 min). Online clients no
+    // longer need tc up-front — the clock is discovered from the authoritative /api/clocks poll.
+    var TC_GAMES = { 1: true, 4: true };            // checkers=1, chess=4 (mirror server CLOCK_GAMES)
+    var TC_CHOICES = [60, 180, 300, 600];           // 1 / 3 / 5 / 10 minutes
+    var TC_ANY_DEFAULT = 300;                       // "Any" collapses to 5 min where a concrete bank is required
+    var selectedTimeControl = 300;                  // host's pick (persists while browsing)
+    function isTimedGame(id) { return !!TC_GAMES[id]; }
+    // Concrete bank for a room that must fix one now (Create / vs-Bot): map "Any"(-1) → 5 min.
+    function concreteTc(sec) { return sec === -1 ? TC_ANY_DEFAULT : sec; }
     // Games that can be TICKED in Select-Multiple. Durak (3) is included so it can be picked
     // too (maintainer). Public mquick still can't pair durak — its online path is a room — so
     // ticking durak alone falls back to its Create/room flow; ticked alongside others it's just
@@ -298,88 +311,43 @@
         applyUiScale();
     }
 
-    // ── sound control (volume + instant mute), left of the scale dropdown ──────────
-    // Panorama has no reliable drag/cursor-position read (ARCHITECTURE: GameUI.GetCursorPosition
-    // is absent, native-widget drag is flaky in our HUD context), so a true drag-slider is a dead
-    // end here. Instead the picker is a VERTICAL column of clickable level segments (pure
-    // `onactivate`, the only robust input primitive) — it opens downward and reads like a volume
-    // bar you tap. The closed control has two hit targets: the level-bars icon toggles mute
-    // instantly (maintainer's §4 requirement), the value opens the picker. Popup visibility is a
-    // single class on the panel (trap 12); the wrapper is flow-children:none + overflow:noclip so
-    // the popup escapes the header row without resizing it (trap 1/11), z-index over the body.
-    var VOL_STEPS = [100, 90, 80, 70, 60, 50, 40, 30, 20, 10, 0]; // top→bottom in the popup
-    var soundWrapEl = null, soundMenu = null, soundValLbl = null, soundBars = [], soundStepEls = {};
+    // ── sound control (volume), left of the scale dropdown ─────────────────────────
+    // The volume picker is a native `DropDown` — the SAME proven recipe as the UI-scale control
+    // (buildScaleControl): the custom click-segment popup didn't reliably open in our HUD context,
+    // so we reuse the widget the engine opens/closes itself. No separate icon (maintainer
+    // 2026-07-15): the "0%" option IS the mute, so the dropdown alone is the whole control.
+    var VOL_STEPS = [100, 90, 80, 70, 60, 50, 40, 30, 20, 10, 0]; // options, loud→silent (0 = off)
+    var VOL_DD_ID = "MG_VolDropDown";            // popup auto-id = VOL_DD_ID + "DropDownMenu"
+    var soundWrapEl = null, soundDropdown = null;
     function buildSoundControl(wrap) {
         soundWrapEl = wrap;
-        // closed control: [level-bars icon | value%]
-        var ctl = $.CreatePanel("Panel", wrap, "");
-        ctl.AddClass("mg-vol");
-        var icon = $.CreatePanel("Button", ctl, "");
-        icon.AddClass("mg-vol-icon");
-        soundBars = [];
-        for (var b = 0; b < 4; b++) {
-            var bar = $.CreatePanel("Panel", icon, "");
-            bar.AddClass("mg-vol-bar");
-            bar.AddClass("mg-vol-bar-" + b);      // per-bar height via CSS
-            soundBars.push(bar);
-        }
-        var slash = $.CreatePanel("Panel", icon, "");  // red "muted" slash, shown only when muted
-        slash.AddClass("mg-vol-slash");
-        icon.SetPanelEvent("onactivate", function () {
-            if (MG.Sound) MG.Sound.toggleMute();
-            renderSoundState();
-        });
-        var val = $.CreatePanel("Button", ctl, "");
-        val.AddClass("mg-vol-val");
-        soundValLbl = $.CreatePanel("Label", val, "");
-        soundValLbl.AddClass("mg-vol-val-lbl");
-        val.SetPanelEvent("onactivate", function () {
-            if (soundMenu) soundMenu.ToggleClass("mg-open");
-        });
-
-        // vertical popup: one clickable segment per level
-        soundMenu = $.CreatePanel("Panel", wrap, "");
-        soundMenu.AddClass("mg-vol-menu");
-        soundStepEls = {};
+        // native DropDown for the level — mirrors buildScaleControl exactly. 0% = muted.
+        var dd = $.CreatePanel("DropDown", wrap, VOL_DD_ID);
+        dd.AddClass("mg-vol-dd");
+        soundDropdown = dd;
+        var curVol = MG.Sound ? (MG.Sound.isMuted() ? 0 : MG.Sound.getVol()) : 70;
+        var selectedId = "";
         for (var s = 0; s < VOL_STEPS.length; s++) {
-            (function (pct) {
-                var seg = $.CreatePanel("Button", soundMenu, "");
-                seg.AddClass("mg-vol-seg");
-                var lbl = $.CreatePanel("Label", seg, "");
-                lbl.AddClass("mg-vol-seg-lbl");
-                lbl.text = pct + "%";
-                seg.SetPanelEvent("onactivate", function () {
-                    if (MG.Sound) { MG.Sound.setVol(pct); MG.Sound.setMuted(false); }
-                    if (soundMenu) soundMenu.RemoveClass("mg-open");
-                    renderSoundState();
-                });
-                soundStepEls[pct] = seg;
-            })(VOL_STEPS[s]);
+            var pct = VOL_STEPS[s];
+            var optId = "MG_Vol_" + pct;
+            var opt = $.CreatePanel("Label", dd, optId);
+            opt.AddClass("mg-vol-opt");
+            opt.text = pct === 0 ? "Off" : (pct + "%");
+            dd.AddOption(opt);
+            if (pct === curVol) selectedId = optId;
         }
-        renderSoundState();
-    }
-    // Reflect MG.Sound state onto the control: value text, lit bars, muted slash/dim, and which
-    // popup segment is the current level.
-    function renderSoundState() {
-        if (!MG.Sound) return;
-        var vol = MG.Sound.getVol(), muted = MG.Sound.isMuted();
-        if (soundValLbl) soundValLbl.text = muted ? "off" : (vol + "%");
-        var lit = muted ? 0 : Math.round(vol / 100 * soundBars.length);
-        for (var i = 0; i < soundBars.length; i++) {
-            if (i < lit) soundBars[i].AddClass("mg-vol-bar-on");
-            else soundBars[i].RemoveClass("mg-vol-bar-on");
-        }
-        if (soundWrapEl) {
-            if (muted) soundWrapEl.AddClass("mg-vol-muted");
-            else soundWrapEl.RemoveClass("mg-vol-muted");
-        }
-        // nearest popup step to the current volume (steps are every 10)
-        var near = Math.round(vol / 10) * 10;
-        for (var p in soundStepEls) {
-            if (!soundStepEls.hasOwnProperty(p)) continue;
-            if (!muted && parseInt(p, 10) === near) soundStepEls[p].AddClass("mg-on");
-            else soundStepEls[p].RemoveClass("mg-on");
-        }
+        try { dd.SetSelected(selectedId || ("MG_Vol_" + VOL_STEPS[0])); } catch (e) {}
+        dd.SetPanelEvent("oninputsubmit", function () {
+            var sel = null;
+            try { sel = dd.GetSelected ? dd.GetSelected() : null; } catch (e) {}
+            if (!sel) return;
+            var pctNum = parseInt(String(sel.id || "").replace("MG_Vol_", ""), 10);
+            if (isFinite(pctNum) && pctNum >= 0 && MG.Sound) {
+                // 0% = mute; any positive level sets the volume and unmutes.
+                if (pctNum === 0) { MG.Sound.setMuted(true); }
+                else { MG.Sound.setVol(pctNum); MG.Sound.setMuted(false); }
+            }
+        });
     }
 
 
@@ -599,6 +567,13 @@
             renderDetail();
         });
 
+        // Time-control picker: only chess/checkers, only in single-game mode. The host picks the
+        // bank for Create and vs-Bot; Quick Match ignores it (forced 5 min) and the joiner reads
+        // the host's choice back from the server, so no picker is shown to a joiner here.
+        if (!multiSelect && isTimedGame(selectedGameId)) {
+            renderTimeControl();
+        }
+
         if (multiSelect) {
             renderMultiPanel();    // count + Quick Match(set) + Create(random) on the right
         } else if (onlineReady) {
@@ -653,6 +628,38 @@
 
         fadeInDetail();
 
+    }
+
+    // Time-control segmented control (chess/checkers). One row of 1/3/5/10-minute segments plus
+    // "Any" (value -1: quick-match wildcard — pair with any waiting bank, else 5 min). The picked
+    // one carries .mg-on. selectedTimeControl persists while browsing. For Create/vs-Bot a room
+    // needs a concrete bank, so "Any" collapses to 5 min (TC_ANY_DEFAULT); for Quick Match "Any"
+    // rides up as tc="any" and the server resolves the bank when a second searcher arrives.
+    function renderTimeControl() {
+        var label = $.CreatePanel("Label", detailPanel, "");
+        label.AddClass("mg-section-label");
+        label.AddClass("mg-tc-label");
+        label.text = "Time control";
+        var seg = $.CreatePanel("Panel", detailPanel, "");
+        seg.AddClass("mg-tc-seg");
+        var opts = [
+            { sec: 60, text: "1 min" },
+            { sec: 180, text: "3 min" },
+            { sec: 300, text: "5 min" },
+            { sec: 600, text: "10 min" },
+            { sec: -1, text: "Any" }
+        ];
+        opts.forEach(function (o) {
+            var b = $.CreatePanel("Button", seg, "");
+            b.AddClass("mg-tc-opt");
+            if (selectedTimeControl === o.sec) b.AddClass("mg-on");
+            var l = $.CreatePanel("Label", b, ""); l.text = o.text;
+            b.SetPanelEvent("onactivate", function () {
+                if (selectedTimeControl === o.sec) return;
+                selectedTimeControl = o.sec;
+                renderDetail();     // re-skin the segments (cheap; whole column rebuilds)
+            });
+        });
     }
 
     // Nudge opacity 0→1 one frame after the rebuild so the column fades in on each
@@ -779,7 +786,9 @@
         var iAmHost = (botGamesStarted % 2) === 0;
         botGamesStarted++;
         log("startBotGame game=" + selectedGameId + " iAmHost=" + iAmHost);
-        renderGame(selectedGameId, 0, iAmHost, true);
+        // Offline room needs a concrete bank now, so "Any"(-1) collapses to the 5-min default.
+        var tc = isTimedGame(selectedGameId) ? concreteTc(selectedTimeControl) : 0;
+        renderGame(selectedGameId, 0, iAmHost, true, { timeControl: tc });
     }
 
     function renderJoin() {
@@ -852,7 +861,7 @@
         cleanupCurrentView(false);
         view = "game";
         var g = MG.Games.byId(gameId);
-        setTitle((g ? g.name : "Game") + (bot ? " (bot)" : ""));
+        setTitle((g ? (g.short || g.name) : "Game") + (bot ? " (bot)" : ""));
         clearBody();
         rematchPollToken++;   // invalidate any handshake from the previous game
 
@@ -875,6 +884,10 @@
             tok: currentTok,          // seat token: authorises this client's moves (unused offline)
             seat: opts && opts.seat,
             numPlayers: opts && opts.numPlayers,
+            // Time control in SECONDS (0 = untimed). Only chess/checkers ever set it. Offline the
+            // controller ticks it locally; online it's advisory — the controller polls the
+            // server-authoritative /api/clocks — but we still pass it so the clock UI is built.
+            timeControl: (opts && opts.timeControl) | 0,
             onStatus: setStatus,
             onGameOver: onGameOver
         });
@@ -945,17 +958,21 @@
         if (!g || !g.enabled) { setStatus("Pick an available game."); return; }
         setStatus("Creating lobby…");
         currentTok = MG.Session.newToken();   // one seat token for this whole game
-        log("startCreate game=" + selectedGameId + " base=" + MG.Net.getBaseUrl());
+        // The host's time-control pick rides the create request (chess/checkers only); the joiner
+        // learns it back from join(). A private room must fix a concrete bank, so "Any"(-1)
+        // collapses to 5 min here. Untimed games send 0 (server ignores it anyway).
+        var tc = isTimedGame(selectedGameId) ? concreteTc(selectedTimeControl) : 0;
+        log("startCreate game=" + selectedGameId + " base=" + MG.Net.getBaseUrl() + " tc=" + tc);
         MG.Api.create(selectedGameId, currentTok, function (code) {
             log("create ok, code=" + code);
             currentCode = code;
             if (isDurakOnlineGame(selectedGameId)) { renderRoom(code, true, false); return; }
             renderWaiting(code);
-            waitForJoiner(code);
+            waitForJoiner(code, tc);
         }, function () {
             log("create FAILED (request errored)");
             setStatus("Couldn't create lobby. Check the server.");
-        });
+        }, tc);
     }
 
     function renderRoom(code, isHost, isPublic) {
@@ -1028,14 +1045,16 @@
         tick();
     }
 
-    function waitForJoiner(code) {
+    // `tc` (seconds) is the host's chosen time control, threaded through so the host mounts its
+    // clock with the same bank the joiner will read from the server. 0 for untimed / non-clock games.
+    function waitForJoiner(code, tc) {
         statusPollToken++;
         var token = statusPollToken;
         function tick() {
             if (token !== statusPollToken) return;
             MG.Api.status(code, function (st) {
                 if (token !== statusPollToken) return;
-                if (st.players === 2) { renderGame(selectedGameId, code, true); return; }
+                if (st.players === 2) { renderGame(selectedGameId, code, true, false, { timeControl: tc | 0 }); return; }
                 $.Schedule(1.5, tick);
             }, function () { $.Schedule(2.0, tick); });
         }
@@ -1048,24 +1067,30 @@
         if (!g || !g.enabled) { setStatus("Pick an available game."); return; }
         setStatus("Finding a match…");
         currentTok = MG.Session.newToken();
-        log("startQuickMatch game=" + selectedGameId);
+        // Quick Match time control (chess/checkers only): a concrete pick pools with same-bank
+        // searchers; "Any"(-1) rides up as tc="any" and the server pairs it with any waiter (or
+        // 5 min if two "Any" seekers meet). The server resolves the final bank when both seats are
+        // present, so the client no longer knows it up-front — the online clock is poll-discovered
+        // from /api/clocks, hence renderGame gets timeControl:0 (untimed games send it too, no-op).
+        var tcArg = isTimedGame(selectedGameId) ? (selectedTimeControl === -1 ? "any" : selectedTimeControl) : 0;
+        log("startQuickMatch game=" + selectedGameId + " tc=" + tcArg);
         MG.Api.quick(selectedGameId, currentTok, function (res) {
             if (res.role === "joiner") {
                 log("quick joined, code=" + res.code);
                 currentCode = res.code;
                 if (isDurakOnlineGame(selectedGameId)) { renderRoom(res.code, false, true); return; }
-                renderGame(selectedGameId, res.code, false); // seated by the server; we play black
+                renderGame(selectedGameId, res.code, false, false, { timeControl: 0 }); // seated by the server; we play black
             } else {
                 log("quick hosting, code=" + res.code);
                 currentCode = res.code;
                 if (isDurakOnlineGame(selectedGameId)) { renderRoom(res.code, true, true); return; }
                 renderWaiting(res.code, true);
-                waitForJoiner(res.code);
+                waitForJoiner(res.code, 0);
             }
         }, function () {
             log("quick FAILED (request errored)");
             setStatus("Couldn't reach matchmaking. Check the server.");
-        });
+        }, tcArg);
     }
 
     // ── multi-select quick match ──────────────────────────────────────────────
@@ -1208,7 +1233,9 @@
                 if (!g || !g.enabled) { setStatus("Couldn't read the lobby. Please try again."); return; }
                 currentCode = code;
                 if (res.game === 3) { renderRoom(code, false, false); return; }
-                renderGame(res.game, code, false);
+                // res.tc = the host's time control (seconds), decoded from the join reply. The
+                // clock itself is server-authoritative; we pass tc only so the clock UI is built.
+                renderGame(res.game, code, false, false, { timeControl: res.tc | 0 });
                 return;
             }
             if (res.reason === "missing") setStatus("Lobby " + code + " not found.");

@@ -305,6 +305,53 @@ async function main() {
     var g2 = await req(h4, "/api/quick.png?game=2&tok=QGAME2BB");   // different game
     ok(g2.w >= 100, "quick for a different game hosts its own lobby (per-game queue)");
 
+    // ── quick match: time-control (tc) bucketing (chess/checkers) ──
+    // Helper: decode a quick reply into { host, code }.
+    function qdec(r) { var host = r.w >= 100; return { host: host, code: (host ? r.w - 100 : r.w) * 100 + (r.h - 1) }; }
+    await (async function () {
+        // (a) Different concrete banks do NOT force-pair: a 1-min seeker and a 10-min seeker each host.
+        var ht = new Hub({ storage: new FakeStorage() });
+        var a = qdec(await req(ht, "/api/quick.png?game=4&tok=TCONE111&tc=60"));    // chess, 1 min
+        ok(a.host, "tc: first 1-min chess seeker HOSTS");
+        var b = qdec(await req(ht, "/api/quick.png?game=4&tok=TCTEN222&tc=600"));   // chess, 10 min
+        ok(b.host && b.code !== a.code, "tc: a 10-min seeker does NOT join the 1-min host (separate banks)");
+        // (b) A same-bank seeker joins the matching host, and the lobby runs that bank.
+        var c = qdec(await req(ht, "/api/quick.png?game=4&tok=TCONE333&tc=60"));    // another 1 min
+        ok(!c.host && c.code === a.code, "tc: a second 1-min seeker JOINS the waiting 1-min host");
+        var cl = await req(ht, "/api/clocks.png?code=" + a.code);
+        ok(cl.w === 61 && cl.h === 61, "tc: the paired 1-min lobby banks 60s per side (authoritative /api/clocks)");
+    })();
+    await (async function () {
+        // (c) "Any" joins any waiting bank and adopts it (here a waiting 3-min host → 180s).
+        var ht = new Hub({ storage: new FakeStorage() });
+        var h = qdec(await req(ht, "/api/quick.png?game=1&tok=ANYHOST1&tc=180"));   // checkers, 3 min
+        ok(h.host, "tc/any: concrete 3-min host waits");
+        var j = qdec(await req(ht, "/api/quick.png?game=1&tok=ANYJOIN1&tc=any"));   // "Any"
+        ok(!j.host && j.code === h.code, "tc/any: an Any seeker joins the waiting 3-min host");
+        var cl = await req(ht, "/api/clocks.png?code=" + h.code);
+        ok(cl.w === 181 && cl.h === 181, "tc/any: the Any joiner adopts the host's 3-min bank (180s)");
+    })();
+    await (async function () {
+        // (d) Two "Any" seekers meet with no concrete bank around → resolve to the 5-min default.
+        var ht = new Hub({ storage: new FakeStorage() });
+        var h = qdec(await req(ht, "/api/quick.png?game=4&tok=ANYANY01&tc=any"));
+        ok(h.host, "tc/any: first Any seeker HOSTS an undecided-bank lobby");
+        var j = qdec(await req(ht, "/api/quick.png?game=4&tok=ANYANY02&tc=any"));
+        ok(!j.host && j.code === h.code, "tc/any: the second Any seeker joins it");
+        var cl = await req(ht, "/api/clocks.png?code=" + h.code);
+        ok(cl.w === 301 && cl.h === 301, "tc/any: two Any seekers resolve to the 5-min default (300s)");
+    })();
+    await (async function () {
+        // (e) A concrete seeker adopts a waiting "Any" host (fixing the bank to the concrete pick).
+        var ht = new Hub({ storage: new FakeStorage() });
+        var h = qdec(await req(ht, "/api/quick.png?game=1&tok=ANYWAIT1&tc=any"));   // Any host waits
+        ok(h.host, "tc/any: Any host waits with no fixed bank");
+        var j = qdec(await req(ht, "/api/quick.png?game=1&tok=CONCJN10&tc=600"));   // concrete 10 min
+        ok(!j.host && j.code === h.code, "tc/any: a concrete 10-min seeker joins the waiting Any host");
+        var cl = await req(ht, "/api/clocks.png?code=" + h.code);
+        ok(cl.w === 601 && cl.h === 601, "tc/any: the Any host adopts the joiner's 10-min bank (600s)");
+    })();
+
     // ── multi-select quick match (mquick): intersection matching + status game ──
     await (async function () {
         var hm = new Hub({ storage: new FakeStorage() });

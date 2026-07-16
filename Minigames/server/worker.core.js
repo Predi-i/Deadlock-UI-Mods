@@ -108,33 +108,72 @@ export class Hub {
         await this.maybeSweep();
         const game = clampInt(q.get("game"), 1, 1, 9);
         if (!SUPPORTED_GAMES[game]) return png(9, 6);      // unsupported game id (6..9 have no engine)
-
         if (!validTok(q.get("tok"))) return png(9, 3);     // reject empty/garbage seat token
-        const waitCode = await this.storage.get("pubq:" + game);
 
-        if (waitCode) {
+        // TIME-CONTROL matchmaking (chess/checkers only; other games have no bank). The picker
+        // sends tc = concrete SECONDS (60/180/300/600) or the literal "any". Searchers pool by
+        // (game, tc-bucket) so a 1-min seeker never gets force-matched into a 10-min waiter:
+        //   • concrete T  → join a same-T waiter, else an "any" waiter (which then adopts T),
+        //                   else host a T lobby.
+        //   • "any"       → join ANY waiter (adopt its bank; if that waiter is itself "any",
+        //                   the game resolves to 5 min), else host an "any" lobby.
+        // Non-clock games ignore tc entirely and share one bucket ("0"). Single-quick queues use
+        // the prefix pubq:q:<game>:<bucket> so they never collide with mquick's pubq:<game>.
+        const clockGame = !!CLOCK_GAMES[game];
+        const rawTc = q.get("tc");
+        const wantAny = clockGame && rawTc === "any";
+        const wantTc = clockGame && !wantAny ? clockSecFor(game, rawTc) : 0;  // concrete secs, else 0
+        // The bank this seeker will impose once paired: a concrete pick fixes to itself; "Any"
+        // resolves to 5 min against an unbanked/undecided host. (When joining a single-quick host
+        // that already holds a concrete bank, that host's bank stands instead — see below.)
+        const seekerTc = clockGame ? (wantAny ? 300 : wantTc) : 0;
+        // Candidate queues to try joining, in order:
+        //   • single-quick tc buckets (pubq:q:<game>:<bucket>) — a concrete seeker also accepts an
+        //     "any" host; an "any" seeker sweeps every bucket.
+        //   • the shared mquick queue (pubq:<game>) — an undecided multi-select host (game 0) whose
+        //     candidate set includes this game; finalizeJoin fixes the game for it.
+        // Each entry is [storageKey, isMquickQueue].
+        const buckets = !clockGame ? ["0"]
+          : wantAny ? ["60", "180", "300", "600", "any"]
+          : [String(wantTc), "any"];
+        const qkey = (b) => "pubq:q:" + game + ":" + b;
+        const queues = buckets.map((b) => [qkey(b), false]);
+        queues.push(["pubq:" + game, true]);   // mquick multi-hosts live here (undecided game 0)
+
+        for (let i = 0; i < queues.length; i++) {
+          const waitCode = await this.storage.get(queues[i][0]);
+          if (!waitCode) continue;
           const w = await this.storage.get("l:" + waitCode);
-          // Join a waiting host if it's this exact game OR a still-undecided multi-select
-          // lobby (game 0) whose candidate set includes this game. finalizeJoin fixes the
-          // game (for a multi-lobby), seats the joiner and clears the host's queue(s).
-          if (w && w.pub && w.players < 2 &&
-              (w.game === game || (w.game === 0 && w.games && w.games.indexOf(game) >= 0))) {
+          const isMulti = w && w.game === 0 && w.games && w.games.indexOf(game) >= 0;
+          if (w && w.pub && w.players < 2 && (w.game === game || isMulti)) {
+            // Resolve the bank now that both seats are known:
+            //   • single-quick host with a concrete bank (w.tc>0, not qtcAny) → that bank stands.
+            //   • single-quick "any" host (qtcAny) or an mquick multi-host (no bank) → the seeker
+            //     imposes seekerTc (its own concrete T, or 5 min if it too asked for "Any").
+            if (!clockGame) w.tc = 0;
+            else if (w.qtcAny || isMulti || !w.tc) { w.tc = seekerTc; delete w.qtcAny; }
+            // else the host's concrete w.tc stands and the joiner plays at it.
             await this.finalizeJoin(waitCode, w, q.get("tok"), game);
             return png(Math.floor(waitCode / 100), (waitCode % 100) + 1); // JOINER (black)
           }
-          // stale/closed slot — fall through and host a fresh lobby.
+          // stale/closed slot — try the next queue, then fall through to hosting.
         }
+
+        // No match: host a fresh public lobby in OUR bucket and wait.
+        const hostBucket = !clockGame ? "0" : wantAny ? "any" : String(wantTc);
         const newCode = await this.freshCode();
         const lobby = {
           game, players: 1, moves: [], pub: 1, t: nowSeq(),
           seats: [{ tok: q.get("tok") || "" }, null], // host takes seat 0 (white/X/+1)
           turn: 0,
-          tc: QUICK_CLOCK_SEC[game] || 0,              // chess/checkers quick = fixed 5 min (both sides know)
+          tc: clockGame && !wantAny ? wantTc : 0,      // concrete bank, or 0 while an "any" host is unresolved
+          qtcAny: clockGame && wantAny ? 1 : 0,        // unresolved "any" host — its bank is fixed at join
+          qk: qkey(hostBucket),                        // the queue slot this lobby holds (for clearQueuesFor)
           state: initState(game)
         };
         initClock(lobby);
         await this.storage.put("l:" + newCode, lobby);
-        await this.storage.put("pubq:" + game, newCode);
+        await this.storage.put(qkey(hostBucket), newCode);
         // HOST (white): +100 on the width flags the role without a fragile extra value.
         return png(Math.floor(newCode / 100) + 100, (newCode % 100) + 1);
       }
@@ -418,10 +457,16 @@ export class Hub {
     await this.clearQueuesFor(w, waitCode);
   }
 
-  // Remove a lobby's code from every per-game queue it registered under. A single-game
-  // lobby holds one queue (pubq:game); a multi-select lobby (games[]) holds several. Only
-  // deletes a queue entry that still points at THIS code (a newer host may have replaced it).
+  // Remove a lobby's code from every public queue it registered under. Three queue shapes:
+  //   • single-quick  → one (game, tc-bucket) slot stored in lobby.qk (pubq:q:<game>:<bucket>)
+  //   • multi-select  → one pubq:<game> per candidate game in lobby.games[]
+  // Only deletes a queue entry that still points at THIS code (a newer host may have replaced
+  // it). Both shapes are cleared idempotently, so a mislabeled lobby can't strand a slot.
   async clearQueuesFor(lobby, code) {
+    if (lobby.qk) {
+      const wc = await this.storage.get(lobby.qk);
+      if (wc != null && Number(wc) === Number(code)) await this.storage.delete(lobby.qk);
+    }
     const ids = lobby.games && lobby.games.length ? lobby.games : [lobby.game];
     for (let i = 0; i < ids.length; i++) {
       const g = ids[i];

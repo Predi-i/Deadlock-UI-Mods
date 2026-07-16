@@ -385,8 +385,10 @@
             }, err);
         },
 
-        create: function (game, tok, cb, err) {
-            request("/api/create", { game: game, tok: tok }, function (w, h) {
+        // tc = time control in SECONDS (chess/checkers only; server rejects off-menu / other
+        // games → untimed). Omit or 0 for an untimed lobby. The joiner learns tc from join().
+        create: function (game, tok, cb, err, tc) {
+            request("/api/create", { game: game, tok: tok, tc: tc || 0 }, function (w, h) {
                 var code = w * 100 + (h - 1); // CODE = hi*100 + lo
                 log("create decoded w=" + w + " h=" + h + " => code=" + code);
                 if (code < 1000 || code > 9999) {
@@ -400,8 +402,14 @@
 
         // Public quickmatch. Server either seats us into a waiting lobby (JOINER, we play
         // black) or hosts a fresh public lobby and waits (HOST, +100 on the width flags it).
-        quick: function (game, tok, cb, err) {
-            request("/api/quick", { game: game, tok: tok }, function (w, h) {
+        // tc = time-control choice (chess/checkers only): concrete SECONDS (60/180/300/600),
+        // the literal "any" (wildcard — pairs with any waiter, else 5 min), or omitted/0 for a
+        // non-clock game. The server pools waiters by (game, tc) so banks never force-mismatch;
+        // the resolved bank is discovered by both clients from the authoritative /api/clocks.
+        quick: function (game, tok, cb, err, tc) {
+            var params = { game: game, tok: tok };
+            if (tc != null && tc !== 0) params.tc = tc;   // "any" or concrete secs; omit for untimed
+            request("/api/quick", params, function (w, h) {
                 var isHost = w >= 100;
                 var code = (isHost ? w - 100 : w) * 100 + (h - 1);
                 if (code < 1000 || code > 9999) {

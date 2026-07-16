@@ -39,6 +39,108 @@
     var legalSequences = RC.legalSequences, chooseBotMove = RC.chooseBotMove;
     var tttWinner = RT.tttWinner, tttFull = RT.tttFull, tttBotMove = RT.tttBotMove;
 
+    // ── shared game clock (chess & checkers) ─────────────────────────────────
+    // Two side clocks rendered above/below the board. There are two backing modes:
+    //   ONLINE  — the SERVER owns the banks and even the CHOICE of whether there's a clock at
+    //             all (Quick Match resolves the time control only once a joiner arrives). So the
+    //             online clock is fully POLL-DISCOVERED: we build a hidden shell, poll
+    //             /api/clocks ~1/s, reveal it on the first timed reply and render verbatim, or
+    //             tear it down if the server says the lobby is untimed. `secs` is IGNORED online.
+    //   OFFLINE (bot) — no server, so we tick locally from `secs`: the side to move drains, and
+    //             when it hits 0 that side flags. secs=0 offline → no clock (a no-op stub).
+    // onFlag(seat) fires once when a side runs out. seatNames labels each clock.
+    function createClock(parent, secs, online, code, onFlag, seatNames) {
+        if (!online && !secs) return { el: null, setTurn: function () {}, stop: function () {}, isTimed: false };
+        var flagged = -1, running = -1, stopped = false, revealed = false;
+        var localMs = [secs * 1000, secs * 1000];   // offline banks; online we render server values
+        var lastTick = 0;
+
+        var wrap = $.CreatePanel("Panel", parent, "");
+        wrap.AddClass("mg-clocks");
+        if (online) wrap.style.visibility = "collapse";   // hidden until the first timed poll reveals it
+        var rows = [];
+        for (var s = 0; s < 2; s++) {
+            var row = $.CreatePanel("Panel", wrap, "");
+            row.AddClass("mg-clock-row");
+            var name = $.CreatePanel("Label", row, ""); name.AddClass("mg-clock-name");
+            name.text = (seatNames && seatNames[s]) || ("Seat " + (s + 1));
+            var time = $.CreatePanel("Label", row, ""); time.AddClass("mg-clock-time");
+            rows.push({ row: row, time: time });
+        }
+
+        function fmt(sec) {
+            sec = Math.max(0, Math.ceil(sec));
+            var m = Math.floor(sec / 60), s = sec % 60;
+            return m + ":" + (s < 10 ? "0" + s : s);
+        }
+        function paint(secArr) {
+            for (var s = 0; s < 2; s++) {
+                if (!rows[s].time.IsValid()) continue;
+                rows[s].time.text = fmt(secArr[s]);
+                rows[s].row.SetHasClass("mg-clock-active", s === running && flagged < 0);
+                rows[s].row.SetHasClass("mg-clock-low", secArr[s] <= 10 && flagged < 0);
+                rows[s].row.SetHasClass("mg-clock-flagged", s === flagged);
+            }
+        }
+        function fireFlag(seat) {
+            if (flagged >= 0) return;
+            flagged = seat;
+            if (onFlag) onFlag(seat);
+        }
+
+        // OFFLINE: drain the running side locally, once per ~250ms tick.
+        function localTick() {
+            if (stopped || flagged >= 0 || online) return;
+            var now = Date.now();
+            if (running >= 0 && lastTick) {
+                localMs[running] = Math.max(0, localMs[running] - (now - lastTick));
+                if (localMs[running] === 0) fireFlag(running);
+            }
+            lastTick = now;
+            paint([localMs[0] / 1000, localMs[1] / 1000]);
+            if (!stopped && flagged < 0) $.Schedule(0.25, localTick);
+        }
+        // ONLINE: poll the authoritative banks and render them; the server decides flag-fall.
+        // A null reply = the lobby is untimed (or gone): before we ever revealed the clock, that
+        // means "no clock for this game" → tear the shell down and stop. Guarded by `stopped`
+        // (set from the controller's destroy), so it dies with the view.
+        function onlineTick() {
+            if (stopped) return;
+            MG.Api.clocks(code, function (r) {
+                if (stopped) return;
+                if (r) {
+                    if (!revealed && wrap.IsValid()) { wrap.style.visibility = "visible"; revealed = true; }
+                    if (r.flag >= 0) running = -1;         // once flagged nobody is "active"
+                    paint(r.sec);
+                    if (r.flag >= 0) { fireFlag(r.flag); return; }
+                    $.Schedule(1.0, onlineTick);
+                } else {
+                    // Server says this lobby has no clock — remove the empty shell and stop polling.
+                    stopped = true;
+                    if (!revealed) { try { wrap.DeleteAsync(0); } catch (e) {} }
+                }
+            }, function () { if (!stopped) $.Schedule(1.2, onlineTick); });
+        }
+
+        if (online) { onlineTick(); }
+        else { lastTick = Date.now(); localTick(); }
+
+        return {
+            el: wrap,
+            isTimed: true,
+            // Set which seat's clock is running (the side to move). Offline this switches which
+            // bank drains; online it's cosmetic (the server already knows) but keeps the active
+            // highlight responsive between the ~1s polls.
+            setTurn: function (seat) {
+                if (!online && running >= 0 && lastTick) {
+                    localMs[running] = Math.max(0, localMs[running] - (Date.now() - lastTick));
+                }
+                running = seat; lastTick = Date.now();
+            },
+            stop: function () { stopped = true; }
+        };
+    }
+
     // ── checkers controller ─────────────────────────────────────────────────
     function createCheckers(container, session) {
         var Api = MG.Api;
@@ -55,6 +157,12 @@
         var gameOver = false;
         var lastFrom = -1, lastTo = -1; // last COMPLETED move's endpoints (for the last-move wash)
         var oppSeqFrom = -1;            // first `from` of the opponent's in-progress (multi-hop) turn
+
+        // Time control (§8 commit 2.3). session.timeControl = seconds per side (0 = untimed).
+        // The clock is authoritative on the SERVER online; offline (bot) it ticks locally. seat
+        // 0 = white/host, seat 1 = black/joiner — the clock indexes by seat, so map colour→seat.
+        var timeControl = session.timeControl || 0;
+        var clock = null;               // createClock handle, built in buildSidePanel
 
         // Move history + local review (§8 commit 2.2). Each finished TURN pushes one entry
         // { from, to, cap, boardAfter, label }. reviewIndex === null means "live" (board shows
@@ -133,6 +241,10 @@
         (function buildSidePanel() {
             var panel = $.CreatePanel("Panel", twoCol, "MG_CheckersMoves");
             panel.AddClass("mg-movelist");
+            // Clocks sit at the TOP of the side panel (opponent above, you below — see clockSeat).
+            // secs=0 → the module builds nothing and every call is a no-op, so an untimed game is
+            // visually unchanged. Server seat 0 = host = white; clockSeat maps that to my view.
+            clock = createClock(panel, timeControl, !session.bot, code, onFlag, clockNames());
             var head = $.CreatePanel("Label", panel, "");
             head.AddClass("mg-movelist-head");
             head.text = "Moves";
@@ -145,6 +257,22 @@
             navNextBtn = makeNavBtn(nav, "Next >", function () { navNext(); });
             renderMoveList();
         })();
+        // Clock rows are indexed by SERVER seat (0 = host = white, 1 = joiner = black). Name them
+        // by colour so both players read the same labels regardless of who they are.
+        function clockNames() {
+            return session.bot
+                ? [myColor === WHITE ? "You" : "Bot", myColor === WHITE ? "Bot" : "You"]
+                : ["White", "Black"];
+        }
+        // The server clock seat for a checkers colour: white always host (seat 0).
+        function clockSeatFor(color) { return color === WHITE ? 0 : 1; }
+        // A side ran out of time: that seat loses, so the OTHER colour wins. seat 0 = white.
+        function onFlag(seat) {
+            if (gameOver) return;
+            var winnerColor = seat === 0 ? BLACK : WHITE;   // loser is white(0)/black(1) → winner is the other
+            finish(winnerColor, "time");
+        }
+        function syncClockTurn() { if (clock && clock.isTimed) clock.setTurn(clockSeatFor(turn)); }
         function makeNavBtn(parent, text, onClick) {
             var b = $.CreatePanel("Button", parent, "");
             b.AddClass("mg-nav-btn");
@@ -692,6 +820,34 @@
             return simpleMoves(board, i);
         }
 
+        // Illegal-move feedback (maintainer 2026-07-15): a wrong click/drop plays the Illegal
+        // cue and, when a capture is available, briefly flashes the piece(s) that MUST jump —
+        // Russian checkers forces the capture and it isn't always obvious which piece is obliged.
+        // The flash is a JS-toggled class (.mg-mustcap) removed after ~0.9s; a @keyframes drives
+        // the pulse (mg.css). Squares with a mandatory capture right now, for my colour.
+        function mustCaptureSquares() {
+            if (!anyCaptureFor(board, myColor)) return [];
+            var out = [];
+            for (var i = 0; i < 64; i++) {
+                if (colorOf(board[i]) === myColor && captureMoves(board, i).length > 0) out.push(i);
+            }
+            return out;
+        }
+        var mustCapToken = 0;
+        function flashMustCapture() {
+            var sqs = mustCaptureSquares();
+            if (sqs.length === 0) return;
+            mustCapToken++;
+            var tok = mustCapToken;
+            for (var k = 0; k < sqs.length; k++) if (cells[sqs[k]]) cells[sqs[k]].AddClass("mg-mustcap");
+            $.Schedule(0.9, function () {
+                if (destroyed || tok !== mustCapToken) return;
+                for (var j = 0; j < sqs.length; j++) if (cells[sqs[j]]) cells[sqs[j]].RemoveClass("mg-mustcap");
+            });
+        }
+        // A click/drop that couldn't be a legal move: sound + (if forced) the must-capture flash.
+        function rejectMove() { sfx("Illegal"); flashMustCapture(); }
+
         function onCellClick(i) {
             if (destroyed || reviewIndex !== null || !myTurn()) return;
 
@@ -700,13 +856,16 @@
                 for (var t = 0; t < legalTargets.length; t++) {
                     if (legalTargets[t].to === i) { doLocalHop(selected, legalTargets[t]); return; }
                 }
+                // A selection is up but this square isn't one of its targets. If it's not a
+                // re-select of another of my movable pieces either, it's an illegal attempt.
+                if (colorOf(board[i]) !== myColor) { rejectMove(); return; }
             }
-            if (chaining) return; // during a chain only its targets are clickable
+            if (chaining) { rejectMove(); return; } // during a chain only its targets are clickable
 
             // Otherwise (re)select one of my pieces that actually has a legal move.
             if (colorOf(board[i]) === myColor) {
                 var tg = targetsFor(i);
-                if (tg.length === 0) { status("That piece has no legal move."); return; }
+                if (tg.length === 0) { status("That piece has no legal move."); rejectMove(); return; }
                 selected = i;
                 legalTargets = tg;
                 refreshHighlights();
@@ -723,7 +882,9 @@
                     return;
                 }
             }
-            // Dropped on a non-target: keep the selection so its hints stay up for a click.
+            // Dropped on a non-target: reject (sound + forced-capture flash), keep the selection
+            // so its hints stay up for a click.
+            rejectMove();
         }
 
         var pendingHops = [];
@@ -758,6 +919,7 @@
             for (var h = 0; h < hops.length; h++) hops[h].end = (h === hops.length - 1) ? 1 : 0;
 
             turn = (myColor === WHITE ? BLACK : WHITE); // hand off locally right away
+            syncClockTurn();                            // opponent's bank starts draining
 
             if (session.bot) {
                 checkEnd();
@@ -784,6 +946,7 @@
             if (destroyed) return;
             if (h >= seq.length) {
                 turn = myColor;
+                syncClockTurn();
                 lastFrom = seq[0].from; lastTo = seq[seq.length - 1].to;
                 refreshHighlights();
                 pushHistory(lastFrom, lastTo, botTurnCapture);
@@ -889,6 +1052,7 @@
                     if (oppSeqFrom < 0) oppSeqFrom = mv.from; // first hop of this opponent turn
                     if (mv.end) {
                         turn = myColor;
+                        syncClockTurn();
                         lastFrom = oppSeqFrom; lastTo = mv.to;
                         pushHistory(oppSeqFrom, mv.to, oppTurnCapture);
                         oppSeqFrom = -1;
@@ -921,11 +1085,15 @@
             else if (bc === 0) finish(WHITE);
         }
 
-        function finish(winner) {
+        // `reason` is optional: "time" when the game ended on a flag-fall (shown in the status).
+        function finish(winner, reason) {
+            if (gameOver) return;      // a flag-fall + a board end can race; first one wins
             gameOver = true;
             clearSelection();
             refreshHighlights();
-            status(winner === myColor ? "🏆 You win!" : "You lose.");
+            if (clock) clock.stop();
+            var lost = reason === "time" ? " (on time)" : "";
+            status(winner === myColor ? ("🏆 You win!" + lost) : ("You lose." + lost));
             if (session.onGameOver) session.onGameOver(winner === myColor ? "win" : "lose");
         }
 
@@ -933,6 +1101,7 @@
         buildCells();
         layoutPieces();
         refreshHighlights();
+        syncClockTurn();          // white (seat 0) is on the move at the start
         sfx("GameStart");
         if (myTurn()) {
             status("Your turn. You play " + (myColor === WHITE ? "white (bottom)." : "black (bottom)."));
@@ -946,7 +1115,7 @@
         }
 
         return {
-            destroy: function () { destroyed = true; pollToken++; clearDrag(); try { root.DeleteAsync(0); } catch (e) {} }
+            destroy: function () { destroyed = true; pollToken++; if (clock) clock.stop(); clearDrag(); try { root.DeleteAsync(0); } catch (e) {} }
         };
     }
 
@@ -1198,6 +1367,12 @@
         var history = [];
         var reviewIndex = null;
 
+        // Time control (§8 commit 2.3), mirrors createCheckers. session.timeControl = seconds per
+        // side (0 = untimed). Authoritative on the SERVER online; offline (bot) it ticks locally.
+        // seat 0 = white/host, seat 1 = black/joiner — the clock indexes by seat.
+        var timeControl = session.timeControl || 0;
+        var clock = null;              // createClock handle, built in buildSidePanel
+
         var dragActive = false, dragGhost = null, dragOverSq = -1, dragEnterCount = 0;
         var dragSourcePiece = null;    // the real piece being dragged (un-dim even if it's since been deleted)
         var DRAG_DEBUG = false;        // drag path is the proven checkers recipe; flip on only to debug
@@ -1262,6 +1437,8 @@
         (function buildSidePanel() {
             var panel = $.CreatePanel("Panel", twoCol, "MG_ChessMoves");
             panel.AddClass("mg-movelist");
+            // Clocks at the top of the side panel (untimed → builds nothing; see createClock).
+            clock = createClock(panel, timeControl, !session.bot, code, onFlag, clockNames());
             var head = $.CreatePanel("Label", panel, "");
             head.AddClass("mg-movelist-head");
             head.text = "Moves";
@@ -1280,6 +1457,21 @@
             var l = $.CreatePanel("Label", b, ""); l.text = text;
             b.SetPanelEvent("onactivate", onClick);
             return b;
+        }
+        // Clock rows are indexed by SERVER seat (0 = host = white, 1 = joiner = black).
+        function clockNames() {
+            return session.bot
+                ? [myColor === 1 ? "You" : "Bot", myColor === 1 ? "Bot" : "You"]
+                : ["White", "Black"];
+        }
+        // Chess colour → server seat: white (+1) is always the host (seat 0).
+        function clockSeatFor(color) { return color === 1 ? 0 : 1; }
+        function syncClockTurn() { if (clock && clock.isTimed) clock.setTurn(clockSeatFor(turn)); }
+        // A side flagged (ran out of time): that seat loses. Map seat → colour and finish.
+        function onFlag(seat) {
+            if (gameOver) return;
+            var loserColor = seat === 0 ? 1 : -1;
+            finish(loserColor === 1 ? -1 : 1, "time");
         }
 
         var SQ = 60, PIECE_SZ = 56, INSET = (SQ - PIECE_SZ) / 2;
@@ -1684,10 +1876,14 @@
                 for (var t = 0; t < legalTargets.length; t++) {
                     if (legalTargets[t].to === i) { doLocalMove(selected, i); return; }
                 }
+                // A selection is up and this isn't one of its targets: if it's not a re-select
+                // of another of my pieces, it's an illegal attempt — sound feedback (no forced
+                // capture in chess, so no flash).
+                if (cSign(board[i]) !== myColor) { sfx("Illegal"); return; }
             }
             if (cSign(board[i]) === myColor) {
                 var tg = targetsFor(i);
-                if (tg.length === 0) { status("That piece has no legal move."); return; }
+                if (tg.length === 0) { status("That piece has no legal move."); sfx("Illegal"); return; }
                 selected = i;
                 legalTargets = tg;
                 refreshHighlights();
@@ -1699,6 +1895,7 @@
             for (var t = 0; t < legalTargets.length; t++) {
                 if (legalTargets[t].to === i) { doLocalMove(selected, i); return; }
             }
+            sfx("Illegal");   // dropped on a non-target square
         }
 
         function doLocalMove(from, to) {
@@ -1707,6 +1904,7 @@
             lastFrom = from; lastTo = to;
             clearSelection();
             turn = -myColor;               // hand off locally
+            syncClockTurn();               // opponent's bank starts draining
             refreshHighlights();
             pushHistory(from, to, cap);
             sfx(inCheck(board, turn) ? "Check" : (fx.promoted ? "Promote" : "MoveSelf"));
@@ -1731,6 +1929,7 @@
             var fx = applyChessMove(mv.from, mv.to);
             lastFrom = mv.from; lastTo = mv.to;
             turn = myColor;
+            syncClockTurn();
             refreshHighlights();
             pushHistory(mv.from, mv.to, cap);
             sfx(inCheck(board, myColor) ? "Check" : (fx.promoted ? "Promote" : "MoveOpp"));
@@ -1803,6 +2002,7 @@
                     var fx = applyChessMove(mv.from, mv.to);
                     lastFrom = mv.from; lastTo = mv.to;
                     turn = myColor;                 // every chess move ends the turn (end always 1)
+                    syncClockTurn();
                     refreshHighlights();
                     pushHistory(mv.from, mv.to, oppCap);
                     sfx(inCheck(board, myColor) ? "Check" : (fx.promoted ? "Promote" : "MoveOpp"));
@@ -1825,17 +2025,25 @@
             if (res === "stalemate") { finishDraw(); return true; }
             return false;
         }
-        function finish(winner) {
+        // `reason` is optional: "time" when the game ended on a flag-fall (shown in the status).
+        function finish(winner, reason) {
+            if (gameOver) return;      // a flag-fall + a checkmate can race; first one wins
             gameOver = true;
             clearSelection();
             refreshHighlights();
-            status(winner === myColor ? "🏆 Checkmate — you win!" : "Checkmate — you lose.");
-            if (session.onGameOver) session.onGameOver(winner === myColor ? "win" : "lose");
+            if (clock) clock.stop();
+            var win = winner === myColor;
+            var how = reason === "time" ? (win ? "🏆 Opponent flagged — you win!" : "You lose on time.")
+                                        : (win ? "🏆 Checkmate — you win!" : "Checkmate — you lose.");
+            status(how);
+            if (session.onGameOver) session.onGameOver(win ? "win" : "lose");
         }
         function finishDraw() {
+            if (gameOver) return;
             gameOver = true;
             clearSelection();
             refreshHighlights();
+            if (clock) clock.stop();
             status("Stalemate — it's a draw.");
             if (session.onGameOver) session.onGameOver("draw");
         }
@@ -1844,6 +2052,7 @@
         buildCells();
         layoutPieces();
         refreshHighlights();
+        syncClockTurn();          // white (seat 0) is on the move at the start
         sfx("GameStart");
         if (myTurn()) {
             status("Your turn. You play " + (myColor === 1 ? "white (bottom)." : "black (bottom)."));
@@ -1856,7 +2065,7 @@
         }
 
         return {
-            destroy: function () { destroyed = true; pollToken++; clearDrag(); try { root.DeleteAsync(0); } catch (e) {} }
+            destroy: function () { destroyed = true; pollToken++; if (clock) clock.stop(); clearDrag(); try { root.DeleteAsync(0); } catch (e) {} }
         };
     }
 
@@ -1879,10 +2088,12 @@
     MG.Games = {
         list: [
             { id: 1, key: "checkers", name: "Checkers", enabled: true },
-            { id: 2, key: "tictactoe", name: "Tic-Tac-Toe", enabled: true },
+            // `short` is the compact label for the game-screen HEADER only (setTitle); the picker
+            // card keeps the full `name`. TTT / Connect 4 are long enough to want a shorter header.
+            { id: 2, key: "tictactoe", name: "Tic-Tac-Toe", short: "TTT", enabled: true },
             { id: 3, key: "durak", name: "Durak", enabled: false },
             { id: 4, key: "chess", name: "Chess", enabled: true },
-            { id: 5, key: "connectfour", name: "Connect Four", enabled: false },
+            { id: 5, key: "connectfour", name: "Connect Four", short: "Connect 4", enabled: false },
             { id: 6, key: "soon1", name: "Coming Soon", enabled: false },
             { id: 7, key: "soon2", name: "Coming Soon", enabled: false },
             { id: 8, key: "soon3", name: "Coming Soon", enabled: false },
