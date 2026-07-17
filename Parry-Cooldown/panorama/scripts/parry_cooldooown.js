@@ -39,12 +39,18 @@
 
         for (var i = 0; i < rebuttals.length; i++) {
             var el = rebuttals[i];
-            
+
             if (el.BHasClass("recentPurchase") || el.BHasClass("QuickbuyItem")) {
                 continue;
             }
-            
+
             var isValid = true;
+            // The game reuses the "parryRebuttal" CSS class for both Rebuttal
+            // (Tier 1) and Counterspell (Tier 3), but only Rebuttal reduces the
+            // parry cooldown. The owning CitadelModIcon carries an isTierN class
+            // (isTierN maps 1:1 to EModTier_N), so require Tier 1 to exclude
+            // Counterspell and any future higher-tier parry items.
+            var isTier1 = false;
             var curr = el.GetParent();
             while (curr && curr.IsValid() && curr !== State.cachedInventory) {
                 var pid = curr.id;
@@ -52,10 +58,13 @@
                     isValid = false;
                     break;
                 }
+                if (curr.BHasClass("isTier1")) {
+                    isTier1 = true;
+                }
                 curr = curr.GetParent();
             }
-            
-            if (isValid) return true;
+
+            if (isValid && isTier1) return true;
         }
         return false;
     }
