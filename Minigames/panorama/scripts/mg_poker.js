@@ -61,7 +61,8 @@
     }
 
     // Stage geometry (px). Bigger than Durak's 680×500 — the 4-seat felt needs the room.
-    var CARD_W = 76, CARD_H = 106;     // board / hole card size
+    var CARD_W = 76, CARD_H = 106;     // board / my hole card size
+    var OPP_CW = 42, OPP_CH = 59;      // opponents' small face-down backs (avoid the mushy overlap)
     var STAGE_W = 760, STAGE_H = 520;
     var START_STACK = 200, SB = 5, BB = 10;
 
@@ -109,25 +110,29 @@
 
         // ── seat layout ─────────────────────────────────────────────────────────────
         // Avatar tile centres per zone (my tile bottom-centre; opponents around the felt).
+        // Left/right pulled inward so a 120px tile + its card pair clear the 760px felt edge.
         function seatCenter(seat) {
-            if (seat === mySeat) return { x: STAGE_W / 2, y: STAGE_H - 40 };
+            // My tile lives in the bottom-LEFT corner (durak idiom) so it never stacks on my
+            // centred hole cards or the pot; opponents ring the top/sides.
+            if (seat === mySeat) return { x: 84, y: STAGE_H - 46 };
             var rel = (seat - mySeat + numPlayers) % numPlayers;
             var zone = seatZone(rel, numPlayers);
-            if (zone === "left") return { x: 70, y: STAGE_H * 0.42 };
-            if (zone === "right") return { x: STAGE_W - 70, y: STAGE_H * 0.42 };
-            return { x: STAGE_W / 2, y: 52 };   // top
+            if (zone === "left") return { x: 96, y: STAGE_H * 0.40 };
+            if (zone === "right") return { x: STAGE_W - 96, y: STAGE_H * 0.40 };
+            return { x: STAGE_W / 2, y: 56 };   // top
         }
-        // Where a seat's two cards sit (my hole cards face-up bottom-centre; opponents' backs
-        // tucked beside their tile).
+        // Where a seat's two cards sit. Mine are the big face-up hole cards, bottom-centre,
+        // ABOVE my tile. Opponents get two SMALL backs, centred as a neat pair just below their
+        // tile (a small gap, NOT the heavy 71% overlap that mushed the old full-size backs).
         function holeAnchor(seat) {
             var c = seatCenter(seat);
-            if (seat === mySeat) return { x: STAGE_W / 2 - (CARD_W + 8), y: STAGE_H - CARD_H - 96, spread: CARD_W + 8 };
-            var rel = (seat - mySeat + numPlayers) % numPlayers;
-            var zone = seatZone(rel, numPlayers);
-            var sw = 22;   // overlapped backs
-            if (zone === "left") return { x: c.x - 10, y: c.y + 34, spread: sw };
-            if (zone === "right") return { x: c.x - 10 - sw, y: c.y + 34, spread: sw };
-            return { x: c.x - 10, y: c.y + 34, spread: sw };   // top
+            if (seat === mySeat) {
+                // Big face-up pair along the bottom edge, centred. Below the pot label, clear of
+                // my corner tile — the felt's bottom-centre is otherwise empty.
+                return { x: STAGE_W / 2 - CARD_W - 4, y: STAGE_H - CARD_H - 14, spread: CARD_W + 8, w: CARD_W, h: CARD_H };
+            }
+            var pairW = OPP_CW * 2 + 6;                 // two small backs + a 6px gap
+            return { x: c.x - pairW / 2, y: c.y + 36, spread: OPP_CW + 6, w: OPP_CW, h: OPP_CH };
         }
         // Board (up to 5 community cards) centred horizontally, mid felt.
         function boardSlot(i, n) {
@@ -181,12 +186,15 @@
             var isMe = seat === mySeat;
             var live = st.inHand[seat] && !st.folded[seat];
 
-            // hole cards
+            // hole cards. Mine are big face-up cards; opponents get two small backs (the
+            // per-seat w/h from holeAnchor, applied inline so one .mg-pk-card rule serves both).
             var ha = holeAnchor(seat);
             if (st.inHand[seat] && st.hole[seat] && st.hole[seat].length === 2) {
                 for (var k = 0; k < 2; k++) {
                     var card = $.CreatePanel("Panel", cardLayer, "");
                     card.AddClass("mg-pk-card");
+                    card.style.width = ha.w + "px";
+                    card.style.height = ha.h + "px";
                     if (isMe) card.AddClass("mg-pk-hole-me");
                     var reveal = isMe || (showdownReveal && live);
                     if (reveal) setFace(card, cardFaceUrl(st.hole[seat][k]));
@@ -216,13 +224,14 @@
             if (seat === st.button) badge(tile, "D", "mg-pk-dealer");
             if (typeof st.bbSeat === "number" && seat === st.bbSeat) { /* labelled by bet below */ }
 
-            // current street bet in front of the seat
+            // current street bet, floated toward the pot (a chip readout between the seat and
+            // the board). Mine sits just above my tile; opponents' below their card pair.
             if (st.bet[seat] > 0) {
                 var betLbl = $.CreatePanel("Label", decorLayer, "");
                 betLbl.AddClass("mg-pk-bet");
-                var bx = c.x - 20, by = c.y + (seat === mySeat ? -54 : 34);
+                var bx = c.x - 30, by = (seat === mySeat) ? (c.y - 62) : (c.y + 36 + ha.h + 6);
                 betLbl.style.transform = xform(bx, by, 0);
-                betLbl.text = String(st.bet[seat]);
+                betLbl.text = String(st.bet[seat]) + " ch";
             }
 
             // folded / result tag
@@ -245,14 +254,11 @@
             if (!myTurn()) return;
             var la = P.legalActions(st, mySeat);
 
-            var row = $.CreatePanel("Panel", controlsZone, ""); row.AddClass("mg-pk-actionrow");
-
-            if (la.canFold) mkButton(row, "Fold", "mg-btn", function () { doAction({ type: "fold" }); });
-            if (la.canCheck) mkButton(row, "Check", "mg-btn-primary", function () { doAction({ type: "check" }); });
-            if (la.canCall) mkButton(row, "Call " + la.callAmount, "mg-btn-primary", function () { doAction({ type: "call" }); });
-
+            // Stepper row (only when a raise is possible) sits ABOVE the action buttons — the
+            // standard poker layout. The action buttons (incl. Raise) all live on ONE centred
+            // row so the Raise button inherits the row's flow-children:right + centre and can't
+            // clip half-off the left edge (the "half-visible button" bug).
             if (la.canRaise) {
-                // clamp the stepper into [minRaiseTo, maxRaiseTo]
                 if (pendingBet < la.minRaiseTo || pendingBet > la.maxRaiseTo) pendingBet = la.minRaiseTo;
                 var stepRow = $.CreatePanel("Panel", controlsZone, ""); stepRow.AddClass("mg-pk-steprow");
                 mkStep(stepRow, "-", function () { pendingBet = Math.max(la.minRaiseTo, pendingBet - BB); buildControls(); });
@@ -264,8 +270,15 @@
                     buildControls();
                 });
                 mkStep(stepRow, "Max", function () { pendingBet = la.maxRaiseTo; buildControls(); });
+            }
+
+            var row = $.CreatePanel("Panel", controlsZone, ""); row.AddClass("mg-pk-actionrow");
+            if (la.canFold) mkButton(row, "Fold", "mg-btn", function () { doAction({ type: "fold" }); });
+            if (la.canCheck) mkButton(row, "Check", "mg-btn-primary", function () { doAction({ type: "check" }); });
+            if (la.canCall) mkButton(row, "Call " + la.callAmount, "mg-btn-primary", function () { doAction({ type: "call" }); });
+            if (la.canRaise) {
                 var raiseLabel = (st.currentBet === 0) ? "Bet " : "Raise to ";
-                mkButton(controlsZone, raiseLabel + pendingBet, "mg-btn-primary", function () {
+                mkButton(row, raiseLabel + pendingBet, "mg-btn-primary", function () {
                     doAction({ type: "raise", to: pendingBet });
                 });
             }

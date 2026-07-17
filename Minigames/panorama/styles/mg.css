@@ -1250,11 +1250,15 @@
 /* Controls row: FIXED height so toggling action buttons / next-hand never reflows the
    modal (the durak "panel jumps" lesson). flow-children:down + horizontal-align:center
    centres the stacked action / stepper rows. */
-.mg-poker-controls { width: 100%; height: 96px; flow-children: down; horizontal-align: center; margin-top: 6px; }
+.mg-poker-controls { width: 100%; height: 104px; flow-children: down; horizontal-align: center; margin-top: 6px; }
 
 .mg-poker-stage {
     width: 760px; height: 520px; flow-children: none; horizontal-align: center;
-    border-radius: 220px;                 /* rounded-oval felt like a real poker table */
+    /* Modest corner radius, NOT a full oval: a big radius (220px) is a quarter-ellipse that
+       clips the corner seats (my bottom-left tile, the side players) because the decor/card
+       layers are CHILDREN of this felt. overflow:noclip lets a card near an edge paint fully. */
+    border-radius: 40px;
+    overflow: noclip;
     background-color: #1f5138;
     background-color: gradient(radial, 50% 46%, 0% 0%, 120% 120%, from(#2f7350), to(#163a29));
     border: 3px solid #0d2419;
@@ -1334,10 +1338,12 @@
     horizontal-align: center; letter-spacing: 1px;
 }
 
-/* control rows below the felt */
-.mg-pk-actionrow { flow-children: right; horizontal-align: center; }
-.mg-pk-steprow { flow-children: right; horizontal-align: center; margin-top: 4px; }
-.mg-pk-action { min-width: 120px; height: 44px; margin: 0px 4px; }
+/* control rows below the felt. Both rows are flow:right + centred; a lone button appended
+   straight to the down-flow controls zone (Next hand) also needs to self-centre, so
+   .mg-pk-action carries horizontal-align:center for that case. */
+.mg-pk-actionrow { flow-children: right; horizontal-align: center; margin-top: 4px; }
+.mg-pk-steprow { flow-children: right; horizontal-align: center; }
+.mg-pk-action { min-width: 120px; height: 44px; margin: 0px 4px; horizontal-align: center; }
 .mg-pk-action Label { font-size: 17px !important; letter-spacing: 1px; }
 .mg-pk-step { min-width: 52px; height: 40px; margin: 0px 3px; }
 .mg-pk-step Label { font-size: 16px !important; }
