@@ -2268,7 +2268,7 @@
             { id: 3, key: "durak", name: "Durak", enabled: false },
             { id: 4, key: "chess", name: "Chess", enabled: true },
             { id: 5, key: "connectfour", name: "Connect Four", short: "Connect 4", enabled: false },
-            { id: 6, key: "soon1", name: "Coming Soon", enabled: false },
+            { id: 6, key: "poker", name: "Poker", short: "Hold'em", enabled: true },
             { id: 7, key: "soon2", name: "Coming Soon", enabled: false },
             { id: 8, key: "soon3", name: "Coming Soon", enabled: false },
             { id: 9, key: "soon4", name: "Coming Soon", enabled: false },

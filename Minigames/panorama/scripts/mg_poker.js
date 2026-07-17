@@ -1,0 +1,394 @@
+"use strict";
+
+/*
+ * mg_poker.js — No-Limit Texas Hold'em controller for the Deadlock Minigames mod.
+ *
+ * Stage 1 (this file): offline "you + 3 bots" is fully playable; the online worker-as-dealer
+ * wiring (private hole cards via /api/ddraw, public betting log via /api/dlog) mirrors Durak
+ * Stage 2 and is stubbed behind `online` for a follow-up commit. The pure rules live in
+ * rules/poker.js (shared byte-for-byte with the worker); here we render, take input, and run
+ * the offline bot loop.
+ *
+ * RENDERING follows the Durak idiom (ARCHITECTURE §8.6 + the traps): everything sits on ONE
+ * flow-children:none felt STAGE, positioned by transform:translate3d (Panorama has NO
+ * position:absolute). Cards draw their face/back with a CHILD <Image> (setFace), NOT a panel
+ * background-image — a background paints the .vtex at its native 367×512 px on frame 1 (the
+ * ~300% zoom bug). The felt is larger than Durak's (the maintainer said the 4-seat Durak table
+ * is cramped): 760×520.
+ *
+ * NONE of the visuals are verifiable from a shell — reasoned from the game's CSS idioms + the
+ * Durak/Connect Four controllers, confirmed only after a VPK repack.
+ *
+ * Card model matches rules/poker.js: id 0..51 = suit*13 + rank. suit 0..3 = S,H,D,C.
+ * rank 0..12 = 2..9,T,J,Q,K,A. Face art = deck/<SUIT><RANK>.vtex (e.g. "SA", "H2", "DT").
+ */
+
+(function () {
+    var MG = ($.MG = $.MG || {});
+    if (MG._pokerLoaded) return;
+    MG._pokerLoaded = true;
+
+    var P = MG.Rules && MG.Rules.poker;   // shared pure engine (rules/poker.js)
+
+    var SUIT_CHARS = P ? P.SUIT_CHARS : ["S", "H", "D", "C"];
+    var RANK_CHARS = P ? P.RANK_CHARS : ["2", "3", "4", "5", "6", "7", "8", "9", "T", "J", "Q", "K", "A"];
+    var DECK_DIR = "s2r://panorama/images/deck/";
+    function cardFaceUrl(id) { return DECK_DIR + SUIT_CHARS[P.suitOf(id)] + RANK_CHARS[P.rankOf(id)] + ".vtex"; }
+    var BACK_URL = DECK_DIR + "BACK.vtex";
+
+    // Draw a card face/back with a CHILD <Image> (SetImage + scaling), NOT the container's
+    // style.backgroundImage — a Panel background paints the .vtex at its native pixel size until
+    // the panel is re-laid-out (the ~300% first-frame zoom). An <Image> fills its CSS box from
+    // frame 1 (game idiom: hud_ability_icon.xml). The Image is transparent to input.
+    function setFace(container, url) {
+        var img = container._faceImg;
+        if (!img) {
+            img = $.CreatePanel("Image", container, "", { scaling: "stretch-to-fit-preserve-aspect" });
+            img.AddClass("mg-face-img");
+            try { img.SetAttributeString("hittest", "false"); } catch (e) {}
+            container._faceImg = img;
+        }
+        img.SetImage(url);
+    }
+    function setBack(container) { setFace(container, BACK_URL); }
+
+    // Where each opponent sits on MY screen, given their relative seat offset. I always sit at
+    // the bottom; opponents fill left / top / right (4-handed uses all three).
+    function seatZone(rel, N) {
+        if (N <= 2) return "top";
+        if (N === 3) return rel === 1 ? "left" : "right";
+        return rel === 1 ? "left" : (rel === 2 ? "top" : "right"); // N === 4
+    }
+
+    // Stage geometry (px). Bigger than Durak's 680×500 — the 4-seat felt needs the room.
+    var CARD_W = 76, CARD_H = 106;     // board / hole card size
+    var STAGE_W = 760, STAGE_H = 520;
+    var START_STACK = 200, SB = 5, BB = 10;
+
+    function createPoker(container, session) {
+        var numPlayers = (session.numPlayers && session.numPlayers >= 2) ? session.numPlayers : 4;
+        var mySeat = (session.seat != null) ? session.seat : 0;
+        var isBot = !!session.bot;
+        var online = !isBot && !!session.code && !!(MG.Api && MG.Api.dlog);
+        var destroyed = false;
+
+        // Tournament-style chip carryover across hands (offline). Button rotates each hand.
+        var stacks = [];
+        for (var i = 0; i < numPlayers; i++) stacks.push(START_STACK);
+        var button = (numPlayers - 1);        // so the first hand's button is seat 0 after rotate
+        var handSeed = (session.seed != null) ? session.seed : ((Math.random() * 0x7fffffff) | 0);
+        var st = null;
+        var pendingBet = 0;                   // current raise-to target in the bet stepper
+        var showdownReveal = false;           // reveal all live hands at showdown/over
+        // One evolving rng for every bot decision this session, so bots don't replay an
+        // identical first draw each turn (a fresh makeRng(seed) always yields the same first value).
+        var botRng = P ? P.makeRng((handSeed ^ 0x9e3779b9) | 0) : null;
+        // One evolving rng for all bot decisions this session, so a seat doesn't replay the same
+        // choice every time it acts (a fresh per-call seed would).
+        var botRng = P ? P.makeRng((handSeed ^ 0x9e3779b9) | 0) : null;
+
+        function status(t) { if (session.onStatus) session.onStatus(t); }
+        function nameOf(seat) {
+            if (seat === mySeat) return "You";
+            return "Bot " + (seat + 1);
+        }
+        function myTurn() { return !destroyed && st && st.toAct === mySeat && st.street !== "over" && st.street !== "showdown"; }
+
+        var root = $.CreatePanel("Panel", container, "MG_PokerRoot");
+        root.AddClass("mg-poker");
+
+        var stage = $.CreatePanel("Panel", root, "MG_PkStage"); stage.AddClass("mg-poker-stage");
+        var decorLayer = $.CreatePanel("Panel", stage, "MG_PkDecor"); decorLayer.AddClass("mg-pk-decor");
+        var cardLayer = $.CreatePanel("Panel", stage, "MG_PkCards"); cardLayer.AddClass("mg-pk-cards");
+        var controlsZone = $.CreatePanel("Panel", root, "MG_PkControls"); controlsZone.AddClass("mg-poker-controls");
+
+        function xform(x, y, rot) {
+            var t = "translate3d(" + Math.round(x) + "px, " + Math.round(y) + "px, 0px)";
+            return rot ? (t + " rotateZ(" + rot + "deg)") : t;
+        }
+
+        // ── seat layout ─────────────────────────────────────────────────────────────
+        // Avatar tile centres per zone (my tile bottom-centre; opponents around the felt).
+        function seatCenter(seat) {
+            if (seat === mySeat) return { x: STAGE_W / 2, y: STAGE_H - 40 };
+            var rel = (seat - mySeat + numPlayers) % numPlayers;
+            var zone = seatZone(rel, numPlayers);
+            if (zone === "left") return { x: 70, y: STAGE_H * 0.42 };
+            if (zone === "right") return { x: STAGE_W - 70, y: STAGE_H * 0.42 };
+            return { x: STAGE_W / 2, y: 52 };   // top
+        }
+        // Where a seat's two cards sit (my hole cards face-up bottom-centre; opponents' backs
+        // tucked beside their tile).
+        function holeAnchor(seat) {
+            var c = seatCenter(seat);
+            if (seat === mySeat) return { x: STAGE_W / 2 - (CARD_W + 8), y: STAGE_H - CARD_H - 96, spread: CARD_W + 8 };
+            var rel = (seat - mySeat + numPlayers) % numPlayers;
+            var zone = seatZone(rel, numPlayers);
+            var sw = 22;   // overlapped backs
+            if (zone === "left") return { x: c.x - 10, y: c.y + 34, spread: sw };
+            if (zone === "right") return { x: c.x - 10 - sw, y: c.y + 34, spread: sw };
+            return { x: c.x - 10, y: c.y + 34, spread: sw };   // top
+        }
+        // Board (up to 5 community cards) centred horizontally, mid felt.
+        function boardSlot(i, n) {
+            var step = CARD_W + 10;
+            var totalW = step * 5 - 10;                 // always reserve 5 slots so pot stays centred
+            var x0 = STAGE_W / 2 - totalW / 2;
+            return { x: x0 + i * step, y: STAGE_H / 2 - CARD_H / 2 - 20 };
+        }
+
+        // ── render ────────────────────────────────────────────────────────────────────
+        function render() {
+            decorLayer.RemoveAndDeleteChildren();
+            cardLayer.RemoveAndDeleteChildren();
+            buildPot();
+            buildBoard();
+            buildSeats();
+            buildControls();
+        }
+
+        function buildPot() {
+            var pot = P.totalPot(st);
+            var lbl = $.CreatePanel("Label", decorLayer, "");
+            lbl.AddClass("mg-pk-pot");
+            lbl.style.transform = xform(STAGE_W / 2 - 100, STAGE_H / 2 + CARD_H / 2 - 6, 0);
+            lbl.text = "Pot: " + pot;
+        }
+
+        function buildBoard() {
+            var n = st.board.length;
+            for (var i = 0; i < 5; i++) {
+                var s = boardSlot(i, n);
+                if (i < n) {
+                    var c = $.CreatePanel("Panel", cardLayer, "");
+                    c.AddClass("mg-pk-card");
+                    setFace(c, cardFaceUrl(st.board[i]));
+                    c.style.transform = xform(s.x, s.y, 0);
+                } else {
+                    var slot = $.CreatePanel("Panel", decorLayer, "");
+                    slot.AddClass("mg-pk-boardslot");
+                    slot.style.transform = xform(s.x, s.y, 0);
+                }
+            }
+        }
+
+        function buildSeats() {
+            for (var seat = 0; seat < numPlayers; seat++) buildSeat(seat);
+        }
+
+        function buildSeat(seat) {
+            var c = seatCenter(seat);
+            var isMe = seat === mySeat;
+            var live = st.inHand[seat] && !st.folded[seat];
+
+            // hole cards
+            var ha = holeAnchor(seat);
+            if (st.inHand[seat] && st.hole[seat] && st.hole[seat].length === 2) {
+                for (var k = 0; k < 2; k++) {
+                    var card = $.CreatePanel("Panel", cardLayer, "");
+                    card.AddClass("mg-pk-card");
+                    if (isMe) card.AddClass("mg-pk-hole-me");
+                    var reveal = isMe || (showdownReveal && live);
+                    if (reveal) setFace(card, cardFaceUrl(st.hole[seat][k]));
+                    else setBack(card);
+                    if (st.folded[seat]) card.AddClass("mg-pk-folded");
+                    card.style.transform = xform(ha.x + k * ha.spread, ha.y, 0);
+                }
+            }
+
+            // avatar tile
+            var tile = $.CreatePanel("Panel", decorLayer, "");
+            tile.AddClass("mg-pk-tile");
+            if (isMe) tile.AddClass("mg-pk-me");
+            if (seat === st.toAct && live) tile.AddClass("mg-pk-active");
+            if (st.folded[seat]) tile.AddClass("mg-pk-out");
+            tile.style.transform = xform(c.x - 60, c.y - 30, 0);
+
+            var name = $.CreatePanel("Label", tile, "");
+            name.AddClass("mg-pk-name");
+            name.text = nameOf(seat);
+
+            var stackLbl = $.CreatePanel("Label", tile, "");
+            stackLbl.AddClass("mg-pk-stack");
+            stackLbl.text = st.allIn[seat] ? "ALL-IN" : (st.stacks[seat] + " ch");
+
+            // dealer / blind chips
+            if (seat === st.button) badge(tile, "D", "mg-pk-dealer");
+            if (typeof st.bbSeat === "number" && seat === st.bbSeat) { /* labelled by bet below */ }
+
+            // current street bet in front of the seat
+            if (st.bet[seat] > 0) {
+                var betLbl = $.CreatePanel("Label", decorLayer, "");
+                betLbl.AddClass("mg-pk-bet");
+                var bx = c.x - 20, by = c.y + (seat === mySeat ? -54 : 34);
+                betLbl.style.transform = xform(bx, by, 0);
+                betLbl.text = String(st.bet[seat]);
+            }
+
+            // folded / result tag
+            if (st.folded[seat]) {
+                var tag = $.CreatePanel("Label", tile, "");
+                tag.AddClass("mg-pk-tag"); tag.text = "FOLD";
+            }
+        }
+
+        function badge(tile, text, cls) {
+            var b = $.CreatePanel("Panel", tile, "");
+            b.AddClass("mg-pk-chip"); b.AddClass(cls);
+            var l = $.CreatePanel("Label", b, ""); l.text = text;
+        }
+
+        // ── controls (bet stepper + action buttons) ─────────────────────────────────
+        function buildControls() {
+            controlsZone.RemoveAndDeleteChildren();
+            if (st.street === "over") { buildNextHand(); return; }
+            if (!myTurn()) return;
+            var la = P.legalActions(st, mySeat);
+
+            var row = $.CreatePanel("Panel", controlsZone, ""); row.AddClass("mg-pk-actionrow");
+
+            if (la.canFold) mkButton(row, "Fold", "mg-btn", function () { doAction({ type: "fold" }); });
+            if (la.canCheck) mkButton(row, "Check", "mg-btn-primary", function () { doAction({ type: "check" }); });
+            if (la.canCall) mkButton(row, "Call " + la.callAmount, "mg-btn-primary", function () { doAction({ type: "call" }); });
+
+            if (la.canRaise) {
+                // clamp the stepper into [minRaiseTo, maxRaiseTo]
+                if (pendingBet < la.minRaiseTo || pendingBet > la.maxRaiseTo) pendingBet = la.minRaiseTo;
+                var stepRow = $.CreatePanel("Panel", controlsZone, ""); stepRow.AddClass("mg-pk-steprow");
+                mkStep(stepRow, "-", function () { pendingBet = Math.max(la.minRaiseTo, pendingBet - BB); buildControls(); });
+                var amt = $.CreatePanel("Label", stepRow, ""); amt.AddClass("mg-pk-betamt"); amt.text = String(pendingBet);
+                mkStep(stepRow, "+", function () { pendingBet = Math.min(la.maxRaiseTo, pendingBet + BB); buildControls(); });
+                mkStep(stepRow, "Pot", function () {
+                    var pot = P.totalPot(st);
+                    pendingBet = Math.min(la.maxRaiseTo, Math.max(la.minRaiseTo, st.currentBet + pot));
+                    buildControls();
+                });
+                mkStep(stepRow, "Max", function () { pendingBet = la.maxRaiseTo; buildControls(); });
+                var raiseLabel = (st.currentBet === 0) ? "Bet " : "Raise to ";
+                mkButton(controlsZone, raiseLabel + pendingBet, "mg-btn-primary", function () {
+                    doAction({ type: "raise", to: pendingBet });
+                });
+            }
+        }
+
+        function buildNextHand() {
+            var msg = $.CreatePanel("Label", controlsZone, ""); msg.AddClass("mg-pk-result");
+            msg.text = resultText();
+            var alive = 0, last = -1;
+            for (var s = 0; s < numPlayers; s++) if (stacks[s] > 0) { alive++; last = s; }
+            if (alive < 2) {
+                var over = $.CreatePanel("Label", controlsZone, ""); over.AddClass("mg-pk-result");
+                over.text = (last === mySeat) ? "You win the table!" : nameOf(last) + " wins the table.";
+                if (session.onGameOver) session.onGameOver(last === mySeat ? "win" : "lose");
+                return;
+            }
+            mkButton(controlsZone, "Next hand", "mg-btn-primary", function () { startHand(); });
+        }
+
+        function resultText() {
+            if (!st.result) return "";
+            var w = st.result.winners || [];
+            if (w.length === 0) return "Hand over.";
+            var names = [];
+            for (var i = 0; i < w.length; i++) names.push(nameOf(w[i]));
+            var who = names.join(" & ");
+            if (st.result.uncontested) return who + " win" + (w.length === 1 ? "s" : "") + " (everyone folded).";
+            return who + " win" + (w.length === 1 ? "s" : "") + " at showdown.";
+        }
+
+        function mkButton(parent, text, kind, onClick) {
+            var b = $.CreatePanel("Button", parent, "");
+            b.AddClass("mg-btn"); if (kind === "mg-btn-primary") b.AddClass("mg-btn-primary");
+            b.AddClass("mg-pk-action");
+            var l = $.CreatePanel("Label", b, ""); l.text = text;
+            b.SetPanelEvent("onactivate", onClick);
+            return b;
+        }
+        function mkStep(parent, text, onClick) {
+            var b = $.CreatePanel("Button", parent, "");
+            b.AddClass("mg-btn"); b.AddClass("mg-pk-step");
+            var l = $.CreatePanel("Label", b, ""); l.text = text;
+            b.SetPanelEvent("onactivate", onClick);
+            return b;
+        }
+
+        // ── flow ────────────────────────────────────────────────────────────────────
+        function startHand() {
+            if (destroyed) return;
+            button = P ? nextOccupiedButton() : (button + 1) % numPlayers;
+            handSeed = (handSeed * 1103515245 + 12345) & 0x7fffffff;
+            st = P.newHand(numPlayers, button, stacks, SB, BB, handSeed);
+            showdownReveal = false;
+            pendingBet = 0;
+            render();
+            afterAdvance();
+        }
+        function nextOccupiedButton() {
+            for (var k = 1; k <= numPlayers; k++) {
+                var s = (button + k) % numPlayers;
+                if (stacks[s] > 0) return s;
+            }
+            return button;
+        }
+
+        function doAction(action) {
+            if (!myTurn()) return;
+            if (!P.applyAction(st, mySeat, action)) { status("Illegal move."); return; }
+            pendingBet = 0;
+            postApply();
+        }
+
+        // Runs after any action (mine or a bot's) resolves in the engine.
+        function postApply() {
+            if (destroyed) return;
+            if (st.street === "over") {
+                showdownReveal = !st.result || !st.result.uncontested;
+                // absorb the new stacks back into the tournament carryover
+                stacks = st.stacks.slice();
+                render();
+                status(resultText());
+                return;
+            }
+            render();
+            afterAdvance();
+        }
+
+        // If it's a bot's turn, schedule it; otherwise prompt the human.
+        function afterAdvance() {
+            if (destroyed || !st || st.street === "over") return;
+            var seat = st.toAct;
+            if (seat < 0) return;
+            if (seat === mySeat) { status(streetName() + " — your action."); return; }
+            status(nameOf(seat) + " is thinking…");
+            $.Schedule(0.6, function () { botStep(seat); });
+        }
+
+        function botStep(seat) {
+            if (destroyed || !st || st.toAct !== seat || st.street === "over") return;
+            var act = P.botAction(st, seat, botRng);
+            if (!P.applyAction(st, seat, act)) P.applyAction(st, seat, { type: "fold" });
+            postApply();
+        }
+
+        function streetName() {
+            return { preflop: "Pre-flop", flop: "Flop", turn: "Turn", river: "River" }[st.street] || "";
+        }
+
+        // ── boot ────────────────────────────────────────────────────────────────────
+        if (!P) {
+            status("Poker engine failed to load.");
+        } else if (online) {
+            status("Online poker is coming soon.");   // Stage 2 wiring lands in a later commit
+        } else {
+            startHand();
+        }
+
+        return {
+            destroy: function () { destroyed = true; try { root.DeleteAsync(0); } catch (e) {} }
+        };
+    }
+
+    if (MG.Games && MG.Games.register) {
+        MG.Games.register({ id: 6, enabled: true, create: createPoker });
+    }
+})();

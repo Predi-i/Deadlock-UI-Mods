@@ -1238,6 +1238,120 @@
 /* big remaining-deck count to the right of the stack */
 .mg-dk-deckcount { font-family: oracle !important; font-weight: bold; color: #eaf2ff !important; font-size: 40px !important; }
 
+/* ── poker (No-Limit Hold'em) ─────────────────────────────────────────────────
+   Same one-felt-STAGE idiom as durak: opponents' tiles, the community board, the pot
+   and every card live on ONE flow-children:none stage, positioned by transform in JS.
+   Card faces are compiled .vtex sprites (deck/<S><R>.vtex) drawn by a child <Image>
+   (.mg-face-img); the shared back is .mg-pk-cardback via setBack. I sit at the bottom;
+   opponents are placed by relative seat (seatZone). The felt is LARGER than durak's
+   (the 4-seat durak table felt cramped): STAGE 760×520, CARD 76×106 — geometry MUST
+   match mg_poker.js. NONE of this is verified in-engine yet. */
+.mg-poker { width: 100%; flow-children: down; horizontal-align: center; }
+/* Controls row: FIXED height so toggling action buttons / next-hand never reflows the
+   modal (the durak "panel jumps" lesson). flow-children:down + horizontal-align:center
+   centres the stacked action / stepper rows. */
+.mg-poker-controls { width: 100%; height: 96px; flow-children: down; horizontal-align: center; margin-top: 6px; }
+
+.mg-poker-stage {
+    width: 760px; height: 520px; flow-children: none; horizontal-align: center;
+    border-radius: 220px;                 /* rounded-oval felt like a real poker table */
+    background-color: #1f5138;
+    background-color: gradient(radial, 50% 46%, 0% 0%, 120% 120%, from(#2f7350), to(#163a29));
+    border: 3px solid #0d2419;
+}
+.mg-pk-decor { width: 760px; height: 520px; flow-children: none; }
+.mg-pk-cards { width: 760px; height: 520px; flow-children: none; }
+
+/* a card sprite (board / hole). Face or back drawn by a child <Image> (.mg-face-img,
+   setFace/setBack); the box keeps the fallback fill, radius and shadow. */
+.mg-pk-card {
+    width: 76px; height: 106px;
+    flow-children: none;
+    background-color: #151c27;
+    border-radius: 6px;
+    box-shadow: 0px 3px 6px 0px #00000099;
+}
+.mg-pk-cardback { background-color: #16233a; }
+.mg-pk-hole-me { box-shadow: 0px 4px 9px 0px #000000cc; }
+.mg-pk-folded { opacity: 0.35; }
+/* faint plate marking an as-yet-undealt community card slot */
+.mg-pk-boardslot { width: 76px; height: 106px; border-radius: 6px; background-color: #ffffff14; }
+
+/* pot readout, centred just under the board */
+.mg-pk-pot {
+    width: 200px;
+    font-family: oracle !important; font-weight: bold;
+    color: #ffe9a8 !important; font-size: 22px !important;
+    text-align: center; horizontal-align: center;
+}
+/* a seat's committed chips this street, floated by its tile */
+.mg-pk-bet {
+    font-family: radiance !important; font-weight: bold;
+    color: #ffe9a8 !important; font-size: 16px !important;
+}
+
+/* player tiles on the felt: a rounded plate with name + stack, an active-turn ring, and
+   a small dealer chip. Positioned by transform in JS (top-left = centre − half box). */
+.mg-pk-tile {
+    width: 120px; height: 60px;
+    flow-children: down;
+    background-color: #12241bdd;
+    border-radius: 8px;
+    border: 2px solid #2f5c44;
+    box-shadow: 0px 3px 7px 0px #00000099;
+    overflow: noclip;
+}
+.mg-pk-me { background-color: #163a2add; border-color: #3f7d5b; }
+.mg-pk-active { border-color: #ffd166; box-shadow: 0px 0px 12px 0px #ffd16688; }
+.mg-pk-out { opacity: 0.5; }
+.mg-pk-name {
+    font-family: radiance !important; font-weight: semi-bold;
+    color: #e6efe9 !important; font-size: 15px !important;
+    horizontal-align: center; margin-top: 6px; letter-spacing: 0.5px;
+}
+.mg-pk-stack {
+    font-family: oracle !important;
+    color: #ffe9a8 !important; font-size: 15px !important;
+    horizontal-align: center; margin-top: 1px;
+}
+/* dealer / blind chip pinned to the tile corner */
+.mg-pk-chip {
+    width: 22px; height: 22px; border-radius: 50%;
+    flow-children: none;
+    horizontal-align: right; vertical-align: top;
+    margin-top: -6px; margin-right: -6px;
+    background-color: #0b111a; border: 1px solid #b8c6d4;
+}
+.mg-pk-dealer { background-color: #eef3f8; border-color: #b8c6d4; }
+.mg-pk-chip Label {
+    font-family: oracle !important; font-weight: bold;
+    color: #12241b !important; font-size: 13px !important;
+    horizontal-align: center; vertical-align: center;
+}
+.mg-pk-tag {
+    font-family: radiance !important; font-weight: bold;
+    color: #f0a49c !important; font-size: 13px !important;
+    horizontal-align: center; letter-spacing: 1px;
+}
+
+/* control rows below the felt */
+.mg-pk-actionrow { flow-children: right; horizontal-align: center; }
+.mg-pk-steprow { flow-children: right; horizontal-align: center; margin-top: 4px; }
+.mg-pk-action { min-width: 120px; height: 44px; margin: 0px 4px; }
+.mg-pk-action Label { font-size: 17px !important; letter-spacing: 1px; }
+.mg-pk-step { min-width: 52px; height: 40px; margin: 0px 3px; }
+.mg-pk-step Label { font-size: 16px !important; }
+.mg-pk-betamt {
+    font-family: oracle !important; font-weight: bold;
+    color: #ffe9a8 !important; font-size: 20px !important;
+    min-width: 70px; text-align: center; vertical-align: center;
+    horizontal-align: center; margin: 0px 6px;
+}
+.mg-pk-result {
+    font-family: radiance !important; color: #e6efe9 !important; font-size: 18px !important;
+    horizontal-align: center; margin-bottom: 6px;
+}
+
 /* ── UI-scale dropdown (header, RIGHT of nothing, LEFT of the close X) ───────── */
 /* NATIVE `DropDown` widget (QOLLOCK Default-Hero recipe, mg_ui.js buildScaleControl). The game's
    base `DropDownMenu` paper-tile popup texture + "…" placeholder are overridden the way QOLLOCK
