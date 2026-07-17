@@ -1374,9 +1374,19 @@
     width: 80px; min-width: 80px; max-width: 80px;
     vertical-align: center;
     margin-right: 10px;                  /* gap to the close X on its right */
-    flow-children: right;
+    flow-children: down;                 /* dropdown on top, its caption below */
     overflow: noclip;
     z-index: 10;
+}
+/* small caption UNDER a header dropdown, saying what it controls (maintainer 2026-07-17:
+   the two bare dropdowns read as mystery "DD" boxes). overflow:noclip on the wrap lets this
+   paint below the 30px control without forcing the header row taller. */
+.mg-ctrl-caption {
+    width: 80px;
+    font-family: radiance !important; color: #6a83a0 !important;
+    font-size: 11px !important; letter-spacing: 0.5px;
+    text-align: center; horizontal-align: center;
+    margin-top: 2px;
 }
 .mg-scale-dd {
     width: 80px; min-width: 80px; max-width: 80px;
@@ -1436,10 +1446,9 @@
    auto-created popup escape the header and paint over the body, like the scale wrapper. */
 .mg-vol-wrap {
     width: 80px; min-width: 80px; max-width: 80px;
-    height: 30px;
     vertical-align: center;
     margin-right: 10px;                  /* gap to the scale dropdown on its right */
-    flow-children: right;
+    flow-children: down;                 /* dropdown on top, its caption below */
     overflow: noclip;
     z-index: 10;
 }

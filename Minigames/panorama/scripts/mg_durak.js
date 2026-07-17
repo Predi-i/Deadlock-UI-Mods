@@ -490,7 +490,7 @@
             controlsZone.RemoveAndDeleteChildren();
             var canAct = myTurn() && !pendingAct;
             if (canAct && st.phase === "attack" && st.attacker === mySeat && st.table.length > 0) {
-                mkButton(controlsZone, "Bito (Pass)", function () {
+                mkButton(controlsZone, "Pass", function () {
                     if (!myTurn() || pendingAct) return;
                     if (online) { sendAct(4, 0, 0); return; }         // 4 = bito (beat)
                     endBout(st, false); afterAction();
@@ -556,7 +556,7 @@
             if (st.phase === "defend" && st.defender === mySeat)
                 return "Your defense. Cover the attacks or take.";
             if (st.attacker === mySeat && st.table.length === 0) return "Your turn. Attack.";
-            if (st.attacker === mySeat) return "Add a matching-rank card, or press Bito.";
+            if (st.attacker === mySeat) return "Add a matching-rank card, or press Pass.";
             return "Waiting.";
         }
 

@@ -78,7 +78,8 @@
         tictactoe:   "The classic 3×3 duel. Line up three of your marks in a row to win.",
         durak:       "The beloved Eastern European card game. Be the first to shed all your cards.",
         chess:       "The timeless game of strategy. Full rules, against a friend or the bot.",
-        connectfour: "Drop your discs down the grid and be the first to line up four in a row."
+        connectfour: "Drop your discs down the grid and be the first to line up four in a row.",
+        poker:       "No-Limit Texas Hold'em. Read your table, bet your chips, and take the pot."
     };
 
     // Opens the maintainer's Boosty donate page in the external browser. Proven Panorama
@@ -228,9 +229,13 @@
         var soundWrap = $.CreatePanel("Panel", header, "");
         soundWrap.AddClass("mg-vol-wrap");
         buildSoundControl(soundWrap);
+        var soundCap = $.CreatePanel("Label", soundWrap, "");
+        soundCap.AddClass("mg-ctrl-caption"); soundCap.text = "Volume";
         var scaleWrap = $.CreatePanel("Panel", header, "");
         scaleWrap.AddClass("mg-scale-wrap");
         buildScaleControl(scaleWrap);
+        var scaleCap = $.CreatePanel("Label", scaleWrap, "");
+        scaleCap.AddClass("mg-ctrl-caption"); scaleCap.text = "UI Scale";
         var close = $.CreatePanel("Button", header, "");
         close.AddClass("mg-close");
         var closeLbl = $.CreatePanel("Label", close, "");
