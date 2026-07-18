@@ -237,10 +237,16 @@
         // 150 → defence bottom 324 (20px gap above the hand) while the attack top still clears the
         // top opponent tile (~110) by 40px.
         var TABLE_CX = STAGE_W / 2, TABLE_ATK_Y = 150;
+        // Deck+trump occupy the left column (DECK_X..~150). A full 6-card table must not slide UNDER
+        // it, so the row is clamped to start clear of the deck (was: purely centred → the widest
+        // tables overlapped the deck AND crammed the pairs into a ~460px band with 28px of overlap
+        // between neighbours, the unreadable pile-up in the 6-card screenshot). Widened the budget to
+        // TABLE_SPAN and left-clamped it: small tables stay centred, big ones shift right to breathe.
+        var TABLE_SPAN = 500, TABLE_MIN_X = 156;
         function tableAtkSlot(i, m) {
-            var pairStep = Math.min(CARD_W + 30, (460 - CARD_W) / Math.max(m - 1, 1));
+            var pairStep = Math.min(CARD_W + 30, (TABLE_SPAN - CARD_W) / Math.max(m - 1, 1));
             var totalW = CARD_W + pairStep * (m - 1);
-            var x0 = TABLE_CX - totalW / 2;
+            var x0 = Math.max(TABLE_MIN_X, TABLE_CX - totalW / 2);
             return { x: x0 + i * pairStep, y: TABLE_ATK_Y };
         }
         function tableDefSlot(i, m) { var s = tableAtkSlot(i, m); return { x: s.x + 18, y: s.y + 34 }; }
@@ -362,8 +368,13 @@
                     buildBackBunch({ x: STAGE_W / 2, y: 60 }, st.hands[seat].length);
                     buildTile(seat, { x: 60, y: 54 });
                 } else {
+                    // Side seats (left/right in 3–4-player). SAME bug the top seat had: drawing the
+                    // back-bunch and the avatar tile at the SAME center made the tile paint over the
+                    // backs, so a side opponent rendered as a bare P2/P3 circle with no hand behind it
+                    // (screenshot: 3-player table, opponents just circles). Separate them: tile stays
+                    // on the avatar center, the hidden hand fans just BELOW it so both read clearly.
                     var center = avatarCenter(zone);
-                    buildBackBunch(center, st.hands[seat].length);   // opponents' hands are hidden
+                    buildBackBunch({ x: center.x, y: center.y + AV / 2 + 34 }, st.hands[seat].length);
                     buildTile(seat, center);
                 }
             }
@@ -495,8 +506,15 @@
             if (!pt) return;                            // can't read the drop -> snap back
             if (pt.y >= DROP_ZONE_MAX_Y) return;        // dropped back over the hand -> cancel, snap back
             if (canDefendInput()) {
-                // Cover the nearest UNCOVERED pair this card can beat, but ONLY if the drop
-                // actually landed near that pair (within ~1.4 card widths). A miss snaps back.
+                // GAME-BREAKER FIX (2026-07-18): a defender's card is only DRAGGABLE if it can
+                // legally cover some open attack (computeWanted gates that), so any drop of it onto
+                // the felt UNAMBIGUOUSLY means "defend". The old code additionally required the drop
+                // to land within ~1.4 card widths of the target attack or it snapped back SILENTLY —
+                // so a player (esp. with the overlapping 5–6-card table) would drag their last card,
+                // miss the pixel target, and watch it float back with no explanation ("не мог кинуть
+                // карту, кнопок никаких"). Now: cover the NEAREST open pair this card can beat,
+                // wherever on the felt it was dropped. Only a drop back over the hand cancels (handled
+                // above). If somehow nothing is coverable, say so instead of failing mute.
                 var m = st.table.length, best = -1, bestDx = 1e9;
                 for (var t = 0; t < m; t++) {
                     if (st.table[t].d >= 0 || !canDefendPair(st, t, card)) continue;
@@ -504,11 +522,12 @@
                     var dx = Math.abs(pt.x - sx);
                     if (dx < bestDx) { bestDx = dx; best = t; }
                 }
-                if (best >= 0 && bestDx <= CARD_W * 1.4) {
+                if (best >= 0) {
                     if (online) { sendAct(2, best, card); return; }
                     applyDefend(st, best, card); afterAction();
+                } else {
+                    status("That card can't beat an open attack. Cover another, or press Take.");
                 }
-                // else: no reachable pair under the drop -> snap back silently (a miss shouldn't nag)
                 return;
             }
             if (canAttackInput()) {

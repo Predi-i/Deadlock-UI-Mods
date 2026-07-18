@@ -1112,7 +1112,13 @@ function pokerNewHand(lobby) {
   // shared reducer the client uses — guaranteeing identical validation. The server keeps the
   // real cards in s.hole for private dealing + showdown.
   s.st = R.newHand(n, st.button, stacks, PK_SB, PK_BB, null); // online shell (no cards)
-  s.st.__fullBoard = st.board;                        // full 5-card board (server reveals on schedule)
+  // BUG (2026-07-18, "three identical 2♠ on the flop online"): newHand deals the board LAZILY —
+  // st.board is [] until nextStreet shifts cards off the deck. Reading st.board here captured an
+  // empty array, so pokerFlush emitted BOARD(undefined) → PNG h=1 → the client decoded card id 0
+  // (= 2♠) for every community card. The 5 board cards are the TOP of the freshly-dealt deck AFTER
+  // the 2·n hole cards (dealBoard/runout just shift them in flop/turn/river order), so slice them
+  // straight off the deck now. Verified byte-identical to the real runout for every seed.
+  s.st.__fullBoard = st.deck.slice(0, 5);             // full 5-card board (server reveals on schedule)
   s.serverHole = st.hole;                             // real hole cards for showdown eval
   // The log is CONTINUOUS across hands so the client's `since` cursor stays monotonic — a HAND
   // event just appends and the client reads it as "new hand, pull my hole cards".

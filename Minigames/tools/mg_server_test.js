@@ -432,6 +432,46 @@ async function main() {
         ok(h1.w === 2, "poker: next hand appends a fresh HAND event (continuous log)");
     })();
 
+    // ── poker: a hand PLAYED TO THE FLOP reveals three DISTINCT, real board cards ──
+    // Regression guard for the "three identical 2♠ on the flop online" bug (2026-07-18): the
+    // server was reading the community board off newHand's st.board, which is [] until nextStreet
+    // lazily deals it — so every BOARD event encoded card id 0 (= 2♠). No prior test reached a
+    // flop (they all folded preflop), so it shipped green. This drives a real preflop CALL+CHECK
+    // to the flop and asserts the board cards are distinct and in range.
+    await (async function () {
+        var hub = new Hub({ storage: new FakeStorage() });
+        var HOST = "FLOPHOSTAA", JOIN = "FLOPJOINBB";
+        var d = await req(hub, "/api/pcreate.png?n=2&tok=" + HOST);
+        var code = (d.w - 100) * 100 + (d.h - 1);
+        await req(hub, "/api/pjoin.png?code=" + code + "&tok=" + JOIN);
+        await req(hub, "/api/pstart.png?code=" + code + "&tok=" + HOST);
+        // Reach the flop: heads-up the button/SB acts first (CALL), then the BB CHECKS. We don't
+        // track whose turn it is here — just try each token with CALL, then CHECK, until the flop
+        // lands. The server rejects out-of-turn/illegal actions with (9,x), so wrong tries are safe.
+        var toks = [HOST, JOIN];
+        async function tryAct(a) {
+            for (var i = 0; i < toks.length; i++) {
+                var r = await req(hub, "/api/pact.png?code=" + code + "&tok=" + toks[i] + "&a=" + a + "&to=0");
+                if (r.w === 1 && r.h === 1) return true;
+            }
+            return false;
+        }
+        for (var step = 0; step < 4; step++) { if (!(await tryAct(2))) await tryAct(1); }
+        // Drain the log; collect BOARD(5, card+1) events.
+        var board = [], s = 0, blanks = 0;
+        while (blanks < 2 && s < 40) {
+            var e = await req(hub, "/api/plog.png?code=" + code + "&since=" + s);
+            if (e.w === 1 && e.h === 1) { blanks++; s++; continue; }
+            blanks = 0;
+            if (e.w === 5) board.push(e.h - 1);
+            s++;
+        }
+        ok(board.length >= 3, "poker: reached the flop — at least 3 BOARD cards emitted (" + board.length + ")");
+        var inRange = board.every(function (c) { return c >= 0 && c <= 51; });
+        ok(inRange, "poker: every board card is a real id 0..51");
+        ok(new Set(board).size === board.length, "poker: board cards are all DISTINCT (no duplicate 2♠ bug)");
+    })();
+
     // ── public quickmatch: pairs two callers into one lobby (with tokens) ──
     var h2 = new Hub({ storage: new FakeStorage() });
     var q1 = await req(h2, "/api/quick.png?game=1&tok=QUICKQAA");
