@@ -1,0 +1,1602 @@
+/* ⚠ THE FONT FIX: `oracle` / `radiance` are NOT font names — they are @define aliases
+ * (e.g. `@define oracle: VALVEOracle, Reaver, sans-serif;`) declared in the game's
+ * citadel_base_styles. Our stylesheet is loaded via base_hud.xml into a scope that does
+ * NOT inherit those defines, so `font-family: oracle` didn't resolve and fell back to the
+ * default face. Importing the game's base styles here brings the defines into scope, and
+ * the fonts finally render. This is the same base the working Match-History mod includes. */
+@import url("s2r://panorama/styles/citadel_base_styles.vcss_c");
+
+/* mg.css — styling for the Deadlock Minigames overlay + boards.
+ *
+ * DESIGN SYSTEM (craft pass — see the 12 rules). One coherent language:
+ *   Fonts   : `oracle` (display / headings, bold) · `radiance` (all UI text & labels).
+ *             NEVER quote the family name — `font-family: "Radiance"` is NOT parsed by
+ *             Panorama and silently drops to the default face. Use `oracle` / `radiance`.
+ *   Neutrals: blue-tinted, never pure #000/#fff.
+ *             backdrop #05080e·  modal #0f141c ·  card #151c27 ·  raised #1b2431
+ *             border   #232f3e ·  hairline #ffffff10..14 ·  text #eaf0f8 / #9db0c6 / #63748a
+ *   Accent  : native Deadlock "builds" blue — the ONE hue, used sparingly.
+ *             #4f86d4 (accent) · #82b4ff (bright) · #16233a (tinted surface)
+ *   Danger  : #cf4a42 (close / leave).
+ * Discipline: FLAT solid fills (no decorative gradients), NO outer glow, hairline
+ *   borders for structure + one soft shadow for the modal float, brightness on hover,
+ *   sharp 2px corners, one 4px spacing scale.
+ *
+ * ⚠ WHY `!important` ON TYPOGRAPHY: our panels live in the HUD context, where the game's
+ *   own base styles set font-family / size / color on labels via HIGH-SPECIFICITY
+ *   (ID-scoped) selectors. A plain single-class rule LOSES the cascade to those, so
+ *   `oracle` fell back to the default face and custom sizes didn't take. `!important` wins
+ *   deterministically — the exact approach the Match-History-Cards-Redesign mod uses.
+ * Note: representational shading on the physical checker pieces (a subtle radial, the
+ *   "brand" look of a real disc) is a deliberate R1 exception, and it's in-game not lobby.
+ */
+
+.mg-escape-button {
+    margin-top: -450px;              /* lifted above native sub-options; never overlaps "Swap Hero" */
+}
+.mg-escape-button Label {
+    font-family: radiance !important;
+    font-size: 24px !important;
+    color: #ffffff !important;
+}
+
+/* ── overlay + modal ─────────────────────────────────────────────────────── */
+.mg-overlay {
+    width: 100%;
+    height: 100%;
+    z-index: 5000;
+    horizontal-align: center;
+    vertical-align: center;
+}
+.mg-dim {
+    width: 100%;
+    height: 100%;
+    background-color: #05080ec2;          /* near-black blue backdrop, not pure #000 */
+}
+.mg-modal {
+    width: 900px;
+    min-height: 300px;
+    max-height: 92%;
+    background-color: #0f141c;
+    border: 1px solid #232f3e;
+    box-shadow: 0px 22px 60px 0px #00000099;   /* soft elevation (R10), not a glow */
+    /* asymmetric padding: top trimmed 28→15 (−13px) so the gap above the title matches the gap
+       below it (~21px each); bottom trimmed 28→3 (−25px) to remove the dead strip under the
+       footer status. */
+    padding-top: 15px;
+    padding-right: 28px;
+    padding-bottom: 3px;
+    padding-left: 28px;
+    flow-children: down;
+    horizontal-align: center;
+    vertical-align: center;
+    border-radius: 2px;
+}
+.mg-header {
+    width: 100%;
+    flow-children: right;
+    margin-bottom: 24px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid #ffffff12;
+    /* The UI-scale popup is a descendant that drops BELOW the header row; without noclip the
+       header's own box clips it away (the "dropdown doesn't appear" bug), and without a z-index
+       it renders UNDER the body panel that follows it in the modal's flow. Both are needed so the
+       popup escapes the header and paints over the body. */
+    overflow: noclip;
+    z-index: 10;
+}
+
+/* title + "by Predi_i" credit + Support/Discord pills sit together on the left, hugging their
+   content (fit-children) and flowing normally. The scale dropdown + close X are align-override
+   controls pinned to the header's right edge (see the NOTE below), so no spacer is needed to push
+   them right — they float over the row's right end regardless of this cluster's width. */
+.mg-header-left {
+    width: fit-children;
+    flow-children: right;
+    vertical-align: center;
+    overflow: noclip;                    /* the Support pill sits taller than the title row */
+}
+/* flexible slack between the left cluster and the two right controls (scale dropdown + close X):
+   it eats the row's free space so the controls FLOW to the far right edge. Needed because
+   horizontal-align:right is ignored on a child of a flow-children:right parent — the controls flow
+   in a row and would otherwise sit stuck against the left cluster. Mirrors the footer layout. */
+.mg-header-spacer {
+    width: fill-parent-flow(1.0);
+    height: 1px;
+    vertical-align: center;
+}
+
+
+.mg-title {
+    font-family: oracle !important;
+    font-weight: bold;
+    color: #eef3fa !important;
+    font-size: 30px !important;          /* bigger — the header row had free vertical space */
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    vertical-align: center;
+    margin-top: 2px;                     /* nudge the whole "MINIGAMES by Predi_i" line +2px down */
+}
+/* the credit — smaller than the title, right beside it, clickable → Boosty */
+.mg-header-credit {
+    vertical-align: center;
+    margin-left: 9px;                    /* pulled in toward the title (п7) */
+    margin-top: 2px;                     /* keep the credit level with the +2px title */
+}
+.mg-header-credit Label {
+    font-family: radiance !important;
+    color: #6a83a0 !important;           /* +contrast to match the larger title */
+    font-size: 17px !important;          /* scaled with the title (15→17) */
+    letter-spacing: 0.5px;
+    vertical-align: center;
+    transition-property: color;
+    transition-duration: 0.1s;
+}
+.mg-header-credit:hover Label { color: #82b4ff !important; }
+
+/* Close: a 30px square. The single glyph is centred, then nudged +1px right / +3px down
+   per the maintainer's in-game measurement (an odd box can't land perfectly on center).
+   ⚠ In FLOW as the last (rightmost) control after the spacer + scale dropdown. It keeps a HIGHER
+   z-index (12) than the dropdown (10) so the native DropDown widget can never paint over it (the "на
+   месте крестика дропдаун" symptom — the missing z-index was one of the two real bugs; the fixed
+   80px dropdown wrapper is the other, see .mg-scale-wrap / trap 15b). margin-right is the gap from
+   the header's right edge. */
+.mg-close {
+    width: 30px;
+    height: 30px;
+    margin-right: 40px;                  /* gap from the header's right edge (pulls the group ~35px left) */
+    z-index: 12;                         /* ABOVE the dropdown (z 10) so it can't paint over the X */
+    background-color: #161f2b;
+    border: 1px solid #2a3849;
+    border-radius: 2px;
+    vertical-align: center;
+    transition-property: background-color, border-color;
+    transition-duration: 0.1s;
+    transition-timing-function: ease-out;
+}
+
+.mg-close Label {
+    font-family: oracle !important;
+    font-weight: bold;
+    color: #93a6bb !important;
+    font-size: 18px !important;
+    horizontal-align: center;
+    vertical-align: center;
+    margin-left: 4px;                    /* +4px right — glyph reads left-of-centre in the box (п6) */
+    margin-top: 2px;                     /* +2px down */
+}
+.mg-close:hover { background-color: #3a1c1a; border-color: #cf4a42; }
+.mg-close:hover Label { color: #f0c7c4 !important; }
+.mg-close:active { background-color: #4a201d; }
+
+.mg-body {
+    width: 100%;
+    flow-children: down;
+    vertical-align: top;
+}
+.mg-status {
+    font-family: radiance !important;
+    color: #aebfd2 !important;           /* lifted off the muddy grey — reads on the dark modal (C) */
+    font-size: 17px !important;
+    margin-top: 10px;                    /* pulled up under the footer (B: kill the floating gap) */
+    width: 100%;
+    text-align: center;
+}
+
+/* ── two-column shell: LEFT picker grid (56%), RIGHT detail/actions (44%) ──── */
+.mg-columns {
+    width: 100%;
+    flow-children: right;
+}
+/* Columns sum to 55+44 = 99% (+1px divider border) so they fit INSIDE the 844px inner zone
+   with ~7px slack — the old 56%+44%+1px overflowed by 1px, bulging the right column and
+   pinning its buttons to the modal edge. ⚠ Do NOT use fill-parent-flow here: mixing it with a
+   %-width sibling makes Panorama miscompute the remainder and the right column overflows the
+   modal (buttons + blurb clipped off the right). Explicit percentages are the safe idiom. */
+.mg-col-left {
+    width: 55%;
+    padding-right: 22px;                 /* gap from picker to the divider */
+}
+.mg-col-right {
+    width: 44%;
+    padding-left: 22px;
+    padding-right: 5px;                  /* ⚠ MUST stay > 0: with 0, Panorama clips the button's
+                                            1px right border when it sits flush at the box edge
+                                            (the PLAY VS BOT "no right border" bug, п4). 5px keeps
+                                            the border visible AND gives a small right gap. */
+    border-left: 1px solid #ffffff10;
+    flow-children: down;
+    overflow: noclip;
+}
+
+/* ── game picker — 3 per row ─────────────────────────────────────────────── */
+/* max-height matches the right column's .mg-detail height, so the divider spans the same
+   height as the grid AND all 9 square cards (3 rows × 142px = 426) show without a scroll — the
+   old 380 clipped the 3rd row into a dead "unused space" strip. Card row = 132 + 2*5 margin = 142px. */
+.mg-picker {
+    width: 100%;
+    max-height: 500px;                  /* matches .mg-detail height so the column divider spans the
+                                           same height on both sides (was 430; detail grew to 500 for
+                                           the time-control block). 9 cards (3×142) still show without
+                                           a scroll; extra space sits below them. */
+    flow-children: right-wrap;
+    overflow: clip scroll;              /* NATIVE Panorama vertical-scroll idiom */
+}
+.mg-game-card {
+    width: 132px;
+    height: 132px;                      /* SQUARE — art is square, so no stretch; was 148 (portrait) */
+    margin: 5px;
+    flow-children: none;
+    background-color: #151c27;
+    border: 2px solid #232f3e;          /* 2px on every state → selection never shifts layout */
+    border-radius: 2px;
+    transition-property: border-color, background-color, brightness, pre-transform-scale2d;
+    transition-duration: 0.12s;
+    transition-timing-function: ease-out;
+    pre-transform-scale2d: 1.0;
+}
+.mg-game-card:hover {
+    border-color: #35506f;
+    brightness: 1.12;                   /* lift via brightness, like the reference redesign */
+    pre-transform-scale2d: 1.02;
+}
+/* Selected: solid accent border + accent-tinted fill + accent name — no glow, no ring. */
+.mg-selected {
+    border-color: #4f86d4;
+    background-color: #16233a;
+}
+.mg-selected:hover { border-color: #6499e0; background-color: #1a2a44; }
+.mg-selected .mg-game-name { color: #82b4ff !important; }
+.mg-disabled { saturation: 0.5; opacity: 0.48; }
+.mg-disabled:hover { brightness: 1.0; pre-transform-scale2d: 1.0; border-color: #232f3e; }
+/* centred "IN DEVELOPMENT" plate over the dimmed art */
+.mg-lock-badge {
+    background-color: #0b111aee;
+    border: 1px solid #2f4256;
+    border-radius: 2px;
+    padding: 4px 10px;
+    horizontal-align: center;
+    vertical-align: center;
+}
+.mg-lock-badge Label {
+    font-family: radiance !important;
+    font-weight: semi-bold;
+    color: #a2b5cb !important;           /* C: readable over the dimmed art */
+    font-size: 12px !important;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    horizontal-align: center;
+}
+
+/* motif layer — centred, nudged up so the name plate never covers it */
+/* Card motif is now a custom compiled image (PNG→.vtex, drawn by the maintainer) filling the
+   card behind the name plate. Path: s2r://panorama/images/cards/<key>.vtex, set inline in
+   renderMenu. Until a .vtex exists the fallback background-color shows (a plain dark card). */
+.mg-card-art {
+    width: 100%;
+    height: 100%;
+    flow-children: none;
+    background-color: #0c121b;           /* fallback under the art (Image) / shows for soon1-4 */
+    border-radius: inherit;
+}
+
+/* The compiled-art / sprite child. An <Image> (SetImage + scaling) sized to its parent's box,
+   used everywhere a card face / chess piece / opponent back is drawn. It fills the CSS box from
+   frame 1, so there is NO native-pixel first-frame zoom (the old Panel+background-image bug that
+   snapped right only on hover). scaling="stretch-to-fit-preserve-aspect" is set in JS. radius is
+   inherited so a rounded container (cards) clips the image too. */
+.mg-face-img {
+    width: 100%;
+    height: 100%;
+    border-radius: inherit;
+}
+
+/* name plate pinned to the bottom — solid dark bar keeps the name legible over the art */
+.mg-card-namebar {
+    width: 100%;
+    vertical-align: bottom;
+    flow-children: down;
+    padding-top: 6px;
+    padding-bottom: 8px;
+    background-color: #0a0e16ee;
+}
+.mg-game-name {
+    font-family: radiance !important;
+    font-weight: semi-bold;
+    color: #dfe8f2 !important;
+    font-size: 15px !important;
+    letter-spacing: 0.5px;
+    horizontal-align: center;
+    transition-property: color;
+    transition-duration: 0.12s;
+}
+
+/* A ticked card in Select-Multiple reads as SELECTED: accent border, tinted fill and a small
+
+   scale-up so the pick is obvious (п4 — before this, ticking a game changed nothing visible;
+   only the corner badge appeared). Mirrors .mg-selected but wins via the extra .mg-ticked. */
+.mg-game-card.mg-ticked {
+    border-color: #4f86d4;
+    background-color: #16233a;
+    pre-transform-scale2d: 1.05;
+}
+.mg-game-card.mg-ticked:hover { border-color: #6499e0; background-color: #1a2a44; pre-transform-scale2d: 1.07; }
+.mg-game-card.mg-ticked .mg-game-name { color: #82b4ff !important; }
+
+
+/* ── right column: detail + actions ──────────────────────────────────────── */
+/* FIXED height (not min) so the right column is ALWAYS the same size no matter how many
+   buttons/labels the current view has — a locked game (fewer elements), Select-Multiple
+   (no Join/Practice), or a game with a longer note (durak) all occupy the same box. A plain
+   min-height let the taller single-game layout grow past it while multi-select shrank back,
+   so the whole modal jumped (п5: "panel is shorter when Join disappears"). overflow:noclip
+   keeps any slight overflow visible without changing the panel's committed height. 430 fits
+   the tallest layout (single-game durak) with headroom. */
+.mg-detail {
+    width: 100%;
+    height: 500px;                        /* FIXED (not fit-children/min): the modal is vertically
+                                             centred, so ANY per-game height change re-centres the
+                                             whole modal → a jump when you switch chess/checkers (which
+                                             add the ~70px time-control block) vs untimed games. 500
+                                             = old 430 + the timer block, fits the tallest layout with
+                                             the same headroom the 430 gave durak. fit-children brought
+                                             the jump back (maintainer 2026-07-16). */
+    flow-children: down;
+    overflow: noclip;                     /* don't clip the full-width buttons' borders (п4) */
+    transition-property: opacity;         /* fades in on each game switch (fadeInDetail) */
+    transition-duration: 0.14s;
+    transition-timing-function: ease-out;
+}
+.mg-detail-title {
+    font-family: oracle !important;
+    font-weight: bold;
+    color: #eef3fa !important;
+    font-size: 32px !important;           /* the big display element — huge type contrast */
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+}
+/* FIXED height (not min) so a 1-line vs 2-line blurb occupies the same space → no jump
+   between games with different description lengths. */
+.mg-detail-desc {
+    font-family: radiance !important;
+    color: #bcc9db !important;           /* C: lifted from #9db0c6 — the blurb read "soft/washed" */
+    font-size: 17px !important;          /* C: 16→17, the main reading block */
+    line-height: 24px;
+    height: 52px;
+    width: 100%;
+    margin-bottom: 20px;
+}
+.mg-detail-locked {
+    font-family: radiance !important;
+    font-weight: semi-bold;
+    color: #7d92ab !important;            /* muted slate, not amber */
+    font-size: 16px !important;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    margin-top: 12px;
+}
+.mg-detail-locked-sub {
+    font-family: radiance !important;
+    color: #63748a !important;
+    font-size: 15px !important;
+    line-height: 21px;
+    width: 100%;
+    margin-top: 8px;
+}
+/* small ALL-CAPS section labels (they replace the old "— text —" dividers) */
+.mg-section-label {
+    font-family: radiance !important;
+    font-weight: semi-bold;
+    color: #7a8ea6 !important;           /* C: lifted from #64798f — section labels were near-invisible */
+    font-size: 13px !important;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    margin-top: 22px;
+    margin-bottom: 8px;
+}
+
+/* ── buttons / actions ───────────────────────────────────────────────────── */
+.mg-actions {
+    width: fit-children;
+    flow-children: right;
+    horizontal-align: center;
+    margin-top: 16px;
+}
+.mg-btn {
+    height: 46px;
+    min-width: 120px;
+    padding-left: 16px;
+    padding-right: 16px;
+    margin: 6px;
+    background-color: #161f2b;
+    border: 1px solid #2a3849;
+    border-radius: 2px;
+    transition-property: background-color, border-color, brightness;
+    transition-duration: 0.1s;
+    transition-timing-function: ease-out;
+}
+.mg-btn Label {
+    font-family: radiance !important;
+    font-weight: semi-bold;
+    color: #cdd9e7 !important;
+    font-size: 18px !important;          /* CREATE / JOIN / PLAY VS BOT bumped 16→18; QUICK MATCH
+                                            keeps 19 via .mg-btn-quick (declared later, wins) */
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    horizontal-align: center;
+    vertical-align: center;
+}
+.mg-btn:hover { background-color: #1c2836; border-color: #3a5170; brightness: 1.08; }
+.mg-btn:active { background-color: #131b26; brightness: 0.96; }
+/* Primary CTA — the ONLY filled, accent button, so it clearly owns the eye. FLAT solid. */
+.mg-btn-primary {
+    background-color: #4f86d4;
+    border: 1px solid #5e93de;
+}
+.mg-btn-primary Label { color: #f4f8ff !important; }
+.mg-btn-primary:hover { background-color: #5e93de; border-color: #7aa8e8; brightness: 1.05; }
+.mg-btn-primary:active { background-color: #3f6fb8; brightness: 1.0; }
+.mg-btn-quick { height: 58px; }
+.mg-btn-quick Label { font-size: 19px !important; letter-spacing: 2px; }
+/* Inert CTA — shown for poker's QUICK MATCH (poker has no public matchmaking, but a game with no
+   button at all looked broken, maintainer 2026-07-18). Distinct from .mg-btn-disabled (that one is
+   the multi-search button: faded-blue, still primary). This is a fully muted grey with hover/active
+   neutralised so it reads as switched-off. Declared AFTER .mg-btn-primary/.mg-btn-quick so it wins
+   the cascade for those combined classes. */
+.mg-btn-inert,
+.mg-btn-inert:hover,
+.mg-btn-inert:active {
+    background-color: #141a23;
+    border: 1px solid #232f3e;
+    brightness: 1.0;
+}
+.mg-btn-inert Label { color: #5a6a7d !important; }
+
+/* full-width buttons inside the right detail column. margin:0 (the default side margin was
+   letting the right border run past the column edge → "border cut off" on PLAY VS BOT, п4). */
+.mg-detail .mg-btn { width: 100%; margin: 0px; }
+/* Flexible filler in the fixed-height detail column: takes all the height left between the top
+   cluster and the action buttons so the buttons sink to the bottom instead of leaving a dead
+   strip under them on untimed games (the "подбородок"). fill-parent-flow is the proven idiom
+   here (see .mg-movelist-rows / .mg-header-spacer); it shrinks to ~0 when the time-control block
+   makes the top cluster tall. min-height 0 so it never forces the column past 500px. */
+.mg-detail-spacer {
+    width: 100%;
+    height: fill-parent-flow(1.0);
+    min-height: 0px;
+}
+.mg-btn-row {
+    width: 100%;
+    flow-children: right;
+}
+.mg-btn-row .mg-btn { width: fill-parent-flow(1.0); }
+.mg-btn-row .mg-btn-2nd { margin-left: 10px; }
+/* A SOLO button (QUICK MATCH / PLAY VS BOT) must span the full row. A LONE fill-parent-flow(1.0)
+   child underfills by ~28px in Panorama — the flex ratio only forces full width with ≥2 children
+   (confirmed in-game: solo buttons landed 28px short of the CREATE/JOIN span). So pin width:100%
+   — deterministic full-row width that matches the CREATE/JOIN right edge exactly. Declared after
+   the fill-parent-flow rule so it wins at equal specificity; the right border survives because
+   .mg-col-right reserves padding-right:5px. */
+.mg-btn-row .mg-btn-solo { width: 99.8%; } /* maintainer: without this the right border of this button is being cut off idk why */
+
+/* caption under the Quick Match button */
+.mg-caption {
+    font-family: radiance !important;
+    color: #8093a9 !important;           /* C: lifted from #6b7f96 */
+    font-size: 14px !important;
+    width: 100%;
+    margin-top: 8px;
+}
+
+/* ── Quick Match "Select Multiple" ─────────────────────────────────────────
+ * A toggle pill + a checkbox list over the multi-capable games, in the firm palette
+ * (#161f2b fill, #2a3849 hairline). Checkboxes are panel-drawn (no glyph reliance):
+ * a bordered box whose "x" mark shows only when ticked. */
+.mg-multi-toggle-row { width: 100%; margin-bottom: 8px; }
+.mg-multi-toggle {
+    width: 100%; height: 34px;
+    flow-children: right;
+    background-color: #161f2b;
+    border: 1px solid #2a3849;
+    vertical-align: center;
+}
+.mg-multi-toggle:hover { background-color: #1c2836; border-color: #3a5170; }
+.mg-multi-toggle.mg-on { border-color: #4f86d4; background-color: #16233a; }
+.mg-multi-toggle-label {
+    font-family: radiance !important; color: #cdd9e7 !important; font-size: 15px !important;
+    vertical-align: center; margin-left: 8px;
+}
+
+/* the vertical list of game checkboxes shown when the toggle is ON */
+.mg-multi-list { width: 100%; flow-children: down; margin-bottom: 6px; }
+.mg-multi-item {
+    width: 100%; height: 34px;
+    flow-children: right;
+    background-color: #131a24;
+    border: 1px solid #232f3e;
+    vertical-align: center;
+    margin-bottom: 4px;
+}
+.mg-multi-item:hover { background-color: #1c2836; border-color: #3a5170; }
+.mg-multi-item.mg-on { border-color: #4f86d4; background-color: #16233a; }
+.mg-multi-item-label {
+    font-family: radiance !important; color: #dbe6f2 !important; font-size: 16px !important;
+    vertical-align: center; margin-left: 8px;
+}
+
+/* shared checkbox square (used by the toggle + each list item) */
+.mg-check-box {
+    width: 18px; height: 18px;
+    flow-children: none;
+    background-color: #0d131b;
+    border: 1px solid #33455a;
+    margin-left: 8px;
+    vertical-align: center;
+}
+.mg-on > .mg-check-box { border-color: #4f86d4; background-color: #1d3350; }
+.mg-check-mark {
+    font-family: radiance !important; color: #82b4ff !important; font-size: 14px !important;
+    font-weight: bold;
+    horizontal-align: center; vertical-align: center;
+}
+
+/* the multi-search Quick Match button reads disabled until at least one game is ticked */
+.mg-btn-disabled { opacity: 0.5; }
+.mg-btn-disabled:hover { background-color: #4f86d4; brightness: 1.0; }
+
+/* public-match "searching" line */
+.mg-searching {
+    font-family: radiance !important;
+    color: #9db0c6 !important;
+    font-size: 23px !important;
+    width: 100%;
+    text-align: center;
+    margin-top: 24px;
+    margin-bottom: 8px;
+}
+
+/* ── footer: just the discreet dev tools now (Support moved to the header) ──── */
+.mg-footer {
+    width: 100%;
+    flow-children: right;
+    margin-top: 14px;                    /* B: tightened from 24 — the dev-tools strip was oversized */
+    padding-top: 10px;                   /* B: from 14 */
+    border-top: 1px solid #ffffff10;
+    vertical-align: center;
+}
+/* status text (e.g. "Pinging server…") CENTERED in the footer and a bit larger. It's an
+   align-override child (like the header's close button) so it centers over the whole footer
+   while the spacer + dev tools still flow to the right edge. */
+.mg-footer-status {
+    font-family: radiance !important;
+    color: #aebfd2 !important;
+    font-size: 18px !important;          /* bigger per maintainer (15→18) */
+    horizontal-align: center;            /* centered, not hugging the left */
+    vertical-align: center;
+}
+/* spacer takes the slack so the dev tools sit at the right edge */
+.mg-footer-spacer {
+    width: fill-parent-flow(1.0);
+    height: 1px;
+}
+/* Support pill — sits in the HEADER, just right of "by Predi_i". Native-QOLLOCK styling
+   (dark fill, hairline, brightness hover). NO yellow. thumbsup icon wash-tinted to accent. */
+.mg-support-btn {
+    height: 32px;                        /* +4px taller (2 top / 2 bottom) */
+    width: fit-children;                 /* hug icon+label → kills the dead zone right of the text */
+    margin-left: 14px;
+    margin-top: 1px;                     /* drop the pill +1px to sit better on the header line */
+    padding-left: 11px;
+    padding-right: 12px;                 /* +1 over left to visually balance the left-side icon */
+    background-color: #16233a;
+    border: 1px solid #34557f;
+    border-radius: 2px;
+    flow-children: right;
+    vertical-align: center;
+    transition-property: background-color, border-color, brightness;
+    transition-duration: 0.1s;
+    transition-timing-function: ease-out;
+}
+.mg-support-btn:hover { background-color: #1b2c47; border-color: #4f86d4; brightness: 1.08; }
+.mg-support-btn:active { brightness: 0.97; }
+.mg-support-icon {
+    width: 17px;                         /* scaled up with the taller button */
+    height: 17px;
+    margin-right: 7px;
+    vertical-align: center;
+    background-image: url("s2r://panorama/images/icons/icon_thumbsup.vsvg");
+    background-size: contain;
+    background-repeat: no-repeat;
+    wash-color: #82b4ff;
+    transition-property: wash-color;
+    transition-duration: 0.1s;
+}
+.mg-support-btn:hover .mg-support-icon { wash-color: #9cc3ff; }
+.mg-support-label {
+    font-family: radiance !important;
+    font-weight: semi-bold;
+    color: #9cc3ff !important;
+    font-size: 17px !important;          /* a touch bigger again (16→17) per maintainer */
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    vertical-align: center;
+}
+
+/* Discord pill — right of Support, same shape, Discord blurple palette (primary #5865F2,
+   secondary #2C3462). The logo is a .vtex raster drawn by a child <Image> (.mg-face-img via
+   setFace), so .mg-discord-icon is JUST a sized box — NO background-image / wash-color (the
+   logo keeps its own colours; a raster background would 300%-zoom on frame 1, trap 14). */
+.mg-discord-btn {
+    height: 32px;
+    width: fit-children;
+    margin-left: 10px;
+    margin-top: 1px;
+    padding-left: 11px;
+    padding-right: 12px;
+    background-color: #2c3462;
+    border: 1px solid #5865f2;
+    border-radius: 2px;
+    flow-children: right;
+    vertical-align: center;
+    transition-property: background-color, border-color, brightness;
+    transition-duration: 0.1s;
+    transition-timing-function: ease-out;
+}
+.mg-discord-btn:hover { background-color: #3a4488; border-color: #7983f5; brightness: 1.08; }
+.mg-discord-btn:active { brightness: 0.97; }
+.mg-discord-icon {
+    width: 19px;
+    height: 19px;
+    margin-right: 7px;
+    vertical-align: center;
+}
+.mg-discord-label {
+    font-family: radiance !important;
+    font-weight: semi-bold;
+    color: #c7ccff !important;
+    font-size: 17px !important;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    vertical-align: center;
+}
+
+/* discreet dev tools, pushed to the right of the footer */
+.mg-tools {
+    width: fit-children;
+    flow-children: right;
+    vertical-align: center;
+    margin-top: -3px;                    /* lift the dev-tools row 3px per maintainer */
+}
+.mg-tool {
+    height: 22px;                        /* B: from 26 — trims the footer strip height */
+    padding-left: 8px;
+    padding-right: 8px;
+    margin-left: 6px;
+    background-color: #00000000;
+    border: 0px solid #00000000;
+    vertical-align: center;
+}
+.mg-tool Label {
+    font-family: radiance !important;
+    color: #66798f !important;           /* C: nudged up but kept discreet (dev-only strip) */
+    font-size: 13px !important;
+    vertical-align: center;
+    transition-property: color;
+    transition-duration: 0.1s;
+}
+.mg-tool:hover Label { color: #82b4ff !important; }
+
+/* ── join / code ─────────────────────────────────────────────────────────── */
+.mg-join-wrap { width: 100%; horizontal-align: center; margin-top: 12px; margin-bottom: 10px; }
+.mg-code-entry {
+    width: 260px;
+    height: 64px;
+    font-family: oracle !important;
+    font-weight: bold;
+    font-size: 40px !important;
+    color: #ffffff !important;
+    background-color: #0c1118;
+    border: 2px solid #2a3849;
+    border-radius: 2px;
+    text-align: center;
+    horizontal-align: center;
+    letter-spacing: 8px;
+    transition-property: border-color;
+    transition-duration: 0.1s;
+}
+.mg-code-entry:focus { border-color: #4f86d4; }        /* designed focus state (R11) */
+.mg-code-box { width: 100%; flow-children: down; horizontal-align: center; margin-top: 10px; }
+.mg-code-cap {
+    font-family: radiance !important;
+    color: #9db0c6 !important;
+    font-size: 17px !important;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    horizontal-align: center;
+}
+.mg-code-big {
+    font-family: oracle !important;
+    font-weight: bold;
+    color: #82b4ff !important;
+    font-size: 76px !important;
+    letter-spacing: 12px;
+    horizontal-align: center;
+    margin-top: 6px;
+    margin-bottom: 12px;
+}
+.mg-code-hint {
+    font-family: radiance !important;
+    color: #6b7f96 !important;
+    font-size: 16px !important;
+    horizontal-align: center;
+}
+
+/* ── simple 2-seat room view (Durak online v1) ───────────────────────────── */
+.mg-room-seats {
+    width: 420px;
+    flow-children: down;
+    horizontal-align: center;
+    margin-top: 16px;
+    padding: 12px;
+    background-color: #0c1118;
+    border: 1px solid #263445;
+    border-radius: 2px;
+}
+.mg-room-seat {
+    font-family: radiance !important;
+    color: #cdd9e7 !important;
+    font-size: 18px !important;
+    width: 100%;
+    margin-top: 3px;
+    margin-bottom: 3px;
+    text-align: center;
+}
+
+/* ── checkers board ──────────────────────────────────────────────────────── */
+.mg-game-host { width: 100%; horizontal-align: center; }
+/* width:100% so the flow:none .mg-game-2col child below inherits the full 844px inner zone and
+   can centre the board / right-pin the list against it (not against a shrunk fit-children box). */
+.mg-checkers { width: 100%; horizontal-align: center; flow-children: down; }
+.mg-chess { width: 100%; horizontal-align: center; flow-children: down; }
+
+/* Game screen: the BOARD is centred in the modal, the move list floats to its right. A
+   flow-children:right ROW would centre the board+list GROUP, not the board itself — so the
+   board reads off-centre. Instead this is a flow-children:NONE overlay (the .mg-board-wrap
+   idiom): each child parks by its OWN align in the full 844px inner zone. The board takes
+   horizontal-align:center (line ~906) → truly centred, spanning [179,665]. The list takes
+   horizontal-align:right at 160px wide → spans [684,844], a 19px gap past the board, and its
+   right edge lands INSIDE the modal (the 200px list right-of-centre used to overflow — maintainer
+   2026-07-16: "доску в центр ты так и не перевёл"). Height = board height so both columns line
+   up top and bottom. */
+.mg-game-2col {
+    flow-children: none;
+    width: 100%;
+    height: 486px;
+    horizontal-align: center;
+}
+/* Move-list side panel. RIGHT-pinned in the flow:none .mg-game-2col overlay (horizontal-align:
+   right in the 844px inner zone → spans [684,844]); the board is centred at [179,665], so a 19px
+   gap sits between them and the list's right edge stays inside the modal. Fixed height = board
+   height (486px) so the two columns line up top and bottom; the row list inside scrolls when moves
+   overflow. Narrowed 200→160 (maintainer 2026-07-16): with the board CENTRED (not left-aligned),
+   a 200px list right-pinned would overlap the board's right edge — 160px clears it. Neutral card,
+   hairline border, no gradient/glow (house style). */
+.mg-movelist {
+    width: 160px;
+    height: 486px;
+    horizontal-align: right;
+    vertical-align: top;
+    flow-children: down;
+    background-color: #0c1118;
+    border: 1px solid #263445;
+    border-radius: 2px;
+}
+.mg-movelist-head {
+    font-family: radiance !important;
+    font-weight: bold;
+    color: #cdd9e7 !important;
+    font-size: 16px !important;
+    width: 100%;
+    padding: 8px 10px 6px 10px;
+    border-bottom: 1px solid #263445;
+}
+/* Scrollable list of move rows; takes all the height left under the header and above the
+   navigation bar. Panorama scrolls a flow:down panel that overflows its fixed height. */
+.mg-movelist-rows {
+    width: 100%;
+    height: fill-parent-flow(1.0);
+    flow-children: down;
+    overflow: squish scroll;
+}
+/* One move row: a half-move index (chess) or turn number (checkers) is baked into the label
+   text by the controller, so the row is a single label. Alternating hover/selected states
+   let a click jump to that position (wired in the history commit). */
+.mg-move-row {
+    font-family: radiance !important;
+    color: #9fb1c6 !important;
+    font-size: 15px !important;
+    width: 100%;
+    padding: 4px 10px 4px 10px;
+}
+.mg-move-row:hover { background-color: #16202c; color: #cdd9e7 !important; }
+.mg-move-row.mg-move-current { background-color: #21344a; color: #eaf1f8 !important; }
+.mg-move-empty {
+    font-family: radiance !important;
+    color: #5d6f84 !important;
+    font-size: 15px !important;
+    width: 100%;
+    padding: 8px 10px 8px 10px;
+}
+/* Navigation bar pinned to the bottom of the panel: Prev / Next / Live (ASCII, no glyphs —
+   the game font lacks ◀▶). Live returns to the current position; Prev/Next step the review. */
+.mg-movelist-nav {
+    width: 100%;
+    height: 38px;
+    flow-children: right;
+    vertical-align: bottom;
+    border-top: 1px solid #263445;
+}
+.mg-nav-btn {
+    width: fill-parent-flow(1.0);
+    height: 38px;
+    flow-children: none;
+}
+.mg-nav-btn:hover { background-color: #16202c; }
+.mg-nav-btn Label {
+    font-family: radiance !important;
+    color: #9fb1c6 !important;
+    font-size: 15px !important;
+    horizontal-align: center;
+    vertical-align: center;
+}
+.mg-nav-btn:hover Label { color: #cdd9e7 !important; }
+.mg-nav-btn.mg-nav-disabled Label { color: #445468 !important; }
+
+/* ── game clocks (chess/checkers) ────────────────────────────────────────────
+   Two side clocks sit at the TOP of the move-list panel (opponent's above, mine below).
+   Each row = a name on the left, the mm:ss bank on the right. The row to move carries
+   .mg-clock-active (accent bar); a bank under 10s pulses .mg-clock-low; the seat that ran
+   out of time locks in .mg-clock-flagged. Built by createClock in mg_games.js. */
+.mg-clocks {
+    width: 100%;
+    flow-children: down;
+    border-bottom: 1px solid #263445;
+}
+.mg-clock-row {
+    width: 100%;
+    height: 34px;
+    flow-children: right;
+    padding: 0 10px 0 10px;
+    border-left: 3px solid #0c1118;   /* transparent placeholder; .mg-clock-active tints it */
+}
+.mg-clock-name {
+    font-family: radiance !important;
+    color: #9fb1c6 !important;
+    font-size: 15px !important;
+    vertical-align: center;
+    width: fill-parent-flow(1.0);
+}
+.mg-clock-time {
+    font-family: radiance !important;
+    font-weight: bold;
+    color: #cdd9e7 !important;
+    font-size: 17px !important;
+    vertical-align: center;
+    horizontal-align: right;
+}
+.mg-clock-row.mg-clock-active {
+    background-color: #16202c;
+    border-left-color: #3f78c8;
+}
+.mg-clock-row.mg-clock-active .mg-clock-name { color: #cdd9e7 !important; }
+.mg-clock-row.mg-clock-low .mg-clock-time { color: #e8b64c !important; }
+.mg-clock-row.mg-clock-flagged .mg-clock-time { color: #d15b5b !important; }
+.mg-clock-row.mg-clock-flagged .mg-clock-name { color: #d15b5b !important; }
+
+/* ── time-control segmented picker (detail column, chess/checkers) ───────────
+   One row of segments (1/3/5/10 min + Off); the picked one carries .mg-on. Mirrors the
+   button palette but reads as a compact toggle strip. Rendered by renderTimeControl. */
+.mg-tc-seg {
+    width: 100%;
+    flow-children: right;
+    margin-bottom: 4px;
+}
+/* the "Time control" label sits tighter than a normal section label so the extra picker
+   block doesn't crowd the Practice button out of the detail column. */
+.mg-tc-label { margin-top: 12px; margin-bottom: 6px; }
+.mg-tc-opt {
+    width: fill-parent-flow(1.0);
+    height: 30px;
+    flow-children: none;
+    background-color: #10161f;
+    border: 1px solid #263445;
+    margin-right: -1px;               /* collapse the shared edge between adjacent segments */
+}
+.mg-tc-opt:hover { background-color: #16202c; border-color: #3a5170; }
+.mg-tc-opt Label {
+    font-family: radiance !important;
+    color: #9fb1c6 !important;
+    font-size: 13px !important;
+    horizontal-align: center;
+    vertical-align: center;
+}
+.mg-tc-opt:hover Label { color: #cdd9e7 !important; }
+.mg-tc-opt.mg-on {
+    background-color: #21344a;
+    border-color: #3f78c8;
+    z-index: 1;                       /* keep the active border above its neighbours' -1px overlap */
+}
+.mg-tc-opt.mg-on Label { color: #eaf1f8 !important; }
+
+/* Board grid + pieces overlay are stacked siblings (flow-children:none parks both at the
+   wrap's top-left; Panorama has no position:absolute). Size = 8*60 + 2*3 border = 486px. */
+.mg-board-wrap {
+    flow-children: none;
+    width: 486px;
+    height: 486px;
+    horizontal-align: center;
+}
+.mg-board {
+    flow-children: down;
+    border: 3px solid #0a0d12;
+}
+.mg-board-row {
+    flow-children: right;
+    height: 60px;
+}
+.mg-cell {
+    width: 60px;
+    height: 60px;
+}
+.mg-cell-light { background-color: #d8c6a8; }
+.mg-cell-dark { background-color: #6e5138; }
+/* Highlights, lichess palette (maintainer 2026-07-15). Declared BEFORE sel/target/check so
+   those win at equal specificity via source order — an active selection or a check must
+   always read over the passive last-move hint.
+   last-move FROM (where the piece stood) is a LIGHT wash; last-move TO (where it landed) is a
+   DARKER, denser wash so the two ends of the move read differently (maintainer 2026-07-16: "там
+   куда поставили должно быть темнее"). Cleaner warm gold (#ffd452 / #f0b429) replaces the old
+   muddy #f2d24b ("неприятный болотный жёлтый"). Selected uses the light hue, dense, so the piece
+   you picked reads distinctly from the from/to wash. */
+.mg-cell.mg-lastmove { background-color: #ffd45266; }        /* FROM: light gold wash, ~40% alpha */
+.mg-cell.mg-lastmove-to { background-color: #f0b429c8; }     /* TO: darker amber, denser */
+.mg-cell.mg-sel { background-color: #ffd452d0; }             /* light gold, dense (selected) */
+/* queued premove (online): a click made during the opponent's turn glows its from/to cells (and
+   the picked piece before you set a destination) a translucent ORANGE — distinct from the yellow
+   live selection and the green legal dots, and NOT the red illegal flash. Cleared or replayed the
+   instant the opponent's move lands (tryPremove). Declared after mg-sel so it wins on the from cell
+   when a premove is staged during the opponent's turn (there's no live selection then anyway). */
+.mg-cell.mg-premove { background-color: #e8873cb0; }    /* orange wash, ~69% alpha */
+/* legal move = a small GREEN, semi-transparent dot centred in the cell (maintainer 2026-07-16:
+   "сделай их чуть поменьше + сделай их зелёными и полупрозрачными"; superseded the earlier neutral
+   grey). A hard-edged radial (green out to 18%, then a 1px step to the square's own shade) reads
+   as a clean circle, not a fuzzy halo — smaller radius than the old 22%. A softer, muted sage
+   green (#6bbf83, less saturated than the old toxic #3fb950 — maintainer 2026-07-16: "этот зелёный
+   слишком зелёный") at 0x8c (~55% alpha) reads calmly on both wood tones while staying translucent.
+   Two variants only so the outer step lands on the right base per shade. */
+.mg-cell-light.mg-target { background-color: gradient(radial, 50% 50%, 0% 0%, 18% 18%, from(#6bbf838c), color-stop(0.85, #6bbf838c), to(#d8c6a8)); }
+.mg-cell-dark.mg-target  { background-color: gradient(radial, 50% 50%, 0% 0%, 18% 18%, from(#6bbf838c), color-stop(0.85, #6bbf838c), to(#6e5138)); }
+/* forced-capture flash (checkers): after an illegal try while a jump is mandatory, the
+   piece(s) that MUST capture flash a warning RED for ~0.9s (JS AddClass then RemoveClass on a
+   timer — see flashMustCapture). Red, not the old amber #e8873c, reads unambiguously as "wrong /
+   not allowed" (maintainer 2026-07-16: "цвет подсветки нелегального хода пусть будет красный").
+   A background-color transition eases the red in/out so it reads as a soft pulse without a
+   @keyframes rule (Panorama's HUD CSS parser rejects the whole stylesheet on an unsupported
+   @-rule; a plain transition is the safe, house-style idiom). Rides OVER any base shade because
+   it's the most specific .mg-cell rule active during the flash. */
+.mg-cell.mg-mustcap {
+    background-color: #d23b34;
+    transition-property: background-color;
+    transition-duration: 0.15s;
+    transition-timing-function: ease-in-out;
+}
+
+/* ── board coordinates (lichess style) ──────────────────────────────────────
+   Files a–h on the bottom row, ranks 1–8 down the left column. Each label is placed by
+   translate3d into a cell corner (rank: top-left, file: bottom-right; offsets in addCoord)
+   and coloured OPPOSITE the square's shade so it reads on light or dark. The layer is
+   hittest:false so it never eats a cell click. flow-children:none so each label sits purely
+   where its transform puts it (same idiom as the pieces overlay). */
+.mg-coords-layer {
+    width: 480px;
+    height: 480px;
+    margin: 3px;                        /* line up inside the board's 3px border, like the pieces layer */
+    flow-children: none;
+}
+.mg-coord {
+    font-family: radiance !important;
+    font-weight: bold;
+    font-size: 12px !important;
+}
+.mg-coord-onlight { color: #6e5138 !important; }    /* dark ink on a light square */
+.mg-coord-ondark  { color: #d8c6a8 !important; }    /* light ink on a dark square  */
+
+/* Pieces sit in an overlay above the cells, placed by JS via transform: translate3d(...),
+   so a move animates as a slide. The 3px margin lines the layer up inside the board border.
+   Its children use flow:none so each piece parks top-left and is moved purely by transform. */
+.mg-pieces-layer {
+    width: 480px;
+    height: 480px;
+    margin: 3px;
+    flow-children: none;
+}
+/* The BASE piece carries NO transition, so its FIRST committed transform (the initial deal)
+   snaps into place instead of sliding from (0,0). The transition is added one frame later
+   via .mg-anim (see makePiece), so every LATER move animates. Longhand is mandatory —
+   Panorama does not parse the `transition:` shorthand for transform. */
+.mg-piece {
+    width: 46px;
+    height: 46px;
+    border-radius: 50%;
+    box-shadow: 0px 3px 5px 0px #00000099;
+    pre-transform-scale2d: 1.0;
+}
+.mg-piece.mg-anim {
+    transition-property: transform, opacity, pre-transform-scale2d;
+    transition-duration: 0.18s, 0.2s, 0.2s;
+    transition-timing-function: ease-in-out, ease-out, ease-out;
+}
+.mg-captured { opacity: 0.0; }
+.mg-piece.mg-dragging {
+    pre-transform-scale2d: 1.12;
+    box-shadow: 0px 3px 6px 0px #000000aa;
+}
+.mg-piece.mg-drag-source {
+    opacity: 0.35;
+}
+/* Physical draughts pieces keep a subtle radial (representational shading, deliberate R1
+   exception — the "brand" look of a real disc; in-game, not lobby). */
+.mg-white { background-color: gradient(radial, 50% 35%, 0% 0%, 70% 70%, from(#ffffff), to(#c9cdd4)); border: 2px solid #9aa0a8; }
+.mg-black { background-color: gradient(radial, 50% 35%, 0% 0%, 70% 70%, from(#4a4f57), to(#1c1f24)); border: 2px solid #0a0c0f; }
+/* King crown: a solid gold ring, no glow (R2). */
+.mg-king {
+    border-color: #e3ad3a;
+    box-shadow: 0px 3px 5px 0px #00000099;
+}
+
+/* ── chess ─────────────────────────────────────────────────────────────────────
+   Reuses the whole checkers board (.mg-board-wrap / .mg-board / .mg-board-row / .mg-cell*
+   / .mg-pieces-layer) and the .mg-piece transition + drag machinery. Only the piece LOOK
+   differs: a compiled .vtex sprite (set inline in JS) instead of a drawn disc. */
+.mg-chess { horizontal-align: center; flow-children: down; }
+/* the checking king's square, so a player sees why they must respond (lichess red) */
+.mg-cell.mg-check { background-color: #d1495b; }
+/* Chess piece = image sprite. Overrides the disc look of .mg-piece (declared later so it wins
+   at equal specificity): bigger, square, no radius, no box shadow, transparent fill. The sprite
+   (WhitePawn.vtex …) is drawn by a child <Image> (.mg-face-img), assigned in makePiece. */
+.mg-chess-piece {
+    width: 56px;
+    height: 56px;
+    border-radius: 0px;
+    box-shadow: 0px 0px 0px 0px #00000000;
+    background-color: #00000000;
+    flow-children: none;
+}
+.mg-chess-piece.mg-dragging { box-shadow: 0px 0px 0px 0px #00000000; }
+
+/* ── tic-tac-toe ───────────────────────────────────────────────────────────── */
+.mg-ttt { horizontal-align: center; flow-children: down; }
+.mg-ttt-board {
+    flow-children: down;
+    border: 3px solid #0a0d12;
+    background-color: #0a0d12;         /* shows through as grid lines between cells */
+    horizontal-align: center;
+}
+.mg-ttt-row {
+    flow-children: right;
+    height: 104px;
+}
+.mg-ttt-cell {
+    width: 104px;
+    height: 104px;
+    margin: 3px;
+    background-color: #223142;
+    transition-property: background-color;
+    transition-duration: 0.1s;
+    transition-timing-function: ease-out;
+}
+.mg-ttt-cell:hover { background-color: #2c3f55; }
+.mg-ttt-cell.mg-ttt-win { background-color: #4b8f5a; }
+
+/* Marks are panels, not text (the game font lacks ✕/◯ glyphs). */
+.mg-ttt-mark {
+    width: 68px;
+    height: 68px;
+    horizontal-align: center;
+    vertical-align: center;
+}
+.mg-ttt-mark.mg-o {
+    border: 9px solid #ff7b7b;
+    border-radius: 50%;
+}
+.mg-x-bar {
+    width: 82px;
+    height: 13px;
+    border-radius: 2px;
+    background-color: #6ea8ff;
+    horizontal-align: center;
+    vertical-align: center;
+}
+.mg-x-bar-a { transform: rotateZ(45deg); }
+.mg-x-bar-b { transform: rotateZ(-45deg); }
+
+/* ── stub ────────────────────────────────────────────────────────────────── */
+.mg-stub { width: 100%; height: 200px; }
+.mg-stub-label { font-family: radiance !important; color: #9db0c6 !important; font-size: 22px !important; horizontal-align: center; vertical-align: center; }
+
+/* ── durak ───────────────────────────────────────────────────────────────────
+   EVERYTHING — opponents' avatar tiles, the deck+trump, the attack/defense pairs and MY
+   hand — lives on ONE flow-children:none felt STAGE where each element is positioned by
+   transform:translate3d (Panorama has no position:absolute — same idiom as the checkers
+   pieces overlay). A card panel PERSISTS across refreshes keyed by its id, so reassigning
+   its transform makes it SLIDE via .mg-dk-anim (checkers .mg-piece pattern): playing glides
+   hand→table, a draw glides from the deck. Card faces are compiled .vtex sprites
+   (deck/<S><R>.vtex) set inline in JS; the shared back is .mg-dk-cardback. Everyone renders
+   themselves at the bottom, so an opponent's side is relative (seatZone).
+   Geometry MUST match mg_durak.js: CARD 100×140, STAGE 680×500. */
+.mg-durak { width: 100%; flow-children: down; horizontal-align: center; }
+/* Single action button: flow-children:down so horizontal-align:center on the button actually
+   centres it (in a flow:right row a lone child pins to the left). FIXED height (button 52 +
+   breathing room) reserved whether or not a Take/Bito button is showing, so a bot playing a
+   card never reflows the modal (the "panel jumps" bug). */
+.mg-durak-controls { width: 100%; height: 64px; flow-children: down; horizontal-align: center; margin-top: 6px; }
+.mg-dk-action { horizontal-align: center; min-width: 220px; height: 52px; }
+.mg-dk-action Label { font-size: 19px !important; letter-spacing: 2px; }
+
+/* the felt stage: fixed size so JS px math lands; a soft green-blue table baize with two
+   stacked flow-children:none layers (decor behind, live cards in front). */
+.mg-durak-stage {
+    width: 680px; height: 500px; flow-children: none; horizontal-align: center;
+    border-radius: 12px;
+    background-color: #24506e;
+    background-color: gradient(radial, 50% 42%, 0% 0%, 120% 120%, from(#3a6d8f), to(#1c3d55));
+}
+.mg-dk-decor { width: 680px; height: 500px; flow-children: none; }
+.mg-dk-cards { width: 680px; height: 500px; flow-children: none; }
+
+
+/* a card sprite. NO transition on the base class so a freshly-created card snaps to its
+   start position; .mg-dk-anim is added one frame later, after which every transform change
+   animates (identical arming trick to .mg-piece / .mg-anim). The face/back is drawn by a
+   child <Image> (.mg-face-img, set in JS via setFace/setBack) — flow-children:none so the
+   image fills the box; the box keeps the fallback fill, radius and shadow. */
+.mg-dk-card {
+    width: 100px;
+    height: 140px;
+    flow-children: none;
+    background-color: #151c27;
+    border-radius: 6px;
+    box-shadow: 0px 3px 6px 0px #00000099;
+}
+/* the drag visual (a throwaway copy under the cursor) + the dimmed source it left behind */
+.mg-dk-dragging { opacity: 0.95; box-shadow: 0px 6px 14px 0px #000000cc; }
+.mg-dk-drag-source { opacity: 0.30; }
+.mg-dk-card.mg-dk-anim {
+    transition-property: transform, opacity;
+    transition-duration: 0.22s, 0.2s;
+    transition-timing-function: ease-in-out, ease-out;
+}
+.mg-dk-cardback {
+    background-color: #16233a;           /* under the BACK.vtex child <Image> (setBack) */
+}
+/* Trump laid horizontal UNDER the deck: outer wrapper positioned by translate3d in JS, this
+   inner card rotated 90 with a SINGLE rotateZ (idiom proven by .mg-x-bar-a). NEVER combine
+   translate3d + rotateZ in one inline transform (the "300% scale" trump glitch, scale3d trap
+   family). The wrapper keeps the 100x140 box so nothing scales. */
+.mg-dk-trump-wrap { width: 100px; height: 140px; flow-children: none; overflow: noclip; }
+.mg-dk-trump { transform: rotateZ(90deg); }
+/* a hand card I can legally play right now — accent hairline + brighten on hover.
+   No transform on :hover (it would fight the inline positioning transform). */
+.mg-dk-playable {
+    border: 2px solid #4f86d4;
+    transition-property: brightness, border-color;
+    transition-duration: 0.1s;
+}
+.mg-dk-playable:hover { brightness: 1.18; border-color: #82b4ff; }
+/* faint plate behind an uncovered attack while I'm defending */
+.mg-dk-openslot { width: 108px; height: 148px; border-radius: 8px; background-color: #2a384966; }
+
+/* opponents/self as AVATAR TILES on the felt (reference-app look). Each is a round avatar
+   with the player's initial, a name under it, a count BADGE clipped to the corner, and a
+   role RING (red = attacker, blue = defender). All positioned by transform in JS. */
+.mg-opp-tile { width: 64px; height: 64px; flow-children: down; overflow: noclip; }
+.mg-opp-avatar {
+    width: 64px; height: 64px; border-radius: 50%;
+    flow-children: none;
+    background-color: #16233a;
+    border: 3px solid #3f5c82;          /* neutral ring; role rings override below */
+    box-shadow: 0px 3px 7px 0px #00000099;
+}
+.mg-opp-me .mg-opp-avatar { background-color: #1d3350; }
+.mg-opp-atk .mg-opp-avatar { border-color: #cf4a42; }   /* attacker → red ring */
+.mg-opp-def .mg-opp-avatar { border-color: #4f86d4; }   /* defender → blue ring */
+.mg-opp-initial {
+    font-family: oracle !important; font-weight: bold;
+    color: #dfe8f2 !important; font-size: 22px !important;
+    horizontal-align: center; vertical-align: center;
+}
+.mg-opp-name {
+    font-family: radiance !important; color: #cdd9e7 !important; font-size: 15px !important;
+    horizontal-align: center; margin-top: 3px; letter-spacing: 0.5px;
+}
+.mg-opp-atk .mg-opp-name { color: #f0a49c !important; }
+.mg-opp-def .mg-opp-name { color: #9cc3ff !important; }
+/* count badge — small dark disc pinned to the avatar's top-right corner */
+.mg-opp-badge {
+    width: 24px; height: 24px; border-radius: 50%;
+    background-color: #0b111a; border: 1px solid #34557f;
+    horizontal-align: right; vertical-align: top;
+    margin-top: -2px; margin-right: -2px;
+    flow-children: none;
+}
+.mg-opp-badgenum {
+    font-family: radiance !important; font-weight: semi-bold;
+    color: #cdd9e7 !important; font-size: 14px !important;
+    horizontal-align: center; vertical-align: center;
+}
+/* small card backs bunched behind an opponent tile (positioned by transform in JS). SELF-
+   CONTAINED — must NOT also carry .mg-dk-card, whose width:100px/height:140px won the cascade
+   at equal specificity and rendered these at full size (the "scattered giant backs" overlap the
+   maintainer saw). The BACK.vtex is drawn by a child <Image> (.mg-face-img, setBack) that fills
+   this 54×76 box. flow-children:none so the image fills; keeps its own fill/radius/shadow. */
+.mg-opp-back {
+    width: 54px;
+    height: 76px;
+    flow-children: none;
+    background-color: #16233a;
+    border-radius: 5px;
+    box-shadow: 0px 2px 4px 0px #00000088;
+}
+/* big remaining-deck count to the right of the stack */
+.mg-dk-deckcount { font-family: oracle !important; font-weight: bold; color: #eaf2ff !important; font-size: 40px !important; }
+
+/* ── poker (No-Limit Hold'em) ─────────────────────────────────────────────────
+   Same one-felt-STAGE idiom as durak: opponents' tiles, the community board, the pot
+   and every card live on ONE flow-children:none stage, positioned by transform in JS.
+   Card faces are compiled .vtex sprites (deck/<S><R>.vtex) drawn by a child <Image>
+   (.mg-face-img); the shared back is .mg-pk-cardback via setBack. I sit at the bottom;
+   opponents are placed by relative seat (seatZone). The felt is LARGER than durak's
+   (the 4-seat durak table felt cramped): STAGE 760×520, CARD 76×106 — geometry MUST
+   match mg_poker.js. NONE of this is verified in-engine yet. */
+.mg-poker { width: 100%; flow-children: down; horizontal-align: center; }
+/* Controls row: FIXED height so toggling action buttons / next-hand never reflows the
+   modal (the durak "panel jumps" lesson). flow-children:down + horizontal-align:center
+   centres the stacked action / stepper rows. */
+.mg-poker-controls { width: 100%; height: 104px; flow-children: down; horizontal-align: center; margin-top: 6px; }
+
+.mg-poker-stage {
+    width: 760px; height: 520px; flow-children: none; horizontal-align: center;
+    /* Modest corner radius, NOT a full oval: a big radius (220px) is a quarter-ellipse that
+       clips the corner seats (my bottom-left tile, the side players) because the decor/card
+       layers are CHILDREN of this felt. overflow:noclip lets a card near an edge paint fully. */
+    border-radius: 40px;
+    overflow: noclip;
+    background-color: #1f5138;
+    background-color: gradient(radial, 50% 46%, 0% 0%, 120% 120%, from(#2f7350), to(#163a29));
+    border: 3px solid #0d2419;
+}
+.mg-pk-decor { width: 760px; height: 520px; flow-children: none; }
+.mg-pk-cards { width: 760px; height: 520px; flow-children: none; }
+
+/* a card sprite (board / hole). Face or back drawn by a child <Image> (.mg-face-img,
+   setFace/setBack); the box keeps the fallback fill, radius and shadow. */
+.mg-pk-card {
+    width: 76px; height: 106px;
+    flow-children: none;
+    background-color: #151c27;
+    border-radius: 6px;
+    box-shadow: 0px 3px 6px 0px #00000099;
+}
+.mg-pk-cardback { background-color: #16233a; }
+.mg-pk-hole-me { box-shadow: 0px 4px 9px 0px #000000cc; }
+.mg-pk-folded { opacity: 0.35; }
+/* faint plate marking an as-yet-undealt community card slot */
+.mg-pk-boardslot { width: 76px; height: 106px; border-radius: 6px; background-color: #ffffff14; }
+
+/* pot readout, centred just under the board */
+.mg-pk-pot {
+    width: 200px;
+    font-family: oracle !important; font-weight: bold;
+    color: #ffe9a8 !important; font-size: 22px !important;
+    text-align: center; horizontal-align: center;
+}
+/* a seat's committed chips this street, floated by its tile */
+.mg-pk-bet {
+    font-family: radiance !important; font-weight: bold;
+    color: #ffe9a8 !important; font-size: 16px !important;
+}
+
+/* player tiles on the felt: a rounded plate with name + stack, an active-turn ring, and
+   a small dealer chip. Positioned by transform in JS (top-left = centre − half box). */
+.mg-pk-tile {
+    width: 120px; height: 60px;
+    flow-children: down;
+    background-color: #12241bdd;
+    border-radius: 8px;
+    border: 2px solid #2f5c44;
+    box-shadow: 0px 3px 7px 0px #00000099;
+    overflow: noclip;
+}
+.mg-pk-me { background-color: #163a2add; border-color: #3f7d5b; }
+.mg-pk-active { border-color: #ffd166; box-shadow: 0px 0px 12px 0px #ffd16688; }
+.mg-pk-out { opacity: 0.5; }
+.mg-pk-name {
+    font-family: radiance !important; font-weight: semi-bold;
+    color: #e6efe9 !important; font-size: 15px !important;
+    horizontal-align: center; margin-top: 6px; letter-spacing: 0.5px;
+}
+.mg-pk-stack {
+    font-family: oracle !important;
+    color: #ffe9a8 !important; font-size: 15px !important;
+    horizontal-align: center; margin-top: 1px;
+}
+/* dealer / blind chip pinned to the tile corner */
+.mg-pk-chip {
+    width: 22px; height: 22px; border-radius: 50%;
+    flow-children: none;
+    horizontal-align: right; vertical-align: top;
+    margin-top: -6px; margin-right: -6px;
+    background-color: #0b111a; border: 1px solid #b8c6d4;
+}
+.mg-pk-dealer { background-color: #eef3f8; border-color: #b8c6d4; }
+.mg-pk-chip Label {
+    font-family: oracle !important; font-weight: bold;
+    color: #12241b !important; font-size: 13px !important;
+    horizontal-align: center; vertical-align: center;
+}
+.mg-pk-tag {
+    font-family: radiance !important; font-weight: bold;
+    color: #f0a49c !important; font-size: 13px !important;
+    horizontal-align: center; letter-spacing: 1px;
+}
+
+/* control rows below the felt. Both rows are flow:right + centred; a lone button appended
+   straight to the down-flow controls zone (Next hand) also needs to self-centre, so
+   .mg-pk-action carries horizontal-align:center for that case. */
+.mg-pk-actionrow { flow-children: right; horizontal-align: center; margin-top: 4px; }
+.mg-pk-steprow { flow-children: right; horizontal-align: center; }
+.mg-pk-action { min-width: 120px; height: 44px; margin: 0px 4px; horizontal-align: center; }
+.mg-pk-action Label { font-size: 17px !important; letter-spacing: 1px; }
+.mg-pk-step { min-width: 52px; height: 40px; margin: 0px 3px; }
+.mg-pk-step Label { font-size: 16px !important; }
+.mg-pk-betamt {
+    font-family: oracle !important; font-weight: bold;
+    color: #ffe9a8 !important; font-size: 20px !important;
+    min-width: 70px; text-align: center; vertical-align: center;
+    horizontal-align: center; margin: 0px 6px;
+}
+.mg-pk-result {
+    font-family: radiance !important; color: #e6efe9 !important; font-size: 18px !important;
+    horizontal-align: center; margin-bottom: 6px;
+}
+
+/* ── UI-scale dropdown (header, RIGHT of nothing, LEFT of the close X) ───────── */
+/* NATIVE `DropDown` widget (QOLLOCK Default-Hero recipe, mg_ui.js buildScaleControl). The game's
+   base `DropDownMenu` paper-tile popup texture + "…" placeholder are overridden the way QOLLOCK
+   does it: `background-image:none` + our own `background-color` on the auto-created popup
+   `#MG_ScaleDropDownMenu` (+ its option Labels). The base `DropDown` arrow .vtex IS its own
+   `background-image` (citadel_base_styles.css:2832 + `background-size:32px 32px`), so we keep it but
+   shrink it to 60% (~19px). The engine opens/closes the popup itself (it toggles
+   `DropDownMenuVisible`); no JS toggle needed. */
+/* the scale dropdown wrapper: a FIXED 80px box in the header flow. min/max-width:80 pin its flow
+   footprint to 80px, containing the native DropDown's phantom 352px preferred width so the close X
+   flows right after it instead of being shoved off the modal edge (mg_ui.js buildOverlay,
+   ARCHITECTURE trap 15b). margin-right is the gap to the X. */
+.mg-scale-wrap {
+    width: 80px; min-width: 80px; max-width: 80px;
+    /* The wrap sizes to dropdown(30) + caption(~15) = ~45px, but a NEGATIVE margin-bottom of that
+       caption height makes the flow/centering engine count the wrap as only ~30px tall. So:
+       (a) vertical-align:center lines the DROPDOWN up with the 32px header pills instead of pushing
+           it up half a caption (the "dropdowns shoved too high" bug), and
+       (b) the caption still paints below (header is overflow:noclip), so it no longer vanishes
+           (the "Volume / UI Scale labels gone" regression, maintainer 2026-07-18).
+       This is the standard negative-margin "don't count my last row" trick. */
+    vertical-align: center;
+    margin-right: 10px;                  /* gap to the close X on its right */
+    margin-bottom: -15px;                /* ≈ caption line height; keeps the wrap centering on the dropdown */
+    flow-children: down;                 /* dropdown on top, its caption below */
+    overflow: noclip;
+    z-index: 10;
+}
+/* small caption UNDER a header dropdown, saying what it controls (maintainer 2026-07-17:
+   the two bare dropdowns read as mystery "DD" boxes). overflow:noclip on the wrap lets this
+   paint below the 30px control without forcing the header row taller. */
+.mg-ctrl-caption {
+    width: 80px;
+    font-family: radiance !important; color: #6a83a0 !important;
+    font-size: 11px !important; letter-spacing: 0.5px;
+    text-align: center; horizontal-align: center;
+    margin-top: 2px;
+}
+.mg-scale-dd {
+    width: 80px; min-width: 80px; max-width: 80px;
+    height: 30px; min-height: 30px; max-height: 30px;
+    padding: 1px 8px;
+    vertical-align: center;
+    background-size: 19px 19px;           /* shrink the base 32px dropdown arrow to ~60% */
+    background-position: right 29px 35%;   /* base is `right 38px`; −9px offset = arrow 9px further right */
+    background-color: #161f2b;
+    border: 1px solid #2a3849;
+    border-radius: 2px;
+    transition-property: brightness, border-color;
+    transition-duration: 0.1s; transition-timing-function: ease-out;
+}
+.mg-scale-dd:hover { brightness: 1.08; border-color: #3a5170; }
+/* the value shown in the CLOSED control is a clone of the selected option Label. The game's base
+   `DropDown Label` sets `width:100%; margin:0 29px 0 6px` — that offset shoves our short "100%"
+   off-centre and steals width; zero it and centre in our fixed 90px box. */
+.mg-scale-dd Label {
+    font-family: radiance !important; font-weight: semi-bold; color: #cdd9e7 !important;
+    font-size: 15px !important;
+    margin: 0px; padding: 0px;
+    horizontal-align: center; vertical-align: center;
+}
+/* the popup list — auto-created by the engine at the context root, id = "<ddId>DropDownMenu".
+   Override the paper texture the same way (background-image:none + our fill). z-index lifts it
+   over the modal body. */
+#MG_ScaleDropDownMenu {
+    width: 80px; min-width: 80px; max-width: 80px;
+    background-image: none;
+    background-color: #0f141c;
+    border: 1px solid #2a3849; border-radius: 2px;
+    box-shadow: 0px 8px 20px 0px #000000aa;
+    z-index: 200;
+}
+#MG_ScaleDropDownMenu Label,
+#MG_ScaleDropDownMenu .mg-scale-opt {
+    width: 100%; height: 30px;
+    padding: 0px 10px;
+    font-family: radiance !important; color: #cdd9e7 !important; font-size: 15px !important;
+    vertical-align: center;
+    background-image: none;
+    background-color: #00000000;
+    border: 0px solid transparent;
+    transition-property: background-color, color;
+    transition-duration: 0.1s; transition-timing-function: ease-out;
+}
+#MG_ScaleDropDownMenu Label:hover,
+#MG_ScaleDropDownMenu .mg-scale-opt:hover {
+    background-color: #1c2836; color: #eef3fa !important;
+}
+
+/* ── sound control (volume), left of the scale dropdown ──────────────────────────
+   Just a native DropDown (no icon — maintainer 2026-07-15: the "Off" option IS the mute, so
+   the bars icon was dropped). Same proven widget as the UI-scale control (the custom
+   click-popup didn't open reliably in our HUD context). overflow:noclip + z-index let the
+   auto-created popup escape the header and paint over the body, like the scale wrapper. */
+.mg-vol-wrap {
+    width: 80px; min-width: 80px; max-width: 80px;
+    /* Negative margin-bottom "don't count the caption row" trick, same as .mg-scale-wrap: the
+       dropdown centres on the header pills AND the caption still paints below (2026-07-18). */
+    vertical-align: center;
+    margin-right: 10px;                  /* gap to the scale dropdown on its right */
+    margin-bottom: -15px;
+    flow-children: down;                 /* dropdown on top, its caption below */
+    overflow: noclip;
+    z-index: 10;
+}
+/* the volume DropDown — a clone of .mg-scale-dd (same 30px height, arrow shrink, palette). */
+.mg-vol-dd {
+    width: 80px; min-width: 80px; max-width: 80px;
+    height: 30px; min-height: 30px; max-height: 30px;
+    padding: 1px 8px;
+    vertical-align: center;
+    background-size: 19px 19px;           /* shrink the base 32px dropdown arrow to ~60% */
+    background-position: right 29px 35%;   /* match .mg-scale-dd (80px box) */
+    background-color: #161f2b;
+    border: 1px solid #2a3849;
+    border-radius: 2px;
+    transition-property: brightness, border-color;
+    transition-duration: 0.1s; transition-timing-function: ease-out;
+}
+.mg-vol-dd:hover { brightness: 1.08; border-color: #3a5170; }
+.mg-vol-dd Label {
+    font-family: radiance !important; font-weight: semi-bold; color: #cdd9e7 !important;
+    font-size: 14px !important;
+    margin: 0px; padding: 0px;
+    horizontal-align: center; vertical-align: center;
+}
+.mg-vol-muted .mg-vol-dd Label { color: #7d8794 !important; }
+/* the popup list — auto-created by the engine at the context root, id = "<ddId>DropDownMenu". */
+#MG_VolDropDownMenu {
+    width: 80px; min-width: 80px; max-width: 80px;
+    background-image: none;
+    background-color: #0f141c;
+    border: 1px solid #2a3849; border-radius: 2px;
+    box-shadow: 0px 8px 20px 0px #000000aa;
+    z-index: 200;
+}
+#MG_VolDropDownMenu Label,
+#MG_VolDropDownMenu .mg-vol-opt {
+    width: 100%; height: 30px;
+    padding: 0px 10px;
+    font-family: radiance !important; color: #cdd9e7 !important; font-size: 14px !important;
+    vertical-align: center;
+    background-image: none;
+    background-color: #00000000;
+    border: 0px solid transparent;
+    transition-property: background-color, color;
+    transition-duration: 0.1s; transition-timing-function: ease-out;
+}
+#MG_VolDropDownMenu Label:hover,
+#MG_VolDropDownMenu .mg-vol-opt:hover {
+    background-color: #1c2836; color: #eef3fa !important;
+}
+
+
+
+
+
+/* ── connect four ────────────────────────────────────────────────────────────
+   Opaque blue plate (.mg-cf-board, #23479e) with dark round sockets (.mg-cf-hole, #0d1b3e); discs
+   live on a SEPARATE overlay (.mg-cf-pieces) stacked ON TOP of the plate (checkers .mg-board-wrap
+   idiom) and placed by translate3d. The overlay is overflow:CLIP and sized to the plate's inner
+   window, so a falling disc is visible ONLY inside the plate: it drops in from the top slot and is
+   never seen floating above the board or over the modal's dark windows (the maintainer's
+   "падение внутрь", п3). A resting disc + its 3px win-ring stay 2px inside the clip box (INSET 5),
+   so only the mid-fall portion above the top edge is hidden — nothing at rest is clipped.
+   Geometry MUST match mg_connectfour.js: CELL 60, disc 50, 7x6. */
+.mg-cf { horizontal-align: center; flow-children: down; }
+/* plate + discs overlay stacked as siblings (flow-children:none parks both at the wrap's
+   top-left). Size = 7*60 + 2*6 padding = 432 wide, 6*60 + 12 = 372 tall. */
+.mg-cf-wrap {
+    flow-children: none;
+    width: 432px; height: 372px;
+    horizontal-align: center;
+}
+/* the solid blue plate — created FIRST so it paints BEHIND the discs. 6px padding frames the grid. */
+.mg-cf-board {
+    flow-children: down; overflow: noclip;
+    padding: 6px; border-radius: 10px;
+    background-color: #23479e;
+    box-shadow: 0px 6px 16px 0px #00000099;
+}
+.mg-cf-row { flow-children: right; height: 60px; }
+.mg-cf-cell { width: 60px; height: 60px; flow-children: none; }
+/* the empty dark socket the discs sit in; a hover tints the whole cell to hint the drop column. */
+.mg-cf-hole {
+    width: 50px; height: 50px; border-radius: 50%;
+    background-color: #0d1b3e;
+    horizontal-align: center; vertical-align: center;
+    transition-property: background-color; transition-duration: 0.1s;
+}
+.mg-cf-cell:hover .mg-cf-hole { background-color: #16275c; }
+/* discs overlay: sibling created AFTER the plate → paints OVER it. Offset by the plate's 6px
+   padding (margin) so a disc's translate3d(col*60+5, row*60+5) lands centred in its socket.
+   overflow:CLIP bounds every disc to the plate window: a disc starting one cell ABOVE the top edge
+   is hidden until it crosses into the plate, so the fall reads as dropping INSIDE the board rather
+   than flying above it (п3). hittest is disabled on the JS panel so clicks fall through to cells. */
+.mg-cf-pieces {
+    width: 420px; height: 360px;
+    margin: 6px;
+    flow-children: none;
+    overflow: clip;
+}
+/* a played disc — positioned by translate3d on the overlay (NOT a cell child). BASE class
+   carries NO transition so a rebuilt board snaps; the falling disc gets .mg-cf-anim one frame
+   later so only real drops animate (checkers arming). */
+.mg-cf-disc {
+    width: 50px; height: 50px; border-radius: 50%;
+    box-shadow: 0px 2px 4px 0px #00000099;
+}
+
+
+
+/* Fall = pure gravity: accelerate the whole way and hit the floor at MAX speed, with NO
+   end-of-curve slowdown (any deceleration reads as the disc "floating" just before landing —
+   the maintainer's ~0.2s hover). cubic-bezier(0.55,0,1,1) keeps the end control point at y=1
+   so the last frames are the FASTEST. Short 0.3s so it snaps into place. */
+.mg-cf-disc.mg-cf-anim {
+    transition-property: transform; transition-duration: 0.3s;
+    transition-timing-function: cubic-bezier(0.55, 0, 1, 1);
+}
+
+.mg-cf-red { background-color: gradient(radial, 50% 35%, 0% 0%, 75% 75%, from(#ff6b63), to(#c8352c)); border: 2px solid #a02820; }
+.mg-cf-yellow { background-color: gradient(radial, 50% 35%, 0% 0%, 75% 75%, from(#ffe06a), to(#e0b422)); border: 2px solid #b8901a; }
+/* winning four highlighted on the discs themselves: a bright white ring + brightness lift. */
+.mg-cf-disc.mg-cf-win-disc { border-color: #ffffff; box-shadow: 0px 0px 0px 3px #ffffffcc; brightness: 1.35; }
+
+
+
+
