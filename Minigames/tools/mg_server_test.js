@@ -129,6 +129,42 @@ async function main() {
     d = await req(hub, "/api/join.png?code=1&tok=MISSING00"); // no such lobby
     ok(d.w === 20, "join a missing lobby returns 20");
 
+    // ── security hardening (2026-07-18 audit) ──
+    await (async function () {
+        // L1: a non-4-digit code can never name a lobby — normalised to "" → missing, not a
+        // junk "l:<garbage>" key. Covers "1e3", overlong, non-numeric, and unicode-digit inputs.
+        var h = new Hub({ storage: new FakeStorage() });
+        var bad = ["1e3", "12345", "99", "abcd", "10 0", "١٢٣٤"];
+        for (var i = 0; i < bad.length; i++) {
+            var r = await req(h, "/api/status.png?code=" + encodeURIComponent(bad[i]));
+            ok(r.w === 9 && r.h === 1, "L1: status(code='" + bad[i] + "') → (9,1) gone (rejected)");
+        }
+
+        // H2: /api/join must refuse a multi-seat lobby (poker/durak-N have .cap and their own
+        // routes). A guessed code can no longer clobber players/seats on such a lobby.
+        var ph = new Hub({ storage: new FakeStorage() });
+        var pc = await req(ph, "/api/pcreate.png?n=3&tok=PKHOSTAA");
+        var pcode = (pc.w - 100) * 100 + (pc.h - 1);
+        var jr = await req(ph, "/api/join.png?code=" + pcode + "&tok=INTRUDER1");
+        ok(jr.w === 20, "H2: generic join on a poker lobby → (20) missing (guarded)");
+        var pr = await req(ph, "/api/proom.png?code=" + pcode);
+        ok(pr.w - (pr.w >= 100 ? 100 : 0) === 1, "H2: poker lobby still has 1 player after blocked join");
+
+        // H3: >RL_MAX_HITS formation requests from ONE IP within the window get (9,4) throttled;
+        // a null IP (as the rest of this suite uses) is exempt. Drive it with an explicit IP.
+        var th = new Hub({ storage: new FakeStorage() });
+        function ipReq(pq) { return th.fetch(new Request("https://mg.test" + pq, { headers: { "CF-Connecting-IP": "203.0.113.9" } })).then(dims); }
+        var throttled = false, lastH = 0;
+        for (var k = 0; k < 120; k++) {
+            var rr = await ipReq("/api/create.png?game=1&tok=FLOODER01");
+            if (rr.w === 9 && rr.h === 4) { throttled = true; lastH = rr.h; break; }
+        }
+        ok(throttled, "H3: single-IP create flood eventually returns (9,4) throttled");
+        // A different IP is unaffected by the first IP's throttle.
+        var other = await th.fetch(new Request("https://mg.test/api/create.png?game=1&tok=CLEANIP01", { headers: { "CF-Connecting-IP": "198.51.100.7" } })).then(dims);
+        ok(other.w !== 9, "H3: a different IP is not throttled (" + other.w + "," + other.h + ")");
+    })();
+
     // ── checkers: forced capture is enforced by the server ──
     await (async function () {
         var L = await seatedLobby(1, "HCHK1234", "JCHK1234");
@@ -267,6 +303,133 @@ async function main() {
         // Covering pair 0 with a card the defender does NOT hold is illegal.
         var badCover = await req(L.hub, "/api/dact.png?code=" + L.code + "&tok=" + defTok + "&a=2&p=0&c=" + hand[0]);
         ok(badCover.w === 9 && badCover.h === 2, "durak: covering with a card you don't hold → (9,2)");
+    })();
+
+    // ── durak: N-seat private lobby (dcreate/djoin/droom) + 3-player deal, ROLES, throw-in ──
+    await (async function () {
+        var hub = new Hub({ storage: new FakeStorage() });
+        // Host creates a 3-seat durak table (dcreate is NOT the generic create — the 2-int lobby
+        // is hard-capped at 2 seats; a 3–4-player table needs its own routes, like poker).
+        var dc = await req(hub, "/api/dcreate.png?n=3&tok=DKHOST01");
+        ok(dc.w >= 100, "durak-N: dcreate → HOST (w>=100 role flag)");
+        var code = (dc.w - 100) * 100 + (dc.h - 1);
+        ok(code >= 1000 && code <= 9999, "durak-N: host code valid (" + code + ")");
+        var badTok = await req(hub, "/api/dcreate.png?n=3&tok=x");
+        ok(badTok.w === 9 && badTok.h === 3, "durak-N: dcreate short token → (9,3)");
+        // Room shows 1 seated, cap 3, not started.
+        var dr = await req(hub, "/api/droom.png?code=" + code);
+        ok(dr.w === 1 && dr.h === 3, "durak-N: droom shows 1 player, cap 3, not started");
+        // Two joiners fill seats 1 and 2; each learns its seat + the cap.
+        var j1 = await req(hub, "/api/djoin.png?code=" + code + "&tok=DKPLR201");
+        ok(j1.w === 3 && j1.h === 2, "durak-N: djoin → cap 3, seat index 1");
+        var j1b = await req(hub, "/api/djoin.png?code=" + code + "&tok=DKPLR201");
+        ok(j1b.w === 3 && j1b.h === 2, "durak-N: djoin re-join idempotent");
+        var j2 = await req(hub, "/api/djoin.png?code=" + code + "&tok=DKPLR301");
+        ok(j2.w === 3 && j2.h === 3, "durak-N: djoin → cap 3, seat index 2");
+        // Table now full: a 4th join is refused.
+        var j3 = await req(hub, "/api/djoin.png?code=" + code + "&tok=DKPLR401");
+        ok(j3.w === 21, "durak-N: djoin into a full table → (21,1)");
+        // Only the host (seat 0) starts, and dealing sets started + numPlayers=3.
+        var badStart = await req(hub, "/api/start.png?code=" + code + "&tok=DKPLR201");
+        ok(badStart.w === 9 && badStart.h === 1, "durak-N: non-host start → (9,1)");
+        var st = await req(hub, "/api/start.png?code=" + code + "&tok=DKHOST01");
+        ok(st.w === 1 && st.h === 1, "durak-N: host start deals the game");
+        var dr2 = await req(hub, "/api/droom.png?code=" + code);
+        ok(dr2.w === 103 && dr2.h === 3, "durak-N: droom now shows started (players 3 +100)");
+        // Three DRAW events (one per seat) confirm a 3-hand deal, plus TRUMP + OPEN up front.
+        var e0 = await req(hub, "/api/dlog.png?code=" + code + "&since=0");
+        ok(e0.w === 2, "durak-N: dlog[0] = TRUMP");
+        var e1 = await req(hub, "/api/dlog.png?code=" + code + "&since=1");
+        ok(e1.w === 3 && e1.h >= 1 && e1.h <= 3, "durak-N: dlog[1] = OPEN(attacker 0..2)");
+        for (var s = 0; s < 3; s++) {
+            var ds = await req(hub, "/api/dlog.png?code=" + code + "&since=" + (2 + s));
+            ok(ds.w === 50 + s && ds.h === 7, "durak-N: dlog[" + (2 + s) + "] = DRAW(seat " + s + ", 6)");
+        }
+        // Drive a full bout to force a ROLES event. Read the opener's seat, walk its whole hand
+        // (deterministic per-seed) attacking + taking so the defender picks up; the server then
+        // rotates roles and emits ROLES(4, attacker*4+defender+1).
+        var openSeat = e1.h - 1;                                   // OPEN carried attacker+1
+        var toks = ["DKHOST01", "DKPLR201", "DKPLR301"];
+        var defSeat = (openSeat + 1) % 3;
+        // Attacker opens with its first card.
+        var aHand0 = (await req(hub, "/api/ddraw.png?code=" + code + "&tok=" + toks[openSeat] + "&i=0")).w - 2;
+        var open = await req(hub, "/api/dact.png?code=" + code + "&tok=" + toks[openSeat] + "&a=1&c=" + aHand0);
+        ok(open.w === 1 && open.h === 1, "durak-N: opener attacks (accepted)");
+        // Find where PLAY landed, then the defender takes the table → bout ends, ROLES emitted.
+        var take = await req(hub, "/api/dact.png?code=" + code + "&tok=" + toks[defSeat] + "&a=3");
+        ok(take.w === 1 && take.h === 1, "durak-N: defender takes the table (accepted)");
+        // Scan the log tail for a ROLES event (w===4). Its a/d must be legal seats and differ.
+        var foundRoles = false;
+        for (var idx = 5; idx < 40; idx++) {
+            var lg = await req(hub, "/api/dlog.png?code=" + code + "&since=" + idx);
+            if (lg.w === 1 && lg.h === 1) break;                   // drained
+            if (lg.w === 4) {
+                var atk = ((lg.h - 1) / 4) | 0, def = (lg.h - 1) % 4;
+                ok(atk >= 0 && atk < 3 && def >= 0 && def < 3 && atk !== def, "durak-N: ROLES(a,d) legal & distinct seats");
+                foundRoles = true;
+                break;
+            }
+        }
+        ok(foundRoles, "durak-N: a ROLES event follows the bout");
+    })();
+
+    // ── poker: authoritative dealer (own route set: pcreate/pjoin/proom/pstart/pact/plog/pdraw) ──
+    await (async function () {
+        var hub = new Hub({ storage: new FakeStorage() });
+        // Host creates a 2-seat poker lobby (pcreate is NOT the generic create — poker owns its
+        // routes because the shared lobby is hard-capped at 2 while poker seats 2–4).
+        var pc = await req(hub, "/api/pcreate.png?n=2&tok=PHOST123");
+        ok(pc.w >= 100, "poker: pcreate → HOST (w>=100 role flag)");
+        var code = (pc.w - 100) * 100 + (pc.h - 1);
+        ok(code >= 1000 && code <= 9999, "poker: host code valid (" + code + ")");
+        // Bad token is refused up front.
+        var badTok = await req(hub, "/api/pcreate.png?n=2&tok=x");
+        ok(badTok.w === 9 && badTok.h === 3, "poker: pcreate with short token → (9,3)");
+        // Room shows 1 seated, cap 2, not started.
+        var pr = await req(hub, "/api/proom.png?code=" + code);
+        ok(pr.w === 1 && pr.h === 2, "poker: proom shows 1 player, cap 2, not started");
+        // A second player joins → learns its own seat (1) and the cap (2).
+        var pj = await req(hub, "/api/pjoin.png?code=" + code + "&tok=PJOIN123");
+        ok(pj.w === 2 && pj.h === 2, "poker: pjoin → cap 2, seat index 1");
+        // Re-join is idempotent (poll safety).
+        var pj2 = await req(hub, "/api/pjoin.png?code=" + code + "&tok=PJOIN123");
+        ok(pj2.w === 2 && pj2.h === 2, "poker: pjoin re-join idempotent");
+        // Only the host (seat 0) starts.
+        var badStart = await req(hub, "/api/pstart.png?code=" + code + "&tok=PJOIN123");
+        ok(badStart.w === 9 && badStart.h === 1, "poker: non-host start → (9,1)");
+        var ps = await req(hub, "/api/pstart.png?code=" + code + "&tok=PHOST123");
+        ok(ps.w === 1 && ps.h === 1, "poker: host start deals the first hand");
+        var pr2 = await req(hub, "/api/proom.png?code=" + code);
+        ok(pr2.w === 102 && pr2.h === 2, "poker: proom now shows started (players 2 +100)");
+        // Public log opens with a HAND event (2, button+1).
+        var h0 = await req(hub, "/api/plog.png?code=" + code + "&since=0");
+        ok(h0.w === 2 && (h0.h === 1 || h0.h === 2), "poker: plog[0] = HAND (2, button+1)");
+        // Private deal: each seat reads exactly its own 2 hole cards (card+2, never (1,1)).
+        for (var seatTok = 0; seatTok < 2; seatTok++) {
+            var tok = seatTok === 0 ? "PHOST123" : "PJOIN123";
+            for (var i = 0; i < 2; i++) {
+                var d = await req(hub, "/api/pdraw.png?code=" + code + "&tok=" + tok + "&i=" + i);
+                ok(d.w >= 2 && d.w <= 53 && d.h === 1, "poker: pdraw seat" + seatTok + "[" + i + "] returns a card");
+            }
+        }
+        // Privacy: a foreign token can't read any seat's hole cards.
+        var spy = await req(hub, "/api/pdraw.png?code=" + code + "&tok=STRANGER0&i=0");
+        ok(spy.w === 9 && spy.h === 3, "poker: pdraw with foreign token → (9,3)");
+        // Heads-up preflop: the button/SB (seat = button) acts first. Whoever's turn it is folds;
+        // the hand ends and the log carries a FOLD then a WIN.
+        var button = h0.h - 1;                       // seat on the button = first to act heads-up
+        var actTok = button === 0 ? "PHOST123" : "PJOIN123";
+        var fold = await req(hub, "/api/pact.png?code=" + code + "&tok=" + actTok + "&a=0&to=0");
+        ok(fold.w === 1 && fold.h === 1, "poker: fold accepted");
+        var ev1 = await req(hub, "/api/plog.png?code=" + code + "&since=1");
+        ok(ev1.w === (10 + button) && ev1.h === 1, "poker: plog records FOLD(seat, 1)");
+        var ev2 = await req(hub, "/api/plog.png?code=" + code + "&since=2");
+        ok(ev2.w === 7 && ev2.h === 1, "poker: uncontested hand → WIN(7,1)");
+        // A busted seat can't happen from one hand (stacks are 200/blinds tiny), so no OVER yet.
+        var pnext = await req(hub, "/api/pnext.png?code=" + code + "&tok=PJOIN123");
+        ok(pnext.w === 1 && pnext.h === 1, "poker: any seat may deal the next hand once over");
+        var h1 = await req(hub, "/api/plog.png?code=" + code + "&since=3");
+        ok(h1.w === 2, "poker: next hand appends a fresh HAND event (continuous log)");
     })();
 
     // ── public quickmatch: pairs two callers into one lobby (with tokens) ──

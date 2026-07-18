@@ -40,8 +40,10 @@
  * BOTH clients agree that seat lost on time — no separate timeout route is needed. The bank
  * (60/180/300/600 s) fits one dimension (max 601 ≤ downlink cap). tc is chosen at create time
  * (create?tc=SEC), forced to 300 for a chess/checkers quick match, and carried to the joiner
- * in the /api/join height (game, tc+1). Games without a bank (tc=0, incl. TTT/Durak which use
- * a purely client-side 20 s per-move timer) get (9,9) from /api/clocks and never poll it.
+ * in the /api/join height (game, tc+1). Games without a bank (tc=0, incl. TTT/Durak) get
+ * (9,9) from /api/clocks and never poll it — they have NO per-move timer at all (an earlier
+ * note here claimed a "client-side 20 s per-move timer"; that was never implemented). Only
+ * chess/checkers are timed.
  *
  * CODE = CODE_HI*100 + CODE_LO (4-digit). Squares are 0..63; from != to always, so a
  * real poll move can never decode to (1,1) — that's why (1,1) is a safe "nothing" marker.
@@ -68,6 +70,37 @@ export class Hub {
   constructor(state) {
     this.state = state;
     this.storage = state.storage;
+    // In-memory per-IP sliding window for the lobby-FORMATION routes (create/join family).
+    // Lives on the single Durable Object instance, so every request sees the same counters
+    // (no KV lag). Keyed by CF-Connecting-IP: legit players sit on distinct IPs and never
+    // approach the cap, while a brute-forcer sweeping the 4-digit code space or flooding
+    // `create` is one IP and gets throttled. A null IP (local/tests) is exempt (fails open),
+    // and the HOT read/poll loop is DELIBERATELY never throttled — a (9,x) sentinel there
+    // would be misread by the poll decoder as a real move. Bounded to RL_MAX_IPS entries so
+    // the map itself can't be used to exhaust memory.
+    this.rl = new Map();          // ip -> array of recent request timestamps (ms)
+  }
+
+  // Sliding-window rate check for one IP. Returns true if this request is ALLOWED. A null/
+  // empty IP is always allowed (local dev + the test harness send no CF-Connecting-IP). Prunes
+  // timestamps older than the window on each call, and evicts the oldest IP once the map is
+  // full so a spoofed-IP flood can't grow it without bound.
+  rateOk(ip) {
+    if (!ip) return true;
+    const now = Date.now();
+    let hits = this.rl.get(ip);
+    if (!hits) {
+      if (this.rl.size >= RL_MAX_IPS) { const first = this.rl.keys().next().value; if (first !== undefined) this.rl.delete(first); }
+      hits = [];
+      this.rl.set(ip, hits);
+    }
+    // Drop timestamps outside the window (in place, cheap for small arrays).
+    let k = 0;
+    for (let i = 0; i < hits.length; i++) if (now - hits[i] < RL_WINDOW_MS) hits[k++] = hits[i];
+    hits.length = k;
+    if (hits.length >= RL_MAX_HITS) return false;
+    hits.push(now);
+    return true;
   }
 
   async fetch(request) {
@@ -76,7 +109,20 @@ export class Hub {
     // client appends ".png" to every route. Strip it here before routing.
     const p = url.pathname.replace(/\.png$/, "");
     const q = url.searchParams;
-    const code = q.get("code");
+    // Normalise `code` to a canonical 4-digit integer string, or "" if it isn't one. All
+    // real lobby codes are 1000..9999 (freshCode), so anything else (unicode, "1e3", a
+    // giant string) can never name a live lobby — reject it here so it can't create junk
+    // "l:<garbage>" keys or match via loose string coercion. "" makes every `code ? …`
+    // guard below fall straight to the missing/gone branch.
+    const code = validCode(q.get("code"));
+
+    // Rate-limit the formation + existence-probe routes by client IP (Cloudflare sets
+    // CF-Connecting-IP; absent locally / in tests → fails open). (9,4) is a dedicated
+    // "slow down" marker the throttled client methods surface as a friendly retry, and
+    // it can never be confused with a real reply on these routes.
+    if (THROTTLED_ROUTES[p] && !this.rateOk(request.headers.get("CF-Connecting-IP"))) {
+      return png(9, 4);
+    }
 
     try {
       if (p === "/api/probe") return png(600, 1000);
@@ -230,6 +276,12 @@ export class Hub {
         if (!validTok(q.get("tok"))) return png(9, 3); // reject empty/garbage seat token
         const lobby = code ? await this.storage.get("l:" + code) : null;
         if (!lobby) return png(20, 1);             // missing
+        // Game-type guard (H2): the generic 2-seat join hard-sets players=2/seats[1], which would
+        // CORRUPT an N-seat poker/durak lobby (those carry `cap` and grow via seats.push through
+        // pjoin/djoin). A poker lobby (game 6) is never joinable here either. Refuse both so a
+        // guessed code can't clobber a multi-seat table — the client already routes them to
+        // pjoin/djoin, so a legitimate joiner never hits this path.
+        if (lobby.cap || lobby.game === 6) return png(20, 1); // not a generic 2-seat lobby → "missing"
         if (lobby.players >= 2) return png(21, 1); // full
 
         lobby.players = 2;
@@ -268,6 +320,11 @@ export class Hub {
         if (clockCheckFlag(lobby) >= 0) { await this.storage.put("l:" + code, lobby); return png(9, 2); }
         const v = validateMove(lobby, seat, from, to, end);
         if (!v.ok) return png(9, v.code);          // (9,1) not your turn · (9,2) illegal
+        // Hard ceiling on the move log (poll?since indexes it directly, so it can't be
+        // truncated — we refuse to grow it past a size no real game reaches). A legit chess/
+        // checkers game is well under 600 plies; MOVE_CAP is pure-abuse territory (two colluding
+        // seats shuffling a piece to bloat the DO's storage). Reject as illegal past the cap.
+        if (lobby.moves.length >= MOVE_CAP) return png(9, 2);
         lobby.moves.push(v.move);
         lobby.t = nowSeq();                        // keep-alive: TTL is measured from last activity
         // Clock accounting: bill the elapsed time to the seat that just moved, and (only when
@@ -421,6 +478,146 @@ export class Hub {
         return png(card + 2, 1);
       }
 
+      // ── Durak N-seat private lobby (2–4 players) ─────────────────────────────────
+      // Mirrors the poker lobby routes (pcreate/pjoin/proom): the 2-int move/poll lobby is
+      // hard-capped at 2 seats, so a 3–4-player table needs its OWN create/join/room that seats
+      // up to `cap`. Once dealt, play runs through the SAME /api/start · /api/dact · /api/dlog ·
+      // /api/ddraw handlers above — those are seat-token + state driven and seat-count agnostic,
+      // so nothing about the game protocol changes; only lobby formation grows past two seats.
+      if (p === "/api/dcreate") {
+        await this.maybeSweep();
+        if (!validTok(q.get("tok"))) return png(9, 3);
+        const cap = clampInt(q.get("n"), 2, 2, 4);           // seat cap 2..4
+        const newCode = await this.freshCode();
+        const lobby = {
+          game: 3, players: 1, moves: [], pub: 0, t: nowSeq(), cap: cap,
+          seats: [{ tok: q.get("tok") || "" }],              // host = seat 0
+          turn: 0,
+          state: initState(3)
+        };
+        await this.storage.put("l:" + newCode, lobby);
+        // HOST (+100 on width, like create) · height carries the seat cap so the joiner UI
+        // can show "waiting 1/N" without another round-trip.
+        return png(Math.floor(newCode / 100) + 100, (newCode % 100) + 1);
+      }
+      if (p === "/api/djoin") {
+        if (!validTok(q.get("tok"))) return png(9, 3);
+        const lobby = code ? await this.storage.get("l:" + code) : null;
+        if (!lobby || lobby.game !== 3 || !lobby.cap) return png(20, 1); // missing / not an N-seat durak lobby
+        if (lobby.state && lobby.state.started) return png(22, 1);       // already started
+        if (seatOf(lobby, q.get("tok")) >= 0)                           // idempotent re-join (poll safety)
+          return png(lobby.cap, lobby.players);
+        if (lobby.players >= lobby.cap) return png(21, 1);              // full
+        lobby.seats.push({ tok: q.get("tok") || "" });
+        lobby.players++;
+        lobby.t = nowSeq();
+        await this.storage.put("l:" + code, lobby);
+        // width = cap, height = the seat index this joiner took +1 (so it learns its seat)
+        return png(lobby.cap, lobby.players);
+      }
+      if (p === "/api/droom") {
+        const lobby = code ? await this.storage.get("l:" + code) : null;
+        if (!lobby || lobby.game !== 3 || !lobby.cap) return png(9, 1); // gone / not an N-seat durak lobby
+        const started = lobby.state && lobby.state.started ? 100 : 0;
+        // width = players joined (+100 once started) · height = seat cap
+        return png(lobby.players + started, lobby.cap);
+      }
+
+      // ── Poker (authoritative dealer, 2–4 players; its own multi-seat lobby) ──────
+      // A poker lobby holds up to `cap` seats (chosen at create). Unlike the 2-int games it is
+      // NOT capped at 2 — pjoin fills seats up to cap, and the host starts when ready.
+      if (p === "/api/pcreate") {
+        await this.maybeSweep();
+        if (!validTok(q.get("tok"))) return png(9, 3);
+        const cap = clampInt(q.get("n"), 2, 2, 4);           // seat cap 2..4
+        const newCode = await this.freshCode();
+        const lobby = {
+          game: 6, players: 1, pub: 0, t: nowSeq(), cap: cap,
+          seats: [{ tok: q.get("tok") || "" }],              // host = seat 0
+          state: initState(6)
+        };
+        await this.storage.put("l:" + newCode, lobby);
+        // HOST (+100 on width, like create) · height carries the seat cap so the joiner UI
+        // can show "waiting 1/N" without another round-trip.
+        return png(Math.floor(newCode / 100) + 100, (newCode % 100) + 1);
+      }
+      if (p === "/api/pjoin") {
+        if (!validTok(q.get("tok"))) return png(9, 3);
+        const lobby = code ? await this.storage.get("l:" + code) : null;
+        if (!lobby || lobby.game !== 6) return png(20, 1);   // missing / not a poker lobby
+        if (lobby.state && lobby.state.started) return png(22, 1); // already started
+        if (seatOf(lobby, q.get("tok")) >= 0)                // idempotent re-join (poll safety)
+          return png(lobby.cap || 4, lobby.players);
+        if (lobby.players >= (lobby.cap || 4)) return png(21, 1); // full
+        lobby.seats.push({ tok: q.get("tok") || "" });
+        lobby.players++;
+        lobby.t = nowSeq();
+        await this.storage.put("l:" + code, lobby);
+        // width = cap, height = the seat index this joiner took +1 (so it learns its seat)
+        return png(lobby.cap || 4, lobby.players);
+      }
+      if (p === "/api/proom") {
+        const lobby = code ? await this.storage.get("l:" + code) : null;
+        if (!lobby || lobby.game !== 6) return png(9, 1);    // gone
+        const started = lobby.state && lobby.state.started ? 100 : 0;
+        // width = players joined (+100 once started) · height = seat cap
+        return png(lobby.players + started, lobby.cap || 4);
+      }
+      if (p === "/api/pstart") {
+        const lobby = code ? await this.storage.get("l:" + code) : null;
+        if (!lobby || lobby.game !== 6) return png(9, 9);
+        const seat = seatOf(lobby, q.get("tok"));
+        if (seat < 0) return png(9, 3);
+        const r = pokerStart(lobby, seat);
+        if (!r.ok) return png(9, r.code);
+        lobby.t = nowSeq();
+        await this.storage.put("l:" + code, lobby);
+        return png(1, 1);
+      }
+      if (p === "/api/pact") {
+        const lobby = code ? await this.storage.get("l:" + code) : null;
+        if (!lobby || lobby.game !== 6) return png(9, 9);
+        const seat = seatOf(lobby, q.get("tok"));
+        if (seat < 0) return png(9, 3);
+        const a = clampInt(q.get("a"), 0, 0, 3);
+        const to = clampInt(q.get("to"), 0, 0, 5000);
+        const r = pokerAct(lobby, seat, a, to);
+        if (!r.ok) return png(9, r.code);
+        lobby.t = nowSeq();
+        await this.storage.put("l:" + code, lobby);
+        return png(1, 1);
+      }
+      if (p === "/api/pnext") {
+        const lobby = code ? await this.storage.get("l:" + code) : null;
+        if (!lobby || lobby.game !== 6) return png(9, 9);
+        const seat = seatOf(lobby, q.get("tok"));
+        if (seat < 0) return png(9, 3);
+        const r = pokerNext(lobby, seat);
+        if (!r.ok) return png(9, r.code);
+        lobby.t = nowSeq();
+        await this.storage.put("l:" + code, lobby);
+        return png(1, 1);
+      }
+      if (p === "/api/plog") {
+        const lobby = code ? await this.storage.get("l:" + code) : null;
+        if (!lobby || lobby.game !== 6) return png(9, 9);
+        const since = clampInt(q.get("since"), 0, 0, 100000);
+        const ev = lobby.state && lobby.state.log ? lobby.state.log[since] : null;
+        if (!ev) return png(1, 1);                           // nothing new
+        return png(ev.w, ev.h);
+      }
+      if (p === "/api/pdraw") {
+        const lobby = code ? await this.storage.get("l:" + code) : null;
+        if (!lobby || lobby.game !== 6) return png(9, 9);
+        const seat = seatOf(lobby, q.get("tok"));
+        if (seat < 0) return png(9, 3);
+        const i = clampInt(q.get("i"), 0, 0, 1);             // exactly 2 hole cards (0,1)
+        const hole = lobby.state && lobby.state.serverHole ? lobby.state.serverHole[seat] : null;
+        const card = hole ? hole[i] : undefined;
+        if (card === undefined || card === null) return png(1, 1);
+        return png(card + 2, 1);                             // card+2, like ddraw
+      }
+
       return png(9, 8); // unknown route
     } catch (e) {
       return png(9, 7); // server error marker
@@ -509,8 +706,49 @@ function validTok(tok) {
   return typeof tok === "string" && tok.length >= 8 && tok.length <= 64 && /^[a-z0-9]+$/i.test(tok);
 }
 
-// Game ids the server is authoritative for. 3 = durak (its own route set). An id outside
-// this set has no engine, so create/quick reject it up front and move never relays it.
+// Canonicalise an incoming lobby code. Real codes are 4-digit ints (1000..9999, see
+// freshCode); we require the raw param to be EXACTLY four digits and return it as a
+// string, else "". Using a strict regex (not parseInt) rejects "1e3", "1000abc",
+// " 1000", unicode digits, etc. — so `code` can only ever name a real key or nothing.
+function validCode(raw) {
+  return typeof raw === "string" && /^[0-9]{4}$/.test(raw) ? raw : "";
+}
+
+// ── per-IP rate limit for lobby FORMATION + existence-probe routes ────────────
+// Window/cap are tuned so no legitimate flow comes close: a single client makes ~1
+// create/quick plus ~1 status|room poll per ~1.5 s (≈8 hits/10 s), and even several
+// players sharing one NAT/household IP stay well under RL_MAX_HITS. A brute-forcer
+// sweeping the 9000-code space or flooding `create` is one IP and gets capped to
+// RL_MAX_HITS/window (≈6 req/s → ~25 min for a full sweep — a real deterrent, and H2
+// already blocks multi-seat lobbies from a guessed join). RL_MAX_IPS bounds the map so
+// a spoofed-IP flood can't grow it without bound. The in-game hot loop (move/poll/log/
+// draw/clocks/rematch) is NEVER gated — a (9,x) throttle sentinel there would be
+// misread by the poll decoder as a real move (from=8,to=4) and corrupt the board.
+const RL_WINDOW_MS = 10000;   // sliding window length
+const RL_MAX_HITS = 60;       // max FORMATION/probe hits per IP per window
+const RL_MAX_IPS = 5000;      // cap on tracked IPs (memory bound)
+// Hard ceiling on a lobby's monotonic event array (moves[] for the 2-int games, log[] for
+// poker). poll/plog `since` indexes these directly, so they can NEVER be truncated — instead
+// we refuse to grow them past a size no honest game reaches (a full chess/checkers game is
+// well under 600 plies; a 200-chip poker table ends in far fewer events). Only two colluding
+// seats deliberately bloating the single DO's storage ever hit it. Reject as illegal past it.
+const MOVE_CAP = 4000;
+// Routes the limiter guards. Formation (create + every join variant) is the DoS +
+// brute-force-join vector; the existence probes (status/room/proom/droom) are how a
+// sweeper discovers which of the 9000 codes are live. Everything else — probe/ping
+// (calibration must always work), cancel (frees lobbies), and the whole in-game loop —
+// is intentionally exempt.
+const THROTTLED_ROUTES = {
+  "/api/create": 1, "/api/quick": 1, "/api/mquick": 1, "/api/join": 1,
+  "/api/pcreate": 1, "/api/pjoin": 1, "/api/dcreate": 1, "/api/djoin": 1,
+  "/api/status": 1, "/api/room": 1, "/api/proom": 1, "/api/droom": 1
+};
+
+// Game ids the generic /api/create lobby accepts. 3 = durak creates its lobby here too, then
+// switches to its own dealer routes (room/start/dact/…). 6 = poker is DELIBERATELY absent: it
+// owns a fully separate route set (pcreate/pjoin/pstart/pact/…) because the generic lobby is
+// hard-capped at 2 seats and poker seats 2–4. An id outside this set has no engine, so
+// create/quick reject it up front and move never relays it.
 const SUPPORTED_GAMES = { 1: 1, 2: 1, 3: 1, 4: 1, 5: 1 };
 
 // Games eligible for MULTI-select quick match. Durak (3) is excluded: it uses a wholly
@@ -612,6 +850,7 @@ function initState(game) {
   if (game === 4) return { board: R.chess.initialChessBoard(), cst: R.chess.initialChessState() }; // chess
   if (game === 3) return { started: 0, pub: [], priv: [[], []] };                                  // durak (dealt on /api/start)
   if (game === 5) return { board: R.connectfour.initialBoard() };                                  // connect four
+  if (game === 6) return { started: 0, pub: [], priv: [], st: null, stacks: null, button: -1 };    // poker (dealt on /api/pstart)
   return null;
 }
 
@@ -702,16 +941,20 @@ function validateConnectFour(RC, lobby, seat, from, to) {
   return { ok: true, move: { f: from, t: 7, e: 1 } };
 }
 
-/* ───────────────────── Durak authoritative dealer (2 players) ─────────────────────
+/* ─────────────────── Durak authoritative dealer (2–4 players) ──────────────────────
  * Public event encoding (each fits the 2-int downlink, both dims <= ~63; NONE is (1,1)):
  *   TRUMP        (2,  trumpCard+1)
  *   OPEN atk a   (3,  a+1)                     first attacker seat
- *   PLAY  s c    (10+s, c+1)                   seat s attacks/throws in card c
- *   COVER p c    (20+p, c+1)                   defender covers table pair p with card c
- *   TAKE  s      (30+s, 1)                     seat s (defender) takes the table
+ *   ROLES a d    (4,  a*4 + d + 1)             post-bout roles: attacker a, defender d (0..3)
+ *   PLAY  s c    (10+s, c+1)                   seat s attacks/throws in card c (s 0..3)
+ *   COVER p c    (20+p, c+1)                   defender covers table pair p with card c (p 0..5)
+ *   TAKE  s      (30+s, 1)                     seat s (defender) takes the table (s 0..3)
  *   BITO         (40,   1)                     table beaten & discarded
- *   DRAW  s n    (50+s, n+1)                   seat s drew n cards from the deck
+ *   DRAW  s n    (50+s, n+1)                   seat s drew n cards from the deck (s 0..3)
  *   OVER  L      (60,   L+2)                   game over; L = fool seat (-1 = draw)
+ * ROLES makes the SERVER authoritative over the post-bout rotation (who attacks/defends next),
+ * which for 3–4 players depends on refill order + who ran out of cards — state the client can't
+ * replay. The 2-player wire is unchanged except for this one extra event after each bout.
  * Private per-seat draws go to state.priv[seat] and are pulled one index at a time via
  * /api/ddraw (gated by the seat token), encoded as (card+2, 1). The +2 is deliberate:
  * card id 0 would otherwise collide with the universal (1,1) "nothing new" marker.
@@ -723,21 +966,23 @@ function durakStart(lobby, seat) {
   const st = lobby.state;
   if (!st || st.started) return { ok: true };            // idempotent (already dealt)
   if (seat !== 0) return { ok: false, code: 1 };         // only the host (seat 0) starts
-  if (lobby.players < 2) return { ok: false, code: 2 };  // need both players
+  const n = lobby.players;                               // deal for however many actually seated (2..4)
+  if (n < 2) return { ok: false, code: 2 };              // need at least two players
   const seedBuf = new Uint32Array(1); crypto.getRandomValues(seedBuf);
   const seed = seedBuf[0] & 0x7fffffff;                  // SERVER owns the seed (never sent down)
-  const g = R.newGame(2, seed);
+  const g = R.newGame(n, seed);
 
-  st.numPlayers = 2;
+  st.numPlayers = n;
   st.trump = g.trump; st.trumpCard = g.trumpCard;
   st.deck = g.deck; st.hands = g.hands; st.table = g.table;
   st.attacker = g.attacker; st.defender = g.defender; st.phase = g.phase;
   st.discard = g.discard; st.out = g.out; st.loser = g.loser;
-  st.pub = []; st.priv = [[], []];
+  st.pub = []; st.priv = [];
+  for (let s = 0; s < n; s++) st.priv.push([]);
   st.started = 1;
   dpush(st, 2, g.trumpCard + 1);                         // TRUMP
   dpush(st, 3, g.attacker + 1);                          // OPEN(first attacker)
-  for (let s = 0; s < 2; s++) {
+  for (let s = 0; s < n; s++) {
     for (let k = 0; k < g.hands[s].length; k++) st.priv[s].push(g.hands[s][k]);
     dpush(st, 50 + s, g.hands[s].length + 1);            // DRAW(s, 6)
   }
@@ -761,7 +1006,12 @@ function durakEndBout(st, took) {
       dpush(st, 50 + s, drawn.length + 1);               // DRAW(s, n)
     }
   }
-  if (st.phase === "over") dpush(st, 60, st.loser + 2);  // OVER(loser)
+  if (st.phase === "over") { dpush(st, 60, st.loser + 2); return; }  // OVER(loser)
+  // ROLES(attacker, defender): the SERVER owns the post-bout rotation (it depends on refill,
+  // who went `out`, and skip-the-taker rules — all card-state the client can't replay). Emitting
+  // it authoritatively frees the client from a fragile local swap, which is only correct for 2
+  // players. Encoded as (4, attacker*4 + defender + 1); attacker/defender ∈ 0..3 → h ∈ 1..16.
+  dpush(st, 4, st.attacker * 4 + st.defender + 1);
 }
 
 // Validate + apply one durak action by the seat holder. a: 1 attack, 2 cover, 3 take, 4 bito.
@@ -801,6 +1051,180 @@ function durakAct(lobby, seat, a, p, c) {
     return { ok: true };
   }
   return { ok: false, code: 2 };
+}
+
+
+/* ─────────────────────── Poker (authoritative dealer, 2–4 players) ──────────────────────
+ * Its OWN route set, like Durak, because the 2-int move/poll lobby is hard-capped at 2 seats
+ * and poker seats 2–4 with a host "Start" gate. The worker owns the deck, seed, button, and
+ * every hole card; it deals hole cards PRIVATELY (via /api/pdraw, card+2 like ddraw) and relays
+ * only PUBLIC facts through an indexed event log (/api/plog). The client replays the shared
+ * poker.applyAction to reconstruct all betting truth (pot / whose turn / legal actions are
+ * card-INDEPENDENT), and fills board + revealed hole cards + winners from the log — so it never
+ * needs the deck and can't diverge from the server.
+ *
+ * Public event log entries (each fits the 2-int downlink; width picks the type, height the
+ * payload+1; a real entry can never decode to (1,1) = "nothing new"):
+ *   HAND   (2, button+1)                     start a fresh hand, dealer button on `button`
+ *   FOLD   (10+seat, 1)                      seat folds
+ *   CHECK  (20+seat, 1)                      seat checks
+ *   CALL   (30+seat, 1)                      seat calls
+ *   RAISE  (40+seat, to+1)                   seat raises TO `to` chips (this street)
+ *   BOARD  (5, card+1)                       one community card revealed (card 0..51)
+ *   SHOW   (60+seat, card+1)                 a hole card of `seat` shown at showdown
+ *   WIN    (7, 1)                            hand resolved — client runs resolveShowdown/finish
+ *   OVER   (8, 1)                            table over (one player has all the chips)
+ * Private draw (/api/pdraw?i=): the i-th hole card the caller was dealt this hand → (card+2, 1),
+ * or (1,1) if not dealt yet. The client pulls its 2 hole cards each hand exactly like Durak.
+ *
+ * Action codes for /api/pact (a, to): a = 0 fold · 1 check · 2 call · 3 raise (to=amount).
+ */
+
+// Build the authoritative poker state for a lobby that has `n` seated players. Deals the whole
+// hand server-side with a per-hand seed, then converts it into a public event stream + private
+// hole cards. Returns the fresh `st` (full, with cards) so the caller can persist it.
+function pokerNewHand(lobby) {
+  const R = rules().poker;
+  const s = lobby.state;
+  const n = s.n;                                    // seat count fixed at start
+  // rotate the button to the next occupied (non-busted) seat
+  let button = s.button;
+  const stacks = s.stacks.slice();
+  // find next seat with chips for the button (first hand: seat 0)
+  if (button < 0) button = 0;
+  else { for (let k = 1; k <= n; k++) { const c = (button + k) % n; if (stacks[c] > 0) { button = c; break; } } }
+  // SECURITY (C1): the seed MUST be a fresh CSPRNG draw per hand — never derived from
+  // lobby.t and never chained through pseed. mulberry32 is fully deterministic, so a
+  // predictable seed leaks the entire deck order (every seat's hole cards + the full
+  // board) before a bet is placed. Same CSPRNG source durakStart uses (see above).
+  const seedBuf = new Uint32Array(1); crypto.getRandomValues(seedBuf);
+  const seed = seedBuf[0] & 0x7fffffff;             // SERVER owns the seed (never sent down)
+  const st = R.newHand(n, button, stacks, PK_SB, PK_BB, seed);
+  s.button = st.button;
+  // reset the public log for the hand and stash the private hole cards per seat
+  s.hole = st.hole.map((h) => h.slice());           // [[c,c],…] server-only until SHOW
+  s.drawn = [];                                      // per-seat: how many hole cards pulled
+  for (let i = 0; i < n; i++) s.drawn.push(0);
+  s.board = [];                                      // revealed community cards (public)
+  s.boardShown = 0;                                  // how many BOARD events emitted so far
+  s.shownFor = [];                                   // seats whose hole cards were SHOW-n
+  // Replace st.hole/deck with an ONLINE shell so the SERVER also tracks betting via the same
+  // shared reducer the client uses — guaranteeing identical validation. The server keeps the
+  // real cards in s.hole for private dealing + showdown.
+  s.st = R.newHand(n, st.button, stacks, PK_SB, PK_BB, null); // online shell (no cards)
+  s.st.__fullBoard = st.board;                        // full 5-card board (server reveals on schedule)
+  s.serverHole = st.hole;                             // real hole cards for showdown eval
+  // The log is CONTINUOUS across hands so the client's `since` cursor stays monotonic — a HAND
+  // event just appends and the client reads it as "new hand, pull my hole cards".
+  s.log = s.log || [];
+  s.handStart = s.log.length;                         // index of THIS hand's HAND event
+  s.log.push({ w: 2, h: st.button + 1 });             // HAND event opens the hand
+  s.handOver = 0;
+  return s;
+}
+
+// Push the BOARD events needed to catch the public board up to the online reducer's street,
+// then, if the hand has reached showdown/over, emit SHOW + WIN (or just WIN for uncontested).
+function pokerFlush(lobby) {
+  const R = rules().poker;
+  const s = lobby.state;
+  const online = s.st;
+  // How many board cards should be visible for the current street? A "showdown" (everyone
+  // called down / all-in runout) reveals all five. But an uncontested "over" — everyone
+  // folded to one player — reveals NOTHING new: no community card is shown for a hand that
+  // never reached a showdown (leaking them was the "board appears after a preflop fold" bug).
+  const want = online.street === "flop" ? 3
+    : online.street === "turn" ? 4
+    : (online.street === "river" || online.street === "showdown") ? 5
+    : online.street === "over" ? s.boardShown
+    : 0;
+  while (s.boardShown < want) {
+    const card = s.st.__fullBoard[s.boardShown];
+    s.board.push(card);
+    s.log.push({ w: 5, h: card + 1 });                // BOARD
+    s.boardShown++;
+  }
+  if ((online.street === "showdown" || online.street === "over") && !s.handOver) {
+    // Uncontested (everyone folded) → no cards shown, just resolve. Contested showdown → reveal
+    // every non-folded contender's two hole cards, then WIN.
+    const contenders = [];
+    for (let i = 0; i < s.n; i++) if (online.inHand[i] && !online.folded[i]) contenders.push(i);
+    if (contenders.length > 1) {
+      for (let j = 0; j < contenders.length; j++) {
+        const seat = contenders[j];
+        for (let c = 0; c < s.serverHole[seat].length; c++)
+          s.log.push({ w: 60 + seat, h: s.serverHole[seat][c] + 1 });   // SHOW
+      }
+    }
+    // Resolve on the SERVER's online reducer using the real cards so stacks stay authoritative.
+    online.hole = s.serverHole;
+    online.board = s.st.__fullBoard.slice(0, 5);
+    R.resolveShowdown(online);
+    s.stacks = online.stacks.slice();                 // banked result
+    s.log.push({ w: 7, h: 1 });                       // WIN — client resolves locally too
+    s.handOver = 1;
+    // Table over? one seat holds every chip.
+    let alive = 0; for (let i = 0; i < s.n; i++) if (s.stacks[i] > 0) alive++;
+    if (alive <= 1) { s.log.push({ w: 8, h: 1 }); s.tableOver = 1; }
+  }
+}
+
+// Blinds for the online table (match the offline controller: SB 5 / BB 10, 200-chip stacks).
+const PK_SB = 5, PK_BB = 10, PK_START = 200;
+
+// Host presses Start: fix the seat count to whoever is seated, deal the first hand.
+function pokerStart(lobby, seat) {
+  const R = rules().poker;
+  const s = lobby.state;
+  if (!s) return { ok: false, code: 2 };
+  if (s.started) return { ok: true };                 // idempotent
+  if (seat !== 0) return { ok: false, code: 1 };       // only the host starts
+  const n = lobby.players;
+  if (n < 2) return { ok: false, code: 2 };            // need at least two seated
+  s.n = n;
+  s.button = -1;                                       // first hand normalises to seat 0
+  s.stacks = [];
+  for (let i = 0; i < n; i++) s.stacks.push(PK_START);
+  s.started = 1;
+  pokerNewHand(lobby);
+  return { ok: true };
+}
+
+// Validate + apply one betting action by the seat holder. a: 0 fold · 1 check · 2 call · 3 raise.
+function pokerAct(lobby, seat, a, to) {
+  const R = rules().poker;
+  const s = lobby.state;
+  if (!s || !s.started || s.handOver) return { ok: false, code: 2 };
+  const online = s.st;
+  if (online.toAct !== seat) return { ok: false, code: 1 };  // not your turn
+  const action = a === 0 ? { type: "fold" }
+    : a === 1 ? { type: "check" }
+    : a === 2 ? { type: "call" }
+    : { type: "raise", to: to | 0 };
+  // Snapshot the log length so we can emit the matching public event for the accepted action.
+  if (!R.applyAction(online, seat, action)) return { ok: false, code: 2 }; // illegal
+  if (a === 0) s.log.push({ w: 10 + seat, h: 1 });
+  else if (a === 1) s.log.push({ w: 20 + seat, h: 1 });
+  else if (a === 2) s.log.push({ w: 30 + seat, h: 1 });
+  else s.log.push({ w: 40 + seat, h: (to | 0) + 1 });
+  pokerFlush(lobby);
+  return { ok: true };
+}
+
+// Deal the NEXT hand (any seated client may request it once the current hand is over and the
+// table isn't finished). Idempotent per hand via s.handOver.
+function pokerNext(lobby, seat) {
+  const s = lobby.state;
+  if (!s || !s.started) return { ok: false, code: 2 };
+  if (!s.handOver) return { ok: false, code: 2 };      // current hand still live
+  if (s.tableOver) return { ok: false, code: 2 };
+  // Bound the continuous log so two colluding seats can't fold forever to bloat the DO's
+  // storage (M3). A real 200-chip table ends in a few dozen hands (< a few hundred events);
+  // MOVE_CAP is far above any honest game, so this only ever trips on abuse — after which no
+  // new hand is dealt and the table effectively ends where it is.
+  if (s.log && s.log.length >= MOVE_CAP) return { ok: false, code: 2 };
+  pokerNewHand(lobby);
+  return { ok: true };
 }
 
 

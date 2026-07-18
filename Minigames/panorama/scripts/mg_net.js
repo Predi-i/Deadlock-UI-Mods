@@ -30,6 +30,14 @@
  *   $.MG.Api.dact(code, tok, a, pair, card, cb({ok,reason}), err)   Durak public action
  *   $.MG.Api.dlog(code, since, cb(event|null), err)                 Durak public event log
  *   $.MG.Api.ddraw(code, tok, index, cb(card|null), err)            Durak private draw log
+ *   $.MG.Api.pcreate(cap, tok, cb({code,cap}), err)                 Poker private lobby (2-4 seats)
+ *   $.MG.Api.pjoin(code, tok, cb({ok,seat,cap,reason}), err)        Poker join (learns own seat)
+ *   $.MG.Api.proom(code, cb({gone,players,cap,started}), err)       Poker room state
+ *   $.MG.Api.pstart(code, tok, cb({ok,reason}), err)                Poker host starts/deals
+ *   $.MG.Api.pact(code, tok, a, to, cb({ok,reason}), err)           Poker betting action (0f/1chk/2call/3raise)
+ *   $.MG.Api.pnext(code, tok, cb({ok,reason}), err)                 Poker deal next hand
+ *   $.MG.Api.plog(code, since, cb(event|null), err)                 Poker public event log
+ *   $.MG.Api.pdraw(code, tok, index, cb(card|null), err)            Poker private hole-card draw
  *
  * The seat token (tok) is the identity that makes the server authoritative: it flows
  * ONLY upward (query param), never in a response, so it can't leak through the 2-int
@@ -358,9 +366,23 @@
     // it sees on a seat to that seat; afterwards only that token may act for the seat.
     MG.Session = {
         newToken: function () {
-            // High-entropy random string. Math.random isn't crypto-grade, but combined
-            // across several draws + a time salt it's far beyond guessable for a friendly
-            // relay, and it never travels downward where it could leak.
+            // Prefer a crypto-grade source when the engine exposes one: 24 random bytes
+            // → 48 hex chars, matching validTok's [a-z0-9]{8,64}. crypto is feature-DETECTED,
+            // not assumed — Panorama's JS runtime may not expose it, and calling an absent
+            // API unguarded would throw and break every online seat. When it's missing we
+            // fall back to the original Math.random mix, which is still far beyond guessable
+            // for a friendly relay and never travels downward where it could leak.
+            try {
+                var c = (typeof crypto !== "undefined" && crypto) ||
+                    (typeof globalThis !== "undefined" && globalThis.crypto) || null;
+                if (c && c.getRandomValues) {
+                    var buf = new Uint8Array(24);
+                    c.getRandomValues(buf);
+                    var hex = "";
+                    for (var b = 0; b < buf.length; b++) hex += (buf[b] + 256).toString(16).slice(1);
+                    return hex;
+                }
+            } catch (e) { /* fall through to the Math.random mix */ }
             var s = "";
             for (var i = 0; i < 5; i++) s += Math.random().toString(36).slice(2, 12);
             return (s + Date.now().toString(36)).slice(0, 48);
@@ -389,6 +411,7 @@
         // games → untimed). Omit or 0 for an untimed lobby. The joiner learns tc from join().
         create: function (game, tok, cb, err, tc) {
             request("/api/create", { game: game, tok: tok, tc: tc || 0 }, function (w, h) {
+                if (w === 9 && h === 4) { if (err) err("busy"); return; } // rate-limited, don't recalibrate
                 var code = w * 100 + (h - 1); // CODE = hi*100 + lo
                 log("create decoded w=" + w + " h=" + h + " => code=" + code);
                 if (code < 1000 || code > 9999) {
@@ -410,6 +433,7 @@
             var params = { game: game, tok: tok };
             if (tc != null && tc !== 0) params.tc = tc;   // "any" or concrete secs; omit for untimed
             request("/api/quick", params, function (w, h) {
+                if (w === 9 && h === 4) { if (err) err("busy"); return; } // rate-limited
                 var isHost = w >= 100;
                 var code = (isHost ? w - 100 : w) * 100 + (h - 1);
                 if (code < 1000 || code > 9999) {
@@ -430,6 +454,7 @@
         mquick: function (games, tok, cb, err) {
             var list = (games || []).join(",");
             request("/api/mquick", { games: list, tok: tok }, function (w, h) {
+                if (w === 9 && h === 4) { if (err) err("busy"); return; } // rate-limited
                 if (w === 9) {                                   // (9,6) no valid ids · (9,3) bad token
                     suspectDecode("mquick w=" + w + " h=" + h);
                     if (err) err(h === 6 ? "games" : h === 3 ? "token" : "error");
@@ -460,6 +485,7 @@
                 // h carries the host's time control (seconds+1): the joiner learns the bank
                 // without picking it (0 = untimed). Squares/games can't collide — join's width
                 // is the game id (1..9) here, tc rides the height.
+                if (w === 9 && h === 4) { cb({ ok: false, reason: "busy" }); return; } // rate-limited
                 if (w >= 1 && w <= 9) cb({ ok: true, game: w, tc: Math.max(0, (h | 0) - 1) });
                 else if (w === 20) cb({ ok: false, reason: "missing" });
                 else if (w === 21) cb({ ok: false, reason: "full" });
@@ -473,6 +499,7 @@
         status: function (code, cb, err) {
             request("/api/status", { code: code }, function (w, h) {
                 log("status(" + code + ") decoded w=" + w + " h=" + h);
+                if (w === 9 && h === 4) { if (err) err("busy"); return; } // rate-limited: caller retries
                 if (w === 9) {
                     // status is only polled while a host waits for a joiner, so a
                     // "gone" here means the lobby was swept/closed, not that an
@@ -635,15 +662,18 @@
                     if (MG.UI && MG.UI.kickToMenu) MG.UI.kickToMenu("Lobby closed.");
                     return;
                 }
+                // Seat ranges span 0..3 (2–4 players). ROLES(4, a*4+d+1) is the server-owned
+                // post-bout rotation; OVER's loser range widens to 0..3 (h = loser+2 → 1..5).
                 var ev = null;
                 if (w === 2 && h >= 1 && h <= 36) ev = { type: "trump", card: h - 1 };
-                else if (w === 3 && h >= 1 && h <= 2) ev = { type: "open", seat: h - 1 };
-                else if (w >= 10 && w <= 11 && h >= 1 && h <= 36) ev = { type: "play", seat: w - 10, card: h - 1 };
+                else if (w === 3 && h >= 1 && h <= 4) ev = { type: "open", seat: h - 1 };
+                else if (w === 4 && h >= 1 && h <= 16) ev = { type: "roles", attacker: ((h - 1) / 4) | 0, defender: (h - 1) % 4 };
+                else if (w >= 10 && w <= 13 && h >= 1 && h <= 36) ev = { type: "play", seat: w - 10, card: h - 1 };
                 else if (w >= 20 && w <= 25 && h >= 1 && h <= 36) ev = { type: "cover", pair: w - 20, card: h - 1 };
-                else if (w >= 30 && w <= 31 && h === 1) ev = { type: "take", seat: w - 30 };
+                else if (w >= 30 && w <= 33 && h === 1) ev = { type: "take", seat: w - 30 };
                 else if (w === 40 && h === 1) ev = { type: "bito" };
-                else if (w >= 50 && w <= 51 && h >= 1 && h <= 7) ev = { type: "draw", seat: w - 50, count: h - 1 };
-                else if (w === 60 && h >= 1 && h <= 3) ev = { type: "over", loser: h - 2 };
+                else if (w >= 50 && w <= 53 && h >= 1 && h <= 7) ev = { type: "draw", seat: w - 50, count: h - 1 };
+                else if (w === 60 && h >= 1 && h <= 5) ev = { type: "over", loser: h - 2 };
                 if (!ev) {
                     suspectDecode("dlog w=" + w + " h=" + h);
                     if (err) err("decode");
@@ -663,6 +693,186 @@
                 // collides with the universal (1,1) "nothing new" marker.
                 if (w >= 2 && w <= 37 && h === 1) { cb(w - 2); return; }
                 suspectDecode("ddraw w=" + w + " h=" + h);
+                if (err) err("decode");
+            }, err);
+        },
+
+        // ── Durak N-seat private lobby (2–4 seats) ──────────────────────────────
+        // The 2-player room rides the generic create/join; a 3–4-seat table needs its own
+        // create/join/room (same shape as poker's pcreate/pjoin/proom). Once the host deals
+        // via /api/start, play runs through dact/dlog/ddraw above — seat-count agnostic.
+        dcreate: function (cap, tok, cb, err) {
+            request("/api/dcreate", { n: cap, tok: tok }, function (w, h) {
+                if (w === 9 && h === 4) { if (err) err("busy"); return; }   // rate-limited
+                if (w === 9 && h === 3) { if (err) err("token"); return; }
+                var code = (w - 100) * 100 + (h - 1);   // HOST flagged by +100 on the width
+                if (w < 100 || code < 1000 || code > 9999) {
+                    suspectDecode("dcreate w=" + w + " h=" + h);
+                    if (err) err("decode");
+                    return;
+                }
+                cb({ code: code });
+            }, err);
+        },
+
+        djoin: function (code, tok, cb, err) {
+            request("/api/djoin", { code: code, tok: tok }, function (w, h) {
+                if (w === 9 && h === 4) { cb({ ok: false, reason: "busy" }); return; }   // rate-limited
+                if (w === 9 && h === 3) { cb({ ok: false, reason: "token" }); return; }
+                if (w === 20) { cb({ ok: false, reason: "missing" }); return; }
+                if (w === 21) { cb({ ok: false, reason: "full" }); return; }
+                if (w === 22) { cb({ ok: false, reason: "started" }); return; }
+                // width = seat cap (2..4), height = the joiner's seat index +1 (players count).
+                if (w >= 2 && w <= 4 && h >= 1 && h <= 4) { cb({ ok: true, cap: w, seat: h - 1 }); return; }
+                suspectDecode("djoin w=" + w + " h=" + h);
+                cb({ ok: false, reason: "decode" });
+            }, err);
+        },
+
+        droom: function (code, cb, err) {
+            request("/api/droom", { code: code }, function (w, h) {
+                // Same transient-vs-gone discipline as room(): only (9,1) is truly gone.
+                if (w === 9 && h === 1) { cb({ gone: true, players: 0, cap: 0, started: false }); return; }
+                if (w === 9) { if (err) err("transient"); return; }
+                var started = w >= 100;
+                var players = started ? w - 100 : w;
+                if (players < 1 || players > 4 || h < 2 || h > 4) {
+                    suspectDecode("droom w=" + w + " h=" + h);
+                    if (err) err("decode");
+                    return;
+                }
+                cb({ gone: false, players: players, cap: h, started: started });
+            }, err);
+        },
+
+        // ── Poker (worker-as-dealer, 2–4 seats, own route set) ──────────────────
+        // Like Durak the worker owns the deck/seed/button and deals hole cards privately
+        // (pdraw), relaying only PUBLIC facts through an indexed log (plog). The client
+        // replays the shared betting engine (card-independent → parity) and fills board /
+        // revealed hole cards / winners from the log. Codes stay small; no real value is (1,1).
+        pcreate: function (cap, tok, cb, err) {
+            request("/api/pcreate", { n: cap, tok: tok }, function (w, h) {
+                if (w === 9 && h === 4) { if (err) err("busy"); return; }   // rate-limited
+                if (w === 9 && h === 3) { if (err) err("token"); return; }
+                // HOST flagged by +100 on the width, exactly like create/quick.
+                var code = (w - 100) * 100 + (h - 1);
+                if (w < 100 || code < 1000 || code > 9999) {
+                    suspectDecode("pcreate w=" + w + " h=" + h);
+                    if (err) err("decode");
+                    return;
+                }
+                cb({ code: code });
+            }, err);
+        },
+
+        pjoin: function (code, tok, cb, err) {
+            request("/api/pjoin", { code: code, tok: tok }, function (w, h) {
+                if (w === 9 && h === 4) { cb({ ok: false, reason: "busy" }); return; }   // rate-limited
+                if (w === 9 && h === 3) { cb({ ok: false, reason: "token" }); return; }
+                if (w === 20) { cb({ ok: false, reason: "missing" }); return; }
+                if (w === 21) { cb({ ok: false, reason: "full" }); return; }
+                if (w === 22) { cb({ ok: false, reason: "started" }); return; }
+                // width = seat cap (2..4), height = the joiner's seat index +1 (players count).
+                if (w >= 2 && w <= 4 && h >= 1 && h <= 4) { cb({ ok: true, cap: w, seat: h - 1 }); return; }
+                suspectDecode("pjoin w=" + w + " h=" + h);
+                cb({ ok: false, reason: "decode" });
+            }, err);
+        },
+
+        proom: function (code, cb, err) {
+            request("/api/proom", { code: code }, function (w, h) {
+                // Same transient-vs-gone discipline as room(): only (9,1) is truly gone.
+                if (w === 9 && h === 1) { cb({ gone: true, players: 0, cap: 0, started: false }); return; }
+                if (w === 9) { if (err) err("transient"); return; }
+                // width = players (+100 once started) · height = seat cap.
+                var started = w >= 100;
+                var players = started ? w - 100 : w;
+                if (players < 1 || players > 4 || h < 2 || h > 4) {
+                    suspectDecode("proom w=" + w + " h=" + h);
+                    if (err) err("decode");
+                    return;
+                }
+                cb({ gone: false, players: players, cap: h, started: started });
+            }, err);
+        },
+
+        pstart: function (code, tok, cb, err) {
+            request("/api/pstart", { code: code, tok: tok }, function (w, h) {
+                if (!cb) return;
+                if (w === 1 && h === 1) { cb({ ok: true }); return; }
+                if (w === 9) {
+                    var reason = h === 1 ? "host" : h === 2 ? "players" : h === 3 ? "token" : "gone";
+                    cb({ ok: false, reason: reason });
+                    return;
+                }
+                suspectDecode("pstart w=" + w + " h=" + h);
+                cb({ ok: false, reason: "decode" });
+            }, err);
+        },
+
+        // a: 0 fold · 1 check · 2 call · 3 raise (to = raise-to amount for a raise).
+        pact: function (code, tok, a, to, cb, err) {
+            request("/api/pact", { code: code, tok: tok, a: a, to: to || 0 }, function (w, h) {
+                if (!cb) return;
+                if (w === 1 && h === 1) { cb({ ok: true }); return; }
+                if (w === 9) {
+                    var reason = h === 1 ? "turn" : h === 2 ? "illegal" : h === 3 ? "token" : "gone";
+                    cb({ ok: false, reason: reason });
+                    return;
+                }
+                suspectDecode("pact w=" + w + " h=" + h);
+                cb({ ok: false, reason: "decode" });
+            }, err);
+        },
+
+        pnext: function (code, tok, cb, err) {
+            request("/api/pnext", { code: code, tok: tok }, function (w, h) {
+                if (!cb) return;
+                if (w === 1 && h === 1) { cb({ ok: true }); return; }
+                if (w === 9) { cb({ ok: false, reason: h === 3 ? "token" : "wait" }); return; }
+                suspectDecode("pnext w=" + w + " h=" + h);
+                cb({ ok: false, reason: "decode" });
+            }, err);
+        },
+
+        plog: function (code, since, cb, err) {
+            request("/api/plog", { code: code, since: since }, function (w, h) {
+                if (w === 1 && h === 1) { cb(null); return; }        // nothing new
+                if (w === 9 && h === 9) {
+                    if (MG.UI && MG.UI.kickToMenu) MG.UI.kickToMenu("Lobby closed.");
+                    return;
+                }
+                var ev = null;
+                // HAND(2, button+1) · BOARD(5, card+1) · WIN(7,1) · OVER(8,1)
+                if (w === 2 && h >= 1 && h <= 4) ev = { type: "hand", button: h - 1 };
+                else if (w === 5 && h >= 1 && h <= 52) ev = { type: "board", card: h - 1 };
+                else if (w === 7 && h === 1) ev = { type: "win" };
+                else if (w === 8 && h === 1) ev = { type: "over" };
+                // FOLD(10+seat,1) · CHECK(20+seat,1) · CALL(30+seat,1) · RAISE(40+seat,to+1)
+                else if (w >= 10 && w <= 13 && h === 1) ev = { type: "fold", seat: w - 10 };
+                else if (w >= 20 && w <= 23 && h === 1) ev = { type: "check", seat: w - 20 };
+                else if (w >= 30 && w <= 33 && h === 1) ev = { type: "call", seat: w - 30 };
+                else if (w >= 40 && w <= 43 && h >= 1) ev = { type: "raise", seat: w - 40, to: h - 1 };
+                // SHOW(60+seat, card+1)
+                else if (w >= 60 && w <= 63 && h >= 1 && h <= 52) ev = { type: "show", seat: w - 60, card: h - 1 };
+                if (!ev) {
+                    suspectDecode("plog w=" + w + " h=" + h);
+                    if (err) err("decode");
+                    return;
+                }
+                ev.seq = since + 1;
+                cb(ev);
+            }, err);
+        },
+
+        pdraw: function (code, tok, index, cb, err) {
+            request("/api/pdraw", { code: code, tok: tok, i: index }, function (w, h) {
+                if (w === 1 && h === 1) { cb(null); return; }        // not dealt yet
+                if (w === 9 && h === 3) { if (err) err("token"); return; }
+                if (w === 9 && h === 9) { if (err) err("gone"); return; }
+                // Private card ids use card+2 (2..53) so card 0 never collides with (1,1).
+                if (w >= 2 && w <= 53 && h === 1) { cb(w - 2); return; }
+                suspectDecode("pdraw w=" + w + " h=" + h);
                 if (err) err("decode");
             }, err);
         }
