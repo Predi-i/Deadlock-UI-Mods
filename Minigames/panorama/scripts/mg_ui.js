@@ -572,11 +572,17 @@
             renderDetail();
         });
 
-        // Time-control picker: only chess/checkers, only in single-game mode. The host picks the
-        // bank for Create and vs-Bot; Quick Match ignores it (forced 5 min) and the joiner reads
-        // the host's choice back from the server, so no picker is shown to a joiner here.
-        if (!multiSelect && isTimedGame(selectedGameId)) {
-            renderTimeControl();
+        // Top-cluster picker (rendered BEFORE the spacer, so Quick Match sits at the SAME height
+        // for every game and never jumps as you browse — maintainer 2026-07-18). Which picker:
+        //   • chess/checkers → time-control bank (governs Create + vs-Bot; Quick Match forces 5 min)
+        //   • durak          → private N-seat table size (governs Create; Quick Match stays heads-up)
+        //   • poker          → table size (governs Create; poker has no public Quick Match)
+        // Previously durak/poker rendered their picker AFTER Quick Match, which shoved Quick Match
+        // down for those two games only — the "jump" the maintainer flagged.
+        if (!multiSelect && onlineReady) {
+            if (isTimedGame(selectedGameId)) renderTimeControl();
+            else if (isDurakOnlineGame(selectedGameId)) renderDurakSeatPicker();
+            else if (isPokerOnlineGame(selectedGameId)) renderPokerSeatPicker();
         }
 
         // Flexible spacer between the top cluster (title/blurb/toggle/time-control) and the action
@@ -591,24 +597,36 @@
         if (multiSelect) {
             renderMultiPanel();    // count + Quick Match(set) + Create(random) on the right
         } else if (onlineReady) {
+            var isPoker = isPokerOnlineGame(selectedGameId);
+            var isDurak = isDurakOnlineGame(selectedGameId);
             // Primary: one-button public matchmaking. Wrapped in a .mg-btn-row so it uses
             // fill-parent-flow width, NOT width:100% — the latter makes Panorama clip the button's
             // right border (the PLAY VS BOT / QUICK MATCH "no right border" bug). Same structure as
             // the working CREATE/JOIN row.
+            // Poker has NO public matchmaking (its lobby seats 2–4 on its own routes), but we still
+            // show the button DISABLED for visual parity — a game with no Quick Match button at all
+            // looked broken (maintainer 2026-07-18). Its table-size picker lives in the top cluster.
             var quickRow = $.CreatePanel("Panel", detailPanel, "");
             quickRow.AddClass("mg-btn-row");
             var quickBtn = $.CreatePanel("Button", quickRow, "");
             quickBtn.AddClass("mg-btn"); quickBtn.AddClass("mg-btn-primary"); quickBtn.AddClass("mg-btn-quick"); quickBtn.AddClass("mg-btn-solo");
             var ql = $.CreatePanel("Label", quickBtn, ""); ql.text = "QUICK MATCH";
-            quickBtn.SetPanelEvent("onactivate", function () { startQuickMatch(); });
+            if (isPoker) {
+                quickBtn.AddClass("mg-btn-inert");
+                try { quickBtn.enabled = false; } catch (e) {}
+            } else {
+                quickBtn.SetPanelEvent("onactivate", function () { startQuickMatch(); });
+            }
             var quickCap = $.CreatePanel("Label", detailPanel, "");
             quickCap.AddClass("mg-caption");
-            quickCap.text = "Public match against anyone online.";
+            quickCap.text = isPoker ? "Poker is private-table only — Create or Join a code below."
+                : isDurak ? "Public 2-player match against anyone online."
+                : "Public match against anyone online.";
 
             // Secondary: private match with a friend via a shared code.
             var friendLbl = $.CreatePanel("Label", detailPanel, "");
             friendLbl.AddClass("mg-section-label");
-            friendLbl.text = "Play with a friend";
+            friendLbl.text = (isPoker || isDurak) ? "Play with friends" : "Play with a friend";
             var friendRow = $.CreatePanel("Panel", detailPanel, "");
             friendRow.AddClass("mg-btn-row");
             var createBtn = $.CreatePanel("Button", friendRow, "");
@@ -643,6 +661,56 @@
     // one carries .mg-on. selectedTimeControl persists while browsing. For Create/vs-Bot a room
     // needs a concrete bank, so "Any" collapses to 5 min (TC_ANY_DEFAULT); for Quick Match "Any"
     // rides up as tc="any" and the server resolves the bank when a second searcher arrives.
+    // Poker table-size picker (2–4 seats), reusing the time-control segmented control's skin.
+    // The pick rides pcreate at Create time; it doesn't affect Join (the joiner learns the cap
+    // back from pjoin). Persisted in pokerSeatCap while browsing.
+    function renderPokerSeatPicker() {
+        var label = $.CreatePanel("Label", detailPanel, "");
+        label.AddClass("mg-section-label");
+        label.AddClass("mg-tc-label");
+        label.text = "Table size";
+        var seg = $.CreatePanel("Panel", detailPanel, "");
+        seg.AddClass("mg-tc-seg");
+        [2, 3, 4].forEach(function (n) {
+            var b = $.CreatePanel("Button", seg, "");
+            b.AddClass("mg-tc-opt");
+            if (pokerSeatCap === n) b.AddClass("mg-on");
+            var l = $.CreatePanel("Label", b, ""); l.text = n + " seats";
+            b.SetPanelEvent("onactivate", function () {
+                if (pokerSeatCap === n) return;
+                pokerSeatCap = n;
+                renderDetail();     // re-skin the segments (cheap; whole column rebuilds)
+            });
+        });
+        // No trailing caption: this picker now sits in the top cluster (next to where
+        // time-control sits for chess/checkers), and the CREATE caption below explains the flow.
+    }
+
+    // Durak private-table size picker (2–4 seats), reusing the segmented-control skin. It ONLY
+    // governs Create (the private N-seat lobby via dcreate); Quick Match stays heads-up and Join
+    // learns the cap back from djoin. Persisted in durakSeatCap while browsing.
+    function renderDurakSeatPicker() {
+        var label = $.CreatePanel("Label", detailPanel, "");
+        label.AddClass("mg-section-label");
+        label.AddClass("mg-tc-label");
+        label.text = "Private table size";
+        var seg = $.CreatePanel("Panel", detailPanel, "");
+        seg.AddClass("mg-tc-seg");
+        [2, 3, 4].forEach(function (n) {
+            var b = $.CreatePanel("Button", seg, "");
+            b.AddClass("mg-tc-opt");
+            if (durakSeatCap === n) b.AddClass("mg-on");
+            var l = $.CreatePanel("Label", b, ""); l.text = n + " players";
+            b.SetPanelEvent("onactivate", function () {
+                if (durakSeatCap === n) return;
+                durakSeatCap = n;
+                renderDetail();     // re-skin the segments (cheap; whole column rebuilds)
+            });
+        });
+        // No trailing caption: this picker now sits in the top cluster (where time-control sits
+        // for chess/checkers). The "Play with friends" CREATE row below carries the private-table flow.
+    }
+
     function renderTimeControl() {
         var label = $.CreatePanel("Label", detailPanel, "");
         label.AddClass("mg-section-label");
@@ -959,6 +1027,12 @@
 
     // ── lobby flow ────────────────────────────────────────────────────────────
     function isDurakOnlineGame(id) { return id === 3; }
+    // Poker online is PRIVATE-CODE only (2–4 seats via its own pcreate/pjoin/proom routes —
+    // the generic create/join/quick paths are hard-capped at 2 and would clobber a poker
+    // lobby). It has no public quick-match, so the detail view hides that button for it.
+    function isPokerOnlineGame(id) { return id === 6; }
+    var pokerSeatCap = 2;   // host's chosen table size for the next poker lobby (2..4)
+    var durakSeatCap = 2;   // host's chosen table size for the next PRIVATE durak lobby (2..4)
 
     function startCreate() {
         if (!MG.Net.isConfigured()) { setStatus("⚠ Configure the server first (BASE_URL in mg_net.js)."); return; }
@@ -969,12 +1043,32 @@
         // The host's time-control pick rides the create request (chess/checkers only); the joiner
         // learns it back from join(). A private room must fix a concrete bank, so "Any"(-1)
         // collapses to 5 min here. Untimed games send 0 (server ignores it anyway).
+        // Poker owns its route set (2–4 seats) — pcreate, not the generic 2-cap create.
+        if (isPokerOnlineGame(selectedGameId)) {
+            MG.Api.pcreate(pokerSeatCap, currentTok, function (res) {
+                currentCode = res.code;
+                renderPokerRoom(res.code, true, pokerSeatCap);
+            }, function (why) {
+                setStatus(why === "token" ? "Session error, please retry." : "Couldn't create the poker table.");
+            });
+            return;
+        }
+        // Durak's private lobby seats 2–4 on its own routes (dcreate/djoin/droom), so Create
+        // routes through dcreate — never the generic 2-cap create — exactly like poker.
+        if (isDurakOnlineGame(selectedGameId)) {
+            MG.Api.dcreate(durakSeatCap, currentTok, function (res) {
+                currentCode = res.code;
+                renderDurakRoom(res.code, true, durakSeatCap, 0);
+            }, function (why) {
+                setStatus(why === "token" ? "Session error, please retry." : "Couldn't create the Durak table.");
+            });
+            return;
+        }
         var tc = isTimedGame(selectedGameId) ? concreteTc(selectedTimeControl) : 0;
         log("startCreate game=" + selectedGameId + " base=" + MG.Net.getBaseUrl() + " tc=" + tc);
         MG.Api.create(selectedGameId, currentTok, function (code) {
             log("create ok, code=" + code);
             currentCode = code;
-            if (isDurakOnlineGame(selectedGameId)) { renderRoom(code, true, false); return; }
             renderWaiting(code);
             waitForJoiner(code, tc);
         }, function () {
@@ -1047,6 +1141,155 @@
                 if (r.started) { renderGame(3, code, isHost, false, { seat: isHost ? 0 : 1, numPlayers: 2 }); return; }
                 if (isHost) setStatus(r.players >= 2 ? "Player 2 joined. Press Start." : "Waiting for player 2…");
                 else setStatus("Waiting for host to start…");
+                $.Schedule(1.0, tick);
+            }, function () { $.Schedule(1.5, tick); });
+        }
+        tick();
+    }
+
+    // Poker lobby room: 2–4 seats. Host sees the shared code + a Deal button (usable once ≥2
+    // seats are filled); joiners wait for the host to deal. `cap` is the table size fixed at
+    // create; `mySeat` is the joiner's seat (host = 0).
+    function renderPokerRoom(code, isHost, cap, mySeat) {
+        cleanupCurrentView(false);
+        view = "room";
+        setTitle(isHost ? "Poker Table" : "Joined Poker Table");
+        clearBody();
+        currentCode = code;
+        var seat = isHost ? 0 : (mySeat | 0);
+
+        var box = $.CreatePanel("Panel", modalBody, "");
+        box.AddClass("mg-code-box");
+        var capL = $.CreatePanel("Label", box, ""); capL.AddClass("mg-code-cap"); capL.text = "Poker table code:";
+        var big = $.CreatePanel("Label", box, ""); big.AddClass("mg-code-big"); big.text = String(code);
+        var hint = $.CreatePanel("Label", box, ""); hint.AddClass("mg-code-hint");
+        hint.text = cap + "-seat No-Limit Hold'em. Host deals once everyone's in.";
+
+        var seats = $.CreatePanel("Panel", modalBody, "");
+        seats.AddClass("mg-room-seats");
+        var seatLabels = [];
+        for (var s = 0; s < cap; s++) {
+            var lbl = $.CreatePanel("Label", seats, ""); lbl.AddClass("mg-room-seat");
+            lbl.text = "Seat " + (s + 1) + ": " + (s === seat ? "You" + (isHost ? " (host)" : "") : (s === 0 ? "Host" : "Waiting…"));
+            seatLabels.push(lbl);
+        }
+
+        var row = $.CreatePanel("Panel", modalBody, "");
+        row.AddClass("mg-actions");
+        if (isHost) {
+            var startBtn = $.CreatePanel("Button", row, "");
+            startBtn.AddClass("mg-btn"); startBtn.AddClass("mg-btn-primary");
+            var sl = $.CreatePanel("Label", startBtn, ""); sl.text = "Deal";
+            startBtn.SetPanelEvent("onactivate", function () {
+                setStatus("Dealing…");
+                MG.Api.pstart(code, currentTok, function (r) {
+                    if (r.ok) { renderGame(6, code, true, false, { seat: 0, numPlayers: cap }); return; }
+                    if (r.reason === "players") setStatus("Need at least two players before dealing.");
+                    else if (r.reason === "host") setStatus("Only the host can deal.");
+                    else setStatus("Couldn't deal (" + (r.reason || "error") + ").");
+                }, function () { setStatus("Server unavailable."); });
+            });
+        }
+        var back = $.CreatePanel("Button", row, "");
+        back.AddClass("mg-btn");
+        var bl = $.CreatePanel("Label", back, ""); bl.text = "Cancel";
+        back.SetPanelEvent("onactivate", function () { renderMenu(); });
+
+        setStatus(isHost ? "Waiting for players…" : "Waiting for the host to deal…");
+        pollPokerRoom(code, isHost, cap, seat, seatLabels);
+    }
+
+    function pollPokerRoom(code, isHost, cap, seat, seatLabels) {
+        statusPollToken++;
+        var token = statusPollToken;
+        function tick() {
+            if (token !== statusPollToken || view !== "room") return;
+            MG.Api.proom(code, function (r) {
+                if (token !== statusPollToken || view !== "room") return;
+                if (r.gone) { renderMenu(); setStatus("⚠ Table closed."); return; }
+                for (var s = 0; s < cap; s++) {
+                    if (s === seat) continue;   // never overwrite "You"
+                    if (!seatLabels[s] || !seatLabels[s].IsValid || !seatLabels[s].IsValid()) continue;
+                    seatLabels[s].text = "Seat " + (s + 1) + ": " + (s < r.players ? "Player joined" : "Waiting…");
+                }
+                if (r.started) { renderGame(6, code, isHost, false, { seat: seat, numPlayers: cap }); return; }
+                if (isHost) setStatus(r.players >= 2 ? (r.players + "/" + cap + " seated. Press Deal.") : "Waiting for players…");
+                else setStatus("Waiting for the host to deal…");
+                $.Schedule(1.0, tick);
+            }, function () { $.Schedule(1.5, tick); });
+        }
+        tick();
+    }
+
+    // Durak PRIVATE N-seat lobby room (2–4 seats). The 2-player public Quick Match still uses the
+    // simpler renderRoom/pollDurakRoom above; this mirrors renderPokerRoom for the private table.
+    // Host sees the shared code + a Start button (usable once ≥2 seats fill); joiners wait. `cap`
+    // is the table size fixed at create; `seat` is this client's seat (host = 0).
+    function renderDurakRoom(code, isHost, cap, seat) {
+        cleanupCurrentView(false);
+        view = "room";
+        setTitle(isHost ? "Durak Table" : "Joined Durak Table");
+        clearBody();
+        currentCode = code;
+        seat = seat | 0;
+
+        var box = $.CreatePanel("Panel", modalBody, "");
+        box.AddClass("mg-code-box");
+        var capL = $.CreatePanel("Label", box, ""); capL.AddClass("mg-code-cap"); capL.text = "Durak table code:";
+        var big = $.CreatePanel("Label", box, ""); big.AddClass("mg-code-big"); big.text = String(code);
+        var hint = $.CreatePanel("Label", box, ""); hint.AddClass("mg-code-hint");
+        hint.text = cap + "-player online Durak. Host starts once everyone's in.";
+
+        var seats = $.CreatePanel("Panel", modalBody, "");
+        seats.AddClass("mg-room-seats");
+        var seatLabels = [];
+        for (var s = 0; s < cap; s++) {
+            var lbl = $.CreatePanel("Label", seats, ""); lbl.AddClass("mg-room-seat");
+            lbl.text = "Seat " + (s + 1) + ": " + (s === seat ? "You" + (isHost ? " (host)" : "") : (s === 0 ? "Host" : "Waiting…"));
+            seatLabels.push(lbl);
+        }
+
+        var row = $.CreatePanel("Panel", modalBody, "");
+        row.AddClass("mg-actions");
+        if (isHost) {
+            var startBtn = $.CreatePanel("Button", row, "");
+            startBtn.AddClass("mg-btn"); startBtn.AddClass("mg-btn-primary");
+            var sl = $.CreatePanel("Label", startBtn, ""); sl.text = "Start";
+            startBtn.SetPanelEvent("onactivate", function () {
+                setStatus("Starting Durak…");
+                MG.Api.start(code, currentTok, function (r) {
+                    if (r.ok) { renderGame(3, code, true, false, { seat: 0, numPlayers: cap }); return; }
+                    if (r.reason === "players") setStatus("Need at least two players before starting.");
+                    else if (r.reason === "host") setStatus("Only the host can start.");
+                    else setStatus("Couldn't start Durak (" + (r.reason || "error") + ").");
+                }, function () { setStatus("Server unavailable."); });
+            });
+        }
+        var back = $.CreatePanel("Button", row, "");
+        back.AddClass("mg-btn");
+        var bl = $.CreatePanel("Label", back, ""); bl.text = "Cancel";
+        back.SetPanelEvent("onactivate", function () { renderMenu(); });
+
+        setStatus(isHost ? "Waiting for players…" : "Waiting for the host to start…");
+        pollDurakTable(code, isHost, cap, seat, seatLabels);
+    }
+
+    function pollDurakTable(code, isHost, cap, seat, seatLabels) {
+        statusPollToken++;
+        var token = statusPollToken;
+        function tick() {
+            if (token !== statusPollToken || view !== "room") return;
+            MG.Api.droom(code, function (r) {
+                if (token !== statusPollToken || view !== "room") return;
+                if (r.gone) { renderMenu(); setStatus("⚠ Table closed."); return; }
+                for (var s = 0; s < cap; s++) {
+                    if (s === seat) continue;   // never overwrite "You"
+                    if (!seatLabels[s] || !seatLabels[s].IsValid || !seatLabels[s].IsValid()) continue;
+                    seatLabels[s].text = "Seat " + (s + 1) + ": " + (s < r.players ? "Player joined" : "Waiting…");
+                }
+                if (r.started) { renderGame(3, code, isHost, false, { seat: seat, numPlayers: cap }); return; }
+                if (isHost) setStatus(r.players >= 2 ? (r.players + "/" + cap + " seated. Press Start.") : "Waiting for players…");
+                else setStatus("Waiting for the host to start…");
                 $.Schedule(1.0, tick);
             }, function () { $.Schedule(1.5, tick); });
         }
@@ -1233,6 +1476,31 @@
         if (!MG.Net.isConfigured()) { setStatus("⚠ Configure the server first (BASE_URL in mg_net.js)."); return; }
         setStatus("Connecting to " + code + "…");
         currentTok = MG.Session.newToken();
+        // Poker lobbies live on their own routes; join via pjoin (which learns our seat + the
+        // table cap) rather than the generic 2-seat join. The Join screen is shared, so we try
+        // pjoin first ONLY when the user is browsing poker — otherwise fall through to join.
+        if (isPokerOnlineGame(selectedGameId)) {
+            MG.Api.pjoin(code, currentTok, function (res) {
+                if (res.ok) { currentCode = code; renderPokerRoom(code, false, res.cap, res.seat); return; }
+                if (res.reason === "missing") setStatus("Table " + code + " not found.");
+                else if (res.reason === "full") setStatus("That table is full.");
+                else if (res.reason === "started") setStatus("That hand has already started.");
+                else setStatus("Couldn't join the table.");
+            }, function () { setStatus("Server unavailable."); });
+            return;
+        }
+        // Durak private tables (2–4 seats) live on their own routes too; join via djoin so the
+        // joiner learns its seat + the table cap. Same shape as poker's pjoin branch above.
+        if (isDurakOnlineGame(selectedGameId)) {
+            MG.Api.djoin(code, currentTok, function (res) {
+                if (res.ok) { currentCode = code; renderDurakRoom(code, false, res.cap, res.seat); return; }
+                if (res.reason === "missing") setStatus("Table " + code + " not found.");
+                else if (res.reason === "full") setStatus("That table is full.");
+                else if (res.reason === "started") setStatus("That game has already started.");
+                else setStatus("Couldn't join the table.");
+            }, function () { setStatus("Server unavailable."); });
+            return;
+        }
         MG.Api.join(code, currentTok, function (res) {
             if (res.ok) {
                 // The game id must decode to a real, playable game — mounting a

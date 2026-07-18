@@ -3,11 +3,12 @@
 /*
  * mg_poker.js — No-Limit Texas Hold'em controller for the Deadlock Minigames mod.
  *
- * Stage 1 (this file): offline "you + 3 bots" is fully playable; the online worker-as-dealer
- * wiring (private hole cards via /api/ddraw, public betting log via /api/dlog) mirrors Durak
- * Stage 2 and is stubbed behind `online` for a follow-up commit. The pure rules live in
- * rules/poker.js (shared byte-for-byte with the worker); here we render, take input, and run
- * the offline bot loop.
+ * Two modes share this controller. OFFLINE ("you + N bots") runs the whole hand locally off
+ * the shared engine + a seeded bot. ONLINE (worker-as-dealer, 2–4 seats) holds NO authority:
+ * it replays the SAME pure betting engine against the server's public event log (/api/plog),
+ * pulls its own two hole cards privately (/api/pdraw), fills the board + revealed hands from
+ * events, and resolves the pots locally at showdown — mirroring Durak Stage 2. The pure rules
+ * live in rules/poker.js (shared byte-for-byte with the worker); here we render + take input.
  *
  * RENDERING follows the Durak idiom (ARCHITECTURE §8.6 + the traps): everything sits on ONE
  * flow-children:none felt STAGE, positioned by transform:translate3d (Panorama has NO
@@ -70,7 +71,7 @@
         var numPlayers = (session.numPlayers && session.numPlayers >= 2) ? session.numPlayers : 4;
         var mySeat = (session.seat != null) ? session.seat : 0;
         var isBot = !!session.bot;
-        var online = !isBot && !!session.code && !!(MG.Api && MG.Api.dlog);
+        var online = !isBot && !!session.code && !!(MG.Api && MG.Api.plog);
         var destroyed = false;
 
         // Tournament-style chip carryover across hands (offline). Button rotates each hand.
@@ -81,17 +82,22 @@
         var st = null;
         var pendingBet = 0;                   // current raise-to target in the bet stepper
         var showdownReveal = false;           // reveal all live hands at showdown/over
-        // One evolving rng for every bot decision this session, so bots don't replay an
-        // identical first draw each turn (a fresh makeRng(seed) always yields the same first value).
-        var botRng = P ? P.makeRng((handSeed ^ 0x9e3779b9) | 0) : null;
         // One evolving rng for all bot decisions this session, so a seat doesn't replay the same
-        // choice every time it acts (a fresh per-call seed would).
+        // choice every time it acts (a fresh per-call seed would). Offline only.
         var botRng = P ? P.makeRng((handSeed ^ 0x9e3779b9) | 0) : null;
+
+        // ── online sync state (worker-as-dealer) ──────────────────────────────────
+        // logSeq = next public event index to fetch; pollGen guards against two concurrent
+        // poll chains sharing logSeq (the exact bug that dropped Durak events — see mg_durak).
+        // holeCursor = how many of MY 2 hole cards I've pulled via pdraw for the current hand;
+        // pendingAct blocks input between send and the echoed event.
+        var logSeq = 0, pollGen = 0, holeCursor = 0, pendingAct = false, gameOver = false;
+        var wantHole = false;                 // a HAND event landed → pull my hole cards before rendering
 
         function status(t) { if (session.onStatus) session.onStatus(t); }
         function nameOf(seat) {
             if (seat === mySeat) return "You";
-            return "Bot " + (seat + 1);
+            return online ? ("Player " + (seat + 1)) : ("Bot " + (seat + 1));
         }
         function myTurn() { return !destroyed && st && st.toAct === mySeat && st.street !== "over" && st.street !== "showdown"; }
 
@@ -144,6 +150,7 @@
 
         // ── render ────────────────────────────────────────────────────────────────────
         function render() {
+            if (!st) return;   // online: nothing to draw until the first HAND event lands
             decorLayer.RemoveAndDeleteChildren();
             cardLayer.RemoveAndDeleteChildren();
             buildPot();
@@ -156,7 +163,12 @@
             var pot = P.totalPot(st);
             var lbl = $.CreatePanel("Label", decorLayer, "");
             lbl.AddClass("mg-pk-pot");
-            lbl.style.transform = xform(STAGE_W / 2 - 100, STAGE_H / 2 + CARD_H / 2 - 6, 0);
+            // X comes purely from .mg-pk-pot's horizontal-align:center — do NOT also translate X.
+            // The old code did BOTH (align-centre + translateX of STAGE_W/2-100), and Panorama
+            // stacks them, shoving the 200px label to the felt's right edge where it landed on the
+            // right-hand seat's bet chip readout ("texts overlap", maintainer 2026-07-18). translateY
+            // only for the vertical drop below the board; align keeps it horizontally centred.
+            lbl.style.transform = xform(0, STAGE_H / 2 + CARD_H / 2 - 6, 0);
             lbl.text = "Pot: " + pot;
         }
 
@@ -188,15 +200,19 @@
 
             // hole cards. Mine are big face-up cards; opponents get two small backs (the
             // per-seat w/h from holeAnchor, applied inline so one .mg-pk-card rule serves both).
+            // Online, only MY two cards are known during the hand (pulled via pdraw); opponents'
+            // hole arrays stay empty until SHOW events at showdown. So draw a face-DOWN pair for
+            // any in-hand seat whose cards we don't hold yet, and face-UP once we have both.
             var ha = holeAnchor(seat);
-            if (st.inHand[seat] && st.hole[seat] && st.hole[seat].length === 2) {
+            var known = st.hole[seat] && st.hole[seat].length === 2;
+            if (st.inHand[seat]) {
                 for (var k = 0; k < 2; k++) {
                     var card = $.CreatePanel("Panel", cardLayer, "");
                     card.AddClass("mg-pk-card");
                     card.style.width = ha.w + "px";
                     card.style.height = ha.h + "px";
                     if (isMe) card.AddClass("mg-pk-hole-me");
-                    var reveal = isMe || (showdownReveal && live);
+                    var reveal = known && (isMe || (showdownReveal && live));
                     if (reveal) setFace(card, cardFaceUrl(st.hole[seat][k]));
                     else setBack(card);
                     if (st.folded[seat]) card.AddClass("mg-pk-folded");
@@ -295,7 +311,10 @@
                 if (session.onGameOver) session.onGameOver(last === mySeat ? "win" : "lose");
                 return;
             }
-            mkButton(controlsZone, "Next hand", "mg-btn-primary", function () { startHand(); });
+            mkButton(controlsZone, "Next hand", "mg-btn-primary", function () {
+                if (online) { requestNextHand(); return; }
+                startHand();
+            });
         }
 
         function resultText() {
@@ -346,6 +365,7 @@
 
         function doAction(action) {
             if (!myTurn()) return;
+            if (online) { sendAct(action); return; }
             if (!P.applyAction(st, mySeat, action)) { status("Illegal move."); return; }
             pendingBet = 0;
             postApply();
@@ -387,11 +407,147 @@
             return { preflop: "Pre-flop", flop: "Flop", turn: "Turn", river: "River" }[st.street] || "";
         }
 
+        // ── online sync (worker-as-dealer) ────────────────────────────────────────────
+        // The client holds NO authority: it replays the SAME pure betting engine against the
+        // public event log (fold/check/call/raise are card-independent, so the replay is
+        // byte-identical to the server's), fills the board from BOARD events, its own two hole
+        // cards privately from /api/pdraw, and every contender's cards from SHOW events at
+        // showdown — then resolves the pots LOCALLY (resolveShowdown, same side-pot maths as the
+        // server) so nobody's hole cards travel until the hand is decided. Actions are sent via
+        // /api/pact WITHOUT optimistic mutation: the echoed event is the single source of truth.
+        // (opponent names come from nameOf(), which already reads "Player N" online.)
+
+        // A HAND event opens a new hand: build a fresh online shell (blinds/turn are
+        // card-independent so they match the server), then pull my two hole cards before render.
+        function beginOnlineHand(button) {
+            button = Math.max(0, Math.min(button | 0, numPlayers - 1));
+            st = P.newHand(numPlayers, button, stacks, SB, BB, null);  // online shell (empty deck)
+            showdownReveal = false;
+            pendingBet = 0;
+            holeCursor = 0;
+            wantHole = true;
+        }
+
+        function applyOnlineEvent(ev) {
+            if (ev.type === "hand") { beginOnlineHand(ev.button); return; }
+            if (ev.type === "board") { if (st) st.board.push(ev.card); return; }
+            if (ev.type === "show") {
+                // Reveal a contender's two hole cards at showdown. My OWN seat is skipped: I
+                // already hold my real cards from pdraw, and the server SHOWs every contender
+                // (me included) — pushing them again would give me a 4-card hand.
+                if (st && ev.seat !== mySeat && st.hole[ev.seat] && st.hole[ev.seat].length < 2)
+                    st.hole[ev.seat].push(ev.card);
+                return;
+            }
+            if (ev.type === "win") {
+                if (!st) return;
+                // Contested showdown deferred to "showdown" with no result → resolve now that the
+                // board + every contender's hole cards have arrived. Uncontested folds already
+                // finished the hand locally (street "over"), so resolveShowdown is a safe no-op.
+                P.resolveShowdown(st);
+                showdownReveal = !st.result || !st.result.uncontested;
+                stacks = st.stacks.slice();          // bank the tournament carryover
+                return;
+            }
+            if (ev.type === "over") { gameOver = true; return; }
+            // betting actions — replayed through the shared engine (validated already server-side)
+            var action = ev.type === "fold" ? { type: "fold" }
+                : ev.type === "check" ? { type: "check" }
+                : ev.type === "call" ? { type: "call" }
+                : ev.type === "raise" ? { type: "raise", to: ev.to } : null;
+            if (action && st && st.toAct === ev.seat) P.applyAction(st, ev.seat, action);
+        }
+
+        // Pull my 2 hole cards for the current hand, one index at a time (FIFO-safe), then render.
+        function pullHole(done) {
+            if (destroyed) return;
+            if (holeCursor >= 2) { wantHole = false; done(); return; }
+            MG.Api.pdraw(session.code, session.tok, holeCursor, function (card) {
+                if (destroyed) return;
+                if (card == null) { done(); return; }      // not dealt at that index yet — retry via poll
+                if (st && st.hole[mySeat]) st.hole[mySeat][holeCursor] = card;
+                holeCursor++;
+                pullHole(done);
+            }, function () { if (!destroyed) $.Schedule(0.4, function () { pullHole(done); }); });
+        }
+
+        function onlineStatus() {
+            if (gameOver) return;
+            if (!st) { status("Dealing…"); return; }
+            if (st.street === "over") { status(resultText()); return; }
+            if (myTurn()) { status(streetName() + " — your action."); return; }
+            if (st.toAct >= 0) { status(nameOf(st.toAct) + " to act…"); return; }
+            status(streetName());
+        }
+
+        // Single authoritative poll chain (pollGen guards it, exactly like mg_durak — two chains
+        // sharing logSeq would double-apply one event and skip the next).
+        function startPolling() { pollGen++; pollLoop(pollGen); }
+        function pollLoop(gen) {
+            if (destroyed || gameOver || gen !== pollGen) return;
+            MG.Api.plog(session.code, logSeq, function (ev) {
+                if (destroyed || gen !== pollGen) return;
+                if (!ev) { $.Schedule(0.6, function () { pollLoop(gen); }); return; }   // nothing new
+                logSeq++;
+                applyOnlineEvent(ev);
+                if (wantHole) {
+                    pullHole(function () {
+                        if (gen !== pollGen) return;
+                        render(); onlineStatus(); pollLoop(gen);
+                    });
+                    return;
+                }
+                render();
+                onlineStatus();
+                if (gameOver) { finishOnline(); return; }
+                pollLoop(gen);                                 // drain any burst immediately
+            }, function () { if (!destroyed && gen === pollGen) $.Schedule(1.0, function () { pollLoop(gen); }); });
+        }
+
+        function finishOnline() {
+            render();
+            // whoever still holds chips won the table
+            var last = -1;
+            for (var s = 0; s < numPlayers; s++) if (stacks[s] > 0) last = s;
+            status(last === mySeat ? "You win the table!" : nameOf(last) + " wins the table.");
+            if (session.onGameOver) session.onGameOver(last === mySeat ? "win" : "lose");
+        }
+
+        // Send one betting action; the server validates and (on success) appends the echoed
+        // event the poll reads back. No optimistic local mutation — a rejected action just
+        // never lands. a: 0 fold · 1 check · 2 call · 3 raise (to).
+        function sendAct(action) {
+            if (destroyed || pendingAct) return;
+            var a = action.type === "fold" ? 0 : action.type === "check" ? 1 : action.type === "call" ? 2 : 3;
+            var to = (a === 3) ? (action.to | 0) : 0;
+            pendingAct = true;
+            status("Sending…");
+            MG.Api.pact(session.code, session.tok, a, to, function (r) {
+                pendingAct = false;
+                if (r && r.ok) { startPolling(); return; }        // pull the echo promptly (single chain)
+                if (r && r.reason === "turn") status("Not your turn.");
+                else if (r && r.reason === "illegal") status("That move isn't legal.");
+                else if (r && r.reason === "gone") { if (MG.UI && MG.UI.kickToMenu) MG.UI.kickToMenu("Lobby closed."); }
+                else status("Move rejected.");
+            }, function () { pendingAct = false; status("Server unavailable."); });
+        }
+
+        function requestNextHand() {
+            if (destroyed) return;
+            status("Dealing next hand…");
+            MG.Api.pnext(session.code, session.tok, function (r) {
+                // Success OR "wait" (someone else already dealt) — the poll will pick up the HAND
+                // event either way. Only a token/gone failure is worth surfacing.
+                if (r && !r.ok && r.reason === "gone" && MG.UI && MG.UI.kickToMenu) MG.UI.kickToMenu("Lobby closed.");
+            }, function () { status("Server unavailable."); });
+        }
+
         // ── boot ────────────────────────────────────────────────────────────────────
         if (!P) {
             status("Poker engine failed to load.");
         } else if (online) {
-            status("Online poker is coming soon.");   // Stage 2 wiring lands in a later commit
+            status("Dealing…");
+            startPolling();
         } else {
             startHand();
         }

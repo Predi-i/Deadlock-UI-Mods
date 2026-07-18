@@ -106,6 +106,12 @@
         // index already pulled for a seat (only MY cursor pulls real ids via ddraw, opponents
         // just get placeholder count). pendingAct blocks input between send and the echo.
         var logSeq = 0, drawCursor = [], pendingAct = false, pendingDraws = 0, gameOver = false;
+        // Poll GENERATION guard (same idiom as checkers/chess pollToken). Every pollLoop chain
+        // captures the current pollGen; a stale chain bails the moment pollGen moves. Without it
+        // a `sendAct` success that kicks pollLoop() while a prior `$.Schedule(0.6, pollLoop)` is
+        // still pending gives TWO concurrent loops sharing logSeq — they double-apply one event
+        // and skip the next (an opponent's card silently vanishes; dealing corrupts the state).
+        var pollGen = 0;
         var deckRemaining = DECK_SIZE;   // 36 minus every card drawn (client can't see the deck, only count it)
         for (var _s = 0; _s < numPlayers; _s++) drawCursor.push(0);
 
@@ -154,8 +160,31 @@
 
         var cardEls = {}; // card id -> persistent face panel on the stage
 
+        // One-shot hint for the NEXT render's animateOut: when a bout ends by TAKE, the table cards
+        // don't just leave — they go into the TAKER's hand. render() is a stateless reconcile, so
+        // without this it would fling every de-"wanted" card to the deck and delete it, and a bot's
+        // (or online opponent's) taken cards LOOK like they vanish (they're actually in the hidden
+        // hand — the count badge grows). boutTakeSeat routes those cards to that seat's hand origin
+        // instead. Cleared after each render. -1 = normal (fly to deck: draws leaving, Bito discard).
+        var boutTakeSeat = -1;
+
         function actionActor() { return st.phase === "defend" ? st.defender : st.attacker; }
         function myTurn() { return !destroyed && st.phase !== "over" && actionActor() === mySeat; }
+        // Can I initiate an ATTACK / THROW-IN via input right now?
+        //  • offline (always 2p heads-up here): only when it's my turn as the primary attacker —
+        //    identical to the pre-4-player behaviour, so no heads-up regression.
+        //  • online (2–4 seats): ANY in-play non-defender may throw in a legal card at any time
+        //    (the defining podkidnoy mechanic). The server serialises simultaneous throw-ins and
+        //    rejects a now-illegal one, which sendAct() surfaces gracefully. legalAttacks() gates
+        //    which cards actually qualify; this only governs whether input is live at all.
+        function canAttackInput() {
+            if (destroyed || pendingAct || st.phase === "over") return false;
+            if (online) return mySeat !== st.defender;
+            return myTurn() && st.phase === "attack" && st.attacker === mySeat;
+        }
+        function canDefendInput() {
+            return myTurn() && st.phase === "defend" && st.defender === mySeat && !pendingAct;
+        }
 
         // slot geometry (stage coords)
         function xform(x, y, rot) {
@@ -180,6 +209,18 @@
         // A card an opponent PLAYS glides in from the top-centre (where they sit); a drawn HAND
         // card glides from the deck.
         function oppOriginSlot() { return { x: STAGE_W / 2 - CARD_W / 2, y: 60 }; }
+        // Where a given seat's HAND lives on the felt — the point taken cards should fly TO when
+        // that seat picks up the table. Mirrors buildOpponents' placement (me bottom-centre, top
+        // opponent top-centre, side opponents at their avatar). Card-corner coords (top-left), so
+        // it lines up with the card transforms in ensureCard/animateOut.
+        function seatHandSlot(seat) {
+            if (seat === mySeat) return { x: STAGE_W / 2 - CARD_W / 2, y: STAGE_H - CARD_H - 16 };
+            var rel = (seat - mySeat + numPlayers) % numPlayers;
+            var zone = seatZone(rel, numPlayers);
+            if (zone === "top") return { x: STAGE_W / 2 - CARD_W / 2, y: 60 - CARD_H / 2 };
+            var c = avatarCenter(zone);
+            return { x: c.x - CARD_W / 2, y: c.y - CARD_H / 2 };
+        }
         // Hand: a clean FLAT row (no arc, no tilt), CENTRED on the stage centre (STAGE_W/2).
         function handSlot(j, n) {
             var step = n > 1 ? Math.min(64, 380 / (n - 1)) : 0;
@@ -257,19 +298,25 @@
         // A FLAT horizontal row of backs behind an opponent tile — mirrors MY hand (handSlot:
         // rot 0, a plain left-to-right row), per the maintainer. The old version stepped only 7px
         // (cards 54px wide → heavy overlap) AND rotateZ'd each by 3°, so the backs read as a
-        // tilted VERTICAL pile instead of a hand. Now: no rotation, centred on center.x, spaced
-        // like the hand so they lie side by side. Capped at 6 shown like a real hand.
+        // tilted VERTICAL pile instead of a hand.
+        // Show EVERY card, not a cap of 6 — a defender who takes the table can hold 10+, and the old
+        // 6-cap made the backs disagree with the count badge (maintainer 2026-07-18: "bot only ever
+        // draws 6"). Like the real hand (handSlot), the step COMPRESSES as the count grows so the row
+        // stays within a bounded width instead of running off the felt.
         function buildBackBunch(center, count) {
-            var shown = Math.min(count, 6);
-            if (shown <= 0) return;
+            if (count <= 0) return;
             var BK_W = 54;
-            var step = shown > 1 ? Math.min(30, 160 / (shown - 1)) : 0;
-            var totalW = BK_W + step * (shown - 1);
+            var MAX_ROW = 170;                  // widest the back row is allowed to get
+            // Same shape as handSlot's spacing: cap the per-card step, but shrink it to fit MAX_ROW
+            // once there are enough cards that the natural 30px step would overflow.
+            var step = count > 1 ? Math.min(30, (MAX_ROW - BK_W) / (count - 1)) : 0;
+            var totalW = BK_W + step * (count - 1);
             var x0 = center.x - totalW / 2;
             var y = center.y - 76 / 2;          // vertically centred on the tile
-            for (var i = 0; i < shown; i++) {
+            for (var i = 0; i < count; i++) {
                 var bk = $.CreatePanel("Panel", decorLayer, "");
                 bk.AddClass("mg-opp-back");
+                bk.style.zIndex = String(i);    // later cards paint on top → clean left-to-right fan
                 setBack(bk);
                 bk.style.transform = xform(x0 + i * step, y, 0);   // flat row, no tilt
             }
@@ -337,12 +384,18 @@
             var myHand = st.hands[mySeat].slice();
             sortByValue(myHand, st.trump);
             var n = myHand.length;
-            var canAct = myTurn(), play = {};
-            if (canAct && st.phase === "attack" && st.attacker === mySeat) {
+            var play = {};
+            // Attacks / throw-ins: ANY in-play non-defender can play a legal attack card — the
+            // opener when the table's empty, or a matching-rank throw-in otherwise (the heart of
+            // 3–4-player podkidnoy). legalAttacks() encodes every rule (rank on table, table not
+            // full, never more uncovered than the defender can cover), so we needn't re-gate on
+            // "am I the attacker". In a 2-player game the only non-defender IS the attacker, so
+            // this collapses to the old behaviour (no regression to heads-up play).
+            if (st.phase !== "over" && mySeat !== st.defender) {
                 var la = legalAttacks(st, mySeat);
                 for (i = 0; i < la.length; i++) play[la[i]] = 1;
             }
-            if (canAct && st.phase === "defend" && st.defender === mySeat) {
+            if (st.phase === "defend" && st.defender === mySeat) {
                 for (i = 0; i < n; i++)
                     for (var t = 0; t < st.table.length; t++)
                         if (st.table[t].d < 0 && canDefendPair(st, t, myHand[i])) { play[myHand[i]] = 1; break; }
@@ -389,11 +442,16 @@
             }
         }
 
-        function animateOut(el) {
+        // A card leaving the "wanted" set flies away and is deleted. Destination: normally the deck
+        // (a Bito discard, or the odd stale card), but when the bout ended by TAKE it flies to the
+        // TAKER's hand instead (boutTakeSeat) so a pickup reads as "these cards go to that player",
+        // not "into the void". Table cards only — a hand card that merely re-slots keeps its element.
+        function animateOut(el, toTake) {
+            var dst = (toTake && boutTakeSeat >= 0) ? seatHandSlot(boutTakeSeat) : deckSlot();
             try {
                 el.AddClass("mg-dk-anim");
                 el.style.opacity = "0.0";
-                el.style.transform = xform(deckSlot().x, deckSlot().y, 0);
+                el.style.transform = xform(dst.x, dst.y, 0);
             } catch (e) { }
             try { el.DeleteAsync(0.25); } catch (e) { }
         }
@@ -432,11 +490,11 @@
         // was missing: previously a defend was applied no matter where you let go.
         var DROP_ZONE_MAX_Y = STAGE_H - CARD_H - 30;
         function commitDrop(card, ghost) {
-            if (!myTurn() || pendingAct) return;
+            if (pendingAct || st.phase === "over") return;
             var pt = stagePointFromGhost(ghost);
             if (!pt) return;                            // can't read the drop -> snap back
             if (pt.y >= DROP_ZONE_MAX_Y) return;        // dropped back over the hand -> cancel, snap back
-            if (st.phase === "defend" && st.defender === mySeat) {
+            if (canDefendInput()) {
                 // Cover the nearest UNCOVERED pair this card can beat, but ONLY if the drop
                 // actually landed near that pair (within ~1.4 card widths). A miss snaps back.
                 var m = st.table.length, best = -1, bestDx = 1e9;
@@ -453,7 +511,7 @@
                 // else: no reachable pair under the drop -> snap back silently (a miss shouldn't nag)
                 return;
             }
-            if (st.phase === "attack" && st.attacker === mySeat) {
+            if (canAttackInput()) {
                 if (canAttackWith(st, mySeat, card)) {
                     if (online) { sendAct(1, 0, card); return; }
                     applyAttack(st, mySeat, card); afterAction();
@@ -465,7 +523,10 @@
 
         function bindCardDrag(el, cid) {
             $.RegisterEventHandler("DragStart", el, function (_p, dragEvent) {
-                if (!el._dkPlayable || !myTurn()) return;
+                // _dkPlayable already reflects throw-in eligibility (computeWanted marks any legal
+                // non-defender attack card playable, not just the primary attacker's), so we no
+                // longer gate the drag on myTurn(); commitDrop re-checks via can*Input().
+                if (!el._dkPlayable) return;
                 var ghost = $.CreatePanel("Panel", cardLayer, "");
                 ghost.AddClass("mg-dk-card"); ghost.AddClass("mg-dk-dragging");
                 setFace(ghost, cardFaceUrl(cid));           // ghost gets its own child <Image>
@@ -500,7 +561,7 @@
                 mkButton(controlsZone, "Take", function () {
                     if (!myTurn() || pendingAct) return;
                     if (online) { sendAct(3, 0, 0); return; }         // 3 = take
-                    endBout(st, true); afterAction();
+                    boutTakeSeat = st.defender; endBout(st, true); afterAction();
                 });
             }
         }
@@ -520,17 +581,20 @@
             var wanted = computeWanted();
             var wid = {};
             for (var k = 0; k < wanted.length; k++) wid[wanted[k].id] = 1;
+            // Cards present last frame but no longer wanted are leaving. On a TAKE bout they were
+            // the table cards being picked up → route them to the taker's hand (boutTakeSeat).
             for (var id in cardEls) {
-                if (cardEls.hasOwnProperty(id) && !wid[id]) { animateOut(cardEls[id]); delete cardEls[id]; }
+                if (cardEls.hasOwnProperty(id) && !wid[id]) { animateOut(cardEls[id], true); delete cardEls[id]; }
             }
             for (var i = 0; i < wanted.length; i++) ensureCard(wanted[i]);
             buildControls();
+            boutTakeSeat = -1;   // one-shot: consumed by this render's animateOut
         }
 
         // input
         function onHandCardClick(card) {
-            if (!myTurn() || pendingAct) return;
-            if (st.phase === "defend" && st.defender === mySeat) {
+            if (pendingAct || st.phase === "over") return;
+            if (canDefendInput()) {
                 for (var t = 0; t < st.table.length; t++) {
                     if (st.table[t].d < 0 && canDefendPair(st, t, card)) {
                         if (online) { sendAct(2, t, card); return; }   // server applies + echoes
@@ -540,7 +604,7 @@
                 status("That card can't beat an open attack. Cover it or take.");
                 return;
             }
-            if (st.phase === "attack" && st.attacker === mySeat) {
+            if (canAttackInput()) {
                 if (canAttackWith(st, mySeat, card)) {
                     if (online) { sendAct(1, 0, card); return; }
                     applyAttack(st, mySeat, card); afterAction(); return;
@@ -579,7 +643,7 @@
             if (st.phase === "defend") {
                 var d = durakBotDefend(st, st.defender);
                 if (d) applyDefend(st, d.pair, d.card);
-                else endBout(st, true);
+                else { boutTakeSeat = st.defender; endBout(st, true); }
             } else {
                 var c = durakBotAttack(st, st.attacker);
                 if (c >= 0) applyAttack(st, st.attacker, c);
@@ -602,8 +666,9 @@
         // local `st` (opponent hands are placeholder counts, table cards are public, my own
         // cards come from /api/ddraw) and sends its own actions via /api/dact — never mutating
         // `st` optimistically. The server's echoed event is the single source of truth, so a
-        // rejected action simply never lands (no rollback needed). Roles rotate deterministically
-        // after each bout exactly like the shared endBout (2-player: Bito swaps, Take keeps).
+        // rejected action simply never lands (no rollback needed). Post-bout roles are NOT derived
+        // locally — the server emits an authoritative ROLES event after each bout (see applyEvent),
+        // which is the only way to get 3–4-player rotation right (it depends on refill + who's out).
         var myDrawExpected = 0;   // total cards the server has told me I hold (from DRAW events)
 
         function addToHand(seat, id) { st.hands[seat].push(seat === mySeat ? id : HIDDEN); }
@@ -612,15 +677,15 @@
             if (seat === mySeat) { var i = h.indexOf(card); if (i >= 0) h.splice(i, 1); }
             else if (h.length) h.pop();     // opponents are counts only
         }
-        function rotateRolesAfterBout(took) {
-            var oldAtk = st.attacker, oldDef = st.defender;
-            if (took) { st.attacker = oldAtk; st.defender = oldDef; }  // taker skipped → roles unchanged
-            else { st.attacker = oldDef; st.defender = oldAtk; }       // successful defence → defender attacks
-            st.phase = "attack";
-        }
+        // Post-bout roles are NOT computed locally — for 3–4 players the rotation depends on
+        // refill order and who ran out of cards (state the client can't see). The server owns it
+        // and sends a ROLES event right after each TAKE/BITO (+ the DRAW refills); we just clear
+        // the felt here and wait for ROLES to set attacker/defender. (A 2-player game gets the
+        // same ROLES event, so there's a single code path.)
         function applyEvent(ev) {
             if (ev.type === "trump") { st.trumpCard = ev.card; st.trump = suitOf(ev.card); }
             else if (ev.type === "open") { st.attacker = ev.seat; st.defender = nextInPlay(st, ev.seat); st.phase = "attack"; }
+            else if (ev.type === "roles") { st.attacker = ev.attacker; st.defender = ev.defender; st.phase = "attack"; }
             else if (ev.type === "play") { st.table.push({ a: ev.card, d: -1 }); st.phase = "defend"; removeFromHand(ev.seat, ev.card); }
             else if (ev.type === "cover") {
                 if (st.table[ev.pair]) st.table[ev.pair].d = ev.card;
@@ -629,9 +694,10 @@
             }
             else if (ev.type === "take") {
                 for (var i = 0; i < st.table.length; i++) { addToHand(ev.seat, st.table[i].a); if (st.table[i].d >= 0) addToHand(ev.seat, st.table[i].d); }
-                st.table = []; rotateRolesAfterBout(true);
+                st.table = [];   // ROLES will set the next attacker/defender
+                boutTakeSeat = ev.seat;   // next render flies the picked-up cards to the taker, not the deck
             }
-            else if (ev.type === "bito") { st.table = []; rotateRolesAfterBout(false); }
+            else if (ev.type === "bito") { st.table = []; }   // ROLES follows
             else if (ev.type === "draw") {
                 deckRemaining = Math.max(0, deckRemaining - ev.count);
                 setDeckCount(deckRemaining);
@@ -655,24 +721,35 @@
         function onlineStatus() {
             if (gameOver) return;
             if (myTurn()) { status(promptFor()); return; }
+            // A non-defender who can throw in during a live attack isn't "on turn", but it CAN act.
+            // Nudge it rather than showing a bare "X's turn…" (only when it actually holds a legal
+            // throw-in — legalAttacks() is empty otherwise, e.g. nothing on the table matches).
+            if (canAttackInput() && legalAttacks(st, mySeat).length > 0) { status("You can throw in a matching card."); return; }
             status(nameOf(actionActor()) + "'s turn…");
         }
-        function pollLoop() {
-            if (destroyed || gameOver) return;
+        // Start (or restart) the single authoritative poll chain. Bumping pollGen kills any
+        // in-flight chain so we never run two at once (see pollGen above).
+        function startPolling() { pollGen++; pollLoop(pollGen); }
+        function pollLoop(gen) {
+            if (destroyed || gameOver || gen !== pollGen) return;
             MG.Api.dlog(session.code, logSeq, function (ev) {
-                if (destroyed) return;
-                if (!ev) { $.Schedule(0.6, pollLoop); return; }     // nothing new
+                if (destroyed || gen !== pollGen) return;
+                if (!ev) { $.Schedule(0.6, function () { pollLoop(gen); }); return; }   // nothing new
                 logSeq++;
                 applyEvent(ev);
                 if (ev.type === "draw" && ev.seat === mySeat) {
-                    pullDraws(function () { render(); onlineStatus(); if (gameOver) finishGame(); else pollLoop(); });
+                    pullDraws(function () {
+                        if (gen !== pollGen) return;
+                        render(); onlineStatus();
+                        if (gameOver) finishGame(); else pollLoop(gen);
+                    });
                     return;
                 }
                 render();
                 onlineStatus();
                 if (gameOver) { finishGame(); return; }
-                pollLoop();                                          // drain any burst immediately
-            }, function () { if (!destroyed) $.Schedule(1.0, pollLoop); });
+                pollLoop(gen);                                       // drain any burst immediately
+            }, function () { if (!destroyed && gen === pollGen) $.Schedule(1.0, function () { pollLoop(gen); }); });
         }
         // Send one action; the server validates and (on success) appends the event we'll read
         // back on the next poll. We do NOT mutate `st` here — the echo is authoritative.
@@ -681,7 +758,7 @@
             pendingAct = true;
             MG.Api.dact(session.code, session.tok, a, pair || 0, card || 0, function (r) {
                 pendingAct = false;
-                if (r && r.ok) { pollLoop(); return; }               // pull the echo promptly
+                if (r && r.ok) { startPolling(); return; }           // pull the echo promptly (single chain)
                 var why = r && r.reason;
                 if (why === "turn") status("Not your turn.");
                 else if (why === "illegal") status("That move isn't legal.");
@@ -694,7 +771,7 @@
         render();
         if (online) {
             status("Dealing…");
-            pollLoop();
+            startPolling();
         } else if (myTurn()) status(promptFor());
         else if (isBot) { status(nameOf(actionActor()) + " is thinking..."); $.Schedule(0.55, botTurn); }
         else status(nameOf(actionActor()) + "'s turn...");

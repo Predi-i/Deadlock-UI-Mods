@@ -439,6 +439,19 @@
 .mg-btn-primary:active { background-color: #3f6fb8; brightness: 1.0; }
 .mg-btn-quick { height: 58px; }
 .mg-btn-quick Label { font-size: 19px !important; letter-spacing: 2px; }
+/* Inert CTA — shown for poker's QUICK MATCH (poker has no public matchmaking, but a game with no
+   button at all looked broken, maintainer 2026-07-18). Distinct from .mg-btn-disabled (that one is
+   the multi-search button: faded-blue, still primary). This is a fully muted grey with hover/active
+   neutralised so it reads as switched-off. Declared AFTER .mg-btn-primary/.mg-btn-quick so it wins
+   the cascade for those combined classes. */
+.mg-btn-inert,
+.mg-btn-inert:hover,
+.mg-btn-inert:active {
+    background-color: #141a23;
+    border: 1px solid #232f3e;
+    brightness: 1.0;
+}
+.mg-btn-inert Label { color: #5a6a7d !important; }
 
 /* full-width buttons inside the right detail column. margin:0 (the default side margin was
    letting the right border run past the column edge → "border cut off" on PLAY VS BOT, п4). */
@@ -1372,8 +1385,16 @@
    ARCHITECTURE trap 15b). margin-right is the gap to the X. */
 .mg-scale-wrap {
     width: 80px; min-width: 80px; max-width: 80px;
+    /* The wrap sizes to dropdown(30) + caption(~15) = ~45px, but a NEGATIVE margin-bottom of that
+       caption height makes the flow/centering engine count the wrap as only ~30px tall. So:
+       (a) vertical-align:center lines the DROPDOWN up with the 32px header pills instead of pushing
+           it up half a caption (the "dropdowns shoved too high" bug), and
+       (b) the caption still paints below (header is overflow:noclip), so it no longer vanishes
+           (the "Volume / UI Scale labels gone" regression, maintainer 2026-07-18).
+       This is the standard negative-margin "don't count my last row" trick. */
     vertical-align: center;
     margin-right: 10px;                  /* gap to the close X on its right */
+    margin-bottom: -15px;                /* ≈ caption line height; keeps the wrap centering on the dropdown */
     flow-children: down;                 /* dropdown on top, its caption below */
     overflow: noclip;
     z-index: 10;
@@ -1446,8 +1467,11 @@
    auto-created popup escape the header and paint over the body, like the scale wrapper. */
 .mg-vol-wrap {
     width: 80px; min-width: 80px; max-width: 80px;
+    /* Negative margin-bottom "don't count the caption row" trick, same as .mg-scale-wrap: the
+       dropdown centres on the header pills AND the caption still paints below (2026-07-18). */
     vertical-align: center;
     margin-right: 10px;                  /* gap to the scale dropdown on its right */
+    margin-bottom: -15px;
     flow-children: down;                 /* dropdown on top, its caption below */
     overflow: noclip;
     z-index: 10;

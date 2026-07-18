@@ -161,10 +161,17 @@
 
     // Start a fresh hand. `stacks` is per-seat chips; seats with 0 chips sit out (not inHand).
     // Blinds are posted, hole cards dealt, action set to the correct opener.
+    //
+    // ONLINE: pass seed=null. The deck stays EMPTY (the server owns it), no hole cards are
+    // dealt, and dealBoard/showdown/finish become no-ops (see st.online guards) — the client
+    // fills board/hole/winners from the server's public event log instead. Everything else
+    // (blinds, currentBet, whose turn) is CARD-INDEPENDENT, so the client's replay of the
+    // betting is byte-identical to the server's authority with no deck knowledge at all.
     function newHand(numPlayers, button, stacks, sb, bb, seed) {
-        var deck = freshDeck(makeRng(seed));
+        var online = (seed == null);
+        var deck = online ? [] : freshDeck(makeRng(seed));
         var st = {
-            numPlayers: numPlayers, button: button, sb: sb, bb: bb,
+            numPlayers: numPlayers, button: button, sb: sb, bb: bb, online: online,
             deck: deck, hole: [], board: [],
             stacks: stacks.slice(),
             bet: [], committed: [], folded: [], allIn: [], inHand: [], acted: [],
@@ -183,8 +190,9 @@
         // blind on an empty seat (heads-up branch) and hang the hand. Normalise it here.
         if (!st.inHand[button]) button = nextOccupied(st, button);
         st.button = button;
-        // deal 2 hole cards to each in-hand seat (button+1 first, like a real deal)
-        for (var round = 0; round < 2; round++) {
+        // deal 2 hole cards to each in-hand seat (button+1 first, like a real deal). Online the
+        // deck is empty and hole cards arrive privately per seat, so skip the deal.
+        if (!online) for (var round = 0; round < 2; round++) {
             for (var k = 1; k <= numPlayers; k++) {
                 var seat = (button + k) % numPlayers;
                 if (st.inHand[seat]) st.hole[seat].push(st.deck.shift());
@@ -293,7 +301,9 @@
     }
 
     var STREETS = { preflop: "flop", flop: "turn", turn: "river", river: "showdown" };
-    function dealBoard(st, n) { for (var i = 0; i < n; i++) st.board.push(st.deck.shift()); }
+    // Online the deck is empty and the board is filled from the server's BOARD events, so
+    // dealing is a no-op here — betting never reads st.board, only the display does.
+    function dealBoard(st, n) { if (st.online) return; for (var i = 0; i < n; i++) st.board.push(st.deck.shift()); }
 
     function nextStreet(st) {
         // clear the street's bets (committed already holds them for side pots)
@@ -337,7 +347,12 @@
     }
 
     // Build side pots from committed[], then award each pot to the best eligible hand(s).
+    // ONLINE the hole cards aren't known during the betting replay (they arrive later as SHOW
+    // events), so defer: freeze the hand at "showdown" with no result and let the client call
+    // resolveShowdown(st) once it has populated st.hole from the events. Side pots are built
+    // from committed[] (card-independent) so the deferred resolution is identical to the server.
     function showdown(st) {
+        if (st.online && !st._resolving) { st.street = "showdown"; st.toAct = -1; return; }
         var contribs = st.committed.slice();
         var pots = [];
         while (true) {
@@ -394,6 +409,17 @@
         return out;
     }
     function totalPot(st) { var t = 0; for (var s = 0; s < st.numPlayers; s++) t += st.committed[s]; return t; }
+
+    // ONLINE showdown resolver: the client calls this after filling st.hole (from SHOW events)
+    // and st.board (from BOARD events) for a hand that reached "showdown" via the deferred path
+    // above. Runs the SAME side-pot + eval logic and awards the pots, so the online result is
+    // identical to the server's without the client ever seeing the deck.
+    function resolveShowdown(st) {
+        if (st.street !== "showdown") return;
+        st._resolving = true;
+        showdown(st);
+        st._resolving = false;
+    }
 
     // ── bot ─────────────────────────────────────────────────────────────────────
     // A deterministic, honest-but-cautious bot. Preflop it rates its two cards; postflop it
@@ -454,7 +480,8 @@
         nextSeat: nextSeat, nextToAct: nextToAct, firstLeftOfButton: firstLeftOfButton,
         activeCount: activeCount, canActCount: canActCount, totalPot: totalPot,
         newHand: newHand, legalActions: legalActions, applyAction: applyAction,
-        roundOver: roundOver, showdown: showdown,
+        roundOver: roundOver, showdown: showdown, resolveShowdown: resolveShowdown,
+        nextOccupied: nextOccupied, activeSeatCount: activeSeatCount,
         preflopStrength: preflopStrength, madeStrength: madeStrength, botAction: botAction
     };
 })();

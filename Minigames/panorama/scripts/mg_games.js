@@ -661,10 +661,10 @@
                 var lwS = lw ? (Math.round(lw.x) + "," + Math.round(lw.y)) : "null";
                 var gwS = gw ? (Math.round(gw.x) + "," + Math.round(gw.y)) : "null";
                 var lwd = (piecesLayer && piecesLayer.actuallayoutwidth) || "?";
-                status("DROP " + (matched >= 0 ? ("OK via " + via + "->" + matched) : "MISS")
-                    + " | win=" + wSq + " g(" + gwS + ") L(" + lwS + ") lw=" + lwd
-                    + " | panel=" + dpid + "->" + aPanel + " over=" + bOver + "(" + dragEnterCount + "e) ghost=" + cGhost
-                    + " | targets=[" + tg.join(",") + "]");
+                status("DROP " + (matched >= 0 ? ("OK via " + via + "->" + matched) : "MISS") +
+                    " | win=" + wSq + " g(" + gwS + ") L(" + lwS + ") lw=" + lwd +
+                    " | panel=" + dpid + "->" + aPanel + " over=" + bOver + "(" + dragEnterCount + "e) ghost=" + cGhost +
+                    " | targets=[" + tg.join(",") + "]");
             }
 
             if (matched >= 0) { onCellDrop(matched); return; }
