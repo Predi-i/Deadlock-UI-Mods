@@ -864,7 +864,13 @@
         log("startBotGame game=" + selectedGameId + " iAmHost=" + iAmHost);
         // Offline room needs a concrete bank now, so "Any"(-1) collapses to the 5-min default.
         var tc = isTimedGame(selectedGameId) ? concreteTc(selectedTimeControl) : 0;
-        renderGame(selectedGameId, 0, iAmHost, true, { timeControl: tc });
+        // Poker/Durak: honour the 2/3/4 seat picker so "vs Bot" fills that many seats with bots
+        // (you + N-1 bots), instead of the controller's fixed default (poker 4 / durak 2). The
+        // offline controller already drives every non-player seat, so this is all it needs.
+        var opts = { timeControl: tc };
+        if (isPokerOnlineGame(selectedGameId)) opts.numPlayers = pokerSeatCap;
+        else if (isDurakOnlineGame(selectedGameId)) opts.numPlayers = durakSeatCap;
+        renderGame(selectedGameId, 0, iAmHost, true, opts);
     }
 
     function renderJoin() {
