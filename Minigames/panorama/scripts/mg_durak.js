@@ -73,10 +73,15 @@
     // Everyone renders themselves at the bottom; opponents are placed by relative seat, so
     // "left" for one player is "right" for another. 3/4-player layouts are only exercised
     // online (Stage 2).
+    // Which top-band zone an opponent occupies, given their seat offset from me (I'm always at the
+    // bottom). Every opponent lives along the TOP so each gets the SAME cluster grammar (avatar +
+    // hidden-hand row beside it) — no more mixing a top layout with side layouts, and nothing lands
+    // on the deck (left-mid) or the table pile (centre). 1 opp → top-centre; 2 → top-left/right;
+    // 3 → top-left/centre/right. rel walks 1..N-1 clockwise from me.
     function seatZone(rel, N) {
-        if (N <= 2) return "top";
-        if (N === 3) return rel === 1 ? "left" : "right";
-        return rel === 1 ? "left" : (rel === 2 ? "top" : "right"); // N === 4
+        if (N <= 2) return "top";               // heads-up: the one opponent sits top-centre
+        if (N === 3) return rel === 1 ? "topleft" : "topright";
+        return rel === 1 ? "topleft" : (rel === 2 ? "top" : "topright"); // N === 4
     }
 
     // Stage geometry (px, in the stage's own coordinate space). Cards are positioned by
@@ -217,9 +222,11 @@
             if (seat === mySeat) return { x: STAGE_W / 2 - CARD_W / 2, y: STAGE_H - CARD_H - 16 };
             var rel = (seat - mySeat + numPlayers) % numPlayers;
             var zone = seatZone(rel, numPlayers);
-            if (zone === "top") return { x: STAGE_W / 2 - CARD_W / 2, y: 60 - CARD_H / 2 };
-            var c = avatarCenter(zone);
-            return { x: c.x - CARD_W / 2, y: c.y - CARD_H / 2 };
+            var count = st.hands[seat].length;
+            var cl = oppCluster(zone, count);
+            // Fly taken cards to the CENTRE of that seat's hidden-hand row (mirrors where
+            // buildBackBunch lays the backs), so the animation lands on the visible fan.
+            return { x: cl.cardX0 + backRowWidth(count) / 2 - CARD_W / 2, y: cl.cardYc - CARD_H / 2 };
         }
         // Hand: a clean FLAT row (no arc, no tilt), CENTRED on the stage centre (STAGE_W/2).
         function handSlot(j, n) {
@@ -296,10 +303,39 @@
         // backs behind opponents. My own tile is bottom-LEFT (balancing the top opponent and
         // clear of my centred hand); opponents by relative seat.
         var AV = 64;
-        function avatarCenter(zone) {
-            if (zone === "left") return { x: 66, y: STAGE_H * 0.44 };
-            if (zone === "right") return { x: STAGE_W - 66, y: STAGE_H * 0.44 };
-            return { x: STAGE_W / 2, y: 46 };               // top
+        // Width of a seat's hidden-hand back row for a given card count — mirrors buildBackBunch's
+        // compressing step so callers can centre other things (taken-card target) on the row. The
+        // cap TIGHTENS with 3 opponents (4-player) so three "avatar + fan" clusters tile the 680px
+        // top band without overlapping (at 170 they'd need ~738px and collide in the middle).
+        var BACK_BK_W = 54;
+        var BACK_MAX_ROW = (numPlayers - 1) >= 3 ? 130 : 170;
+        function backRowWidth(count) {
+            if (count <= 0) return 0;
+            var step = count > 1 ? Math.min(30, (BACK_MAX_ROW - BACK_BK_W) / (count - 1)) : 0;
+            return BACK_BK_W + step * (count - 1);
+        }
+        // One consistent cluster per opponent: an avatar TILE with the hidden-hand row of backs laid
+        // out at a FIXED offset to its RIGHT, so the avatar always reads as attached to its cards
+        // (fixes B2's "avatar far from its cards"). Every opponent lives in the TOP band and its
+        // cluster is CENTRED in an evenly-divided column, so 1/2/3 opponents spread out neatly and
+        // nothing lands on the deck (left-mid) or the table pile (centre). rel→column via zone.
+        //   returns { avX, avY } — avatar tile CENTRE ; { cardX0, cardYc } — back-row left edge + centre-Y
+        var CLUSTER_TOP_Y = 60;                 // avatar/fan centre-Y for every top-band seat
+        var CLUSTER_GAP = 12;                   // avatar → fan gap
+        function clusterCenterX(zone) {
+            // Evenly spread the top band. Heads-up → one centred column; else two/three columns.
+            if (zone === "topleft")  return (numPlayers - 1) >= 3 ? 128 : 178;
+            if (zone === "topright") return (numPlayers - 1) >= 3 ? STAGE_W - 128 : STAGE_W - 178;
+            return STAGE_W / 2;                 // "top" (heads-up, or the middle of three)
+        }
+        function oppCluster(zone, count) {
+            var rowW = backRowWidth(count);
+            var clusterW = AV + CLUSTER_GAP + rowW;     // avatar | gap | fan, laid left→right
+            var left = clusterCenterX(zone) - clusterW / 2;
+            return {
+                avX: left + AV / 2, avY: CLUSTER_TOP_Y,
+                cardX0: left + AV + CLUSTER_GAP, cardYc: CLUSTER_TOP_Y
+            };
         }
         // A FLAT horizontal row of backs behind an opponent tile — mirrors MY hand (handSlot:
         // rot 0, a plain left-to-right row), per the maintainer. The old version stepped only 7px
@@ -309,16 +345,12 @@
         // 6-cap made the backs disagree with the count badge (maintainer 2026-07-18: "bot only ever
         // draws 6"). Like the real hand (handSlot), the step COMPRESSES as the count grows so the row
         // stays within a bounded width instead of running off the felt.
-        function buildBackBunch(center, count) {
+        // Lay the back row from its LEFT edge x0, vertically centred on yc (matches oppCluster's
+        // cardX0/cardYc so the fan sits exactly beside the avatar). Step compresses as count grows.
+        function buildBackBunch(x0, yc, count) {
             if (count <= 0) return;
-            var BK_W = 54;
-            var MAX_ROW = 170;                  // widest the back row is allowed to get
-            // Same shape as handSlot's spacing: cap the per-card step, but shrink it to fit MAX_ROW
-            // once there are enough cards that the natural 30px step would overflow.
-            var step = count > 1 ? Math.min(30, (MAX_ROW - BK_W) / (count - 1)) : 0;
-            var totalW = BK_W + step * (count - 1);
-            var x0 = center.x - totalW / 2;
-            var y = center.y - 76 / 2;          // vertically centred on the tile
+            var step = count > 1 ? Math.min(30, (BACK_MAX_ROW - BACK_BK_W) / (count - 1)) : 0;
+            var y = yc - 76 / 2;                 // 76 = .mg-opp-back height
             for (var i = 0; i < count; i++) {
                 var bk = $.CreatePanel("Panel", decorLayer, "");
                 bk.AddClass("mg-opp-back");
@@ -352,31 +384,21 @@
         function buildOpponents() {
             for (var seat = 0; seat < numPlayers; seat++) {
                 if (seat === mySeat) {
-                    // Bottom-left corner: well away from the centred hand and mirrors the top
-                    // opponent tile so the table reads symmetrically.
+                    // Bottom-left corner: well away from the centred hand and mirrors the top-band
+                    // opponents so the table reads symmetrically.
                     buildTile(seat, { x: 60, y: STAGE_H - 54 });
                     continue;
                 }
+                // Every opponent uses ONE cluster grammar: avatar tile + hidden-hand row laid out at a
+                // fixed offset beside it (see oppCluster). Same shape for top-left / top-centre /
+                // top-right, so the avatar always reads as attached to its cards and nothing lands on
+                // the deck column or the table pile.
                 var rel = (seat - mySeat + numPlayers) % numPlayers;
                 var zone = seatZone(rel, numPlayers);
-                if (zone === "top") {
-                    // Mirror MY side: the hand (a flat centred row of backs) at the top-centre,
-                    // the avatar TILE off to the top-LEFT so it never sits over the middle of the
-                    // row (exactly how "You" is bottom-left with my hand centred). The old code put
-                    // the tile AND the pile at the same top-centre point, so the avatar landed on
-                    // the backs and the tightly-tilted pile read as a vertical stack.
-                    buildBackBunch({ x: STAGE_W / 2, y: 60 }, st.hands[seat].length);
-                    buildTile(seat, { x: 60, y: 54 });
-                } else {
-                    // Side seats (left/right in 3–4-player). SAME bug the top seat had: drawing the
-                    // back-bunch and the avatar tile at the SAME center made the tile paint over the
-                    // backs, so a side opponent rendered as a bare P2/P3 circle with no hand behind it
-                    // (screenshot: 3-player table, opponents just circles). Separate them: tile stays
-                    // on the avatar center, the hidden hand fans just BELOW it so both read clearly.
-                    var center = avatarCenter(zone);
-                    buildBackBunch({ x: center.x, y: center.y + AV / 2 + 34 }, st.hands[seat].length);
-                    buildTile(seat, center);
-                }
+                var count = st.hands[seat].length;
+                var cl = oppCluster(zone, count);
+                buildBackBunch(cl.cardX0, cl.cardYc, count);
+                buildTile(seat, { x: cl.avX, y: cl.avY });
             }
         }
 
