@@ -93,11 +93,13 @@
         // pendingAct blocks input between send and the echoed event.
         var logSeq = 0, pollGen = 0, holeCursor = 0, pendingAct = false, gameOver = false;
         var wantHole = false;                 // a HAND event landed → pull my hole cards before rendering
+        var leftSeats = [];                   // online seats that abandoned the table (rendered as "left")
 
         function status(t) { if (session.onStatus) session.onStatus(t); }
         function nameOf(seat) {
             if (seat === mySeat) return "You";
-            return online ? ("Player " + (seat + 1)) : ("Bot " + (seat + 1));
+            var base = online ? ("Player " + (seat + 1)) : ("Bot " + (seat + 1));
+            return (leftSeats.indexOf(seat) >= 0) ? (base + " (left)") : base;
         }
         function myTurn() { return !destroyed && st && st.toAct === mySeat && st.street !== "over" && st.street !== "showdown"; }
 
@@ -108,6 +110,13 @@
         var decorLayer = $.CreatePanel("Panel", stage, "MG_PkDecor"); decorLayer.AddClass("mg-pk-decor");
         var cardLayer = $.CreatePanel("Panel", stage, "MG_PkCards"); cardLayer.AddClass("mg-pk-cards");
         var controlsZone = $.CreatePanel("Panel", root, "MG_PkControls"); controlsZone.AddClass("mg-poker-controls");
+
+        // Per-turn countdown (left gutter). Parented on `container` (the flow:none game host) so it
+        // parks in the modal's left margin, clear of the centred felt. Poker's action is ALWAYS
+        // optional-in-spirit but the clock is mandatory: if it empties, the seat is timed out with a
+        // fold (or a check when checking is free — never forfeit chips you didn't have to). Absent
+        // build (old mg_games) → null; every call guarded. See refreshTimer/onTimerExpire below.
+        var turnTimer = (MG.Widgets && MG.Widgets.createTurnTimer) ? MG.Widgets.createTurnTimer(container) : null;
 
         function xform(x, y, rot) {
             var t = "translate3d(" + Math.round(x) + "px, " + Math.round(y) + "px, 0px)";
@@ -157,6 +166,30 @@
             buildBoard();
             buildSeats();
             buildControls();
+            refreshTimer();
+        }
+
+        // ── per-turn countdown ───────────────────────────────────────────────────────
+        // The clock runs ONLY while it's my turn to act (myTurn()). If it empties I'm timed out:
+        // fold my hand — the maintainer's ruling — unless checking is free, in which case I check
+        // (there's no reason to forfeit equity when staying in costs nothing). pendingAct parks the
+        // action send, so a slow round-trip can't fire a bogus timeout. render() calls refreshTimer
+        // after every state change; a mode change (my turn ↔ not) (re)arms or stops the 20s.
+        var timerOn = false;
+        function refreshTimer() {
+            if (!turnTimer) return;
+            var live = myTurn() && !pendingAct;
+            if (live === timerOn) return;              // no change → keep the running (or stopped) clock
+            timerOn = live;
+            if (!live) { turnTimer.stop(); return; }
+            turnTimer.start(onTimerExpire);
+        }
+        function onTimerExpire() {
+            timerOn = false;
+            if (destroyed || !st || !myTurn()) return;
+            var la = P.legalActions(st, mySeat);
+            var action = la.canCheck ? { type: "check" } : { type: "fold" };
+            doAction(action);
         }
 
         function buildPot() {
@@ -450,6 +483,16 @@
                 return;
             }
             if (ev.type === "over") { gameOver = true; return; }
+            if (ev.type === "left") {
+                // A seat abandoned the table: replay it as a fold + chip forfeit through the shared
+                // engine (card-independent → byte-identical to the server), then bank the stacks so
+                // beginOnlineHand sits them out. The fold may itself have ended the hand; the server
+                // also flushed the matching board/WIN events, so we let those arrive and resolve.
+                if (st) { P.leaveSeat(st, ev.seat); stacks = st.stacks.slice(); }
+                else if (stacks && stacks[ev.seat] != null) stacks[ev.seat] = 0;
+                if (leftSeats.indexOf(ev.seat) < 0) leftSeats.push(ev.seat);
+                return;
+            }
             // betting actions — replayed through the shared engine (validated already server-side)
             var action = ev.type === "fold" ? { type: "fold" }
                 : ev.type === "check" ? { type: "check" }
@@ -553,7 +596,7 @@
         }
 
         return {
-            destroy: function () { destroyed = true; try { root.DeleteAsync(0); } catch (e) {} }
+            destroy: function () { destroyed = true; if (turnTimer) turnTimer.destroy(); try { root.DeleteAsync(0); } catch (e) {} }
         };
     }
 

@@ -49,6 +49,30 @@
 
         var root = $.CreatePanel("Panel", container, "MG_C4Root");
         root.AddClass("mg-cf");
+
+        // Per-turn countdown (left gutter of the modal). Parented on `container` (the flow:none game
+        // host) so it parks in the left margin, clear of the centred plate. Runs only while it's my
+        // move; on expiry I forfeit (Connect Four is always heads-up with a MANDATORY move —
+        // maintainer's ruling: timeout = loss). Online I also fire Leave so the opponent learns.
+        var turnTimer = (MG.Widgets && MG.Widgets.createTurnTimer) ? MG.Widgets.createTurnTimer(container) : null;
+        var timerOn = false;
+        function refreshTimer() {
+            if (!turnTimer) return;
+            var live = myTurn();
+            if (live === timerOn) return;
+            timerOn = live;
+            if (!live) { turnTimer.stop(); return; }
+            turnTimer.start(onTimerExpire);
+        }
+        function onTimerExpire() {
+            timerOn = false;
+            if (destroyed || gameOver || !myTurn()) return;
+            gameOver = true;
+            if (turnTimer) turnTimer.stop();
+            if (!session.bot && code) { try { if (MG.Api && MG.Api.leave) MG.Api.leave(code, session.tok); } catch (e) {} }
+            status("Time expired — you lose.");
+            if (session.onGameOver) session.onGameOver("lose");
+        }
         // Grid + discs OVERLAY are stacked siblings under a flow-children:none wrap (checkers
         // .mg-board-wrap idiom). Discs sit on the overlay ABOVE the plate; the overlay is
         // overflow:clip and sized to the plate's inner window, so a falling disc is visible only
@@ -183,6 +207,7 @@
             if (C.dropRow(board, col) < 0) return;       // column full — ignore
             applyDrop(col, myMark);
             turn = (myMark === RED ? YEL : RED);
+            refreshTimer();                              // I just acted → stop my clock
             if (session.bot) {
                 if (checkEnd()) return;
                 status("Bot is thinking…");
@@ -204,6 +229,7 @@
             turn = myMark;
             if (checkEnd()) return;
             status("Your turn.");
+            refreshTimer();                              // my turn opened → arm the clock
         }
 
         // ── relay + polling (mirrors tic-tac-toe) ────────────────────────────
@@ -232,6 +258,7 @@
             if (destroyed) return;
             if (seq >= appliedSeq) {
                 rebuildDiscs();
+                refreshTimer();                          // resync settled → (re)arm or stop to match
                 if (myTurn()) status("Move rejected — resynced. Your turn.");
                 else { status("Move rejected — resyncing…"); startPolling(); }
                 return;
@@ -262,6 +289,7 @@
                     turn = myMark;
                     if (checkEnd()) return;
                     status("Your turn.");
+                    refreshTimer();                       // my turn opened → arm the clock
                 } else {
                     $.Schedule(0.4, function () { pollOnce(myToken); });
                 }
@@ -282,9 +310,10 @@
             status("Opponent's turn…");
             startPolling();
         }
+        refreshTimer();                                  // arm if I open, else stay hidden
 
         return {
-            destroy: function () { destroyed = true; pollToken++; try { root.DeleteAsync(0); } catch (e) {} }
+            destroy: function () { destroyed = true; pollToken++; if (turnTimer) turnTimer.destroy(); try { root.DeleteAsync(0); } catch (e) {} }
         };
     }
 

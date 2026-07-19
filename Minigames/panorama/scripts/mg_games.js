@@ -141,6 +141,101 @@
         };
     }
 
+    // ── shared per-turn countdown timer (durak / poker / connect-four / tic-tac-toe) ──
+    // A slim VERTICAL bar to the LEFT of the board that drains top→bottom over TURN_SECS,
+    // with the whole-seconds remaining shown beneath it. Unlike the chess/checkers side
+    // clocks (two banks, server-authoritative), this is a SINGLE bar that runs ONLY while
+    // it's the LOCAL player's turn: the controller calls start(onExpire) when the human is
+    // put on the clock and stop() the instant they act (or a bot / online opponent takes
+    // over). If the bar empties, onExpire() fires exactly once — the controller turns that
+    // into a forfeit / elimination (offline it decides locally; online it sends a forfeit).
+    //
+    // NO @keyframes (ARCHITECTURE §17 — a stray @keyframes rule silently BRICKS the whole
+    // modded HUD stylesheet). The drain is ONE `transform: translate3d(0, H, 0)` write with
+    // a TURN_SECS-long LINEAR transition that lives on the .mg-tt-fill base class (the
+    // .mg-piece "set the value, let CSS tween it" idiom): a single assignment starts a smooth
+    // 20s slide with zero per-frame JS. A ~200ms $.Schedule loop only refreshes the seconds
+    // label + swaps the low/crit colour classes and arms the expiry — the motion is pure CSS.
+    var TURN_SECS = 20;                    // per-turn budget; matches .mg-tt-fill transition-duration in mg.css
+    function createTurnTimer(parent) {
+        var TRACK_H = 300;                 // px; MUST match .mg-tt-track height in mg.css (drain distance)
+        var wrap = $.CreatePanel("Panel", parent, "");
+        wrap.AddClass("mg-turn-timer");
+        wrap.style.visibility = "collapse";   // hidden until the first start()
+        var track = $.CreatePanel("Panel", wrap, "");
+        track.AddClass("mg-tt-track");
+        var fill = $.CreatePanel("Panel", track, "");
+        fill.AddClass("mg-tt-fill");
+        var num = $.CreatePanel("Label", wrap, "");
+        num.AddClass("mg-tt-num");
+
+        var gen = 0;                       // bumps on every start/stop/destroy → stale ticks bail
+        var dead = false, running = false, deadline = 0, expireCb = null;
+
+        // Snap the fill FULL (no transition) so a fresh turn starts from a full bar; the arm()
+        // below then flips on the animated class and pushes it to empty, tweening over TURN_SECS.
+        function snapFull() {
+            fill.RemoveClass("mg-tt-anim");
+            fill.RemoveClass("mg-tt-low");
+            fill.RemoveClass("mg-tt-crit");
+            fill.style.transform = "translate3d(0px, 0px, 0px)";
+        }
+        function arm() {
+            fill.AddClass("mg-tt-anim");
+            fill.style.transform = "translate3d(0px, " + TRACK_H + "px, 0px)";   // drain top→bottom over TURN_SECS
+        }
+
+        function tick(myGen) {
+            if (dead || myGen !== gen || !running) return;
+            var remain = (deadline - Date.now()) / 1000;
+            if (remain <= 0) {
+                running = false;
+                if (num.IsValid()) num.text = "0";
+                var cb = expireCb; expireCb = null;
+                if (cb) cb();
+                return;
+            }
+            if (num.IsValid()) num.text = String(Math.ceil(remain));
+            fill.SetHasClass("mg-tt-low", remain <= 10);
+            fill.SetHasClass("mg-tt-crit", remain <= 5);
+            $.Schedule(0.2, function () { tick(myGen); });
+        }
+
+        return {
+            el: wrap,
+            // Put the human on the clock. onExpire fires once if the bar empties first.
+            start: function (onExpire) {
+                if (dead) return;
+                gen++;
+                var myGen = gen;
+                running = true;
+                expireCb = onExpire || null;
+                deadline = Date.now() + TURN_SECS * 1000;
+                if (wrap.IsValid()) wrap.style.visibility = "visible";
+                snapFull();
+                num.text = String(TURN_SECS);
+                // Arm the CSS drain one frame later (the .mg-piece/.mg-anim arming trick): the
+                // full-snap must commit first, or the browser coalesces both writes and the bar
+                // jumps straight to empty with no slide.
+                $.Schedule(0.0, function () { if (!dead && gen === myGen && running) arm(); });
+                $.Schedule(0.2, function () { tick(myGen); });
+            },
+            // Take the human off the clock (they acted, or it's someone else's turn). Hides the
+            // bar and cancels the pending expiry so a slow action can't fire a stale timeout.
+            stop: function () {
+                gen++;                     // invalidate any in-flight tick + arm
+                running = false;
+                expireCb = null;
+                snapFull();
+                if (wrap.IsValid()) wrap.style.visibility = "collapse";
+            },
+            destroy: function () {
+                dead = true; gen++; running = false; expireCb = null;
+                try { wrap.DeleteAsync(0); } catch (e) {}
+            }
+        };
+    }
+
     // ── checkers controller ─────────────────────────────────────────────────
     function createCheckers(container, session) {
         var Api = MG.Api;
@@ -1253,6 +1348,30 @@
         var boardPanel = $.CreatePanel("Panel", root, "MG_TttBoard");
         boardPanel.AddClass("mg-ttt-board");
 
+        // Per-turn countdown (left gutter of the modal). Parented on `container` (the flow:none game
+        // host) so it parks in the left margin, clear of the centred board. Runs only while it's my
+        // move; on expiry I forfeit (TTT is always heads-up with a MANDATORY move — maintainer's
+        // ruling: timeout = loss). Online I also fire Leave so the opponent's poll learns at once.
+        var turnTimer = (MG.Widgets && MG.Widgets.createTurnTimer) ? MG.Widgets.createTurnTimer(container) : null;
+        var timerOn = false;
+        function refreshTimer() {
+            if (!turnTimer) return;
+            var live = myTurn();
+            if (live === timerOn) return;
+            timerOn = live;
+            if (!live) { turnTimer.stop(); return; }
+            turnTimer.start(onTimerExpire);
+        }
+        function onTimerExpire() {
+            timerOn = false;
+            if (destroyed || gameOver || !myTurn()) return;
+            gameOver = true;
+            if (turnTimer) turnTimer.stop();
+            if (!session.bot && code) { try { if (MG.Api && MG.Api.leave) MG.Api.leave(code, session.tok); } catch (e) {} }
+            status("Time expired — you lose.");
+            if (session.onGameOver) session.onGameOver("lose");
+        }
+
         var cells = [];
         (function buildCells() {
             for (var r = 0; r < 3; r++) {
@@ -1278,6 +1397,7 @@
                 if (board[i]) drawMark(cell, board[i]);
             }
             if (winLine) for (var k = 0; k < winLine.length; k++) cells[winLine[k]].AddClass("mg-ttt-win");
+            refreshTimer();
         }
 
         function place(i, mark) { board[i] = mark; }
@@ -1418,7 +1538,7 @@
         }
 
         return {
-            destroy: function () { destroyed = true; pollToken++; try { root.DeleteAsync(0); } catch (e) {} }
+            destroy: function () { destroyed = true; pollToken++; if (turnTimer) turnTimer.destroy(); try { root.DeleteAsync(0); } catch (e) {} }
         };
     }
 
@@ -2300,6 +2420,12 @@
             return createStub(container, session, g ? g.name : null);
         }
     };
+
+    // Shared widget factory reused by the separate game files (mg_durak / mg_poker /
+    // mg_connectfour) via MG.Widgets — they can't see this file's closure otherwise.
+    MG.Widgets = MG.Widgets || {};
+    MG.Widgets.createTurnTimer = createTurnTimer;
+    MG.Widgets.TURN_SECS = TURN_SECS;
 
     // Built-in games register their factories (their bodies live above in this file).
     MG.Games.register({ id: 1, create: createCheckers });

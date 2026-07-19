@@ -38,6 +38,8 @@
     var canAttackWith = D.canAttackWith, legalAttacks = D.legalAttacks;
     var canDefendPair = D.canDefendPair, legalDefends = D.legalDefends;
     var applyAttack = D.applyAttack, applyDefend = D.applyDefend, endBout = D.endBout, checkOver = D.checkOver;
+    var resetPasses = D.resetPasses, applyPass = D.applyPass, canBito = D.canBito;
+    var isAttackSeat = D.isAttackSeat, pendingThrowers = D.pendingThrowers, inPlayCount = D.inPlayCount;
     var sortByValue = D.sortByValue, cardValue = D.cardValue;
     var durakBotAttack = D.durakBotAttack, durakBotDefend = D.durakBotDefend;
 
@@ -117,6 +119,7 @@
         // still pending gives TWO concurrent loops sharing logSeq — they double-apply one event
         // and skip the next (an opponent's card silently vanishes; dealing corrupts the state).
         var pollGen = 0;
+        var leftSeats = [];              // online seats that abandoned the table (rendered as "left")
         var deckRemaining = DECK_SIZE;   // 36 minus every card drawn (client can't see the deck, only count it)
         for (var _s = 0; _s < numPlayers; _s++) drawCursor.push(0);
 
@@ -125,8 +128,8 @@
         // sentinels so their COUNT badges + back-bunches render; my hand fills from ddraw).
         function emptyOnlineState(N) {
             var s = { numPlayers: N, trump: -1, trumpCard: -1, deck: [], hands: [], table: [],
-                      attacker: 0, defender: 1 % N, phase: "attack", discard: 0, out: [], loser: -1 };
-            for (var i = 0; i < N; i++) { s.hands.push([]); s.out.push(false); }
+                      attacker: 0, defender: 1 % N, phase: "attack", discard: 0, out: [], passed: [], loser: -1 };
+            for (var i = 0; i < N; i++) { s.hands.push([]); s.out.push(false); s.passed.push(false); }
             return s;
         }
         // The client can't see the real deck, but it can COUNT it: 36 cards minus every card
@@ -145,7 +148,8 @@
         function status(t) { if (session.onStatus) session.onStatus(t); }
         function nameOf(seat) {
             if (seat === mySeat) return "You";
-            return isBot ? ("Bot " + seat) : ("Player " + (seat + 1));
+            var base = isBot ? ("Bot " + seat) : ("Player " + (seat + 1));
+            return (leftSeats.indexOf(seat) >= 0) ? (base + " (left)") : base;
         }
 
         var root = $.CreatePanel("Panel", container, "MG_DurakRoot");
@@ -163,6 +167,12 @@
         // reflows the modal.
         var controlsZone = $.CreatePanel("Panel", root, "MG_DkControls"); controlsZone.AddClass("mg-durak-controls");
 
+        // Per-turn countdown (left gutter). Parented on `container` (the flow:none game host) so it
+        // parks in the modal's left margin, clear of the centred felt. Runs ONLY while the LOCAL
+        // player owes an action; see refreshTimer/timerMode below for the (mandatory vs optional)
+        // split and what expiry does. Absent build (old mg_games) → null, every call guarded.
+        var turnTimer = (MG.Widgets && MG.Widgets.createTurnTimer) ? MG.Widgets.createTurnTimer(container) : null;
+
         var cardEls = {}; // card id -> persistent face panel on the stage
 
         // One-shot hint for the NEXT render's animateOut: when a bout ends by TAKE, the table cards
@@ -173,22 +183,111 @@
         // instead. Cleared after each render. -1 = normal (fly to deck: draws leaving, Bito discard).
         var boutTakeSeat = -1;
 
-        function actionActor() { return st.phase === "defend" ? st.defender : st.attacker; }
+        // Whose move is it? Defending → the defender. Attacking with an EMPTY table → the opener
+        // (primary attacker). Attacking with a COVERED table → we're in the throw-in window: the
+        // first attack seat (in turn order from the attacker) that still holds a legal throw-in and
+        // hasn't passed. If none is left, the bout is settled and about to be beaten → fall back to
+        // the attacker (who will register the final pass / trigger Bito). This throw-in-aware actor
+        // is what lets a co-attacker (or me) get a genuine window in 3–4-player play; for a 2-player
+        // covered table the only attack seat is the attacker, so it collapses to the old behaviour.
+        function actionActor() {
+            if (st.phase !== "attack") return st.defender;
+            if (st.table.length === 0) return st.attacker;
+            var pt = pendingThrowers(st);
+            return pt.length ? pt[0] : st.attacker;
+        }
         function myTurn() { return !destroyed && st.phase !== "over" && actionActor() === mySeat; }
-        // Can I initiate an ATTACK / THROW-IN via input right now?
-        //  • offline (always 2p heads-up here): only when it's my turn as the primary attacker —
-        //    identical to the pre-4-player behaviour, so no heads-up regression.
-        //  • online (2–4 seats): ANY in-play non-defender may throw in a legal card at any time
-        //    (the defining podkidnoy mechanic). The server serialises simultaneous throw-ins and
-        //    rejects a now-illegal one, which sendAct() surfaces gracefully. legalAttacks() gates
-        //    which cards actually qualify; this only governs whether input is live at all.
+        // Can I initiate an ATTACK / THROW-IN via input right now? ANY in-play non-defender may
+        // throw in a legal card during an open bout (the defining podkidnoy mechanic) — but not
+        // once I've passed on the current table (my knock stands until a fresh card reopens it).
+        //  • online (2–4 seats): the server serialises simultaneous throw-ins and rejects a
+        //    now-illegal one, which sendAct() surfaces gracefully.
+        //  • offline: bots drive the other seats; the turn loop only lets input go live when it's
+        //    actually my window. legalAttacks() gates which cards qualify — for an empty table it's
+        //    empty for everyone but the opener, so a 2-player game keeps its old heads-up feel.
         function canAttackInput() {
             if (destroyed || pendingAct || st.phase === "over") return false;
-            if (online) return mySeat !== st.defender;
-            return myTurn() && st.phase === "attack" && st.attacker === mySeat;
+            if (mySeat === st.defender || st.out[mySeat] || st.passed[mySeat]) return false;
+            if (online) return true;
+            // Offline: my window is the opener slot (empty table, I'm attacker) or a throw-in slot
+            // (covered table where I'm the current pending thrower). Bots hold the other seats.
+            if (st.table.length === 0) return st.attacker === mySeat;
+            return actionActor() === mySeat;
         }
         function canDefendInput() {
             return myTurn() && st.phase === "defend" && st.defender === mySeat && !pendingAct;
+        }
+
+        // ── per-turn countdown ───────────────────────────────────────────────────────
+        // Two flavours of "on the clock", because durak has a MANDATORY action (defend, or open
+        // an empty table as the primary attacker) and an OPTIONAL one (a throw-in window on a
+        // covered table — you MAY pile on a matching card or just pass). The maintainer's ruling:
+        //   • MANDATORY timeout  → you lose the game (2-player) / you leave the table (online 3–4).
+        //   • OPTIONAL timeout   → auto-pass (Bito), no penalty — you just declined to throw in.
+        // timerMode() classifies the current LOCAL obligation; refreshTimer() starts/stops the bar
+        // to match; onTimerExpire() applies the ruling. pendingAct (a send in flight) parks the
+        // clock so a slow round-trip can't fire a bogus timeout.
+        //   "" → not my move (bar hidden)   "mandatory" → defend/open   "optional" → throw-in window
+        function timerMode() {
+            if (destroyed || gameOver || pendingAct || st.phase === "over") return "";
+            if (canDefendInput()) return "mandatory";                       // must cover or take
+            if (st.phase === "attack" && st.table.length === 0 && !online && st.attacker === mySeat)
+                return "mandatory";                                          // offline: I must open
+            if (online && st.phase === "attack" && st.table.length === 0 && actionActor() === mySeat)
+                return "mandatory";                                          // online: I'm the opener
+            // Covered table + I still hold a legal throw-in and haven't passed → optional window.
+            if (canAttackInput() && st.table.length > 0 && uncoveredCount(st) === 0 &&
+                legalAttacks(st, mySeat).length > 0) return "optional";
+            return "";
+        }
+        // Reconcile the bar with the current obligation. Called after every render/state change:
+        // (re)starts the countdown when a NEW mandatory/optional window opens, stops it otherwise.
+        // We don't restart a still-running bar of the same mode, so the 20s doesn't reset when the
+        // felt changes but my SAME obligation persists (e.g. another attacker throws in while I'm
+        // still the one defending — I keep my original clock). A mode CHANGE (or a fresh window)
+        // arms a new 20s.
+        var timerActiveMode = "";
+        function refreshTimer() {
+            if (!turnTimer) return;
+            var mode = timerMode();
+            if (mode === timerActiveMode) return;   // same obligation still standing → keep the clock
+            timerActiveMode = mode;
+            if (!mode) { turnTimer.stop(); return; }
+            turnTimer.start(function () { onTimerExpire(mode); });
+        }
+        // The bar emptied. Mandatory → forfeit (2p: I lose; online 3–4: I leave the table, which
+        // the server turns into a fold-out). Optional → I simply pass (auto-Bito for my seat).
+        function onTimerExpire(mode) {
+            if (destroyed || gameOver || st.phase === "over") return;
+            timerActiveMode = "";
+            if (mode === "optional") {
+                // Decline to throw in: pass. Online the server tallies it; offline record my knock.
+                if (online) { if (!pendingAct) sendAct(4, 0, 0); return; }
+                myPass();
+                return;
+            }
+            // Mandatory obligation expired → forfeit.
+            forfeitByTimeout();
+        }
+        // I ran out of time on a REQUIRED action. Online with 3+ seats present I just leave the
+        // table (the server folds my seat out and the others play on); everywhere else (heads-up
+        // online, or any offline game) it's a straight loss for me.
+        function forfeitByTimeout() {
+            if (turnTimer) { turnTimer.stop(); timerActiveMode = ""; }
+            if (online && numPlayers >= 3 && inPlayCount(st) >= 3) {
+                // Leave: hand the seat back to the server; the LEFT event tears my view down. Mirror
+                // the lobby's own Leave button so the opponent(s) learn at once and the table lives.
+                destroyed = true;
+                try { if (MG.Api && MG.Api.leave) MG.Api.leave(session.code, session.tok); } catch (e) {}
+                if (MG.UI && MG.UI.kickToMenu) MG.UI.kickToMenu("Time expired — you left the table.");
+                return;
+            }
+            // Heads-up (online or offline) or offline 3–4: I am the loser.
+            gameOver = true;
+            st.phase = "over";
+            st.loser = mySeat;
+            if (online) { try { if (MG.Api && MG.Api.leave) MG.Api.leave(session.code, session.tok); } catch (e) {} }
+            finishGame();
         }
 
         // slot geometry (stage coords)
@@ -590,14 +689,25 @@
 
         function buildControls() {
             controlsZone.RemoveAndDeleteChildren();
-            var canAct = myTurn() && !pendingAct;
-            if (canAct && st.phase === "attack" && st.attacker === mySeat && st.table.length > 0) {
-                mkButton(controlsZone, "Pass", function () {
-                    if (!myTurn() || pendingAct) return;
-                    if (online) { sendAct(4, 0, 0); return; }         // 4 = bito (beat)
-                    endBout(st, false); afterAction();
+            // PASS ("done adding") — offered to ANY in-play attack seat that hasn't passed while a
+            // covered bout is open (its throw-in window), not just the primary attacker. Online the
+            // server tallies passes and beats the table only on full consensus; offline myPass()
+            // records my knock and hands the turn to the bots (which may still pile on). The button
+            // reads "Pass" when others might still add, "Beat" when I'm the last to settle — a small
+            // affordance so a heads-up game still says the familiar "Beat".
+            var iCanAdd = st.phase === "attack" && st.table.length > 0 && uncoveredCount(st) === 0 &&
+                          mySeat !== st.defender && !st.out[mySeat] && !st.passed[mySeat] && !pendingAct;
+            if (iCanAdd) {
+                // "Beat" if passing NOW would settle the table (I'm the only unsettled attack seat);
+                // else "Pass" (someone else may still throw in).
+                var lastToSettle = pendingThrowers(st).length <= 1;   // only me (or nobody) pending
+                mkButton(controlsZone, lastToSettle ? "Beat" : "Pass", function () {
+                    if (pendingAct || st.passed[mySeat]) return;
+                    if (online) { sendAct(4, 0, 0); return; }         // 4 = pass/knock (server tallies)
+                    myPass();
                 });
             }
+            var canAct = myTurn() && !pendingAct;
             if (canAct && st.phase === "defend" && st.defender === mySeat && st.table.length > 0) {
                 mkButton(controlsZone, "Take", function () {
                     if (!myTurn() || pendingAct) return;
@@ -630,6 +740,9 @@
             for (var i = 0; i < wanted.length; i++) ensureCard(wanted[i]);
             buildControls();
             boutTakeSeat = -1;   // one-shot: consumed by this render's animateOut
+            // Reconcile the countdown with the freshly-rendered state — this single hook covers
+            // every path (offline afterAction, online pollLoop/pullDraws) since they all render().
+            refreshTimer();
         }
 
         // input
@@ -656,45 +769,65 @@
         }
 
 
-        // turn loop
+        // turn loop (offline). Online drives everything from pollLoop/onlineStatus instead.
         function promptFor() {
             if (st.phase === "defend" && st.defender === mySeat)
                 return "Your defense. Cover the attacks or take.";
-            if (st.attacker === mySeat && st.table.length === 0) return "Your turn. Attack.";
-            if (st.attacker === mySeat) return "Add a matching-rank card, or press Pass.";
-            return "Waiting.";
+            if (st.table.length === 0 && st.attacker === mySeat) return "Your turn. Attack.";
+            // Covered table, my throw-in window (primary attacker OR a co-attacker).
+            return "Add a matching-rank card, or pass.";
+        }
+
+        // I knock: "done adding to this table". Records my pass; if that settles the bout it's
+        // beaten right away (afterAction sees canBito), otherwise the bots get their window.
+        function myPass() {
+            if (destroyed || st.phase === "over" || st.passed[mySeat]) return;
+            applyPass(st, mySeat);
+            afterAction();
         }
 
         function afterAction() {
             if (destroyed) return;
             render();
             if (checkOver(st)) { finishGame(); return; }
+            // Consensus Bito: a covered table with nobody left to throw in is beaten automatically
+            // (offline; online the server owns this). This is the multiplayer replacement for the
+            // old "attacker presses Bito" — the bout ends only once EVERY attack seat has settled.
+            if (st.phase === "attack" && st.table.length > 0 && canBito(st)) {
+                endBout(st, false); afterAction(); return;
+            }
             var actor = actionActor();
             if (actor === mySeat) { status(promptFor()); return; }
             if (isBot) { status(nameOf(actor) + " is thinking..."); $.Schedule(0.55, botTurn); return; }
-            // Stage 2 (online): poll the public log here.
             status(nameOf(actor) + "'s turn...");
         }
 
         function botTurn() {
             if (destroyed || st.phase === "over") return;
-            var actor = actionActor();
+            var actor = actionActor();          // throw-in-aware: the current pending thrower, or opener/defender
             if (actor === mySeat) { afterAction(); return; }
             if (!isBot) return;
             if (st.phase === "defend") {
                 var d = durakBotDefend(st, st.defender);
                 if (d) applyDefend(st, d.pair, d.card);
                 else { boutTakeSeat = st.defender; endBout(st, true); }
+            } else if (st.table.length === 0) {
+                var c = durakBotAttack(st, actor);          // opener plays its lowest
+                if (c >= 0) applyAttack(st, actor, c);
+                // opener always has a legal card; if not, afterAction's canBito path resolves it
             } else {
-                var c = durakBotAttack(st, st.attacker);
-                if (c >= 0) applyAttack(st, st.attacker, c);
-                else if (st.table.length > 0) endBout(st, false);
-                else { /* opener always has a legal card; nothing to do */ }
+                // Throw-in window: this bot is the current pending thrower — add a cheap matching
+                // card, or knock (pass) when it doesn't want to pile on. Passing lets the next
+                // pending seat (or the consensus Bito) take over.
+                var t = durakBotAttack(st, actor);
+                if (t >= 0) applyAttack(st, actor, t);
+                else applyPass(st, actor);
             }
             afterAction();
         }
 
         function finishGame() {
+            if (turnTimer) { turnTimer.stop(); timerActiveMode = ""; }
             render();
             if (st.loser < 0) status("Draw.");
             else if (st.loser === mySeat) status("You lose.");
@@ -736,14 +869,27 @@
             else if (ev.type === "take") {
                 for (var i = 0; i < st.table.length; i++) { addToHand(ev.seat, st.table[i].a); if (st.table[i].d >= 0) addToHand(ev.seat, st.table[i].d); }
                 st.table = [];   // ROLES will set the next attacker/defender
+                resetPasses(st); // fresh bout coming — clear stale throw-in consensus
                 boutTakeSeat = ev.seat;   // next render flies the picked-up cards to the taker, not the deck
             }
-            else if (ev.type === "bito") { st.table = []; }   // ROLES follows
+            else if (ev.type === "pass") { st.passed[ev.seat] = true; }   // seat done adding; window still open
+            else if (ev.type === "bito") { st.table = []; resetPasses(st); }   // ROLES follows
             else if (ev.type === "draw") {
                 deckRemaining = Math.max(0, deckRemaining - ev.count);
                 setDeckCount(deckRemaining);
                 if (ev.seat === mySeat) myDrawExpected += ev.count;      // real ids pulled via ddraw
                 else for (var k = 0; k < ev.count; k++) addToHand(ev.seat, HIDDEN);
+            }
+            else if (ev.type === "left") {
+                // A seat abandoned the table. Mirror the server's leaveSeat locally: sit them out,
+                // drop their hand (opponent counts), and void any live bout — the discarded felt
+                // just leaves play. The server follows with DRAW refills for the survivors and an
+                // authoritative ROLES (or OVER), so we don't rotate roles here, only clear the felt.
+                st.out[ev.seat] = true;
+                st.hands[ev.seat] = [];
+                st.table = [];
+                resetPasses(st);
+                if (leftSeats.indexOf(ev.seat) < 0) leftSeats.push(ev.seat);
             }
             else if (ev.type === "over") { st.phase = "over"; st.loser = ev.loser; gameOver = true; }
         }
@@ -819,7 +965,7 @@
 
 
         return {
-            destroy: function () { destroyed = true; try { root.DeleteAsync(0); } catch (e) {} }
+            destroy: function () { destroyed = true; if (turnTimer) turnTimer.destroy(); try { root.DeleteAsync(0); } catch (e) {} }
         };
     }
 

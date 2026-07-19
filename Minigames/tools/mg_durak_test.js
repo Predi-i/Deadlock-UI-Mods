@@ -145,6 +145,118 @@ console.log("full bot-vs-bot games terminate & conserve cards");
     ok(true, "all 120 bot games finished, cards conserved, a fool (or draw) decided");
 })();
 
+console.log("throw-in consensus (canBito / pass window)");
+(function () {
+    // 2 players: one non-defender (the attacker). Once it passes on a covered table, canBito.
+    const st = M.newGame(2, 5);
+    const atk = st.attacker;
+    M.applyAttack(st, atk, st.hands[atk][0]);
+    ok(!M.canBito(st), "uncovered table can't be beaten");
+    const ld = M.legalDefends(st, 0);
+    if (ld.length) {
+        M.applyDefend(st, 0, ld[0]);
+        // Table now covered. If the attacker still has a legal throw-in it must NOT be bito-able
+        // until it passes; if it has none, the seat is auto-settled → bito immediately.
+        const canThrow = M.legalAttacks(st, atk).length > 0;
+        if (canThrow) {
+            ok(!M.canBito(st), "covered but attacker still holds a throw-in → not yet bito");
+            ok(M.pendingThrowers(st).indexOf(atk) >= 0, "attacker listed as a pending thrower");
+            M.applyPass(st, atk);
+            ok(M.canBito(st), "attacker passed → bito now allowed");
+            ok(M.pendingThrowers(st).length === 0, "no pending throwers after the pass");
+        } else {
+            ok(M.canBito(st), "covered and attacker has no throw-in → auto-settled, bito allowed");
+        }
+    } else {
+        ok(true, "deal forces a take — consensus not exercised this seed");
+    }
+})();
+
+console.log("a fresh attack card reopens a passed window");
+(function () {
+    // 3 players so there are TWO non-defender attack seats: the primary attacker and one co-attacker.
+    // After both settle and one throws a new matching card, passes must reset (window reopens).
+    let reopened = false, exercised = false;
+    for (let seed = 1; seed <= 60 && !reopened; seed++) {
+        const st = M.newGame(3, seed * 17);
+        const atk = st.attacker;
+        M.applyAttack(st, atk, st.hands[atk][0]);
+        const ld = M.legalDefends(st, 0);
+        if (!ld.length) continue;
+        M.applyDefend(st, 0, ld[0]);
+        // Settle everyone by fiat, then confirm a new attack clears the passes.
+        M.applyPass(st, atk);
+        const co = [0, 1, 2].find(s => M.isAttackSeat(st, s) && s !== atk);
+        if (co != null) M.applyPass(st, co);
+        exercised = true;
+        // Find any legal throw-in for any attack seat and play it.
+        for (const s of [atk, co]) {
+            if (s == null) continue;
+            const la = M.legalAttacks(st, s);
+            if (la.length && st.table.length < 6) {
+                M.applyAttack(st, s, la[0]);
+                ok(!st.passed[atk] && (co == null || !st.passed[co]), "new attack reset all passes");
+                reopened = true;
+                break;
+            }
+        }
+    }
+    ok(exercised, "reached a covered 3p table to test the reopen rule");
+})();
+
+console.log("full CONSENSUS bot games (all attack seats throw in) terminate & conserve");
+(function () {
+    // Drive games where EVERY in-play non-defender throws in until it has nothing legal, then
+    // passes — the true podkidnoy flow. Bito only when canBito(). This exercises the new consensus
+    // path end-to-end (the old loop above only lets the primary attacker act).
+    let bad = 0;
+    for (let seed = 1; seed <= 40; seed++) {
+        for (const N of [2, 3, 4]) {
+            const st = M.newGame(N, seed * 911 + N);
+            let guard = 0, threw = false;
+            try {
+                while (st.phase !== "over" && guard++ < 40000) {
+                    if (st.phase === "defend") {
+                        const d = M.durakBotDefend(st, st.defender);
+                        if (d) M.applyDefend(st, d.pair, d.card);
+                        else { M.endBout(st, true); }
+                        continue;
+                    }
+                    // attack phase (table fully covered or empty). Empty → opener must play.
+                    if (st.table.length === 0) {
+                        const c = M.durakBotAttack(st, st.attacker);
+                        if (c >= 0) M.applyAttack(st, st.attacker, c);
+                        else M.endBout(st, false);   // opener with nothing is degenerate; discard
+                        continue;
+                    }
+                    // Covered table: let a pending thrower add a card; else everyone passes → bito.
+                    const throwers = M.pendingThrowers(st);
+                    if (throwers.length) {
+                        const s = throwers[0];
+                        const la = M.sortByValue(M.legalAttacks(st, s), st.trump);
+                        // Throw the cheapest legal card (mirrors bot temperament, but always adds
+                        // when able, to stress the window rather than stop early).
+                        M.applyAttack(st, s, la[0]);
+                    } else if (M.canBito(st)) {
+                        M.endBout(st, false);
+                    } else {
+                        // Nobody can throw and canBito is false only if still uncovered — shouldn't
+                        // happen in the attack branch. Force-pass to avoid a spin, flag if it recurs.
+                        for (let s = 0; s < N; s++) M.applyPass(st, s);
+                        if (!M.canBito(st)) { threw = true; break; }
+                    }
+                    if (totalCards(st) !== 36) { threw = true; break; }
+                }
+            } catch (e) { threw = true; }
+            if (threw || st.phase !== "over" || guard >= 40000) {
+                bad++;
+                ok(false, "consensus N=" + N + " seed=" + seed + " did not finish (guard=" + guard + ")");
+            }
+        }
+    }
+    ok(bad === 0, "all 120 consensus bot games finished, cards conserved, a fool decided");
+})();
+
 console.log("");
 if (failures) { console.log(failures + " check(s) FAILED"); process.exit(1); }
 else { console.log("all durak checks passed"); }

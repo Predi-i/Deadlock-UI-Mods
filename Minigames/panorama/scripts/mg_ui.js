@@ -378,10 +378,13 @@
         selfTestToken++;
         if (MG.Net && MG.Net.clearQueue) try { MG.Net.clearQueue(); } catch (e) {}
         
-        // Only cancel the server lobby if the player explicitly left or closed the menu
-        if (cancelServer && currentCode && (view === "waiting" || view === "room" || view === "game")) {
-            try { MG.Api.cancel(currentCode, currentTok); } catch (e) {}
-
+        // Tell the server the player is leaving. A lobby still WAITING (waiting/room) is cancelled
+        // — it only exists to be torn down before anyone's committed. A live game uses leave
+        // instead: cancel is a no-op once players ≥ 2, so it never reached a mid-match opponent —
+        // leave folds this seat out (3–4-seat durak/poker) or ends the match (pair games) at once.
+        if (cancelServer && currentCode) {
+            if (view === "game") { try { MG.Api.leave(currentCode, currentTok); } catch (e) {} }
+            else if (view === "waiting" || view === "room") { try { MG.Api.cancel(currentCode, currentTok); } catch (e) {} }
         }
         
         // Destroy active game if any

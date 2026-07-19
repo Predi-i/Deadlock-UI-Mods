@@ -478,6 +478,14 @@
             request("/api/cancel", { code: code, tok: tok || "" }, function (w, h) { if (cb) cb(true); }, err);
         },
 
+        // Leave a game already in progress. Unlike cancel (which only works while a lobby waits),
+        // this reaches the server mid-match so the opponent learns at once: a pair game is torn
+        // down (their next poll returns (9,9) → "Opponent left."), while a 3–4-seat durak/poker
+        // table folds this seat out and plays on. Fire-and-forget — the caller is leaving anyway.
+        leave: function (code, tok, cb, err) {
+            request("/api/leave", { code: code, tok: tok || "" }, function (w, h) { if (cb) cb(true); }, err);
+        },
+
 
         join: function (code, tok, cb, err) {
             request("/api/join", { code: code, tok: tok }, function (w, h) {
@@ -547,8 +555,8 @@
         poll: function (code, since, cb, err, validate) {
             request("/api/poll", { code: code, since: since }, function (w, h) {
                 if (w === 9 && h === 9) {
-                    log("opponent disconnected (9x9 received)");
-                    if (MG.UI && MG.UI.kickToMenu) MG.UI.kickToMenu("Opponent disconnected.");
+                    log("opponent left (9x9 received)");
+                    if (MG.UI && MG.UI.kickToMenu) MG.UI.kickToMenu("Opponent left.");
                     return;
                 }
                 var end = w > 100 ? 1 : 0;
@@ -659,7 +667,7 @@
             request("/api/dlog", { code: code, since: since }, function (w, h) {
                 if (w === 1 && h === 1) { cb(null); return; }
                 if (w === 9 && h === 9) {
-                    if (MG.UI && MG.UI.kickToMenu) MG.UI.kickToMenu("Lobby closed.");
+                    if (MG.UI && MG.UI.kickToMenu) MG.UI.kickToMenu("Opponent left.");
                     return;
                 }
                 // Seat ranges span 0..3 (2–4 players). ROLES(4, a*4+d+1) is the server-owned
@@ -672,6 +680,8 @@
                 else if (w >= 20 && w <= 25 && h >= 1 && h <= 36) ev = { type: "cover", pair: w - 20, card: h - 1 };
                 else if (w >= 30 && w <= 33 && h === 1) ev = { type: "take", seat: w - 30 };
                 else if (w === 40 && h === 1) ev = { type: "bito" };
+                else if (w >= 41 && w <= 44 && h === 1) ev = { type: "pass", seat: w - 41 };
+                else if (w >= 45 && w <= 48 && h === 1) ev = { type: "left", seat: w - 45 };
                 else if (w >= 50 && w <= 53 && h >= 1 && h <= 7) ev = { type: "draw", seat: w - 50, count: h - 1 };
                 else if (w === 60 && h >= 1 && h <= 5) ev = { type: "over", loser: h - 2 };
                 if (!ev) {
@@ -839,7 +849,7 @@
             request("/api/plog", { code: code, since: since }, function (w, h) {
                 if (w === 1 && h === 1) { cb(null); return; }        // nothing new
                 if (w === 9 && h === 9) {
-                    if (MG.UI && MG.UI.kickToMenu) MG.UI.kickToMenu("Lobby closed.");
+                    if (MG.UI && MG.UI.kickToMenu) MG.UI.kickToMenu("Opponent left.");
                     return;
                 }
                 var ev = null;
@@ -853,6 +863,8 @@
                 else if (w >= 20 && w <= 23 && h === 1) ev = { type: "check", seat: w - 20 };
                 else if (w >= 30 && w <= 33 && h === 1) ev = { type: "call", seat: w - 30 };
                 else if (w >= 40 && w <= 43 && h >= 1) ev = { type: "raise", seat: w - 40, to: h - 1 };
+                // LEFT(50+seat, 1) — a seat abandoned the table; replayed as a fold + chip forfeit
+                else if (w >= 50 && w <= 53 && h === 1) ev = { type: "left", seat: w - 50 };
                 // SHOW(60+seat, card+1)
                 else if (w >= 60 && w <= 63 && h >= 1 && h <= 52) ev = { type: "show", seat: w - 60, card: h - 1 };
                 if (!ev) {

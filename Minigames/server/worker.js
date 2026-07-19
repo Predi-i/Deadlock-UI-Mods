@@ -966,9 +966,17 @@
             phase: "attack",   // "attack" | "defend" | "over"
             discard: 0,
             out: [],
+            // Classic podkidnoy throw-in consensus: `passed[s]` = seat s has declared "done
+            // adding" for the CURRENT table. A bout ends by Bito only once EVERY in-play
+            // non-defender who still holds a legal throw-in has passed (see canBito). Any card
+            // hitting the table (attack OR cover) reopens the window, so passes reset then. This
+            // is what gives co-attackers (and the primary attacker) a real window to pile on
+            // matching ranks before the table is beaten — the mechanic the 2-player code never
+            // exercised (one non-defender = the attacker, so its single "pass" was the old Bito).
+            passed: [],
             loser: -1
         };
-        for (var s = 0; s < numPlayers; s++) st.out.push(false);
+        for (var s = 0; s < numPlayers; s++) { st.out.push(false); st.passed.push(false); }
         st.attacker = firstAttacker(st);
         st.defender = nextInPlay(st, st.attacker);
         return st;
@@ -1023,16 +1031,59 @@
         return out;
     }
 
+    // Clear every seat's "done adding" flag. Called whenever the table changes (a new attack
+    // card or a cover), because fresh cards can create new throw-in options for a seat that had
+    // already passed — so consensus must be re-earned before the bout can be beaten.
+    function resetPasses(st) {
+        for (var s = 0; s < st.numPlayers; s++) st.passed[s] = false;
+    }
+    // Is `seat` an in-play ATTACKER (not the defender, not out)? Only these seats throw in and
+    // vote on ending the bout; the defender's "end" action is Take, handled separately.
+    function isAttackSeat(st, seat) { return seat !== st.defender && !st.out[seat]; }
+
+    // Record that `seat` is done adding cards to the current table (a "pass"/knock). Idempotent.
+    function applyPass(st, seat) { if (isAttackSeat(st, seat)) st.passed[seat] = true; }
+
+    // Has `seat` earned the right to still act (throw in) or must it pass? An attack seat is
+    // "settled" once it either passed OR holds no legal throw-in for the current table.
+    function attackSeatSettled(st, seat) {
+        if (!isAttackSeat(st, seat)) return true;
+        if (st.passed[seat]) return true;
+        return legalAttacks(st, seat).length === 0;
+    }
+    // The table may be beaten (Bito) only when it's non-empty, fully covered, AND every in-play
+    // attack seat has settled (passed or has nothing legal to throw in). This replaces the old
+    // "primary attacker presses Bito" single-vote rule so 3–4-player throw-ins get their window.
+    function canBito(st) {
+        if (st.table.length === 0 || uncoveredCount(st) !== 0) return false;
+        for (var s = 0; s < st.numPlayers; s++) if (!attackSeatSettled(st, s)) return false;
+        return true;
+    }
+    // Which attack seats could still throw a legal card in right now (table covered, not yet
+    // passed, and holding a matching-rank card), in classic turn order starting from the primary
+    // attacker. Empty ⇒ nobody left to add → the bout is ready for Bito.
+    function pendingThrowers(st) {
+        var out = [];
+        if (uncoveredCount(st) !== 0) return out;   // still defending; no throw-in window yet
+        for (var k = 0; k < st.numPlayers; k++) {
+            var s = (st.attacker + k) % st.numPlayers;
+            if (isAttackSeat(st, s) && !st.passed[s] && legalAttacks(st, s).length > 0) out.push(s);
+        }
+        return out;
+    }
+
     // mutators
     function applyAttack(st, seat, card) {
         removeCard(st.hands[seat], card);
         st.table.push({ a: card, d: -1 });
         st.phase = "defend";
+        resetPasses(st);                 // a new attack card reopens the throw-in window for everyone
     }
     function applyDefend(st, pairIndex, card) {
         removeCard(st.hands[st.defender], card);
         st.table[pairIndex].d = card;
-        if (uncoveredCount(st) === 0) st.phase = "attack"; // hand back to the attacker (add or Bito)
+        resetPasses(st);                 // a fresh cover can enable new throw-in ranks → reopen
+        if (uncoveredCount(st) === 0) st.phase = "attack"; // hand back to the attacker(s): add or Bito
     }
 
     function updateOut(st) {
@@ -1073,6 +1124,7 @@
             for (i = 0; i < st.table.length; i++) { st.discard++; if (st.table[i].d >= 0) st.discard++; }
         }
         st.table = [];
+        resetPasses(st);                 // fresh table → nobody has settled yet
         refill(st);
         updateOut(st);
         // Successful defense → the defender attacks next. Took → the taker is skipped.
@@ -1082,6 +1134,30 @@
         st.phase = "attack";
         checkOver(st);
     }
+    // A seat abandons the table mid-game (online "Leave"). Their cards leave play with them, any
+    // live bout is voided (a defender walking out can't be forced to finish), the survivors refill,
+    // and roles rotate to the next in-play seats. Deterministic so the server drives it and clients
+    // just apply the resulting LEFT + DRAW + ROLES events. inPlayCount ≤ 1 afterwards ends the game.
+    function leaveSeat(st, seat) {
+        if (st.out[seat] || st.phase === "over") return;
+        st.out[seat] = true;
+        // The leaver's hand is dead — count it into the discard pile so deck maths stay sane.
+        st.discard += st.hands[seat].length;
+        st.hands[seat] = [];
+        // Void any open bout: the table's cards go to discard (the defender may be the one leaving,
+        // so there's no clean "took"/"beaten" resolution — the bout simply doesn't count).
+        for (var i = 0; i < st.table.length; i++) { st.discard++; if (st.table[i].d >= 0) st.discard++; }
+        st.table = [];
+        resetPasses(st);
+        refill(st);                          // survivors top up (attacker-first, defender last)
+        updateOut(st);
+        var base = firstInPlayFrom(st, st.attacker);   // skip the leaver if it was the attacker
+        st.attacker = base;
+        st.defender = nextInPlay(st, base);
+        st.phase = "attack";
+        checkOver(st);
+    }
+
     // Game ends when one or zero players are still holding cards. That last player is the
     // fool (durak); zero means a rare simultaneous-empty draw.
     function checkOver(st) {
@@ -1130,7 +1206,9 @@
         uncoveredCount: uncoveredCount, firstUncovered: firstUncovered, canAttackWith: canAttackWith,
         legalAttacks: legalAttacks, canDefendPair: canDefendPair, legalDefends: legalDefends,
         applyAttack: applyAttack, applyDefend: applyDefend, updateOut: updateOut,
-        inPlayCount: inPlayCount, refill: refill, endBout: endBout, checkOver: checkOver,
+        resetPasses: resetPasses, isAttackSeat: isAttackSeat, applyPass: applyPass,
+        attackSeatSettled: attackSeatSettled, canBito: canBito, pendingThrowers: pendingThrowers,
+        inPlayCount: inPlayCount, refill: refill, endBout: endBout, checkOver: checkOver, leaveSeat: leaveSeat,
         cardValue: cardValue, sortByValue: sortByValue,
         durakBotAttack: durakBotAttack, durakBotDefend: durakBotDefend
     };
@@ -1472,6 +1550,26 @@
         showdown(st);
     }
 
+    // A seat abandons the table mid-game (online "Leave"). It plays out EXACTLY like a fold —
+    // card-independent, so the server and every client replay it byte-identically off a single
+    // LEFT event — plus the leaver forfeits their remaining chips so `newHand`'s `stacks[s] > 0`
+    // test sits them out of every future hand. Folding a seat that wasn't `toAct` can still end
+    // the hand (everyone else already folded) or complete the round (they were the last to act),
+    // so we re-run the same terminal checks `advance` does, but only hand `toAct` forward when the
+    // LEAVER was the one on the clock (otherwise the current actor keeps their turn).
+    function leaveSeat(st, seat) {
+        var wasLive = st.inHand[seat] && !st.folded[seat];
+        st.stacks[seat] = 0;                       // forfeit remaining chips → out of all future hands
+        if (!wasLive) return;
+        st.folded[seat] = true;
+        st.acted[seat] = true;                     // don't let roundOver wait on a seat that's gone
+        var wasToAct = st.toAct === seat;
+        if (activeCount(st) <= 1) { finish(st); return; }
+        if (canActCount(st) <= 1 && roundOver(st)) { runout(st); return; }
+        if (roundOver(st)) { nextStreet(st); return; }
+        if (wasToAct) st.toAct = nextToAct(st, st.toAct);
+    }
+
     // Single player left (all others folded): they take the pot uncontested, no cards shown.
     function finish(st) {
         var winner = -1;
@@ -1618,7 +1716,7 @@
         straightHigh: straightHigh, score: score, compareScores: compareScores, evalSeat: evalSeat,
         nextSeat: nextSeat, nextToAct: nextToAct, firstLeftOfButton: firstLeftOfButton,
         activeCount: activeCount, canActCount: canActCount, totalPot: totalPot,
-        newHand: newHand, legalActions: legalActions, applyAction: applyAction,
+        newHand: newHand, legalActions: legalActions, applyAction: applyAction, leaveSeat: leaveSeat,
         roundOver: roundOver, showdown: showdown, resolveShowdown: resolveShowdown,
         nextOccupied: nextOccupied, activeSeatCount: activeSeatCount,
         preflopStrength: preflopStrength, madeStrength: madeStrength, botAction: botAction
@@ -1841,6 +1939,41 @@ export class Hub {
           await this.storage.delete("l:" + code);
           await this.clearQueuesFor(lobby, code); // clear every per-game queue this lobby holds
         }
+        return png(1, 1);
+      }
+
+      // ── leave a game already in progress ──────────────────────────────────────
+      // `cancel` only fires while a lobby is still waiting (players < 2). Once a match is live,
+      // the "Leave" button hits THIS route so the opponent learns immediately instead of relying
+      // on the 30-min idle sweep. A valid seat token is the anchor of trust — a 4-digit
+      // code-guesser holds no seat token, so it can never nuke someone else's active match.
+      //   • Pair games (board games, or any table down to its last two present players): the lobby
+      //     is deleted, so the survivor's next poll/dlog/plog — and any action — returns (9,9) and
+      //     the client shows "Opponent left." (they win a decided game).
+      //   • 3–4-seat durak/poker with ≥3 present: the seat is folded out via durakLeave/pokerLeave,
+      //     which appends a LEFT event (+ DRAW/ROLES or board/WIN) to the public log so the table
+      //     plays on without the leaver. The game only ends here if it drops to one player.
+      if (p === "/api/leave") {
+        const lobby = code ? await this.storage.get("l:" + code) : null;
+        if (!lobby) return png(1, 1);                       // already gone — nothing to do
+        const seat = seatOf(lobby, q.get("tok"));
+        if (seat < 0) return png(1, 1);                     // not a seated player: ignore, don't leak
+        lobby.left = lobby.left || [];
+        if (lobby.left.indexOf(seat) < 0) lobby.left.push(seat);
+        const started = !!(lobby.state && lobby.state.started);
+        const present = lobby.players - lobby.left.length;  // still-seated players after this leave
+        const isMultiSeat = !!lobby.cap && (lobby.game === 3 || lobby.game === 6);
+        if (started && isMultiSeat && present >= 2) {
+          // Table plays on without the leaver: fold them out and log it.
+          if (lobby.game === 3) durakLeave(lobby, seat);
+          else pokerLeave(lobby, seat);
+          lobby.t = nowSeq();
+          await this.storage.put("l:" + code, lobby);
+          return png(1, 1);
+        }
+        // Pair game, pre-start lobby, or the table just dropped to one player → tear it down.
+        await this.storage.delete("l:" + code);
+        await this.clearQueuesFor(lobby, code);
         return png(1, 1);
       }
 
@@ -2550,6 +2683,7 @@ function durakStart(lobby, seat) {
   st.deck = g.deck; st.hands = g.hands; st.table = g.table;
   st.attacker = g.attacker; st.defender = g.defender; st.phase = g.phase;
   st.discard = g.discard; st.out = g.out; st.loser = g.loser;
+  st.passed = g.passed;                                  // throw-in consensus flags (per seat)
   st.pub = []; st.priv = [];
   for (let s = 0; s < n; s++) st.priv.push([]);
   st.started = 1;
@@ -2587,6 +2721,45 @@ function durakEndBout(st, took) {
   dpush(st, 4, st.attacker * 4 + st.defender + 1);
 }
 
+// A seat abandons a live durak table. Mirrors durakEndBout's DRAW accounting: snapshot the deck,
+// run the shared leaveSeat rule (voids the bout, refills survivors, rotates roles), then emit the
+// LEFT event, a DRAW per seat that picked up from the deck, and the authoritative post-leave ROLES
+// (or OVER when one player remains). Deterministic → clients replay it off the public log.
+function durakLeave(lobby, seat) {
+  const R = rules().durak;
+  const st = lobby.state;
+  if (!st || !st.started || st.phase === "over") return;
+  if (st.out[seat]) return;                                 // already gone (idempotent)
+  const before = {};
+  for (let i = 0; i < st.deck.length; i++) before[st.deck[i]] = 1;
+  R.leaveSeat(st, seat);
+  dpush(st, 45 + seat, 1);                                  // LEFT(seat)
+  for (let s = 0; s < st.numPlayers; s++) {
+    const drawn = [];
+    for (let k = 0; k < st.hands[s].length; k++) if (before[st.hands[s][k]]) drawn.push(st.hands[s][k]);
+    if (drawn.length) {
+      for (let d = 0; d < drawn.length; d++) st.priv[s].push(drawn[d]);
+      dpush(st, 50 + s, drawn.length + 1);                 // DRAW(s, n)
+    }
+  }
+  if (st.phase === "over") { dpush(st, 60, st.loser + 2); return; }  // OVER(loser)
+  dpush(st, 4, st.attacker * 4 + st.defender + 1);         // ROLES(attacker, defender)
+}
+
+// A seat abandons a live poker table. Folds them out of the current hand and forfeits their chips
+// (leaveSeat sets stack 0 → newHand sits them out forever) via the shared rule, emits LEFT(seat),
+// then flushes the board/showdown/WIN the fold may have triggered — exactly like a normal fold.
+function pokerLeave(lobby, seat) {
+  const R = rules().poker;
+  const s = lobby.state;
+  if (!s || !s.started) return;
+  s.log = s.log || [];
+  if (s.st) R.leaveSeat(s.st, seat);
+  else if (s.stacks) s.stacks[seat] = 0;                   // between hands: just forfeit the stack
+  s.log.push({ w: 50 + seat, h: 1 });                      // LEFT(seat)
+  if (s.st && !s.handOver) pokerFlush(lobby);              // fold may have ended the hand
+}
+
 // Validate + apply one durak action by the seat holder. a: 1 attack, 2 cover, 3 take, 4 bito.
 function durakAct(lobby, seat, a, p, c) {
   const R = rules().durak;
@@ -2605,8 +2778,11 @@ function durakAct(lobby, seat, a, p, c) {
   if (a === 2) {                                         // cover a table pair
     if (seat !== st.defender) return { ok: false, code: 1 };
     if (!R.canDefendPair(st, p, c)) return { ok: false, code: 2 };
-    R.applyDefend(st, p, c);
+    R.applyDefend(st, p, c);                              // resets throw-in passes (fresh window)
     dpush(st, 20 + p, c + 1);
+    // If that cover completed the table and NO attack seat has a legal throw-in left, there's
+    // nobody to wait on — beat the table immediately rather than dangle for a pass that can't come.
+    if (R.canBito(st)) { dpush(st, 40, 1); durakEndBout(st, false); }
     return { ok: true };
   }
   if (a === 3) {                                         // take
@@ -2616,11 +2792,17 @@ function durakAct(lobby, seat, a, p, c) {
     durakEndBout(st, true);
     return { ok: true };
   }
-  if (a === 4) {                                         // bito (beat)
-    if (seat !== st.attacker) return { ok: false, code: 1 };
+  if (a === 4) {                                         // pass / knock ("done adding to this table")
+    // Classic podkidnoy: an attack seat declares it won't throw in more. The table is BEATEN
+    // (Bito) only once EVERY in-play attack seat has settled (passed or holds no legal throw-in) —
+    // NOT the moment the primary attacker knocks. So this records the pass authoritatively and
+    // only ends the bout when consensus is reached; otherwise it echoes a PASS event so the other
+    // clients update their local `passed` set (which gates their own Pass button + status).
+    if (seat === st.defender || st.out[seat]) return { ok: false, code: 1 };
     if (st.table.length === 0 || R.uncoveredCount(st) !== 0) return { ok: false, code: 2 };
-    dpush(st, 40, 1);
-    durakEndBout(st, false);
+    R.applyPass(st, seat);
+    if (R.canBito(st)) { dpush(st, 40, 1); durakEndBout(st, false); }
+    else dpush(st, 41 + seat, 1);                        // PASS(seat) — window stays open for others
     return { ok: true };
   }
   return { ok: false, code: 2 };

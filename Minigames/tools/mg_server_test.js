@@ -373,6 +373,80 @@ async function main() {
         ok(foundRoles, "durak-N: a ROLES event follows the bout");
     })();
 
+    // ── durak: throw-in PASS consensus (a covered 3-seat table is beaten only on full consensus) ──
+    await (async function () {
+        // Fresh 3-seat table so there are TWO non-defender attack seats (the opener + one
+        // co-attacker). A single opener PASS must NOT beat the table — it only settles that seat;
+        // Bito waits until every in-play attack seat has passed (or has nothing to throw in).
+        var hub = new Hub({ storage: new FakeStorage() });
+        var dc = await req(hub, "/api/dcreate.png?n=3&tok=DKPASS01");
+        var code = (dc.w - 100) * 100 + (dc.h - 1);
+        await req(hub, "/api/djoin.png?code=" + code + "&tok=DKPASS02");
+        await req(hub, "/api/djoin.png?code=" + code + "&tok=DKPASS03");
+        await req(hub, "/api/start.png?code=" + code + "&tok=DKPASS01");
+        var toks = ["DKPASS01", "DKPASS02", "DKPASS03"];
+        var openEv = await req(hub, "/api/dlog.png?code=" + code + "&since=1");
+        var openSeat = openEv.h - 1, defSeat = (openSeat + 1) % 3;
+        var coSeat = (openSeat + 2) % 3;                            // the OTHER non-defender
+        // Opener attacks; defender covers so the table goes fully covered (attack phase reopens).
+        var aCard = (await req(hub, "/api/ddraw.png?code=" + code + "&tok=" + toks[openSeat] + "&i=0")).w - 2;
+        await req(hub, "/api/dact.png?code=" + code + "&tok=" + toks[openSeat] + "&a=1&c=" + aCard);
+        // Defender tries each of its 6 cards to cover pair 0 (deterministic; at least one may work).
+        var covered = false;
+        for (var di = 0; di < 6 && !covered; di++) {
+            var dCard = (await req(hub, "/api/ddraw.png?code=" + code + "&tok=" + toks[defSeat] + "&i=" + di)).w - 2;
+            var cov = await req(hub, "/api/dact.png?code=" + code + "&tok=" + toks[defSeat] + "&a=2&p=0&c=" + dCard);
+            if (cov.w === 1 && cov.h === 1) covered = true;
+        }
+        if (!covered) {
+            // No legal cover in this deal — the consensus path needs a covered table, so just
+            // assert the pass route rejects an uncovered table and move on (still a real check).
+            var earlyPass = await req(hub, "/api/dact.png?code=" + code + "&tok=" + toks[openSeat] + "&a=4");
+            ok(earlyPass.w === 9 && earlyPass.h === 2, "durak-pass: pass on an uncovered table → (9,2)");
+        } else {
+            // The cover may have ALREADY beaten the table: if no attack seat held a legal throw-in,
+            // canBito() is true the instant the last pair is covered, so the server auto-emits BITO
+            // (valid consensus of zero pending throwers). Scan the log tail to find out which case
+            // we're in — both are correct, but they need different follow-up assertions.
+            var seq = 5, coverBito = false;
+            for (;;) {
+                var lg0 = await req(hub, "/api/dlog.png?code=" + code + "&since=" + seq);
+                if (lg0.w === 1 && lg0.h === 1) break;               // drained
+                if (lg0.w === 40 && lg0.h === 1) coverBito = true;
+                seq++;
+            }
+            if (coverBito) {
+                // Auto-consensus on cover: nobody could throw in, so the table was beaten with no
+                // pass needed. That IS the consensus rule with an empty pending set — assert it.
+                ok(true, "durak-pass: covered table with no throw-ins auto-beats (empty consensus)");
+            } else {
+                // Live covered table: at least one attack seat still holds a throw-in. Defender may
+                // not pass (only attack seats vote). Opener passes: unless it's the last unsettled
+                // attack seat, this echoes PASS(openSeat)=(41+seat,1) and the bout stays live.
+                var defPass = await req(hub, "/api/dact.png?code=" + code + "&tok=" + toks[defSeat] + "&a=4");
+                ok(defPass.w === 9 && defPass.h === 1, "durak-pass: defender cannot pass → (9,1)");
+                await req(hub, "/api/dact.png?code=" + code + "&tok=" + toks[openSeat] + "&a=4");
+                var after = await req(hub, "/api/dlog.png?code=" + code + "&since=" + seq);
+                var isPass = (after.w === 41 + openSeat && after.h === 1);
+                var isBito = (after.w === 40 && after.h === 1);
+                ok(isPass || isBito, "durak-pass: opener pass → PASS echo (window open) or BITO (consensus)");
+                if (isPass) {
+                    // Co-attacker passes too. With both non-defenders settled, consensus → BITO.
+                    await req(hub, "/api/dact.png?code=" + code + "&tok=" + toks[coSeat] + "&a=4");
+                    var sawBito = false;
+                    for (var q = seq + 1; q < seq + 30; q++) {
+                        var lg = await req(hub, "/api/dlog.png?code=" + code + "&since=" + q);
+                        if (lg.w === 1 && lg.h === 1) break;
+                        if (lg.w === 40 && lg.h === 1) { sawBito = true; break; }
+                    }
+                    ok(sawBito, "durak-pass: both attack seats passed → consensus BITO beats the table");
+                } else {
+                    ok(true, "durak-pass: opener was last to settle → immediate consensus BITO");
+                }
+            }
+        }
+    })();
+
     // ── poker: authoritative dealer (own route set: pcreate/pjoin/proom/pstart/pact/plog/pdraw) ──
     await (async function () {
         var hub = new Hub({ storage: new FakeStorage() });
@@ -732,6 +806,95 @@ async function main() {
         // A later /clocks re-read still shows the flagged seat at 0 (sticks, doesn't tick back up).
         var ck4 = await req(fhub, "/api/clocks.png?code=" + fcode);
         ok(ck4.w === 1 && ck4.h === 61, "clocks: flag sticks on later reads (1,61)");
+    })();
+
+    // ── /api/leave: mid-game exit (pair teardown, foreign-token no-op, N-seat fold-out) ──
+    await (async function () {
+        // A) Pair game (chess): a live match. Leaving tears the lobby down so the opponent's next
+        //    poll returns (9,9) "gone" — the survivor is shown "Opponent left." and wins by default.
+        var hub = new Hub({ storage: new FakeStorage() });
+        var c = await req(hub, "/api/create.png?game=1&tok=LVHOST001");
+        var code = c.w * 100 + (c.h - 1);
+        await req(hub, "/api/join.png?code=" + code + "&tok=LVJOIN001");
+        // A stranger with no seat token can never nuke the match.
+        var lv0 = await req(hub, "/api/leave.png?code=" + code + "&tok=STRANGER9");
+        ok(lv0.w === 1 && lv0.h === 1, "leave: foreign token → (1,1) no-op");
+        var st0 = await req(hub, "/api/status.png?code=" + code);
+        ok(st0.w === 2, "leave: match still intact after a foreign-token leave");
+        // The seated joiner leaves → lobby is deleted.
+        var lv1 = await req(hub, "/api/leave.png?code=" + code + "&tok=LVJOIN001");
+        ok(lv1.w === 1 && lv1.h === 1, "leave: seated player leaving → (1,1)");
+        var pgone = await req(hub, "/api/poll.png?code=" + code + "&since=0");
+        ok(pgone.w === 9 && pgone.h === 9, "leave: opponent's poll now returns (9,9) gone");
+        // Leaving an already-gone lobby is a harmless no-op.
+        var lv2 = await req(hub, "/api/leave.png?code=" + code + "&tok=LVHOST001");
+        ok(lv2.w === 1 && lv2.h === 1, "leave: already-gone lobby → (1,1) no-op");
+
+        // B) 3-seat durak: a live table. One seat leaves → the table PLAYS ON (still 2 present).
+        //    A LEFT(45+seat) event is appended so both survivors learn, and the game is NOT over.
+        var dhub = new Hub({ storage: new FakeStorage() });
+        var dc = await req(dhub, "/api/dcreate.png?n=3&tok=DLHOST01");
+        var dcode = (dc.w - 100) * 100 + (dc.h - 1);
+        await req(dhub, "/api/djoin.png?code=" + dcode + "&tok=DLPLR201");
+        await req(dhub, "/api/djoin.png?code=" + dcode + "&tok=DLPLR301");
+        await req(dhub, "/api/start.png?code=" + dcode + "&tok=DLHOST01");
+        // Drain the log to the current tail so we can spot the LEFT event that leave appends.
+        var tail = 0;
+        for (var di = 0; di < 60; di++) {
+            var lg = await req(dhub, "/api/dlog.png?code=" + dcode + "&since=" + di);
+            if (lg.w === 1 && lg.h === 1) { tail = di; break; }
+        }
+        // Seat 2 (DLPLR301) leaves. Table still has seats 0 & 1 → not torn down.
+        var dlv = await req(dhub, "/api/leave.png?code=" + dcode + "&tok=DLPLR301");
+        ok(dlv.w === 1 && dlv.h === 1, "leave(durak-3): seat 2 leaves → (1,1)");
+        var droom = await req(dhub, "/api/droom.png?code=" + dcode);
+        ok(droom.w >= 100, "leave(durak-3): table still alive & started after a leave");
+        // A LEFT(47) event (45 + seat 2) is present in the freshly-appended tail.
+        var sawLeft = false, sawOver = false;
+        for (var dj = tail; dj < tail + 30; dj++) {
+            var e = await req(dhub, "/api/dlog.png?code=" + dcode + "&since=" + dj);
+            if (e.w === 1 && e.h === 1) break;
+            if (e.w === 47 && e.h === 1) sawLeft = true;
+            if (e.w === 60) sawOver = true;
+        }
+        ok(sawLeft, "leave(durak-3): LEFT(47) event logged for the departed seat");
+        ok(!sawOver, "leave(durak-3): 2 players remain → game NOT over");
+        // Now a SECOND seat leaves → only one player left → table torn down.
+        await req(dhub, "/api/leave.png?code=" + dcode + "&tok=DLPLR201");
+        var dgone = await req(dhub, "/api/dlog.png?code=" + dcode + "&since=0");
+        ok(dgone.w === 9 && dgone.h === 9, "leave(durak-3): dropping to 1 player tears the table down");
+
+        // C) 3-seat poker: a live table. One seat leaves → folds out, LEFT(50+seat) logged, plays on.
+        var phub = new Hub({ storage: new FakeStorage() });
+        var pc = await req(phub, "/api/pcreate.png?n=3&tok=PLHOST01");
+        var pcode = (pc.w - 100) * 100 + (pc.h - 1);
+        await req(phub, "/api/pjoin.png?code=" + pcode + "&tok=PLPLR201");
+        await req(phub, "/api/pjoin.png?code=" + pcode + "&tok=PLPLR301");
+        await req(phub, "/api/pstart.png?code=" + pcode + "&tok=PLHOST01");
+        var ptail = 0;
+        for (var pi = 0; pi < 80; pi++) {
+            var pe = await req(phub, "/api/plog.png?code=" + pcode + "&since=" + pi);
+            if (pe.w === 1 && pe.h === 1) { ptail = pi; break; }
+        }
+        var plv = await req(phub, "/api/leave.png?code=" + pcode + "&tok=PLPLR301");
+        ok(plv.w === 1 && plv.h === 1, "leave(poker-3): seat 2 leaves → (1,1)");
+        var proom = await req(phub, "/api/proom.png?code=" + pcode);
+        ok(proom.w >= 100, "leave(poker-3): table still alive & started after a leave");
+        var sawPLeft = false;
+        for (var pj2 = ptail; pj2 < ptail + 30; pj2++) {
+            var pev = await req(phub, "/api/plog.png?code=" + pcode + "&since=" + pj2);
+            if (pev.w === 1 && pev.h === 1) break;
+            if (pev.w === 52 && pev.h === 1) sawPLeft = true;
+        }
+        ok(sawPLeft, "leave(poker-3): LEFT(52) event logged for the departed seat");
+
+        // D) Pre-start lobby: leave behaves like cancel (tears down a waiting lobby).
+        var whub = new Hub({ storage: new FakeStorage() });
+        var wc = await req(whub, "/api/create.png?game=1&tok=WLHOST001");
+        var wcode = wc.w * 100 + (wc.h - 1);
+        await req(whub, "/api/leave.png?code=" + wcode + "&tok=WLHOST001");
+        var wstat = await req(whub, "/api/status.png?code=" + wcode);
+        ok(wstat.w === 9, "leave: pre-start host leaving tears the waiting lobby down");
     })();
 
     console.log("\nALL SERVER TESTS PASSED (" + passed + " checks)");

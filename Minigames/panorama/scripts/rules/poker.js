@@ -333,6 +333,26 @@
         showdown(st);
     }
 
+    // A seat abandons the table mid-game (online "Leave"). It plays out EXACTLY like a fold —
+    // card-independent, so the server and every client replay it byte-identically off a single
+    // LEFT event — plus the leaver forfeits their remaining chips so `newHand`'s `stacks[s] > 0`
+    // test sits them out of every future hand. Folding a seat that wasn't `toAct` can still end
+    // the hand (everyone else already folded) or complete the round (they were the last to act),
+    // so we re-run the same terminal checks `advance` does, but only hand `toAct` forward when the
+    // LEAVER was the one on the clock (otherwise the current actor keeps their turn).
+    function leaveSeat(st, seat) {
+        var wasLive = st.inHand[seat] && !st.folded[seat];
+        st.stacks[seat] = 0;                       // forfeit remaining chips → out of all future hands
+        if (!wasLive) return;
+        st.folded[seat] = true;
+        st.acted[seat] = true;                     // don't let roundOver wait on a seat that's gone
+        var wasToAct = st.toAct === seat;
+        if (activeCount(st) <= 1) { finish(st); return; }
+        if (canActCount(st) <= 1 && roundOver(st)) { runout(st); return; }
+        if (roundOver(st)) { nextStreet(st); return; }
+        if (wasToAct) st.toAct = nextToAct(st, st.toAct);
+    }
+
     // Single player left (all others folded): they take the pot uncontested, no cards shown.
     function finish(st) {
         var winner = -1;
@@ -479,7 +499,7 @@
         straightHigh: straightHigh, score: score, compareScores: compareScores, evalSeat: evalSeat,
         nextSeat: nextSeat, nextToAct: nextToAct, firstLeftOfButton: firstLeftOfButton,
         activeCount: activeCount, canActCount: canActCount, totalPot: totalPot,
-        newHand: newHand, legalActions: legalActions, applyAction: applyAction,
+        newHand: newHand, legalActions: legalActions, applyAction: applyAction, leaveSeat: leaveSeat,
         roundOver: roundOver, showdown: showdown, resolveShowdown: resolveShowdown,
         nextOccupied: nextOccupied, activeSeatCount: activeSeatCount,
         preflopStrength: preflopStrength, madeStrength: madeStrength, botAction: botAction

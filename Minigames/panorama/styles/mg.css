@@ -754,7 +754,11 @@
 }
 
 /* ── checkers board ──────────────────────────────────────────────────────── */
-.mg-game-host { width: 100%; horizontal-align: center; }
+/* flow-children:none so the per-turn timer (a left-aligned child added by the game
+   controllers) parks in the modal's LEFT GUTTER, clear of the centred board/felt, instead
+   of taking a flow row above it. The single game-root child keeps horizontal-align:center,
+   so every board still renders centred exactly as before. */
+.mg-game-host { width: 100%; horizontal-align: center; flow-children: none; }
 /* width:100% so the flow:none .mg-game-2col child below inherits the full 844px inner zone and
    can centre the board / right-pin the list against it (not against a shrunk fit-children box). */
 .mg-checkers { width: 100%; horizontal-align: center; flow-children: down; }
@@ -893,6 +897,66 @@
 .mg-clock-row.mg-clock-low .mg-clock-time { color: #e8b64c !important; }
 .mg-clock-row.mg-clock-flagged .mg-clock-time { color: #d15b5b !important; }
 .mg-clock-row.mg-clock-flagged .mg-clock-name { color: #d15b5b !important; }
+
+/* ── per-turn countdown timer (durak / poker / connect-four / tic-tac-toe) ────
+   A slim VERTICAL bar parked in the modal's LEFT gutter, draining top→bottom over the
+   turn budget while it's the LOCAL player's turn (built by createTurnTimer in mg_games.js;
+   parented onto the game HOST — .mg-game-host is flow:none — so it aligns left + vertically-
+   centred in the left margin without taking a flow row or touching the centred board).
+   The seconds remaining sit under the bar.
+   ⚠ NO @keyframes anywhere (ARCHITECTURE §17: a single @keyframes rule silently bricks this
+   whole stylesheet). The drain is a CSS transition on the transform — JS sets the translate
+   once and the browser tweens it over 20s. The transition-DURATION here MUST match TURN_SECS
+   in mg_games.js, and the .mg-tt-track height MUST match TRACK_H (300). */
+.mg-turn-timer {
+    width: 34px;
+    flow-children: down;
+    horizontal-align: left;
+    vertical-align: center;
+    margin-left: 6px;
+}
+.mg-tt-track {
+    width: 10px;
+    height: 300px;                       /* MUST match TRACK_H in createTurnTimer */
+    horizontal-align: center;
+    border-radius: 5px;
+    background-color: #12202e;           /* the empty channel behind the fill */
+    border: 1px solid #26384c;
+    overflow: clip;                      /* clip the fill as it slides down out of view */
+    flow-children: none;
+}
+/* The draining column. The BASE class carries ONLY the colour transition and NO transform
+   transition, so createTurnTimer's snapFull() (removes .mg-tt-anim, sets translate 0) snaps the
+   bar back to full INSTANTLY on a fresh turn — exactly the .mg-cf-anim / .mg-piece arming idiom
+   used elsewhere. arm() then ADDS .mg-tt-anim (which carries the linear 20s transform transition)
+   and pushes translateY = track height one frame later → a smooth 20s slide down. Putting the 20s
+   transition on the base instead would make the snap-to-full itself animate (the bar would crawl
+   back up over 20s on every restart). Two thresholds (.mg-tt-low ≤10s amber, .mg-tt-crit ≤5s red)
+   recolour it via JS class swaps. */
+.mg-tt-fill {
+    width: 10px;
+    height: 300px;                       /* fills the track; slides DOWN by its own height to empty */
+    border-radius: 5px;
+    background-color: #4b8f5a;           /* healthy green, matches the win tint */
+    transition-property: background-color;
+    transition-duration: 0.3s;
+    transition-timing-function: ease-out;
+}
+.mg-tt-fill.mg-tt-anim {                 /* armed: the 20s linear drain lives here, not on the base */
+    transition-property: transform, background-color;
+    transition-duration: 20s, 0.3s;      /* 20s MUST match TURN_SECS */
+    transition-timing-function: linear, ease-out;
+}
+.mg-tt-fill.mg-tt-low { background-color: #e8b64c; }   /* ≤10s — amber, mirrors the clock-low tint */
+.mg-tt-fill.mg-tt-crit { background-color: #d15b5b; }  /* ≤5s — red, mirrors the clock-flagged tint */
+.mg-tt-num {
+    font-family: radiance !important;
+    font-weight: bold;
+    color: #cdd9e7 !important;
+    font-size: 17px !important;
+    horizontal-align: center;
+    margin-top: 6px;
+}
 
 /* ── time-control segmented picker (detail column, chess/checkers) ───────────
    One row of segments (1/3/5/10 min + Off); the picked one carries .mg-on. Mirrors the

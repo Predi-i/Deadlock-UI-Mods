@@ -271,6 +271,41 @@ export class Hub {
         return png(1, 1);
       }
 
+      // ── leave a game already in progress ──────────────────────────────────────
+      // `cancel` only fires while a lobby is still waiting (players < 2). Once a match is live,
+      // the "Leave" button hits THIS route so the opponent learns immediately instead of relying
+      // on the 30-min idle sweep. A valid seat token is the anchor of trust — a 4-digit
+      // code-guesser holds no seat token, so it can never nuke someone else's active match.
+      //   • Pair games (board games, or any table down to its last two present players): the lobby
+      //     is deleted, so the survivor's next poll/dlog/plog — and any action — returns (9,9) and
+      //     the client shows "Opponent left." (they win a decided game).
+      //   • 3–4-seat durak/poker with ≥3 present: the seat is folded out via durakLeave/pokerLeave,
+      //     which appends a LEFT event (+ DRAW/ROLES or board/WIN) to the public log so the table
+      //     plays on without the leaver. The game only ends here if it drops to one player.
+      if (p === "/api/leave") {
+        const lobby = code ? await this.storage.get("l:" + code) : null;
+        if (!lobby) return png(1, 1);                       // already gone — nothing to do
+        const seat = seatOf(lobby, q.get("tok"));
+        if (seat < 0) return png(1, 1);                     // not a seated player: ignore, don't leak
+        lobby.left = lobby.left || [];
+        if (lobby.left.indexOf(seat) < 0) lobby.left.push(seat);
+        const started = !!(lobby.state && lobby.state.started);
+        const present = lobby.players - lobby.left.length;  // still-seated players after this leave
+        const isMultiSeat = !!lobby.cap && (lobby.game === 3 || lobby.game === 6);
+        if (started && isMultiSeat && present >= 2) {
+          // Table plays on without the leaver: fold them out and log it.
+          if (lobby.game === 3) durakLeave(lobby, seat);
+          else pokerLeave(lobby, seat);
+          lobby.t = nowSeq();
+          await this.storage.put("l:" + code, lobby);
+          return png(1, 1);
+        }
+        // Pair game, pre-start lobby, or the table just dropped to one player → tear it down.
+        await this.storage.delete("l:" + code);
+        await this.clearQueuesFor(lobby, code);
+        return png(1, 1);
+      }
+
 
       if (p === "/api/join") {
         if (!validTok(q.get("tok"))) return png(9, 3); // reject empty/garbage seat token
@@ -977,6 +1012,7 @@ function durakStart(lobby, seat) {
   st.deck = g.deck; st.hands = g.hands; st.table = g.table;
   st.attacker = g.attacker; st.defender = g.defender; st.phase = g.phase;
   st.discard = g.discard; st.out = g.out; st.loser = g.loser;
+  st.passed = g.passed;                                  // throw-in consensus flags (per seat)
   st.pub = []; st.priv = [];
   for (let s = 0; s < n; s++) st.priv.push([]);
   st.started = 1;
@@ -1014,6 +1050,45 @@ function durakEndBout(st, took) {
   dpush(st, 4, st.attacker * 4 + st.defender + 1);
 }
 
+// A seat abandons a live durak table. Mirrors durakEndBout's DRAW accounting: snapshot the deck,
+// run the shared leaveSeat rule (voids the bout, refills survivors, rotates roles), then emit the
+// LEFT event, a DRAW per seat that picked up from the deck, and the authoritative post-leave ROLES
+// (or OVER when one player remains). Deterministic → clients replay it off the public log.
+function durakLeave(lobby, seat) {
+  const R = rules().durak;
+  const st = lobby.state;
+  if (!st || !st.started || st.phase === "over") return;
+  if (st.out[seat]) return;                                 // already gone (idempotent)
+  const before = {};
+  for (let i = 0; i < st.deck.length; i++) before[st.deck[i]] = 1;
+  R.leaveSeat(st, seat);
+  dpush(st, 45 + seat, 1);                                  // LEFT(seat)
+  for (let s = 0; s < st.numPlayers; s++) {
+    const drawn = [];
+    for (let k = 0; k < st.hands[s].length; k++) if (before[st.hands[s][k]]) drawn.push(st.hands[s][k]);
+    if (drawn.length) {
+      for (let d = 0; d < drawn.length; d++) st.priv[s].push(drawn[d]);
+      dpush(st, 50 + s, drawn.length + 1);                 // DRAW(s, n)
+    }
+  }
+  if (st.phase === "over") { dpush(st, 60, st.loser + 2); return; }  // OVER(loser)
+  dpush(st, 4, st.attacker * 4 + st.defender + 1);         // ROLES(attacker, defender)
+}
+
+// A seat abandons a live poker table. Folds them out of the current hand and forfeits their chips
+// (leaveSeat sets stack 0 → newHand sits them out forever) via the shared rule, emits LEFT(seat),
+// then flushes the board/showdown/WIN the fold may have triggered — exactly like a normal fold.
+function pokerLeave(lobby, seat) {
+  const R = rules().poker;
+  const s = lobby.state;
+  if (!s || !s.started) return;
+  s.log = s.log || [];
+  if (s.st) R.leaveSeat(s.st, seat);
+  else if (s.stacks) s.stacks[seat] = 0;                   // between hands: just forfeit the stack
+  s.log.push({ w: 50 + seat, h: 1 });                      // LEFT(seat)
+  if (s.st && !s.handOver) pokerFlush(lobby);              // fold may have ended the hand
+}
+
 // Validate + apply one durak action by the seat holder. a: 1 attack, 2 cover, 3 take, 4 bito.
 function durakAct(lobby, seat, a, p, c) {
   const R = rules().durak;
@@ -1032,8 +1107,11 @@ function durakAct(lobby, seat, a, p, c) {
   if (a === 2) {                                         // cover a table pair
     if (seat !== st.defender) return { ok: false, code: 1 };
     if (!R.canDefendPair(st, p, c)) return { ok: false, code: 2 };
-    R.applyDefend(st, p, c);
+    R.applyDefend(st, p, c);                              // resets throw-in passes (fresh window)
     dpush(st, 20 + p, c + 1);
+    // If that cover completed the table and NO attack seat has a legal throw-in left, there's
+    // nobody to wait on — beat the table immediately rather than dangle for a pass that can't come.
+    if (R.canBito(st)) { dpush(st, 40, 1); durakEndBout(st, false); }
     return { ok: true };
   }
   if (a === 3) {                                         // take
@@ -1043,11 +1121,17 @@ function durakAct(lobby, seat, a, p, c) {
     durakEndBout(st, true);
     return { ok: true };
   }
-  if (a === 4) {                                         // bito (beat)
-    if (seat !== st.attacker) return { ok: false, code: 1 };
+  if (a === 4) {                                         // pass / knock ("done adding to this table")
+    // Classic podkidnoy: an attack seat declares it won't throw in more. The table is BEATEN
+    // (Bito) only once EVERY in-play attack seat has settled (passed or holds no legal throw-in) —
+    // NOT the moment the primary attacker knocks. So this records the pass authoritatively and
+    // only ends the bout when consensus is reached; otherwise it echoes a PASS event so the other
+    // clients update their local `passed` set (which gates their own Pass button + status).
+    if (seat === st.defender || st.out[seat]) return { ok: false, code: 1 };
     if (st.table.length === 0 || R.uncoveredCount(st) !== 0) return { ok: false, code: 2 };
-    dpush(st, 40, 1);
-    durakEndBout(st, false);
+    R.applyPass(st, seat);
+    if (R.canBito(st)) { dpush(st, 40, 1); durakEndBout(st, false); }
+    else dpush(st, 41 + seat, 1);                        // PASS(seat) — window stays open for others
     return { ok: true };
   }
   return { ok: false, code: 2 };
