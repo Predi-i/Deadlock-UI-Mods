@@ -906,8 +906,8 @@
    The seconds remaining sit under the bar.
    ⚠ NO @keyframes anywhere (ARCHITECTURE §17: a single @keyframes rule silently bricks this
    whole stylesheet). The drain is a CSS transition on the transform — JS sets the translate
-   once and the browser tweens it over 20s. The transition-DURATION here MUST match TURN_SECS
-   in mg_games.js, and the .mg-tt-track height MUST match TRACK_H (300). */
+   once and the browser tweens it over 25s. The transition-DURATION here MUST match TURN_SECS
+   in mg_games.js, and the .mg-tt-track height MUST match TRACK_H (280). */
 .mg-turn-timer {
     width: 34px;
     flow-children: down;
@@ -915,12 +915,16 @@
     vertical-align: center;
     margin-left: 6px;
 }
+/* TTT / Connect Four attach the bar to the BOARD's left edge instead of the modal gutter
+   (their boards are narrow + centred, so the far-left gutter looked detached). The controller
+   centre-aligns it then translateX's it left of the board; this just switches the align. */
+.mg-tt-attached { horizontal-align: center; margin-left: 0px; }
 .mg-tt-track {
     width: 10px;
-    height: 300px;                       /* MUST match TRACK_H in createTurnTimer */
+    height: 280px;                       /* MUST match TRACK_H in createTurnTimer; < shortest board so the host never measures its height from the bar (no modal jump) */
     horizontal-align: center;
     border-radius: 5px;
-    background-color: #12202e;           /* the empty channel behind the fill */
+    background-color: #12202e;           /* the empty channel behind the fill — always visible, reserving the footprint */
     border: 1px solid #26384c;
     overflow: clip;                      /* clip the fill as it slides down out of view */
     flow-children: none;
@@ -928,32 +932,35 @@
 /* The draining column. The BASE class carries ONLY the colour transition and NO transform
    transition, so createTurnTimer's snapFull() (removes .mg-tt-anim, sets translate 0) snaps the
    bar back to full INSTANTLY on a fresh turn — exactly the .mg-cf-anim / .mg-piece arming idiom
-   used elsewhere. arm() then ADDS .mg-tt-anim (which carries the linear 20s transform transition)
-   and pushes translateY = track height one frame later → a smooth 20s slide down. Putting the 20s
+   used elsewhere. arm() then ADDS .mg-tt-anim (which carries the linear 25s transform transition)
+   and pushes translateY = track height one frame later → a smooth 25s slide down. Putting the 25s
    transition on the base instead would make the snap-to-full itself animate (the bar would crawl
-   back up over 20s on every restart). Two thresholds (.mg-tt-low ≤10s amber, .mg-tt-crit ≤5s red)
+   back up over 25s on every restart). Two thresholds (.mg-tt-low ≤10s amber, .mg-tt-crit ≤5s red)
    recolour it via JS class swaps. */
 .mg-tt-fill {
     width: 10px;
-    height: 300px;                       /* fills the track; slides DOWN by its own height to empty */
+    height: 280px;                       /* fills the track; slides DOWN by its own height to empty */
     border-radius: 5px;
     background-color: #4b8f5a;           /* healthy green, matches the win tint */
-    transition-property: background-color;
-    transition-duration: 0.3s;
-    transition-timing-function: ease-out;
+    transition-property: opacity, background-color;
+    transition-duration: 0.15s, 0.3s;
+    transition-timing-function: ease-out, ease-out;
 }
-.mg-tt-fill.mg-tt-anim {                 /* armed: the 20s linear drain lives here, not on the base */
-    transition-property: transform, background-color;
-    transition-duration: 20s, 0.3s;      /* 20s MUST match TURN_SECS */
-    transition-timing-function: linear, ease-out;
+.mg-tt-fill.mg-tt-anim {                 /* armed: the 25s linear drain lives here, not on the base */
+    transition-property: transform, opacity, background-color;
+    transition-duration: 25s, 0.15s, 0.3s;   /* 25s MUST match TURN_SECS */
+    transition-timing-function: linear, ease-out, ease-out;
 }
 .mg-tt-fill.mg-tt-low { background-color: #e8b64c; }   /* ≤10s — amber, mirrors the clock-low tint */
 .mg-tt-fill.mg-tt-crit { background-color: #d15b5b; }  /* ≤5s — red, mirrors the clock-flagged tint */
+/* Fixed height so blanking the seconds label between turns never changes the widget footprint
+   (the wrap is always laid out; only the fill opacity + this text toggle). */
 .mg-tt-num {
     font-family: radiance !important;
     font-weight: bold;
     color: #cdd9e7 !important;
     font-size: 17px !important;
+    height: 22px;
     horizontal-align: center;
     margin-top: 6px;
 }

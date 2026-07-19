@@ -152,20 +152,39 @@
     //
     // NO @keyframes (ARCHITECTURE §17 — a stray @keyframes rule silently BRICKS the whole
     // modded HUD stylesheet). The drain is ONE `transform: translate3d(0, H, 0)` write with
-    // a TURN_SECS-long LINEAR transition that lives on the .mg-tt-fill base class (the
+    // a TURN_SECS-long LINEAR transition that lives on the .mg-tt-anim class (the
     // .mg-piece "set the value, let CSS tween it" idiom): a single assignment starts a smooth
-    // 20s slide with zero per-frame JS. A ~200ms $.Schedule loop only refreshes the seconds
+    // slide with zero per-frame JS. A ~200ms $.Schedule loop only refreshes the seconds
     // label + swaps the low/crit colour classes and arms the expiry — the motion is pure CSS.
-    var TURN_SECS = 20;                    // per-turn budget; matches .mg-tt-fill transition-duration in mg.css
-    function createTurnTimer(parent) {
-        var TRACK_H = 300;                 // px; MUST match .mg-tt-track height in mg.css (drain distance)
+    //
+    // The wrap is ALWAYS laid out (never visibility:collapse) so the empty channel reserves its
+    // footprint permanently — the widget never pops in/out and the modal never jumps height when
+    // a turn changes hands. Only the FILL + the seconds label toggle (opacity/text) between "my
+    // turn" (draining) and idle (blank channel). TRACK_H is kept shorter than the shortest board
+    // (TTT ≈336px) so the flow:none host always measures its height from the board, not the bar.
+    //
+    // opts.boardW (px): attach the bar to that board's LEFT EDGE (centre-align + translateX left
+    // by half the board + a gap) instead of the modal's far-left gutter. TTT/C4 pass it (their
+    // boards are narrow and centred, so the gutter looked detached); durak/poker omit it and keep
+    // the wide-felt gutter placement the maintainer already signed off on.
+    var TURN_SECS = 25;                    // per-turn budget; matches .mg-tt-anim transition-duration in mg.css
+    function createTurnTimer(parent, opts) {
+        var TRACK_H = 280;                 // px; MUST match .mg-tt-track height in mg.css (drain distance)
         var wrap = $.CreatePanel("Panel", parent, "");
         wrap.AddClass("mg-turn-timer");
-        wrap.style.visibility = "collapse";   // hidden until the first start()
+        // Attach to a specific board's left edge when a width is given (TTT/C4). GAP + TIMER_W/2
+        // match the .mg-turn-timer width in mg.css; the wrap is centre-aligned by .mg-tt-attached
+        // then shoved left of the board so its right edge sits GAP px before the board's left edge.
+        if (opts && opts.boardW) {
+            var GAP = 14, TIMER_W = 34;
+            wrap.AddClass("mg-tt-attached");
+            wrap.style.transform = "translate3d(" + (-(opts.boardW / 2 + GAP + TIMER_W / 2)) + "px, 0px, 0px)";
+        }
         var track = $.CreatePanel("Panel", wrap, "");
         track.AddClass("mg-tt-track");
         var fill = $.CreatePanel("Panel", track, "");
         fill.AddClass("mg-tt-fill");
+        fill.style.opacity = "0.0";           // idle: only the empty channel shows (footprint reserved)
         var num = $.CreatePanel("Label", wrap, "");
         num.AddClass("mg-tt-num");
 
@@ -179,6 +198,7 @@
             fill.RemoveClass("mg-tt-low");
             fill.RemoveClass("mg-tt-crit");
             fill.style.transform = "translate3d(0px, 0px, 0px)";
+            fill.style.opacity = "1.0";       // reveal the drain for my turn
         }
         function arm() {
             fill.AddClass("mg-tt-anim");
@@ -211,8 +231,7 @@
                 running = true;
                 expireCb = onExpire || null;
                 deadline = Date.now() + TURN_SECS * 1000;
-                if (wrap.IsValid()) wrap.style.visibility = "visible";
-                snapFull();
+                snapFull();               // reveals the fill (opacity) — the wrap is always laid out
                 num.text = String(TURN_SECS);
                 // Arm the CSS drain one frame later (the .mg-piece/.mg-anim arming trick): the
                 // full-snap must commit first, or the browser coalesces both writes and the bar
@@ -220,14 +239,19 @@
                 $.Schedule(0.0, function () { if (!dead && gen === myGen && running) arm(); });
                 $.Schedule(0.2, function () { tick(myGen); });
             },
-            // Take the human off the clock (they acted, or it's someone else's turn). Hides the
-            // bar and cancels the pending expiry so a slow action can't fire a stale timeout.
+            // Take the human off the clock (they acted, or it's someone else's turn). Fades the
+            // fill + blanks the seconds (the empty channel stays, keeping the footprint) and
+            // cancels the pending expiry so a slow action can't fire a stale timeout.
             stop: function () {
                 gen++;                     // invalidate any in-flight tick + arm
                 running = false;
                 expireCb = null;
-                snapFull();
-                if (wrap.IsValid()) wrap.style.visibility = "collapse";
+                fill.RemoveClass("mg-tt-anim");
+                fill.RemoveClass("mg-tt-low");
+                fill.RemoveClass("mg-tt-crit");
+                fill.style.transform = "translate3d(0px, 0px, 0px)";
+                fill.style.opacity = "0.0";   // idle: only the empty channel shows
+                if (num.IsValid()) num.text = "";
             },
             destroy: function () {
                 dead = true; gen++; running = false; expireCb = null;
@@ -1352,7 +1376,9 @@
         // host) so it parks in the left margin, clear of the centred board. Runs only while it's my
         // move; on expiry I forfeit (TTT is always heads-up with a MANDATORY move — maintainer's
         // ruling: timeout = loss). Online I also fire Leave so the opponent's poll learns at once.
-        var turnTimer = (MG.Widgets && MG.Widgets.createTurnTimer) ? MG.Widgets.createTurnTimer(container) : null;
+        // boardW = 3 cells × (104 + 2×3 margin) + 2 × 3px border = 336 → pin the timer to the
+        // board's left edge (narrow centred board; the far-left modal gutter looked detached).
+        var turnTimer = (MG.Widgets && MG.Widgets.createTurnTimer) ? MG.Widgets.createTurnTimer(container, { boardW: 336 }) : null;
         var timerOn = false;
         function refreshTimer() {
             if (!turnTimer) return;

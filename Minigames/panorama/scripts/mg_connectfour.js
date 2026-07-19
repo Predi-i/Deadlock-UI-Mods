@@ -54,7 +54,9 @@
         // host) so it parks in the left margin, clear of the centred plate. Runs only while it's my
         // move; on expiry I forfeit (Connect Four is always heads-up with a MANDATORY move —
         // maintainer's ruling: timeout = loss). Online I also fire Leave so the opponent learns.
-        var turnTimer = (MG.Widgets && MG.Widgets.createTurnTimer) ? MG.Widgets.createTurnTimer(container) : null;
+        // boardW = 7 cols × 60px + 2 × 6px plate padding = 432 → the timer pins to the board's
+        // left edge (narrow centred board; the far-left modal gutter looked detached).
+        var turnTimer = (MG.Widgets && MG.Widgets.createTurnTimer) ? MG.Widgets.createTurnTimer(container, { boardW: 432 }) : null;
         var timerOn = false;
         function refreshTimer() {
             if (!turnTimer) return;
