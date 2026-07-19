@@ -91,11 +91,19 @@
     }
 
     // ── bot ──────────────────────────────────────────────────────────────────────
-    // Negamax + alpha-beta with a light positional eval. Depth is a perf guess for Panorama;
-    // if the bot hitches in-game, drop DEPTH. Centre columns are searched first (better
-    // pruning) and weighted in the eval (classic Connect Four heuristic).
+    // Negamax + alpha-beta with a light positional eval. Centre columns are searched first
+    // (better pruning) and weighted in the eval (classic Connect Four heuristic).
+    //
+    // PERF (2026-07-20 — the maintainer's "дикие лаги"): the search runs SYNCHRONOUSLY on
+    // Panorama's UI thread, and the old code allocated a fresh 42-element board (drop()'s
+    // b.slice()) at EVERY node — tens of thousands of arrays per move, GC-thrashing Panorama's
+    // slow interpreter into a multi-second freeze. Now the search does MAKE/UNDO on ONE working
+    // board (write a cell, recurse, write it back to 0): zero allocation in the hot loop. The
+    // public drop() still copies (its callers rely on that); only the internal search mutates,
+    // and it always restores, so cfBotMove leaves the caller's board untouched. DEPTH trimmed
+    // 6 → 5 for extra headroom (the win/block shortcuts below keep it tactically sharp).
     var CENTER_ORDER = [3, 2, 4, 1, 5, 0, 6];
-    var DEPTH = 6;
+    var DEPTH = 5;
 
     // Count windows of 4 and score them: a window with only my discs is good, only theirs bad.
     function evalBoard(b, me) {
@@ -122,22 +130,51 @@
         return score;
     }
 
-    function negamax(b, player, me, depth, alpha, beta) {
-        var w = winner(b);
-        if (w) return w === me ? (100000 + depth) : -(100000 + depth); // sooner wins score higher
-        var cols = legalCols(b);
-        if (cols.length === 0) return 0;                   // draw
+    // Did the disc JUST placed at (r,c) complete a four-in-a-row? Only scans the four lines
+    // THROUGH that cell (O(1)) instead of the whole board — the make/undo search's per-node
+    // terminal test. `v` is the mover's colour at (r,c).
+    function winsAt(b, r, c, v) {
+        for (var d = 0; d < DIRS.length; d++) {
+            var dr = DIRS[d][0], dc = DIRS[d][1], run = 1, k, rr, cc;
+            for (k = 1; k < 4; k++) {                      // extend one way
+                rr = r + dr * k; cc = c + dc * k;
+                if (rr < 0 || rr >= ROWS || cc < 0 || cc >= COLS || b[idx(rr, cc)] !== v) break;
+                run++;
+            }
+            for (k = 1; k < 4; k++) {                      // …and the other
+                rr = r - dr * k; cc = c - dc * k;
+                if (rr < 0 || rr >= ROWS || cc < 0 || cc >= COLS || b[idx(rr, cc)] !== v) break;
+                run++;
+            }
+            if (run >= 4) return true;
+        }
+        return false;
+    }
+    // Lowest empty row of `col` on the CURRENT (mutated) board — search's make step. -1 if full.
+    function landRow(b, col) { for (var r = ROWS - 1; r >= 0; r--) if (b[idx(r, col)] === 0) return r; return -1; }
+
+    // Negamax on ONE working board via make/undo (no per-node allocation — see the PERF note).
+    // `lastWin` = the mover of the PARENT node just won by landing at (lastR,lastC); we detect the
+    // terminal at the child so we never need a full-board winner() scan inside the loop.
+    function negamax(b, player, me, depth, alpha, beta, lastR, lastC, lastV) {
+        if (lastR >= 0 && winsAt(b, lastR, lastC, lastV))  // parent's move already won
+            return lastV === me ? -(100000 + depth) : (100000 + depth);
         if (depth === 0) return evalBoard(b, me);
-        var best = -1e9;
+        var best = -1e9, moved = false;
         for (var i = 0; i < CENTER_ORDER.length; i++) {
             var col = CENTER_ORDER[i];
-            if (b[idx(0, col)] !== 0) continue;            // full
-            var res = drop(b, col, player);
-            var val = -negamax(res.board, player === 1 ? 2 : 1, me, depth - 1, -beta, -alpha);
+            var r = landRow(b, col);
+            if (r < 0) continue;                           // full
+            moved = true;
+            var cell = idx(r, col);
+            b[cell] = player;                              // make
+            var val = -negamax(b, player === 1 ? 2 : 1, me, depth - 1, -beta, -alpha, r, col, player);
+            b[cell] = 0;                                   // undo
             if (val > best) best = val;
             if (val > alpha) alpha = val;
             if (alpha >= beta) break;                      // prune
         }
+        if (!moved) return 0;                              // board full → draw
         return best;
     }
 
@@ -145,18 +182,24 @@
     function cfBotMove(b, player) {
         var cols = legalCols(b);
         if (cols.length === 0) return -1;
-        var opp = player === 1 ? 2 : 1, i, col, res;
+        var opp = player === 1 ? 2 : 1, i, col, r;
+        // Work on a private copy so the search's make/undo can never touch the caller's board
+        // (make/undo always restores, but a copy makes that guarantee unconditional).
+        var w = b.slice();
         // 1) take an immediate win
-        for (i = 0; i < cols.length; i++) { res = drop(b, cols[i], player); if (winner(res.board) === player) return cols[i]; }
+        for (i = 0; i < cols.length; i++) { col = cols[i]; r = landRow(w, col); w[idx(r, col)] = player; if (winsAt(w, r, col, player)) { w[idx(r, col)] = 0; return col; } w[idx(r, col)] = 0; }
         // 2) block the opponent's immediate win
-        for (i = 0; i < cols.length; i++) { res = drop(b, cols[i], opp); if (winner(res.board) === opp) return cols[i]; }
+        for (i = 0; i < cols.length; i++) { col = cols[i]; r = landRow(w, col); w[idx(r, col)] = opp; if (winsAt(w, r, col, opp)) { w[idx(r, col)] = 0; return col; } w[idx(r, col)] = 0; }
         // 3) search
         var bestCol = cols[0], bestVal = -1e9;
         for (i = 0; i < CENTER_ORDER.length; i++) {
             col = CENTER_ORDER[i];
-            if (b[idx(0, col)] !== 0) continue;
-            res = drop(b, col, player);
-            var val = -negamax(res.board, opp, player, DEPTH - 1, -1e9, 1e9);
+            r = landRow(w, col);
+            if (r < 0) continue;
+            var cell = idx(r, col);
+            w[cell] = player;                              // make
+            var val = -negamax(w, opp, player, DEPTH - 1, -1e9, 1e9, r, col, player);
+            w[cell] = 0;                                   // undo
             if (val > bestVal) { bestVal = val; bestCol = col; }
         }
         return bestCol;

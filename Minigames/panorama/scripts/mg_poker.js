@@ -111,12 +111,12 @@
         var cardLayer = $.CreatePanel("Panel", stage, "MG_PkCards"); cardLayer.AddClass("mg-pk-cards");
         var controlsZone = $.CreatePanel("Panel", root, "MG_PkControls"); controlsZone.AddClass("mg-poker-controls");
 
-        // Per-turn countdown (left gutter). Parented on `container` (the flow:none game host) so it
-        // parks in the modal's left margin, clear of the centred felt. Poker's action is ALWAYS
-        // optional-in-spirit but the clock is mandatory: if it empties, the seat is timed out with a
-        // fold (or a check when checking is free — never forfeit chips you didn't have to). Absent
-        // build (old mg_games) → null; every call guarded. See refreshTimer/onTimerExpire below.
-        var turnTimer = (MG.Widgets && MG.Widgets.createTurnTimer) ? MG.Widgets.createTurnTimer(container) : null;
+        // Per-turn countdown, pinned to the felt's LEFT EDGE (boardW = STAGE_W 760). Parented on
+        // `container` (the flow:none game host). Poker's action is ALWAYS optional-in-spirit but the
+        // clock is mandatory: if it empties, the seat is timed out with a fold (or a check when
+        // checking is free — never forfeit chips you didn't have to). Absent build (old mg_games) →
+        // null; every call guarded. See refreshTimer/onTimerExpire below.
+        var turnTimer = (MG.Widgets && MG.Widgets.createTurnTimer) ? MG.Widgets.createTurnTimer(container, { boardW: 760 }) : null;
 
         function xform(x, y, rot) {
             var t = "translate3d(" + Math.round(x) + "px, " + Math.round(y) + "px, 0px)";

@@ -172,14 +172,31 @@
         var TRACK_H = 280;                 // px; MUST match .mg-tt-track height in mg.css (drain distance)
         var wrap = $.CreatePanel("Panel", parent, "");
         wrap.AddClass("mg-turn-timer");
-        // Attach to a specific board's left edge when a width is given (TTT/C4). GAP + TIMER_W/2
-        // match the .mg-turn-timer width in mg.css; the wrap is centre-aligned by .mg-tt-attached
-        // then shoved left of the board so its right edge sits GAP px before the board's left edge.
+        // Position the wrap with ONE inline transform (inline beats any CSS transform):
+        //  • Y: the wrap is vertical-align:center in the flow:none host, but it's flow-children:down
+        //    (track 280 + 6 gap + 22 num = 308 tall), so the TRACK's centre sits half the below-track
+        //    stack — (6+22)/2 = 14px — ABOVE the wrap centre, i.e. 14px above the board centre. Nudge
+        //    the whole wrap DOWN 14px so the BAR (not the wrap box) is centred on the board. (Was the
+        //    "timer sits above the board centre" report, 2026-07-20.)
+        //  • X: with opts.boardW, pin the bar to that board's LEFT EDGE (centre-align via
+        //    .mg-tt-attached, then shove left by half the board + a gap). TTT/C4 pass it (narrow
+        //    centred boards — the far-left gutter looked detached). Poker/durak omit it: their felts
+        //    are wide (760/680) so a board-edge shove would push the bar off the modal's left margin,
+        //    and the left gutter already sits right at the felt's edge — keep the gutter placement.
+        var VNUDGE = 14;                   // (num margin-top 6 + num height 22) / 2 — see mg.css .mg-tt-num
+        var vx = 0;
         if (opts && opts.boardW) {
-            var GAP = 14, TIMER_W = 34;
+            // .mg-tt-attached centres the wrap in the 844px inner zone; shove it left so its RIGHT
+            // edge sits GAP px before the board's left edge. Wide felts (poker 760) leave < 48px of
+            // margin, so clamp the shove: the wrap's LEFT edge never crosses EDGE px from the modal's
+            // left (else the bar clips off-screen). Centre = INNER_W/2; wrapLeft = Centre + vx - W/2.
+            var GAP = 14, TIMER_W = 34, INNER_W = 844, EDGE = 4;
             wrap.AddClass("mg-tt-attached");
-            wrap.style.transform = "translate3d(" + (-(opts.boardW / 2 + GAP + TIMER_W / 2)) + "px, 0px, 0px)";
+            vx = -(opts.boardW / 2 + GAP + TIMER_W / 2);
+            var minVx = EDGE + TIMER_W / 2 - INNER_W / 2;   // keeps wrapLeft >= EDGE
+            if (vx < minVx) vx = minVx;
         }
+        wrap.style.transform = "translate3d(" + vx + "px, " + VNUDGE + "px, 0px)";
         var track = $.CreatePanel("Panel", wrap, "");
         track.AddClass("mg-tt-track");
         var fill = $.CreatePanel("Panel", track, "");

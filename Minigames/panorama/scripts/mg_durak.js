@@ -167,11 +167,11 @@
         // reflows the modal.
         var controlsZone = $.CreatePanel("Panel", root, "MG_DkControls"); controlsZone.AddClass("mg-durak-controls");
 
-        // Per-turn countdown (left gutter). Parented on `container` (the flow:none game host) so it
-        // parks in the modal's left margin, clear of the centred felt. Runs ONLY while the LOCAL
-        // player owes an action; see refreshTimer/timerMode below for the (mandatory vs optional)
-        // split and what expiry does. Absent build (old mg_games) → null, every call guarded.
-        var turnTimer = (MG.Widgets && MG.Widgets.createTurnTimer) ? MG.Widgets.createTurnTimer(container) : null;
+        // Per-turn countdown, pinned to the felt's LEFT EDGE (boardW = STAGE_W 680). Parented on
+        // `container` (the flow:none game host). Runs ONLY while the LOCAL player owes an action; see
+        // refreshTimer/timerMode below for the (mandatory vs optional) split and what expiry does.
+        // Absent build (old mg_games) → null, every call guarded.
+        var turnTimer = (MG.Widgets && MG.Widgets.createTurnTimer) ? MG.Widgets.createTurnTimer(container, { boardW: 680 }) : null;
 
         var cardEls = {}; // card id -> persistent face panel on the stage
 

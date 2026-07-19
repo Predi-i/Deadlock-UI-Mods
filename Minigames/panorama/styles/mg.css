@@ -899,10 +899,12 @@
 .mg-clock-row.mg-clock-flagged .mg-clock-name { color: #d15b5b !important; }
 
 /* ── per-turn countdown timer (durak / poker / connect-four / tic-tac-toe) ────
-   A slim VERTICAL bar parked in the modal's LEFT gutter, draining top→bottom over the
-   turn budget while it's the LOCAL player's turn (built by createTurnTimer in mg_games.js;
-   parented onto the game HOST — .mg-game-host is flow:none — so it aligns left + vertically-
-   centred in the left margin without taking a flow row or touching the centred board).
+   A slim VERTICAL bar pinned just LEFT of the board, draining top→bottom over the turn
+   budget while it's the LOCAL player's turn (built by createTurnTimer in mg_games.js;
+   parented onto the game HOST — .mg-game-host is flow:none — so it takes no flow row and
+   never touches the centred board). All four games pass opts.boardW so the bar attaches to
+   that board's left EDGE (centre-align + translateX); the controller also nudges the wrap
+   down VNUDGE px so the BAR — not the taller wrap box — is vertically centred on the board.
    The seconds remaining sit under the bar.
    ⚠ NO @keyframes anywhere (ARCHITECTURE §17: a single @keyframes rule silently bricks this
    whole stylesheet). The drain is a CSS transition on the transform — JS sets the translate
