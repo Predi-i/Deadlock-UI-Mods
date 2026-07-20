@@ -40,6 +40,7 @@
     var applyAttack = D.applyAttack, applyDefend = D.applyDefend, endBout = D.endBout, checkOver = D.checkOver;
     var resetPasses = D.resetPasses, applyPass = D.applyPass, canBito = D.canBito;
     var isAttackSeat = D.isAttackSeat, pendingThrowers = D.pendingThrowers, inPlayCount = D.inPlayCount;
+    var firstUnsettled = D.firstUnsettled;
     var sortByValue = D.sortByValue, cardValue = D.cardValue;
     var durakBotAttack = D.durakBotAttack, durakBotDefend = D.durakBotDefend;
 
@@ -193,8 +194,14 @@
         function actionActor() {
             if (st.phase !== "attack") return st.defender;
             if (st.table.length === 0) return st.attacker;
+            // Covered table: a seat that can still THROW IN gets first dibs (pile on a match), else
+            // the first UNSETTLED seat is on the clock to confirm Bito (it holds cards but nothing to
+            // add). firstUnsettled walks turn order and returns -1 only once everyone has confirmed —
+            // then fall back to the attacker (afterAction's canBito path beats the table).
             var pt = pendingThrowers(st);
-            return pt.length ? pt[0] : st.attacker;
+            if (pt.length) return pt[0];
+            var u = firstUnsettled(st);
+            return u >= 0 ? u : st.attacker;
         }
         function myTurn() { return !destroyed && st.phase !== "over" && actionActor() === mySeat; }
         // Can I initiate an ATTACK / THROW-IN via input right now? ANY in-play non-defender may
@@ -235,9 +242,11 @@
                 return "mandatory";                                          // offline: I must open
             if (online && st.phase === "attack" && st.table.length === 0 && actionActor() === mySeat)
                 return "mandatory";                                          // online: I'm the opener
-            // Covered table + I still hold a legal throw-in and haven't passed → optional window.
+            // Covered table + I'm an attacker who hasn't settled (haven't passed, still hold cards) →
+            // optional Bito window. This fires whether or not I hold a legal throw-in: either way I owe
+            // an explicit confirm, and if I don't act within the (shorter) window it auto-passes (Bito).
             if (canAttackInput() && st.table.length > 0 && uncoveredCount(st) === 0 &&
-                legalAttacks(st, mySeat).length > 0) return "optional";
+                mySeat !== st.defender && !st.passed[mySeat] && st.hands[mySeat].length > 0) return "optional";
             return "";
         }
         // Reconcile the bar with the current obligation. Called after every render/state change:
@@ -253,7 +262,11 @@
             if (mode === timerActiveMode) return;   // same obligation still standing → keep the clock
             timerActiveMode = mode;
             if (!mode) { turnTimer.stop(); return; }
-            turnTimer.start(function () { onTimerExpire(mode); });
+            // The optional Bito window gets a shorter 10s clock (maintainer ruling): you're only being
+            // asked to confirm or pile on, not to make a full defensive decision. Mandatory actions
+            // keep the default budget.
+            var secs = (mode === "optional") ? 10 : 0;   // 0 → widget's default (TURN_SECS)
+            turnTimer.start(function () { onTimerExpire(mode); }, secs);
         }
         // The bar emptied. Mandatory → forfeit (2p: I lose; online 3–4: I leave the table, which
         // the server turns into a fold-out). Optional → I simply pass (auto-Bito for my seat).
@@ -429,8 +442,22 @@
         }
         function oppCluster(zone, count) {
             var rowW = backRowWidth(count);
+            var cx = clusterCenterX(zone);
+            // Heads-up: centre the FAN on the stage centre so it mirrors MY hand (handSlot also
+            // centres on STAGE_W/2), with the avatar attached to its left. Centring the whole
+            // avatar|gap|fan cluster instead pushed the fan right of centre by (AV+GAP)/2 — the
+            // "opponent cards shifted right" the single-opponent table showed. For 3-4 players the
+            // clusters tile fixed columns, so there we keep centring the whole cluster (centring each
+            // fan would overlap the neighbouring column).
+            if (numPlayers <= 2) {
+                var cardX0h = cx - rowW / 2;
+                return {
+                    avX: cardX0h - CLUSTER_GAP - AV / 2, avY: CLUSTER_TOP_Y,
+                    cardX0: cardX0h, cardYc: CLUSTER_TOP_Y
+                };
+            }
             var clusterW = AV + CLUSTER_GAP + rowW;     // avatar | gap | fan, laid left→right
-            var left = clusterCenterX(zone) - clusterW / 2;
+            var left = cx - clusterW / 2;
             return {
                 avX: left + AV / 2, avY: CLUSTER_TOP_Y,
                 cardX0: left + AV + CLUSTER_GAP, cardYc: CLUSTER_TOP_Y
@@ -689,19 +716,27 @@
 
         function buildControls() {
             controlsZone.RemoveAndDeleteChildren();
-            // PASS ("done adding") — offered to ANY in-play attack seat that hasn't passed while a
-            // covered bout is open (its throw-in window), not just the primary attacker. Online the
-            // server tallies passes and beats the table only on full consensus; offline myPass()
-            // records my knock and hands the turn to the bots (which may still pile on). The button
-            // reads "Pass" when others might still add, "Beat" when I'm the last to settle — a small
-            // affordance so a heads-up game still says the familiar "Beat".
+            // BITO ("done — beat the table") — offered to ANY in-play attacker that hasn't confirmed
+            // while a covered bout is open, not just the primary attacker. Under the explicit-Bito
+            // rule EVERY attacker holding cards must press this before the table is beaten (or their
+            // 10s window auto-passes it). Online the server tallies the passes and beats only on full
+            // consensus; offline myPass() records my confirm and hands the turn to the bots (which
+            // confirm in turn, or pile on a matching card first). The label reads "Bito" when my
+            // confirm ends the bout (I'm the last unsettled attacker) and "Pass" when someone else
+            // still owes a confirm/throw-in.
             var iCanAdd = st.phase === "attack" && st.table.length > 0 && uncoveredCount(st) === 0 &&
-                          mySeat !== st.defender && !st.out[mySeat] && !st.passed[mySeat] && !pendingAct;
+                          mySeat !== st.defender && !st.out[mySeat] && !st.passed[mySeat] &&
+                          st.hands[mySeat].length > 0 && !pendingAct;
             if (iCanAdd) {
-                // "Beat" if passing NOW would settle the table (I'm the only unsettled attack seat);
-                // else "Pass" (someone else may still throw in).
-                var lastToSettle = pendingThrowers(st).length <= 1;   // only me (or nobody) pending
-                mkButton(controlsZone, lastToSettle ? "Beat" : "Pass", function () {
+                // Am I the last attacker who still owes a confirm? True when no OTHER seat is unsettled
+                // and no OTHER seat can still throw in — then my Bito beats the table outright.
+                var othersPending = false;
+                for (var os = 0; os < numPlayers; os++) {
+                    if (os === mySeat) continue;
+                    if (!D.attackSeatSettled(st, os)) { othersPending = true; break; }
+                }
+                var lastToSettle = !othersPending && pendingThrowers(st).filter(function (s) { return s !== mySeat; }).length === 0;
+                mkButton(controlsZone, lastToSettle ? "Bito" : "Pass", function () {
                     if (pendingAct || st.passed[mySeat]) return;
                     if (online) { sendAct(4, 0, 0); return; }         // 4 = pass/knock (server tallies)
                     myPass();
@@ -774,8 +809,10 @@
             if (st.phase === "defend" && st.defender === mySeat)
                 return "Your defense. Cover the attacks or take.";
             if (st.table.length === 0 && st.attacker === mySeat) return "Your turn. Attack.";
-            // Covered table, my throw-in window (primary attacker OR a co-attacker).
-            return "Add a matching-rank card, or pass.";
+            // Covered table, my confirm window: I may throw in a matching-rank card or press Bito.
+            return legalAttacks(st, mySeat).length > 0
+                ? "Throw in a matching card, or press Bito."
+                : "Press Bito to beat the table.";
         }
 
         // I knock: "done adding to this table". Records my pass; if that settles the bout it's

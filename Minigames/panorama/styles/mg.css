@@ -374,7 +374,7 @@
     font-size: 16px !important;
     letter-spacing: 3px;
     text-transform: uppercase;
-    margin-top: 12px;
+    margin-top: 28px;                     /* now sits BELOW the Discord request button, so more air above */
 }
 .mg-detail-locked-sub {
     font-family: radiance !important;
@@ -383,6 +383,42 @@
     line-height: 21px;
     width: 100%;
     margin-top: 8px;
+}
+/* "Request a game in my Discord" — sits ABOVE the "IN DEVELOPMENT" notice (maintainer ordering),
+   just under the game description, as the primary call to action for a Coming Soon game. Discord
+   blurple palette, mirrors the header .mg-discord-btn but wider (a left-aligned call to action, not
+   a pill). The .vtex logo is drawn by a child <Image> (setFace) so .mg-request-icon is JUST a sized
+   box (no background-image — trap 14). */
+.mg-request-btn {
+    height: 44px;
+    width: fit-children;
+    margin-top: 22px;
+    padding-left: 16px;
+    padding-right: 18px;
+    background-color: #2c3462;
+    border: 1px solid #5865f2;
+    border-radius: 2px;
+    flow-children: right;
+    horizontal-align: left;
+    transition-property: background-color, border-color, brightness;
+    transition-duration: 0.1s;
+    transition-timing-function: ease-out;
+}
+.mg-request-btn:hover { background-color: #3a4488; border-color: #7983f5; brightness: 1.08; }
+.mg-request-btn:active { brightness: 0.97; }
+.mg-request-icon {
+    width: 22px;
+    height: 22px;
+    margin-right: 10px;
+    vertical-align: center;
+}
+.mg-request-label {
+    font-family: radiance !important;
+    font-weight: semi-bold;
+    color: #c7ccff !important;
+    font-size: 17px !important;
+    letter-spacing: 0.5px;
+    vertical-align: center;
 }
 /* small ALL-CAPS section labels (they replace the old "— text —" dividers) */
 .mg-section-label {
@@ -573,6 +609,16 @@
     color: #aebfd2 !important;
     font-size: 18px !important;          /* bigger per maintainer (15→18) */
     horizontal-align: center;            /* centered, not hugging the left */
+    vertical-align: center;
+}
+/* Discreet build stamp pinned to the footer's bottom-LEFT (align-override, so the centered status
+   floats over it without either shifting the other). Muted + small so it never competes with the
+   status message. */
+.mg-footer-version {
+    font-family: radiance !important;
+    color: #ffffff40 !important;
+    font-size: 13px !important;
+    horizontal-align: left;
     vertical-align: center;
 }
 /* spacer takes the slack so the dev tools sit at the right edge */

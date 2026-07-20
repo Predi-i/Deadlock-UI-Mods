@@ -155,17 +155,21 @@ console.log("throw-in consensus (canBito / pass window)");
     const ld = M.legalDefends(st, 0);
     if (ld.length) {
         M.applyDefend(st, 0, ld[0]);
-        // Table now covered. If the attacker still has a legal throw-in it must NOT be bito-able
-        // until it passes; if it has none, the seat is auto-settled → bito immediately.
+        // Table now covered. Under the explicit-Bito rule a seat that still HOLDS cards is never
+        // auto-settled — whether or not it holds a legal throw-in, it must explicitly pass before the
+        // table can be beaten. (Only an empty hand auto-settles.) This is what keeps a covered table
+        // on screen after a defence instead of sweeping it to discard in the same tick.
+        const hasCards = st.hands[atk].length > 0;
         const canThrow = M.legalAttacks(st, atk).length > 0;
-        if (canThrow) {
-            ok(!M.canBito(st), "covered but attacker still holds a throw-in → not yet bito");
-            ok(M.pendingThrowers(st).indexOf(atk) >= 0, "attacker listed as a pending thrower");
+        if (hasCards) {
+            ok(!M.canBito(st), "covered but attacker still holds cards → not yet bito (must confirm)");
+            ok(M.firstUnsettled(st) === atk, "attacker is the unsettled seat owing a Bito confirm");
+            if (canThrow) ok(M.pendingThrowers(st).indexOf(atk) >= 0, "attacker with a throw-in listed as pending thrower");
             M.applyPass(st, atk);
-            ok(M.canBito(st), "attacker passed → bito now allowed");
-            ok(M.pendingThrowers(st).length === 0, "no pending throwers after the pass");
+            ok(M.canBito(st), "attacker passed (Bito) → bito now allowed");
+            ok(M.firstUnsettled(st) === -1, "nobody unsettled after the pass");
         } else {
-            ok(M.canBito(st), "covered and attacker has no throw-in → auto-settled, bito allowed");
+            ok(M.canBito(st), "covered and attacker has no cards → auto-settled, bito allowed");
         }
     } else {
         ok(true, "deal forces a take — consensus not exercised this seed");
@@ -229,7 +233,10 @@ console.log("full CONSENSUS bot games (all attack seats throw in) terminate & co
                         else M.endBout(st, false);   // opener with nothing is degenerate; discard
                         continue;
                     }
-                    // Covered table: let a pending thrower add a card; else everyone passes → bito.
+                    // Covered table: a pending thrower may pile a card on; else the seat currently
+                    // owing a Bito confirm (firstUnsettled) explicitly passes. Under the explicit-Bito
+                    // rule a seat holding cards is never auto-settled, so consensus is only reached by
+                    // walking every unsettled attacker and passing it.
                     const throwers = M.pendingThrowers(st);
                     if (throwers.length) {
                         const s = throwers[0];
@@ -240,10 +247,12 @@ console.log("full CONSENSUS bot games (all attack seats throw in) terminate & co
                     } else if (M.canBito(st)) {
                         M.endBout(st, false);
                     } else {
-                        // Nobody can throw and canBito is false only if still uncovered — shouldn't
-                        // happen in the attack branch. Force-pass to avoid a spin, flag if it recurs.
-                        for (let s = 0; s < N; s++) M.applyPass(st, s);
-                        if (!M.canBito(st)) { threw = true; break; }
+                        // No pending thrower but not yet bito → someone holding cards still owes a
+                        // confirm. Pass that seat (explicit Bito). If firstUnsettled can't find one,
+                        // the state is inconsistent — flag it.
+                        const u = M.firstUnsettled(st);
+                        if (u < 0) { threw = true; break; }
+                        M.applyPass(st, u);
                     }
                     if (totalCards(st) !== 36) { threw = true; break; }
                 }

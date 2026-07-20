@@ -15,6 +15,9 @@
     var MG = ($.MG = $.MG || {});
     if (MG.UI) return;
 
+    // Mod version, shown bottom-left of the footer. Bump on a user-facing release.
+    var MG_VERSION = "1.0";
+
     // Route through MG.debug so nothing hits the console unless debug mode is ON.
     function log(m) {
         try { if (MG.debug) MG.debug("[ui] " + m); } catch (e) {}
@@ -250,6 +253,9 @@
         statusLabel.AddClass("mg-status");
         statusLabel.text = "";
         applyUiScale();
+        // Cache the natural (100%) modal height next frame so the >100% clamp has a baseline. Runs
+        // once; the height is view-independent (fixed-height columns), so no per-view remeasure.
+        $.Schedule(0.0, measureNaturalH);
     }
 
     function setStatus(t) {
@@ -366,9 +372,48 @@
     // The full-screen dim (#MG_Dim) is a separate sibling, and the modal stays centre-aligned in the
     // overlay, so growing the modal's layout box keeps it centred. Drag maths read window px and
     // divide by the rendered layer width, so the scale cancels either way (unchanged from before).
+    //
+    // ⚠ CLAMP TO VIEWPORT. `ui-scale` grows the modal's LAYOUT box by the factor, and the modal is
+    // vertical-align:center in the full-screen overlay, so once (natural height × scale) exceeds the
+    // viewport height the top AND bottom clip OFF-SCREEN — the maintainer's 200% screenshot with
+    // "PLAY WITH A FRIEND" cut off. `max-height: 92%` on .mg-modal can NOT stop it: that cap is in
+    // LOGICAL px, evaluated BEFORE ui-scale multiplies. Width never overflows (900px even at 200% is
+    // < the canvas), so only height is clamped.
+    //
+    // The modal's natural height is EFFECTIVELY constant across views: the menu columns are fixed at
+    // 500px (.mg-picker & .mg-detail, mg.css) and every game stage is within a few px of that (durak
+    // 500, poker 520). So we measure the height ONCE at 100% (cached in naturalModalH by
+    // measureNaturalH, scheduled from ensureOverlay while the scale is still 100%) and reuse it — NO
+    // per-view remeasure, NO forcing the scale to 100% for a frame on every pick. That frame-reset was
+    // the "buttons jump around" jitter on 150%+; killing it keeps every view switch stable. The tiny
+    // stage-vs-menu variance (~20px) is swallowed by FIT_MARGIN's 4% headroom, so a taller stage still
+    // can't clip at the clamped scale.
+    //
+    // ⚠ CONSEQUENCE, not a bug: on a 1080p screen the natural modal (~header + 500px columns) only
+    // fits up to ~150% before it would clip, so 150/175/200% all clamp to about the same size. That is
+    // the physical ceiling — a bigger modal literally can't show without cutting content off (exactly
+    // the clip this clamp exists to prevent). On a taller display (1440p+) the higher steps open up.
+    // We keep all 5 dropdown steps; they just cap where the screen runs out of room.
+    var FIT_MARGIN = 0.96;                 // scaled modal may fill up to this fraction of viewport height
+    var naturalModalH = 0;                 // cached unscaled modal height (layout px); constant across views
+    function fittedScalePct(pct) {
+        if (pct <= 100 || !naturalModalH) return pct;             // ≤100% always fits; no cache yet → don't clamp
+        var vpH = (overlay && overlay.IsValid && overlay.IsValid()) ? Number(overlay.actuallayoutheight) : NaN;
+        if (!(isFinite(vpH) && vpH > 0)) return pct;
+        var maxPct = Math.floor((vpH * FIT_MARGIN / naturalModalH) * 100);
+        return (maxPct >= 100 && pct > maxPct) ? maxPct : pct;    // clamp; never below 100 (natural fits)
+    }
+    // Read the natural height ONCE, only while the modal is genuinely at 100% (so actuallayoutheight —
+    // in layout px — is unscaled and unambiguous), then re-apply so a >100% default scale takes effect.
+    function measureNaturalH() {
+        if (!(modalPanel && modalPanel.IsValid && modalPanel.IsValid())) return;
+        if (naturalModalH || uiScalePct > 100) return;            // already cached, or not at 100% to read cleanly
+        var h = Number(modalPanel.actuallayoutheight);
+        if (isFinite(h) && h > 0) { naturalModalH = h; applyUiScale(); }
+    }
     function applyUiScale() {
         if (modalPanel && modalPanel.IsValid && modalPanel.IsValid()) {
-            try { modalPanel.style.uiScale = uiScalePct + "%"; } catch (e) {}
+            try { modalPanel.style.uiScale = fittedScalePct(uiScalePct) + "%"; } catch (e) {}
         }
     }
 
@@ -399,6 +444,9 @@
         // reference so setStatus falls back to the centred bottom line until the menu rebuilds it.
         footerStatus = null;
         if (modalBody) modalBody.RemoveAndDeleteChildren();
+        // NO per-view re-fit: the modal's natural height is constant (fixed-height columns), and the
+        // ui-scale lives on modalPanel (NOT modalBody, which is what we just cleared), so it persists
+        // across the view switch untouched. Re-applying here was the source of the button jitter.
     }
 
     // ── card art ────────────────────────────────────────────────────────────
@@ -535,6 +583,19 @@
         desc.text = GAME_DESC[g.key] || "";
 
         if (!g.enabled) {
+            // Call to action FIRST (maintainer: the Discord request button sits ABOVE the
+            // "IN DEVELOPMENT" notice): request this game in the community Discord — same
+            // external-browser channel as the header Discord pill.
+            var reqBtn = $.CreatePanel("Button", detailPanel, "");
+            reqBtn.AddClass("mg-request-btn");
+            var reqIcon = $.CreatePanel("Panel", reqBtn, "");
+            reqIcon.AddClass("mg-request-icon");
+            setFace(reqIcon, "s2r://panorama/images/discord_logo.vtex");
+            var reqLbl = $.CreatePanel("Label", reqBtn, "");
+            reqLbl.AddClass("mg-request-label");
+            reqLbl.text = "Request a game in my Discord";
+            reqBtn.SetPanelEvent("onactivate", function () { openDiscord(); });
+
             var locked = $.CreatePanel("Label", detailPanel, "");
             locked.AddClass("mg-detail-locked");
             locked.text = "IN DEVELOPMENT";
@@ -760,8 +821,15 @@
         var footer = $.CreatePanel("Panel", modalBody, "");
         footer.AddClass("mg-footer");
 
-        // Status text on the LEFT of the footer, level with the dev tools (п2). Replaces the
-        // old separate line under the footer, so the bottom strip is one row shorter.
+        // Mod version, pinned bottom-LEFT of the footer. A discreet build stamp; the status text
+        // (below) floats CENTERED over the whole footer as an align-override, so the version and the
+        // status don't fight for the same corner.
+        var version = $.CreatePanel("Label", footer, "");
+        version.AddClass("mg-footer-version");
+        version.text = "v" + MG_VERSION;   // MG_VERSION defined at the top of the IIFE
+
+        // Status text CENTERED over the footer (align-override child), level with the dev tools.
+        // Replaces the old separate line under the footer, so the bottom strip is one row shorter.
         footerStatus = $.CreatePanel("Label", footer, "");
         footerStatus.AddClass("mg-footer-status");
         footerStatus.text = "";

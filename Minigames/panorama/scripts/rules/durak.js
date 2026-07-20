@@ -191,20 +191,39 @@
     // Record that `seat` is done adding cards to the current table (a "pass"/knock). Idempotent.
     function applyPass(st, seat) { if (isAttackSeat(st, seat)) st.passed[seat] = true; }
 
-    // Has `seat` earned the right to still act (throw in) or must it pass? An attack seat is
-    // "settled" once it either passed OR holds no legal throw-in for the current table.
+    // Has `seat` settled the current table — i.e. it owes no further Bito confirmation? An attack
+    // seat is settled once it either passed (declared "done"/Bito) OR holds NO cards at all (an
+    // empty hand can neither throw in nor meaningfully confirm, so it auto-settles — the deadlock
+    // guard). A seat that still HOLDS cards is NOT auto-settled just because none of them is a legal
+    // throw-in: it must explicitly press Bito. That explicit-confirm rule is what keeps a covered
+    // table on screen after the defender covers — the old "no legal throw-in ⇒ auto-settled" made
+    // canBito flip true in the SAME tick a defence landed, so endBout swept the felt to discard
+    // before the player could even see what the defender covered with.
     function attackSeatSettled(st, seat) {
         if (!isAttackSeat(st, seat)) return true;
         if (st.passed[seat]) return true;
-        return legalAttacks(st, seat).length === 0;
+        if (st.hands[seat].length === 0) return true;   // nothing to add or hold back → auto-settle
+        return false;                                    // holds cards → must explicitly Bito/pass
     }
     // The table may be beaten (Bito) only when it's non-empty, fully covered, AND every in-play
-    // attack seat has settled (passed or has nothing legal to throw in). This replaces the old
-    // "primary attacker presses Bito" single-vote rule so 3–4-player throw-ins get their window.
+    // attack seat has settled (explicitly passed, or holds no cards). This is the throw-in/Bito
+    // consensus: every attacker (human or bot) confirms before the bout ends.
     function canBito(st) {
         if (st.table.length === 0 || uncoveredCount(st) !== 0) return false;
         for (var s = 0; s < st.numPlayers; s++) if (!attackSeatSettled(st, s)) return false;
         return true;
+    }
+    // First in-play attack seat (turn order from the primary attacker) that has NOT settled — i.e.
+    // whoever is currently "on the clock" to either throw in a card or confirm Bito on a covered
+    // table. -1 when everyone has settled (the bout is ready to be beaten). Drives actionActor so
+    // the confirm turn walks every attacker, not just those still holding a legal throw-in.
+    function firstUnsettled(st) {
+        if (uncoveredCount(st) !== 0) return -1;
+        for (var k = 0; k < st.numPlayers; k++) {
+            var s = (st.attacker + k) % st.numPlayers;
+            if (!attackSeatSettled(st, s)) return s;
+        }
+        return -1;
     }
     // Which attack seats could still throw a legal card in right now (table covered, not yet
     // passed, and holding a matching-rank card), in classic turn order starting from the primary
@@ -355,6 +374,7 @@
         applyAttack: applyAttack, applyDefend: applyDefend, updateOut: updateOut,
         resetPasses: resetPasses, isAttackSeat: isAttackSeat, applyPass: applyPass,
         attackSeatSettled: attackSeatSettled, canBito: canBito, pendingThrowers: pendingThrowers,
+        firstUnsettled: firstUnsettled,
         inPlayCount: inPlayCount, refill: refill, endBout: endBout, checkOver: checkOver, leaveSeat: leaveSeat,
         cardValue: cardValue, sortByValue: sortByValue,
         durakBotAttack: durakBotAttack, durakBotDefend: durakBotDefend

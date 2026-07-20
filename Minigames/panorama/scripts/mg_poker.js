@@ -94,6 +94,7 @@
         var logSeq = 0, pollGen = 0, holeCursor = 0, pendingAct = false, gameOver = false;
         var wantHole = false;                 // a HAND event landed → pull my hole cards before rendering
         var leftSeats = [];                   // online seats that abandoned the table (rendered as "left")
+        var pendingRaiseLo = [0, 0, 0, 0];    // per-seat low 6 bits of a split raise-to, awaiting its hi half
 
         function status(t) { if (session.onStatus) session.onStatus(t); }
         function nameOf(seat) {
@@ -494,10 +495,21 @@
                 return;
             }
             // betting actions — replayed through the shared engine (validated already server-side)
+            // A raise-to amount (up to ~800, the whole stack) overflows one level dimension, so
+            // the worker splits it into a raiselo (low 6 bits) immediately followed by a raisehi
+            // (high bits). Stash lo, then drive the reducer once the hi half completes it —
+            // to = hi*64 + lo. The pair is always adjacent + ordered in the log, so a per-seat
+            // stash is enough (no seq bookkeeping).
+            if (ev.type === "raiselo") { pendingRaiseLo[ev.seat] = ev.lo; return; }
+            if (ev.type === "raisehi") {
+                var to = ev.hi * 64 + (pendingRaiseLo[ev.seat] || 0);
+                pendingRaiseLo[ev.seat] = 0;
+                if (st && st.toAct === ev.seat) P.applyAction(st, ev.seat, { type: "raise", to: to });
+                return;
+            }
             var action = ev.type === "fold" ? { type: "fold" }
                 : ev.type === "check" ? { type: "check" }
-                : ev.type === "call" ? { type: "call" }
-                : ev.type === "raise" ? { type: "raise", to: ev.to } : null;
+                : ev.type === "call" ? { type: "call" } : null;
             if (action && st && st.toAct === ev.seat) P.applyAction(st, ev.seat, action);
         }
 

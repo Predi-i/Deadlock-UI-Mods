@@ -35,15 +35,42 @@ class FakeStorage {
     }
 }
 
-async function dims(res) {
+// Downlink is now LEVEL-quantised: the worker sends dim = level*STEP + BASE (see
+// worker.core.js d()), and the client recovers level = round((dim - BASE)/STEP). The
+// test mirrors that: rawDims reads the literal PNG pixels; req() level-decodes them so
+// every assertion compares the LOGICAL value (which IS the level) exactly as before.
+// The probe alone is sent literally (it's the calibration reference), so it's read raw.
+var STEP = 9, BASE = 15;
+async function rawDims(res) {
     var b = new Uint8Array(await res.arrayBuffer());
     var rd = function (o) { return ((b[o] << 24) | (b[o + 1] << 16) | (b[o + 2] << 8) | b[o + 3]) >>> 0; };
     return { w: rd(16), h: rd(20) }; // IHDR width @16, height @20 (big-endian)
 }
-async function req(hub, pathAndQuery) {
+function delevel(d) { return { w: Math.round((d.w - BASE) / STEP), h: Math.round((d.h - BASE) / STEP) }; }
+async function reqRaw(hub, pathAndQuery) {
     var res = await hub.fetch(new Request("https://mg.test" + pathAndQuery));
-    return await dims(res);
+    return await rawDims(res);
 }
+async function req(hub, pathAndQuery) {
+    return delevel(await reqRaw(hub, pathAndQuery));
+}
+// Decode a lobby code from a create/quick/host reply. Mirrors worker dCode(): the width
+// is a band (24..39 joiner/create, 40..55 host) + (code>>6); the height is code&63. Host
+// vs joiner is the band, not a +100 flag. codeHost(d) tells them apart.
+function decCode(d) { var band = d.w >= 40 ? 40 : 24; return (d.w - band) * 64 + d.h; }
+function codeHost(d) { return d.w >= 40; }
+// Decode one seat's clock reading. The route now returns ONE seat per read as
+// (30+(sec>>6), sec&63); sentinels are (9,9) gone / (9,8) untimed. clkSec(d) → seconds,
+// Clocks are per-seat now: /api/clocks?seat=S → (30 + sec>>6, sec&63). Recover the seconds.
+// Sentinels (9,9) gone / (9,8) untimed stay at width 9. clkSec reads ONE seat's bank.
+async function clkSec(hub, code, seat) {
+    var d = await req(hub, "/api/clocks.png?code=" + code + "&seat=" + seat);
+    if (d.w === 9) return { sentinel: d.h };            // 9 = gone · 8 = untimed
+    return { sec: (d.w - 30) * 64 + d.h };
+}
+// The join height carries the tc-INDEX+1 (0 untimed · 1 60s · 2 180s · 3 300s · 4 600s).
+var TC_SECS = [0, 60, 180, 300, 600];
+function tcFromJoinH(h) { return TC_SECS[(h | 0) - 1] || 0; }
 // Checkers/chess/ttt squares as row*8+col so tests read naturally.
 function sq(r, c) { return r * 8 + c; }
 
@@ -57,7 +84,7 @@ function ok(cond, msg) {
 async function seatedLobby(game, TH, TJ) {
     var hub = new Hub({ storage: new FakeStorage() });
     var d = await req(hub, "/api/create.png?game=" + game + "&tok=" + TH);
-    var code = d.w * 100 + (d.h - 1);
+    var code = decCode(d);
     await req(hub, "/api/join.png?code=" + code + "&tok=" + TJ);
     return { hub, code };
 }
@@ -67,7 +94,7 @@ async function main() {
 
     // ── calibration + private lobby round-trip with tokens ──
     var hub = new Hub({ storage: new FakeStorage() });
-    d = await req(hub, "/api/probe.png");
+    d = await reqRaw(hub, "/api/probe.png");   // probe is sent LITERALLY (calibration reference)
     ok(d.w === 600 && d.h === 1000, "probe = (600,1000)");
 
     // ── token & game-id validation on create ──
@@ -79,8 +106,8 @@ async function main() {
     ok(d.w === 9 && d.h === 6, "create with unsupported game id → (9,6)");
 
     d = await req(hub, "/api/create.png?game=1&tok=HOSTTOK01");
-    var code = d.w * 100 + (d.h - 1);
-    ok(code >= 1000 && code <= 9999, "create returns a 4-digit code (" + code + ")");
+    var code = decCode(d);
+    ok(code >= 0 && code <= 1023, "create returns a 4-digit code (" + code + ")");
 
     d = await req(hub, "/api/status.png?code=" + code);
     ok(d.w === 1, "status players=1 after create");
@@ -113,8 +140,9 @@ async function main() {
     ok(d.w === 1 && d.h === 1, "legal opening move accepted");
 
     d = await req(hub, "/api/poll.png?code=" + code + "&since=0");
-    var end = d.w > 100 ? 1 : 0, from = (end ? d.w - 100 : d.w) - 1, to = d.h - 1;
-    ok(end === 1 && from === sq(5, 0) && to === sq(4, 1), "poll round-trips the accepted move with server end=1");
+    // Poll now returns RAW squares (from=w, to=h); the turn-hand-off `end` is derived
+    // client-side from the shared rules, no longer sent down.
+    ok(d.w === sq(5, 0) && d.h === sq(4, 1), "poll round-trips the accepted move (raw from/to squares)");
 
     // Now it's black's turn: host moving again is out of turn → (9,1).
     d = await req(hub, "/api/move.png?code=" + code + "&from=" + sq(4, 1) + "&to=" + sq(3, 0) + "&end=1&tok=HOSTTOK01");
@@ -144,16 +172,16 @@ async function main() {
         // routes). A guessed code can no longer clobber players/seats on such a lobby.
         var ph = new Hub({ storage: new FakeStorage() });
         var pc = await req(ph, "/api/pcreate.png?n=3&tok=PKHOSTAA");
-        var pcode = (pc.w - 100) * 100 + (pc.h - 1);
+        var pcode = decCode(pc);
         var jr = await req(ph, "/api/join.png?code=" + pcode + "&tok=INTRUDER1");
         ok(jr.w === 20, "H2: generic join on a poker lobby → (20) missing (guarded)");
         var pr = await req(ph, "/api/proom.png?code=" + pcode);
-        ok(pr.w - (pr.w >= 100 ? 100 : 0) === 1, "H2: poker lobby still has 1 player after blocked join");
+        ok((pr.w >= 50 ? pr.w - 50 : pr.w) === 1, "H2: poker lobby still has 1 player after blocked join");
 
         // H3: >RL_MAX_HITS formation requests from ONE IP within the window get (9,4) throttled;
         // a null IP (as the rest of this suite uses) is exempt. Drive it with an explicit IP.
         var th = new Hub({ storage: new FakeStorage() });
-        function ipReq(pq) { return th.fetch(new Request("https://mg.test" + pq, { headers: { "CF-Connecting-IP": "203.0.113.9" } })).then(dims); }
+        function ipReq(pq) { return th.fetch(new Request("https://mg.test" + pq, { headers: { "CF-Connecting-IP": "203.0.113.9" } })).then(rawDims).then(delevel); }
         var throttled = false, lastH = 0;
         for (var k = 0; k < 120; k++) {
             var rr = await ipReq("/api/create.png?game=1&tok=FLOODER01");
@@ -161,7 +189,7 @@ async function main() {
         }
         ok(throttled, "H3: single-IP create flood eventually returns (9,4) throttled");
         // A different IP is unaffected by the first IP's throttle.
-        var other = await th.fetch(new Request("https://mg.test/api/create.png?game=1&tok=CLEANIP01", { headers: { "CF-Connecting-IP": "198.51.100.7" } })).then(dims);
+        var other = await th.fetch(new Request("https://mg.test/api/create.png?game=1&tok=CLEANIP01", { headers: { "CF-Connecting-IP": "198.51.100.7" } })).then(rawDims).then(delevel);
         ok(other.w !== 9, "H3: a different IP is not throttled (" + other.w + "," + other.h + ")");
     })();
 
@@ -235,8 +263,8 @@ async function main() {
         ok(e2.w === 1 && e2.h === 1, "c4: joiner drops (turn alternation)");
         // Poll round-trips the host's first drop (from=3, to marker=7, end=1).
         var pd = await req(L.hub, "/api/poll.png?code=" + L.code + "&since=0");
-        var pend = pd.w > 100 ? 1 : 0, pfrom = (pend ? pd.w - 100 : pd.w) - 1, pto = pd.h - 1;
-        ok(pend === 1 && pfrom === 3 && pto === 7, "c4: poll round-trips the column drop with end=1");
+        var pfrom = pd.w, pto = pd.h;   // raw squares now; end is derived client-side
+        ok(pfrom === 3 && pto === 7, "c4: poll round-trips the column drop (raw from/to)");
         // Fill column 0 (6 discs) then a 7th drop into it is rejected as illegal.
         var L2 = await seatedLobby(5, "HCF21234", "JCF21234");
         var toks = ["HCF21234", "JCF21234"];
@@ -311,9 +339,9 @@ async function main() {
         // Host creates a 3-seat durak table (dcreate is NOT the generic create — the 2-int lobby
         // is hard-capped at 2 seats; a 3–4-player table needs its own routes, like poker).
         var dc = await req(hub, "/api/dcreate.png?n=3&tok=DKHOST01");
-        ok(dc.w >= 100, "durak-N: dcreate → HOST (w>=100 role flag)");
-        var code = (dc.w - 100) * 100 + (dc.h - 1);
-        ok(code >= 1000 && code <= 9999, "durak-N: host code valid (" + code + ")");
+        ok(codeHost(dc), "durak-N: dcreate → HOST (w>=100 role flag)");
+        var code = decCode(dc);
+        ok(code >= 0 && code <= 1023, "durak-N: host code valid (" + code + ")");
         var badTok = await req(hub, "/api/dcreate.png?n=3&tok=x");
         ok(badTok.w === 9 && badTok.h === 3, "durak-N: dcreate short token → (9,3)");
         // Room shows 1 seated, cap 3, not started.
@@ -335,7 +363,7 @@ async function main() {
         var st = await req(hub, "/api/start.png?code=" + code + "&tok=DKHOST01");
         ok(st.w === 1 && st.h === 1, "durak-N: host start deals the game");
         var dr2 = await req(hub, "/api/droom.png?code=" + code);
-        ok(dr2.w === 103 && dr2.h === 3, "durak-N: droom now shows started (players 3 +100)");
+        ok(dr2.w === 53 && dr2.h === 3, "durak-N: droom now shows started (players 3, +50 band)");
         // Three DRAW events (one per seat) confirm a 3-hand deal, plus TRUMP + OPEN up front.
         var e0 = await req(hub, "/api/dlog.png?code=" + code + "&since=0");
         ok(e0.w === 2, "durak-N: dlog[0] = TRUMP");
@@ -380,7 +408,7 @@ async function main() {
         // Bito waits until every in-play attack seat has passed (or has nothing to throw in).
         var hub = new Hub({ storage: new FakeStorage() });
         var dc = await req(hub, "/api/dcreate.png?n=3&tok=DKPASS01");
-        var code = (dc.w - 100) * 100 + (dc.h - 1);
+        var code = decCode(dc);
         await req(hub, "/api/djoin.png?code=" + code + "&tok=DKPASS02");
         await req(hub, "/api/djoin.png?code=" + code + "&tok=DKPASS03");
         await req(hub, "/api/start.png?code=" + code + "&tok=DKPASS01");
@@ -453,9 +481,9 @@ async function main() {
         // Host creates a 2-seat poker lobby (pcreate is NOT the generic create — poker owns its
         // routes because the shared lobby is hard-capped at 2 while poker seats 2–4).
         var pc = await req(hub, "/api/pcreate.png?n=2&tok=PHOST123");
-        ok(pc.w >= 100, "poker: pcreate → HOST (w>=100 role flag)");
-        var code = (pc.w - 100) * 100 + (pc.h - 1);
-        ok(code >= 1000 && code <= 9999, "poker: host code valid (" + code + ")");
+        ok(codeHost(pc), "poker: pcreate → HOST (w>=100 role flag)");
+        var code = decCode(pc);
+        ok(code >= 0 && code <= 1023, "poker: host code valid (" + code + ")");
         // Bad token is refused up front.
         var badTok = await req(hub, "/api/pcreate.png?n=2&tok=x");
         ok(badTok.w === 9 && badTok.h === 3, "poker: pcreate with short token → (9,3)");
@@ -474,7 +502,7 @@ async function main() {
         var ps = await req(hub, "/api/pstart.png?code=" + code + "&tok=PHOST123");
         ok(ps.w === 1 && ps.h === 1, "poker: host start deals the first hand");
         var pr2 = await req(hub, "/api/proom.png?code=" + code);
-        ok(pr2.w === 102 && pr2.h === 2, "poker: proom now shows started (players 2 +100)");
+        ok(pr2.w === 52 && pr2.h === 2, "poker: proom now shows started (players 2, started band +50)");
         // Public log opens with a HAND event (2, button+1).
         var h0 = await req(hub, "/api/plog.png?code=" + code + "&since=0");
         ok(h0.w === 2 && (h0.h === 1 || h0.h === 2), "poker: plog[0] = HAND (2, button+1)");
@@ -516,7 +544,7 @@ async function main() {
         var hub = new Hub({ storage: new FakeStorage() });
         var HOST = "FLOPHOSTAA", JOIN = "FLOPJOINBB";
         var d = await req(hub, "/api/pcreate.png?n=2&tok=" + HOST);
-        var code = (d.w - 100) * 100 + (d.h - 1);
+        var code = decCode(d);
         await req(hub, "/api/pjoin.png?code=" + code + "&tok=" + JOIN);
         await req(hub, "/api/pstart.png?code=" + code + "&tok=" + HOST);
         // Reach the flop: heads-up the button/SB acts first (CALL), then the BB CHECKS. We don't
@@ -549,25 +577,25 @@ async function main() {
     // ── public quickmatch: pairs two callers into one lobby (with tokens) ──
     var h2 = new Hub({ storage: new FakeStorage() });
     var q1 = await req(h2, "/api/quick.png?game=1&tok=QUICKQAA");
-    ok(q1.w >= 100, "quick #1 becomes HOST (w>=100 role flag)");
-    var c1 = (q1.w - 100) * 100 + (q1.h - 1);
-    ok(c1 >= 1000 && c1 <= 9999, "host code valid (" + c1 + ")");
+    ok(codeHost(q1), "quick #1 becomes HOST (w>=100 role flag)");
+    var c1 = decCode(q1);
+    ok(c1 >= 0 && c1 <= 1023, "host code valid (" + c1 + ")");
 
     var q2 = await req(h2, "/api/quick.png?game=1&tok=QUICKQBB");
-    ok(q2.w < 100, "quick #2 becomes JOINER (w<100)");
-    var c2 = q2.w * 100 + (q2.h - 1);
+    ok(!codeHost(q2), "quick #2 becomes JOINER (w<100)");
+    var c2 = decCode(q2);
     ok(c2 === c1, "joiner is paired into the host's lobby (same code)");
     d = await req(h2, "/api/status.png?code=" + c1);
     ok(d.w === 2, "paired lobby has 2 players");
 
     // ── concurrency: more players form a SECOND independent lobby ──
     var q3 = await req(h2, "/api/quick.png?game=1&tok=QUICKQCC");
-    ok(q3.w >= 100, "quick #3 hosts a new lobby (waiting slot was consumed)");
-    var c3 = (q3.w - 100) * 100 + (q3.h - 1);
+    ok(codeHost(q3), "quick #3 hosts a new lobby (waiting slot was consumed)");
+    var c3 = decCode(q3);
     ok(c3 !== c1, "second lobby has a different code (" + c3 + ")");
     var q4 = await req(h2, "/api/quick.png?game=1&tok=QUICKQDD");
-    var c4 = q4.w * 100 + (q4.h - 1);
-    ok(q4.w < 100 && c4 === c3, "quick #4 joins the second lobby");
+    var c4 = decCode(q4);
+    ok(!codeHost(q4) && c4 === c3, "quick #4 joins the second lobby");
 
     // Host of lobby 1 (QUICKQAA = white seat 0) plays a legal move; lobby 3 stays independent.
     await req(h2, "/api/move.png?code=" + c1 + "&from=" + sq(5, 0) + "&to=" + sq(4, 1) + "&end=1&tok=QUICKQAA");
@@ -580,11 +608,11 @@ async function main() {
     var h4 = new Hub({ storage: new FakeStorage() });
     await req(h4, "/api/quick.png?game=1&tok=QGAME1AA");            // host waiting on game 1
     var g2 = await req(h4, "/api/quick.png?game=2&tok=QGAME2BB");   // different game
-    ok(g2.w >= 100, "quick for a different game hosts its own lobby (per-game queue)");
+    ok(codeHost(g2), "quick for a different game hosts its own lobby (per-game queue)");
 
     // ── quick match: time-control (tc) bucketing (chess/checkers) ──
     // Helper: decode a quick reply into { host, code }.
-    function qdec(r) { var host = r.w >= 100; return { host: host, code: (host ? r.w - 100 : r.w) * 100 + (r.h - 1) }; }
+    function qdec(r) { return { host: codeHost(r), code: decCode(r) }; }
     await (async function () {
         // (a) Different concrete banks do NOT force-pair: a 1-min seeker and a 10-min seeker each host.
         var ht = new Hub({ storage: new FakeStorage() });
@@ -595,8 +623,8 @@ async function main() {
         // (b) A same-bank seeker joins the matching host, and the lobby runs that bank.
         var c = qdec(await req(ht, "/api/quick.png?game=4&tok=TCONE333&tc=60"));    // another 1 min
         ok(!c.host && c.code === a.code, "tc: a second 1-min seeker JOINS the waiting 1-min host");
-        var cl = await req(ht, "/api/clocks.png?code=" + a.code);
-        ok(cl.w === 61 && cl.h === 61, "tc: the paired 1-min lobby banks 60s per side (authoritative /api/clocks)");
+        var s0 = await clkSec(ht, a.code, 0), s1 = await clkSec(ht, a.code, 1);
+        ok(s0.sec === 60 && s1.sec === 60, "tc: the paired 1-min lobby banks 60s per side (authoritative /api/clocks)");
     })();
     await (async function () {
         // (c) "Any" joins any waiting bank and adopts it (here a waiting 3-min host → 180s).
@@ -605,8 +633,8 @@ async function main() {
         ok(h.host, "tc/any: concrete 3-min host waits");
         var j = qdec(await req(ht, "/api/quick.png?game=1&tok=ANYJOIN1&tc=any"));   // "Any"
         ok(!j.host && j.code === h.code, "tc/any: an Any seeker joins the waiting 3-min host");
-        var cl = await req(ht, "/api/clocks.png?code=" + h.code);
-        ok(cl.w === 181 && cl.h === 181, "tc/any: the Any joiner adopts the host's 3-min bank (180s)");
+        var s = await clkSec(ht, h.code, 0);
+        ok(s.sec === 180, "tc/any: the Any joiner adopts the host's 3-min bank (180s)");
     })();
     await (async function () {
         // (d) Two "Any" seekers meet with no concrete bank around → resolve to the 5-min default.
@@ -615,8 +643,8 @@ async function main() {
         ok(h.host, "tc/any: first Any seeker HOSTS an undecided-bank lobby");
         var j = qdec(await req(ht, "/api/quick.png?game=4&tok=ANYANY02&tc=any"));
         ok(!j.host && j.code === h.code, "tc/any: the second Any seeker joins it");
-        var cl = await req(ht, "/api/clocks.png?code=" + h.code);
-        ok(cl.w === 301 && cl.h === 301, "tc/any: two Any seekers resolve to the 5-min default (300s)");
+        var s = await clkSec(ht, h.code, 0);
+        ok(s.sec === 300, "tc/any: two Any seekers resolve to the 5-min default (300s)");
     })();
     await (async function () {
         // (e) A concrete seeker adopts a waiting "Any" host (fixing the bank to the concrete pick).
@@ -625,8 +653,8 @@ async function main() {
         ok(h.host, "tc/any: Any host waits with no fixed bank");
         var j = qdec(await req(ht, "/api/quick.png?game=1&tok=CONCJN10&tc=600"));   // concrete 10 min
         ok(!j.host && j.code === h.code, "tc/any: a concrete 10-min seeker joins the waiting Any host");
-        var cl = await req(ht, "/api/clocks.png?code=" + h.code);
-        ok(cl.w === 601 && cl.h === 601, "tc/any: the Any host adopts the joiner's 10-min bank (600s)");
+        var s = await clkSec(ht, h.code, 0);
+        ok(s.sec === 600, "tc/any: the Any host adopts the joiner's 10-min bank (600s)");
     })();
 
     // ── multi-select quick match (mquick): intersection matching + status game ──
@@ -634,16 +662,16 @@ async function main() {
         var hm = new Hub({ storage: new FakeStorage() });
         // Host offers {1,2,4}. No waiting host yet → becomes HOST of an undecided lobby.
         var mh = await req(hm, "/api/mquick.png?games=1,2,4&tok=MQHOST01");
-        ok(mh.w >= 100, "mquick: first caller becomes HOST (role flag)");
-        var mc = (mh.w - 100) * 100 + (mh.h - 1);
-        ok(mc >= 1000 && mc <= 9999, "mquick: host code valid (" + mc + ")");
+        ok(codeHost(mh), "mquick: first caller becomes HOST (role flag)");
+        var mc = decCode(mh);
+        ok(mc >= 0 && mc <= 1023, "mquick: host code valid (" + mc + ")");
         // While undecided, status reports game+1 = 1 (game 0).
         var msu = await req(hm, "/api/status.png?code=" + mc);
         ok(msu.w === 1 && msu.h === 1, "mquick: undecided lobby reports players=1, game=0 (h=1)");
         // Joiner offers {4,5}. Intersection with host {1,2,4} = {4} → pairs, fixing game 4 (chess).
         var mj = await req(hm, "/api/mquick.png?games=5,4&tok=MQJOIN01");
-        ok(mj.w < 100, "mquick: intersecting joiner becomes JOINER");
-        var mjc = mj.w * 100 + (mj.h - 1);
+        ok(!codeHost(mj), "mquick: intersecting joiner becomes JOINER");
+        var mjc = decCode(mj);
         ok(mjc === mc, "mquick: joiner paired into the host's lobby (same code)");
         // Both sides now learn the fixed game from status: players=2, h = game+1 = 5.
         var msd = await req(hm, "/api/status.png?code=" + mc);
@@ -657,40 +685,40 @@ async function main() {
     await (async function () {
         var hm = new Hub({ storage: new FakeStorage() });
         var a = await req(hm, "/api/mquick.png?games=1,2&tok=MQNOAA01");   // host offers {1,2}
-        ok(a.w >= 100, "mquick: host offers {1,2} (HOST)");
-        var ac = (a.w - 100) * 100 + (a.h - 1);
+        ok(codeHost(a), "mquick: host offers {1,2} (HOST)");
+        var ac = decCode(a);
         var b = await req(hm, "/api/mquick.png?games=4,5&tok=MQNOBB01");   // disjoint {4,5}
-        ok(b.w >= 100, "mquick: disjoint set does NOT pair — hosts its own lobby");
-        var bc = (b.w - 100) * 100 + (b.h - 1);
+        ok(codeHost(b), "mquick: disjoint set does NOT pair — hosts its own lobby");
+        var bc = decCode(b);
         ok(bc !== ac, "mquick: the two disjoint hosts are separate lobbies");
         // A third caller offering {2} takes the FIRST host (which still waits under queue 2).
         var c = await req(hm, "/api/mquick.png?games=2&tok=MQNOCC01");
-        ok(c.w < 100 && (c.w * 100 + (c.h - 1)) === ac, "mquick: {2} joins the {1,2} host, fixing game 2");
+        ok(!codeHost(c) && (decCode(c)) === ac, "mquick: {2} joins the {1,2} host, fixing game 2");
     })();
 
     // ── mquick: cancel clears EVERY per-game queue the multi-lobby registered under ──
     await (async function () {
         var hm = new Hub({ storage: new FakeStorage() });
         var a = await req(hm, "/api/mquick.png?games=1,2,5&tok=MQCANAA1");
-        var ac = (a.w - 100) * 100 + (a.h - 1);
+        var ac = decCode(a);
         await req(hm, "/api/cancel.png?code=" + ac + "&tok=MQCANAA1");
         // Every queue is now free: a single-game quick on 1, 2 AND 5 each hosts fresh.
         var g1 = await req(hm, "/api/quick.png?game=1&tok=MQFRSH11");
-        ok(g1.w >= 100, "mquick cancel: queue 1 freed (quick hosts fresh)");
+        ok(codeHost(g1), "mquick cancel: queue 1 freed (quick hosts fresh)");
         var g2 = await req(hm, "/api/quick.png?game=2&tok=MQFRSH21");
-        ok(g2.w >= 100, "mquick cancel: queue 2 freed");
+        ok(codeHost(g2), "mquick cancel: queue 2 freed");
         var g5 = await req(hm, "/api/quick.png?game=5&tok=MQFRSH51");
-        ok(g5.w >= 100, "mquick cancel: queue 5 freed");
+        ok(codeHost(g5), "mquick cancel: queue 5 freed");
     })();
 
     // ── mquick: a single /api/quick joiner can match a waiting multi-lobby ──
     await (async function () {
         var hm = new Hub({ storage: new FakeStorage() });
         var a = await req(hm, "/api/mquick.png?games=2,5&tok=MQMIXAA1");   // multi-host {2,5}
-        var ac = (a.w - 100) * 100 + (a.h - 1);
+        var ac = decCode(a);
         // A plain single-game quick for game 5 should join the multi-host, fixing game 5.
         var j = await req(hm, "/api/quick.png?game=5&tok=MQMIXBB1");
-        ok(j.w < 100 && (j.w * 100 + (j.h - 1)) === ac, "mquick: single quick(5) joins a {2,5} multi-host");
+        ok(!codeHost(j) && (decCode(j)) === ac, "mquick: single quick(5) joins a {2,5} multi-host");
         var msd = await req(hm, "/api/status.png?code=" + ac);
         ok(msd.w === 2 && msd.h === 6, "mquick: mixed match fixed game 5 (status h=6)");
     })();
@@ -698,7 +726,7 @@ async function main() {
     // ── cancel: only a SEATED player (with token), and only while waiting, may cancel ──
     var h3 = new Hub({ storage: new FakeStorage() });
     var qc = await req(h3, "/api/quick.png?game=1&tok=CANCELAA");
-    var cc = (qc.w - 100) * 100 + (qc.h - 1);
+    var cc = decCode(qc);
     // A cancel WITHOUT a token must NOT destroy the lobby (blocks 4-digit-code griefers).
     await req(h3, "/api/cancel.png?code=" + cc);
     d = await req(h3, "/api/status.png?code=" + cc);
@@ -710,7 +738,7 @@ async function main() {
     // The seated host's token cancels it, freeing the waiting slot.
     await req(h3, "/api/cancel.png?code=" + cc + "&tok=CANCELAA");
     var qc2 = await req(h3, "/api/quick.png?game=1&tok=CANCELBB");
-    ok(qc2.w >= 100, "after a legitimate cancel, next quick hosts fresh (slot freed)");
+    ok(codeHost(qc2), "after a legitimate cancel, next quick hosts fresh (slot freed)");
     d = await req(h3, "/api/status.png?code=" + cc);
     ok(d.w === 9, "cancelled lobby is gone");
 
@@ -749,34 +777,34 @@ async function main() {
         // create with tc=60 → the host lobby carries a 60s bank per seat.
         var hub = new Hub({ storage: new FakeStorage() });
         var c = await req(hub, "/api/create.png?game=4&tok=CLKHOST01&tc=60");
-        var code = c.w * 100 + (c.h - 1);
-        // join learns the time control from the height (tc seconds + 1).
+        var code = decCode(c);
+        // join learns the time control from the height as a tc-INDEX+1 (60s → index 1 → h=2).
         var j = await req(hub, "/api/join.png?code=" + code + "&tok=CLKJOIN01");
-        ok(j.w === 4 && j.h === 61, "join reports the host's time control (tc=60 → h=61)");
-        // clocks route returns both banks; freshly-armed so both ~60s (601 raw = 600 cap? no: 60+1).
-        var ck = await req(hub, "/api/clocks.png?code=" + code);
-        ok(ck.w === 61 && ck.h === 61, "clocks: both seats start at the full 60s bank (61,61)");
+        ok(j.w === 4 && j.h === 2, "join reports the host's time control (tc=60 → index 1 → h=2)");
+        // clocks are per-seat now: read each seat with &seat= and decode the banded value.
+        var b0 = await clkSec(hub, code, 0), b1 = await clkSec(hub, code, 1);
+        ok(b0.sec === 60 && b1.sec === 60, "clocks: both seats start at the full 60s bank");
 
         // an UNTIMED lobby (no tc) reports the untimed sentinel, never a bogus clock.
         var u = await seatedLobby(4, "UNTMHOST1", "UNTMJOIN1");
-        var uc = await req(u.hub, "/api/clocks.png?code=" + u.code);
-        ok(uc.w === 9 && uc.h === 998, "clocks: untimed lobby → (9,998) sentinel");
+        var uc = await clkSec(u.hub, u.code, 0);
+        ok(uc.sentinel === 8, "clocks: untimed lobby → (9,8) sentinel");
 
         // a missing lobby reports the gone sentinel.
-        var gc = await req(hub, "/api/clocks.png?code=1");
-        ok(gc.w === 9 && gc.h === 999, "clocks: missing lobby → (9,999) sentinel");
+        var gc = await clkSec(hub, 1, 0);
+        ok(gc.sentinel === 9, "clocks: missing lobby → (9,9) sentinel");
 
         // tc off the menu (e.g. 42s) is rejected → untimed lobby.
         var hub2 = new Hub({ storage: new FakeStorage() });
         var c2 = await req(hub2, "/api/create.png?game=4&tok=BADTCHOST&tc=42");
-        var code2 = c2.w * 100 + (c2.h - 1);
+        var code2 = decCode(c2);
         var j2 = await req(hub2, "/api/join.png?code=" + code2 + "&tok=BADTCJOIN");
         ok(j2.h === 1, "create: off-menu tc (42s) is rejected → untimed (join h=1)");
 
         // tc is ignored for a non-clock game (TTT) → untimed.
         var hub3 = new Hub({ storage: new FakeStorage() });
         var c3 = await req(hub3, "/api/create.png?game=2&tok=TTTTCHOST&tc=300");
-        var code3 = c3.w * 100 + (c3.h - 1);
+        var code3 = decCode(c3);
         var j3 = await req(hub3, "/api/join.png?code=" + code3 + "&tok=TTTTCJOIN");
         ok(j3.h === 1, "create: tc ignored for a non-clock game (TTT) → untimed");
 
@@ -785,27 +813,29 @@ async function main() {
         // fake storage and move the running seat's clkStart back by N ms, then read /clocks.
         var fhub = new Hub({ storage: new FakeStorage() });
         var fc = await req(fhub, "/api/create.png?game=4&tok=FLAGHOST1&tc=60");
-        var fcode = fc.w * 100 + (fc.h - 1);
+        var fcode = decCode(fc);
         await req(fhub, "/api/join.png?code=" + fcode + "&tok=FLAGJOIN1");
         var L = await fhub.storage.get("l:" + fcode);
         // Seat 0 (host) is on the move. Pretend 25s elapsed since its turn began.
         L.clkStart = L.clkStart - 25000;
         await fhub.storage.put("l:" + fcode, L);
-        var ck2 = await req(fhub, "/api/clocks.png?code=" + fcode);
-        ok(ck2.w === 36 && ck2.h === 61, "clocks: 25s charged to the running seat only (36,61)");
+        // Per-seat now: seat 0 (running) has ~35s left, seat 1 (idle) still the full 60.
+        var ck2a = await clkSec(fhub, fcode, 0);
+        var ck2b = await clkSec(fhub, fcode, 1);
+        ok(ck2a.sec === 35 && ck2b.sec === 60, "clocks: 25s charged to the running seat only (seat0=35, seat1=60)");
 
         // Now blow past the bank: rewind 70s > 60s → running seat flags and loses.
         L = await fhub.storage.get("l:" + fcode);
         L.clkStart = L.clkStart - 70000;
         await fhub.storage.put("l:" + fcode, L);
-        var ck3 = await req(fhub, "/api/clocks.png?code=" + fcode);
-        ok(ck3.w === 1 && ck3.h === 61, "clocks: running seat's bank hits 0 → (1,61) flag-fall");
+        var ck3 = await clkSec(fhub, fcode, 0);
+        ok(ck3.sec === 0, "clocks: running seat's bank hits 0 → flag-fall (seat0=0)");
         // The flag is now persisted: a move by EITHER seat is refused (game over on time).
         var mv = await req(fhub, "/api/move.png?code=" + fcode + "&from=" + sq(6, 4) + "&to=" + sq(4, 4) + "&end=1&tok=FLAGHOST1");
         ok(mv.w === 9 && mv.h === 2, "move after flag-fall is refused → (9,2)");
         // A later /clocks re-read still shows the flagged seat at 0 (sticks, doesn't tick back up).
-        var ck4 = await req(fhub, "/api/clocks.png?code=" + fcode);
-        ok(ck4.w === 1 && ck4.h === 61, "clocks: flag sticks on later reads (1,61)");
+        var ck4 = await clkSec(fhub, fcode, 0);
+        ok(ck4.sec === 0, "clocks: flag sticks on later reads (seat0=0)");
     })();
 
     // ── /api/leave: mid-game exit (pair teardown, foreign-token no-op, N-seat fold-out) ──
@@ -814,7 +844,7 @@ async function main() {
         //    poll returns (9,9) "gone" — the survivor is shown "Opponent left." and wins by default.
         var hub = new Hub({ storage: new FakeStorage() });
         var c = await req(hub, "/api/create.png?game=1&tok=LVHOST001");
-        var code = c.w * 100 + (c.h - 1);
+        var code = decCode(c);
         await req(hub, "/api/join.png?code=" + code + "&tok=LVJOIN001");
         // A stranger with no seat token can never nuke the match.
         var lv0 = await req(hub, "/api/leave.png?code=" + code + "&tok=STRANGER9");
@@ -834,7 +864,7 @@ async function main() {
         //    A LEFT(45+seat) event is appended so both survivors learn, and the game is NOT over.
         var dhub = new Hub({ storage: new FakeStorage() });
         var dc = await req(dhub, "/api/dcreate.png?n=3&tok=DLHOST01");
-        var dcode = (dc.w - 100) * 100 + (dc.h - 1);
+        var dcode = decCode(dc);
         await req(dhub, "/api/djoin.png?code=" + dcode + "&tok=DLPLR201");
         await req(dhub, "/api/djoin.png?code=" + dcode + "&tok=DLPLR301");
         await req(dhub, "/api/start.png?code=" + dcode + "&tok=DLHOST01");
@@ -848,7 +878,7 @@ async function main() {
         var dlv = await req(dhub, "/api/leave.png?code=" + dcode + "&tok=DLPLR301");
         ok(dlv.w === 1 && dlv.h === 1, "leave(durak-3): seat 2 leaves → (1,1)");
         var droom = await req(dhub, "/api/droom.png?code=" + dcode);
-        ok(droom.w >= 100, "leave(durak-3): table still alive & started after a leave");
+        ok(droom.w >= 50, "leave(durak-3): table still alive & started after a leave");
         // A LEFT(47) event (45 + seat 2) is present in the freshly-appended tail.
         var sawLeft = false, sawOver = false;
         for (var dj = tail; dj < tail + 30; dj++) {
@@ -867,7 +897,7 @@ async function main() {
         // C) 3-seat poker: a live table. One seat leaves → folds out, LEFT(50+seat) logged, plays on.
         var phub = new Hub({ storage: new FakeStorage() });
         var pc = await req(phub, "/api/pcreate.png?n=3&tok=PLHOST01");
-        var pcode = (pc.w - 100) * 100 + (pc.h - 1);
+        var pcode = decCode(pc);
         await req(phub, "/api/pjoin.png?code=" + pcode + "&tok=PLPLR201");
         await req(phub, "/api/pjoin.png?code=" + pcode + "&tok=PLPLR301");
         await req(phub, "/api/pstart.png?code=" + pcode + "&tok=PLHOST01");
@@ -879,7 +909,7 @@ async function main() {
         var plv = await req(phub, "/api/leave.png?code=" + pcode + "&tok=PLPLR301");
         ok(plv.w === 1 && plv.h === 1, "leave(poker-3): seat 2 leaves → (1,1)");
         var proom = await req(phub, "/api/proom.png?code=" + pcode);
-        ok(proom.w >= 100, "leave(poker-3): table still alive & started after a leave");
+        ok(proom.w >= 50, "leave(poker-3): table still alive & started after a leave");
         var sawPLeft = false;
         for (var pj2 = ptail; pj2 < ptail + 30; pj2++) {
             var pev = await req(phub, "/api/plog.png?code=" + pcode + "&since=" + pj2);
@@ -891,7 +921,7 @@ async function main() {
         // D) Pre-start lobby: leave behaves like cancel (tears down a waiting lobby).
         var whub = new Hub({ storage: new FakeStorage() });
         var wc = await req(whub, "/api/create.png?game=1&tok=WLHOST001");
-        var wcode = wc.w * 100 + (wc.h - 1);
+        var wcode = decCode(wc);
         await req(whub, "/api/leave.png?code=" + wcode + "&tok=WLHOST001");
         var wstat = await req(whub, "/api/status.png?code=" + wcode);
         ok(wstat.w === 9, "leave: pre-start host leaving tears the waiting lobby down");

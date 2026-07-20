@@ -207,6 +207,7 @@
 
         var gen = 0;                       // bumps on every start/stop/destroy → stale ticks bail
         var dead = false, running = false, deadline = 0, expireCb = null;
+        var curSecs = TURN_SECS;           // budget for the CURRENT run (start may override per call)
 
         // Snap the fill FULL (no transition) so a fresh turn starts from a full bar; the arm()
         // below then flips on the animated class and pushes it to empty, tweening over TURN_SECS.
@@ -219,7 +220,12 @@
         }
         function arm() {
             fill.AddClass("mg-tt-anim");
-            fill.style.transform = "translate3d(0px, " + TRACK_H + "px, 0px)";   // drain top→bottom over TURN_SECS
+            // The drain duration lives in CSS (.mg-tt-fill.mg-tt-anim = 25s) but callers may pass a
+            // shorter budget (durak's 10s Bito window). Override the transform leg inline so the slide
+            // matches curSecs; opacity/colour legs keep their CSS timings. Order MUST match the CSS
+            // transition-property list (transform, opacity, background-color).
+            fill.style.transitionDuration = curSecs + "s, 0.15s, 0.3s";
+            fill.style.transform = "translate3d(0px, " + TRACK_H + "px, 0px)";   // drain top→bottom over curSecs
         }
 
         function tick(myGen) {
@@ -240,16 +246,19 @@
 
         return {
             el: wrap,
-            // Put the human on the clock. onExpire fires once if the bar empties first.
-            start: function (onExpire) {
+            // Put the human on the clock. onExpire fires once if the bar empties first. `secs`
+            // optionally overrides the default TURN_SECS budget (0/undefined → TURN_SECS); durak's
+            // optional Bito window passes 10.
+            start: function (onExpire, secs) {
                 if (dead) return;
                 gen++;
                 var myGen = gen;
                 running = true;
+                curSecs = (secs && secs > 0) ? secs : TURN_SECS;
                 expireCb = onExpire || null;
-                deadline = Date.now() + TURN_SECS * 1000;
+                deadline = Date.now() + curSecs * 1000;
                 snapFull();               // reveals the fill (opacity) — the wrap is always laid out
-                num.text = String(TURN_SECS);
+                num.text = String(curSecs);
                 // Arm the CSS drain one frame later (the .mg-piece/.mg-anim arming trick): the
                 // full-snap must commit first, or the browser coalesces both writes and the bar
                 // jumps straight to empty with no slide.
@@ -348,7 +357,7 @@
         // produced to the on-screen status line — so ONE in-game test reveals which signal
         // the engine really populates, instead of guessing a 5th time. Flip to false (or
         // delete the status() call in commitDropMultimethod) once drag is confirmed working.
-        var DRAG_DEBUG = true;
+        var DRAG_DEBUG = false;        // drag confirmed working in-game — silence the per-drop status trace
 
         function status(t) { if (session.onStatus) session.onStatus(t); }
         function sfx(n) { if (MG.Sound) MG.Sound.play(n); }
@@ -956,6 +965,19 @@
             return { captured: res.captured, promoted: res.promoted, capIdx: capIdx };
         }
 
+        // Derive the turn-hand-off flag `end` for a polled hop WITHOUT the server sending it
+        // (it no longer fits the level-quantised downlink). Mirrors worker.core.js
+        // validateCheckers EXACTLY: apply the hop to a COPY, then the turn continues (end=0)
+        // only if this same piece just captured, wasn't crowned, and still has a capture
+        // available; otherwise the turn hands off (end=1). Uses a copy so the live board is
+        // untouched — the caller applies the real hop itself.
+        function deriveMoveEnd(from, to) {
+            var copy = board.slice();
+            var res = applyHop(copy, from, to);
+            var more = res.captured && !res.promoted && captureMoves(copy, to).length > 0;
+            return more ? 0 : 1;
+        }
+
         // Slide the piece from->to; shrink-fade a captured piece; crown on promotion.
         function animateHop(from, to, capIdx, promoted) {
             // While reviewing, the pieces layer shows a past snapshot, not the live model —
@@ -1251,7 +1273,11 @@
                     appliedSeq = seq;
                     replayAccepted(seq);
                 }
-            }, function () { $.Schedule(0.4, function () { replayAccepted(seq); }); });
+            }, function () { $.Schedule(0.4, function () { replayAccepted(seq); }); },
+            function (from, to) {
+                var fr = (from / 8) | 0, fc = from % 8, tr = (to / 8) | 0, tc = to % 8;
+                return Math.abs(tr - fr) === Math.abs(tc - fc);
+            }, deriveMoveEnd);
         }
 
         // ── opponent polling ────────────────────────────────────────────────
@@ -1301,7 +1327,7 @@
                 // else is a mis-scaled read and must never reach applyHop.
                 var fr = (from / 8) | 0, fc = from % 8, tr = (to / 8) | 0, tc = to % 8;
                 return Math.abs(tr - fr) === Math.abs(tc - fc);
-            });
+            }, deriveMoveEnd);
         }
 
         function checkEnd() {
