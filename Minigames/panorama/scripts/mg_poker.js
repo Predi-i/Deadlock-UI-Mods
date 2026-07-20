@@ -62,7 +62,8 @@
     }
 
     // Stage geometry (px). Bigger than Durak's 680×500 — the 4-seat felt needs the room.
-    var CARD_W = 76, CARD_H = 106;     // board / my hole card size
+    var CARD_W = 76, CARD_H = 106;     // board card size
+    var HERO_W = 106, HERO_H = 148;    // MY hole cards: ~1.4x the board so my hand reads clearly bottom-centre
     var OPP_CW = 42, OPP_CH = 59;      // opponents' small face-down backs (avoid the mushy overlap)
     var STAGE_W = 760, STAGE_H = 520;
     var START_STACK = 200, SB = 5, BB = 10;
@@ -92,12 +93,16 @@
         // holeCursor = how many of MY 2 hole cards I've pulled via pdraw for the current hand;
         // pendingAct blocks input between send and the echoed event.
         var logSeq = 0, pollGen = 0, holeCursor = 0, pendingAct = false, gameOver = false;
+        var pollMisses = 0;            // consecutive empty polls this turn (drives the adaptive cadence)
         var wantHole = false;                 // a HAND event landed → pull my hole cards before rendering
+        var leftSeats = [];                   // online seats that abandoned the table (rendered as "left")
+        var pendingRaiseLo = [0, 0, 0, 0];    // per-seat low 6 bits of a split raise-to, awaiting its hi half
 
         function status(t) { if (session.onStatus) session.onStatus(t); }
         function nameOf(seat) {
             if (seat === mySeat) return "You";
-            return online ? ("Player " + (seat + 1)) : ("Bot " + (seat + 1));
+            var base = online ? ("Player " + (seat + 1)) : ("Bot " + (seat + 1));
+            return (leftSeats.indexOf(seat) >= 0) ? (base + " (left)") : base;
         }
         function myTurn() { return !destroyed && st && st.toAct === mySeat && st.street !== "over" && st.street !== "showdown"; }
 
@@ -108,6 +113,13 @@
         var decorLayer = $.CreatePanel("Panel", stage, "MG_PkDecor"); decorLayer.AddClass("mg-pk-decor");
         var cardLayer = $.CreatePanel("Panel", stage, "MG_PkCards"); cardLayer.AddClass("mg-pk-cards");
         var controlsZone = $.CreatePanel("Panel", root, "MG_PkControls"); controlsZone.AddClass("mg-poker-controls");
+
+        // Per-turn countdown, pinned to the felt's LEFT EDGE (boardW = STAGE_W 760). Parented on
+        // `container` (the flow:none game host). Poker's action is ALWAYS optional-in-spirit but the
+        // clock is mandatory: if it empties, the seat is timed out with a fold (or a check when
+        // checking is free — never forfeit chips you didn't have to). Absent build (old mg_games) →
+        // null; every call guarded. See refreshTimer/onTimerExpire below.
+        var turnTimer = (MG.Widgets && MG.Widgets.createTurnTimer) ? MG.Widgets.createTurnTimer(container, { boardW: 760 }) : null;
 
         function xform(x, y, rot) {
             var t = "translate3d(" + Math.round(x) + "px, " + Math.round(y) + "px, 0px)";
@@ -134,8 +146,9 @@
             var c = seatCenter(seat);
             if (seat === mySeat) {
                 // Big face-up pair along the bottom edge, centred. Below the pot label, clear of
-                // my corner tile — the felt's bottom-centre is otherwise empty.
-                return { x: STAGE_W / 2 - CARD_W - 4, y: STAGE_H - CARD_H - 14, spread: CARD_W + 8, w: CARD_W, h: CARD_H };
+                // my corner tile — the felt's bottom-centre is otherwise empty. Uses HERO_* (larger
+                // than the board cards) so my own hand is the easiest thing on the felt to read.
+                return { x: STAGE_W / 2 - HERO_W - 4, y: STAGE_H - HERO_H - 14, spread: HERO_W + 8, w: HERO_W, h: HERO_H };
             }
             var pairW = OPP_CW * 2 + 6;                 // two small backs + a 6px gap
             return { x: c.x - pairW / 2, y: c.y + 36, spread: OPP_CW + 6, w: OPP_CW, h: OPP_CH };
@@ -157,6 +170,30 @@
             buildBoard();
             buildSeats();
             buildControls();
+            refreshTimer();
+        }
+
+        // ── per-turn countdown ───────────────────────────────────────────────────────
+        // The clock runs ONLY while it's my turn to act (myTurn()). If it empties I'm timed out:
+        // fold my hand — the maintainer's ruling — unless checking is free, in which case I check
+        // (there's no reason to forfeit equity when staying in costs nothing). pendingAct parks the
+        // action send, so a slow round-trip can't fire a bogus timeout. render() calls refreshTimer
+        // after every state change; a mode change (my turn ↔ not) (re)arms or stops the 20s.
+        var timerOn = false;
+        function refreshTimer() {
+            if (!turnTimer) return;
+            var live = myTurn() && !pendingAct;
+            if (live === timerOn) return;              // no change → keep the running (or stopped) clock
+            timerOn = live;
+            if (!live) { turnTimer.stop(); return; }
+            turnTimer.start(onTimerExpire);
+        }
+        function onTimerExpire() {
+            timerOn = false;
+            if (destroyed || !st || !myTurn()) return;
+            var la = P.legalActions(st, mySeat);
+            var action = la.canCheck ? { type: "check" } : { type: "fold" };
+            doAction(action);
         }
 
         function buildPot() {
@@ -391,7 +428,7 @@
             if (destroyed || !st || st.street === "over") return;
             var seat = st.toAct;
             if (seat < 0) return;
-            if (seat === mySeat) { status(streetName() + " — your action."); return; }
+            if (seat === mySeat) { status(streetName() + ": your action."); return; }
             status(nameOf(seat) + " is thinking…");
             $.Schedule(0.6, function () { botStep(seat); });
         }
@@ -450,11 +487,32 @@
                 return;
             }
             if (ev.type === "over") { gameOver = true; return; }
+            if (ev.type === "left") {
+                // A seat abandoned the table: replay it as a fold + chip forfeit through the shared
+                // engine (card-independent → byte-identical to the server), then bank the stacks so
+                // beginOnlineHand sits them out. The fold may itself have ended the hand; the server
+                // also flushed the matching board/WIN events, so we let those arrive and resolve.
+                if (st) { P.leaveSeat(st, ev.seat); stacks = st.stacks.slice(); }
+                else if (stacks && stacks[ev.seat] != null) stacks[ev.seat] = 0;
+                if (leftSeats.indexOf(ev.seat) < 0) leftSeats.push(ev.seat);
+                return;
+            }
             // betting actions — replayed through the shared engine (validated already server-side)
+            // A raise-to amount (up to ~800, the whole stack) overflows one level dimension, so
+            // the worker splits it into a raiselo (low 6 bits) immediately followed by a raisehi
+            // (high bits). Stash lo, then drive the reducer once the hi half completes it —
+            // to = hi*64 + lo. The pair is always adjacent + ordered in the log, so a per-seat
+            // stash is enough (no seq bookkeeping).
+            if (ev.type === "raiselo") { pendingRaiseLo[ev.seat] = ev.lo; return; }
+            if (ev.type === "raisehi") {
+                var to = ev.hi * 64 + (pendingRaiseLo[ev.seat] || 0);
+                pendingRaiseLo[ev.seat] = 0;
+                if (st && st.toAct === ev.seat) P.applyAction(st, ev.seat, { type: "raise", to: to });
+                return;
+            }
             var action = ev.type === "fold" ? { type: "fold" }
                 : ev.type === "check" ? { type: "check" }
-                : ev.type === "call" ? { type: "call" }
-                : ev.type === "raise" ? { type: "raise", to: ev.to } : null;
+                : ev.type === "call" ? { type: "call" } : null;
             if (action && st && st.toAct === ev.seat) P.applyAction(st, ev.seat, action);
         }
 
@@ -475,19 +533,22 @@
             if (gameOver) return;
             if (!st) { status("Dealing…"); return; }
             if (st.street === "over") { status(resultText()); return; }
-            if (myTurn()) { status(streetName() + " — your action."); return; }
+            if (myTurn()) { status(streetName() + ": your action."); return; }
             if (st.toAct >= 0) { status(nameOf(st.toAct) + " to act…"); return; }
             status(streetName());
         }
 
         // Single authoritative poll chain (pollGen guards it, exactly like mg_durak — two chains
         // sharing logSeq would double-apply one event and skip the next).
-        function startPolling() { pollGen++; pollLoop(pollGen); }
+        function startPolling() { pollGen++; pollMisses = 0; pollLoop(pollGen); }
         function pollLoop(gen) {
             if (destroyed || gameOver || gen !== pollGen) return;
             MG.Api.plog(session.code, logSeq, function (ev) {
                 if (destroyed || gen !== pollGen) return;
-                if (!ev) { $.Schedule(0.6, function () { pollLoop(gen); }); return; }   // nothing new
+                // Nothing new: back off on the shared adaptive cadence (see MG.Net.pollDelay) so a
+                // long think doesn't burn ~2 req/s. A real event resets the miss counter below.
+                if (!ev) { $.Schedule(MG.Net.pollDelay(pollMisses++), function () { pollLoop(gen); }); return; }   // nothing new
+                pollMisses = 0;
                 logSeq++;
                 applyOnlineEvent(ev);
                 if (wantHole) {
@@ -553,7 +614,7 @@
         }
 
         return {
-            destroy: function () { destroyed = true; try { root.DeleteAsync(0); } catch (e) {} }
+            destroy: function () { destroyed = true; if (turnTimer) turnTimer.destroy(); try { root.DeleteAsync(0); } catch (e) {} }
         };
     }
 

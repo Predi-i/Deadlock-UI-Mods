@@ -52,8 +52,12 @@
     function createClock(parent, secs, online, code, onFlag, seatNames) {
         if (!online && !secs) return { el: null, setTurn: function () {}, stop: function () {}, isTimed: false };
         var flagged = -1, running = -1, stopped = false, revealed = false;
-        var localMs = [secs * 1000, secs * 1000];   // offline banks; online we render server values
-        var lastTick = 0;
+        // Seconds banks (floats). OFFLINE: seeded from `secs`. ONLINE: null until the first
+        // server resync fills them; from then on the display is driven by LOCAL interpolation
+        // between resyncs (see interpTick), NOT by a per-second server poll.
+        var sec = online ? [null, null] : [secs, secs];
+        var lastTick = 0;              // Date.now() of the last local interpolation step
+        var lastResync = 0;            // Date.now() of the last authoritative server read (online)
 
         var wrap = $.CreatePanel("Panel", parent, "");
         wrap.AddClass("mg-clocks");
@@ -88,56 +92,217 @@
             if (onFlag) onFlag(seat);
         }
 
-        // OFFLINE: drain the running side locally, once per ~250ms tick.
-        function localTick() {
-            if (stopped || flagged >= 0 || online) return;
+        // Interpolate the running seat's bank DOWN locally, ~4×/s. Drives the display in BOTH
+        // modes: offline it's the sole authority (flags locally at 0); online it runs BETWEEN the
+        // infrequent server resyncs so the seconds tick smoothly every frame without a network hit.
+        // Online the SERVER owns flag-fall, so a locally-interpolated 0 just PINS at 0 (no local
+        // fireFlag) until the next resync confirms it — interpolation drift must never mis-flag.
+        function interpTick() {
+            if (stopped || flagged >= 0) return;
+            if (online && sec[0] === null) { $.Schedule(0.25, interpTick); return; } // await first resync
             var now = Date.now();
             if (running >= 0 && lastTick) {
-                localMs[running] = Math.max(0, localMs[running] - (now - lastTick));
-                if (localMs[running] === 0) fireFlag(running);
+                sec[running] = Math.max(0, sec[running] - (now - lastTick) / 1000);
+                if (sec[running] === 0 && !online) fireFlag(running);
             }
             lastTick = now;
-            paint([localMs[0] / 1000, localMs[1] / 1000]);
-            if (!stopped && flagged < 0) $.Schedule(0.25, localTick);
+            paint(sec);
+            if (!stopped && flagged < 0) $.Schedule(0.25, interpTick);
         }
-        // ONLINE: poll the authoritative banks and render them; the server decides flag-fall.
-        // A null reply = the lobby is untimed (or gone): before we ever revealed the clock, that
-        // means "no clock for this game" → tear the shell down and stop. Guarded by `stopped`
-        // (set from the controller's destroy), so it dies with the view.
-        function onlineTick() {
+
+        // ONLINE resync: fetch the authoritative banks and SNAP the local banks to them, correcting
+        // any interpolation drift and applying the server's flag-fall. Deliberately INFREQUENT
+        // (RESYNC_S): the clock is the only thing that used to poll continuously, and at 2 requests
+        // per read it (a) swamped the strictly one-at-a-time image queue — stalling the move-poll so
+        // an opponent's move surfaced many seconds late, the "20s to see a move" desync — and (b)
+        // burned the daily request budget (2 short games ≈ 1200 requests came almost entirely from
+        // this loop). Interpolating locally between rare resyncs keeps the display live for ~free.
+        // Reveals the shell on the first timed reply; tears it down if the lobby is untimed.
+        var RESYNC_S = 8;
+        function resyncTick() {
             if (stopped) return;
             MG.Api.clocks(code, function (r) {
                 if (stopped) return;
                 if (r) {
                     if (!revealed && wrap.IsValid()) { wrap.style.visibility = "visible"; revealed = true; }
-                    if (r.flag >= 0) running = -1;         // once flagged nobody is "active"
-                    paint(r.sec);
-                    if (r.flag >= 0) { fireFlag(r.flag); return; }
-                    $.Schedule(1.0, onlineTick);
+                    sec = [r.sec[0], r.sec[1]];        // snap to authoritative values
+                    lastTick = Date.now();
+                    if (r.flag >= 0) { running = -1; paint(sec); fireFlag(r.flag); return; }
+                    paint(sec);
+                    $.Schedule(RESYNC_S, resyncTick);
                 } else {
                     // Server says this lobby has no clock — remove the empty shell and stop polling.
                     stopped = true;
                     if (!revealed) { try { wrap.DeleteAsync(0); } catch (e) {} }
                 }
-            }, function () { if (!stopped) $.Schedule(1.2, onlineTick); });
+                // Before the first reveal a transport hiccup should retry soon (don't leave the
+                // clock invisible for 8s); once revealed, resume the slow authoritative cadence.
+            }, function () { if (!stopped) $.Schedule(revealed ? RESYNC_S : 1.2, resyncTick); });
         }
 
-        if (online) { onlineTick(); }
-        else { lastTick = Date.now(); localTick(); }
+        lastTick = Date.now();
+        interpTick();
+        if (online) resyncTick();
 
         return {
             el: wrap,
             isTimed: true,
-            // Set which seat's clock is running (the side to move). Offline this switches which
-            // bank drains; online it's cosmetic (the server already knows) but keeps the active
-            // highlight responsive between the ~1s polls.
+            // Set which seat's clock is running (the side to move). Banks the elapsed time to the
+            // seat that was running, then switches. Works identically online and offline now — the
+            // local interpolation is accurate at turn granularity, and the ~8s resync corrects any
+            // drift against the authoritative server banks.
             setTurn: function (seat) {
-                if (!online && running >= 0 && lastTick) {
-                    localMs[running] = Math.max(0, localMs[running] - (Date.now() - lastTick));
+                if (running >= 0 && lastTick && sec[running] !== null) {
+                    sec[running] = Math.max(0, sec[running] - (Date.now() - lastTick) / 1000);
                 }
                 running = seat; lastTick = Date.now();
             },
             stop: function () { stopped = true; }
+        };
+    }
+
+    // ── shared per-turn countdown timer (durak / poker / connect-four / tic-tac-toe) ──
+    // A slim VERTICAL bar to the LEFT of the board that drains top→bottom over TURN_SECS,
+    // with the whole-seconds remaining shown beneath it. Unlike the chess/checkers side
+    // clocks (two banks, server-authoritative), this is a SINGLE bar that runs ONLY while
+    // it's the LOCAL player's turn: the controller calls start(onExpire) when the human is
+    // put on the clock and stop() the instant they act (or a bot / online opponent takes
+    // over). If the bar empties, onExpire() fires exactly once — the controller turns that
+    // into a forfeit / elimination (offline it decides locally; online it sends a forfeit).
+    //
+    // NO @keyframes (ARCHITECTURE §17 — a stray @keyframes rule silently BRICKS the whole
+    // modded HUD stylesheet). The drain is ONE `transform: translate3d(0, H, 0)` write with
+    // a TURN_SECS-long LINEAR transition that lives on the .mg-tt-anim class (the
+    // .mg-piece "set the value, let CSS tween it" idiom): a single assignment starts a smooth
+    // slide with zero per-frame JS. A ~200ms $.Schedule loop only refreshes the seconds
+    // label + swaps the low/crit colour classes and arms the expiry — the motion is pure CSS.
+    //
+    // The wrap is ALWAYS laid out (never visibility:collapse) so the empty channel reserves its
+    // footprint permanently — the widget never pops in/out and the modal never jumps height when
+    // a turn changes hands. Only the FILL + the seconds label toggle (opacity/text) between "my
+    // turn" (draining) and idle (blank channel). TRACK_H is kept shorter than the shortest board
+    // (TTT ≈336px) so the flow:none host always measures its height from the board, not the bar.
+    //
+    // opts.boardW (px): attach the bar to that board's LEFT EDGE (centre-align + translateX left
+    // by half the board + a gap) instead of the modal's far-left gutter. TTT/C4 pass it (their
+    // boards are narrow and centred, so the gutter looked detached); durak/poker omit it and keep
+    // the wide-felt gutter placement the maintainer already signed off on.
+    var TURN_SECS = 25;                    // per-turn budget; matches .mg-tt-anim transition-duration in mg.css
+    function createTurnTimer(parent, opts) {
+        var TRACK_H = 280;                 // px; MUST match .mg-tt-track height in mg.css (drain distance)
+        var wrap = $.CreatePanel("Panel", parent, "");
+        wrap.AddClass("mg-turn-timer");
+        // Position the wrap with ONE inline transform (inline beats any CSS transform):
+        //  • Y: the wrap is vertical-align:center in the flow:none host, but it's flow-children:down
+        //    (track 280 + 6 gap + 22 num = 308 tall), so the TRACK's centre sits half the below-track
+        //    stack — (6+22)/2 = 14px — ABOVE the wrap centre, i.e. 14px above the board centre. Nudge
+        //    the whole wrap DOWN 14px so the BAR (not the wrap box) is centred on the board. (Was the
+        //    "timer sits above the board centre" report, 2026-07-20.)
+        //  • X: with opts.boardW, pin the bar to that board's LEFT EDGE (centre-align via
+        //    .mg-tt-attached, then shove left by half the board + a gap). TTT/C4 pass it (narrow
+        //    centred boards — the far-left gutter looked detached). Poker/durak omit it: their felts
+        //    are wide (760/680) so a board-edge shove would push the bar off the modal's left margin,
+        //    and the left gutter already sits right at the felt's edge — keep the gutter placement.
+        var VNUDGE = 14;                   // (num margin-top 6 + num height 22) / 2 — see mg.css .mg-tt-num
+        var vx = 0;
+        if (opts && opts.boardW) {
+            // .mg-tt-attached centres the wrap in the 844px inner zone; shove it left so its RIGHT
+            // edge sits GAP px before the board's left edge. Wide felts (poker 760) leave < 48px of
+            // margin, so clamp the shove: the wrap's LEFT edge never crosses EDGE px from the modal's
+            // left (else the bar clips off-screen). Centre = INNER_W/2; wrapLeft = Centre + vx - W/2.
+            var GAP = 14, TIMER_W = 34, INNER_W = 844, EDGE = 4;
+            wrap.AddClass("mg-tt-attached");
+            vx = -(opts.boardW / 2 + GAP + TIMER_W / 2);
+            var minVx = EDGE + TIMER_W / 2 - INNER_W / 2;   // keeps wrapLeft >= EDGE
+            if (vx < minVx) vx = minVx;
+        }
+        wrap.style.transform = "translate3d(" + vx + "px, " + VNUDGE + "px, 0px)";
+        var track = $.CreatePanel("Panel", wrap, "");
+        track.AddClass("mg-tt-track");
+        var fill = $.CreatePanel("Panel", track, "");
+        fill.AddClass("mg-tt-fill");
+        fill.style.opacity = "0.0";           // idle: only the empty channel shows (footprint reserved)
+        var num = $.CreatePanel("Label", wrap, "");
+        num.AddClass("mg-tt-num");
+
+        var gen = 0;                       // bumps on every start/stop/destroy → stale ticks bail
+        var dead = false, running = false, deadline = 0, expireCb = null;
+        var curSecs = TURN_SECS;           // budget for the CURRENT run (start may override per call)
+
+        // Snap the fill FULL (no transition) so a fresh turn starts from a full bar; the arm()
+        // below then flips on the animated class and pushes it to empty, tweening over TURN_SECS.
+        function snapFull() {
+            fill.RemoveClass("mg-tt-anim");
+            fill.RemoveClass("mg-tt-low");
+            fill.RemoveClass("mg-tt-crit");
+            fill.style.transform = "translate3d(0px, 0px, 0px)";
+            fill.style.opacity = "1.0";       // reveal the drain for my turn
+        }
+        function arm() {
+            fill.AddClass("mg-tt-anim");
+            // The drain duration lives in CSS (.mg-tt-fill.mg-tt-anim = 25s) but callers may pass a
+            // shorter budget (durak's 10s Bito window). Override the transform leg inline so the slide
+            // matches curSecs; opacity/colour legs keep their CSS timings. Order MUST match the CSS
+            // transition-property list (transform, opacity, background-color).
+            fill.style.transitionDuration = curSecs + "s, 0.15s, 0.3s";
+            fill.style.transform = "translate3d(0px, " + TRACK_H + "px, 0px)";   // drain top→bottom over curSecs
+        }
+
+        function tick(myGen) {
+            if (dead || myGen !== gen || !running) return;
+            var remain = (deadline - Date.now()) / 1000;
+            if (remain <= 0) {
+                running = false;
+                if (num.IsValid()) num.text = "0";
+                var cb = expireCb; expireCb = null;
+                if (cb) cb();
+                return;
+            }
+            if (num.IsValid()) num.text = String(Math.ceil(remain));
+            fill.SetHasClass("mg-tt-low", remain <= 10);
+            fill.SetHasClass("mg-tt-crit", remain <= 5);
+            $.Schedule(0.2, function () { tick(myGen); });
+        }
+
+        return {
+            el: wrap,
+            // Put the human on the clock. onExpire fires once if the bar empties first. `secs`
+            // optionally overrides the default TURN_SECS budget (0/undefined → TURN_SECS); durak's
+            // optional Bito window passes 10.
+            start: function (onExpire, secs) {
+                if (dead) return;
+                gen++;
+                var myGen = gen;
+                running = true;
+                curSecs = (secs && secs > 0) ? secs : TURN_SECS;
+                expireCb = onExpire || null;
+                deadline = Date.now() + curSecs * 1000;
+                snapFull();               // reveals the fill (opacity) — the wrap is always laid out
+                num.text = String(curSecs);
+                // Arm the CSS drain one frame later (the .mg-piece/.mg-anim arming trick): the
+                // full-snap must commit first, or the browser coalesces both writes and the bar
+                // jumps straight to empty with no slide.
+                $.Schedule(0.0, function () { if (!dead && gen === myGen && running) arm(); });
+                $.Schedule(0.2, function () { tick(myGen); });
+            },
+            // Take the human off the clock (they acted, or it's someone else's turn). Fades the
+            // fill + blanks the seconds (the empty channel stays, keeping the footprint) and
+            // cancels the pending expiry so a slow action can't fire a stale timeout.
+            stop: function () {
+                gen++;                     // invalidate any in-flight tick + arm
+                running = false;
+                expireCb = null;
+                fill.RemoveClass("mg-tt-anim");
+                fill.RemoveClass("mg-tt-low");
+                fill.RemoveClass("mg-tt-crit");
+                fill.style.transform = "translate3d(0px, 0px, 0px)";
+                fill.style.opacity = "0.0";   // idle: only the empty channel shows
+                if (num.IsValid()) num.text = "";
+            },
+            destroy: function () {
+                dead = true; gen++; running = false; expireCb = null;
+                try { wrap.DeleteAsync(0); } catch (e) {}
+            }
         };
     }
 
@@ -212,7 +377,7 @@
         // produced to the on-screen status line — so ONE in-game test reveals which signal
         // the engine really populates, instead of guessing a 5th time. Flip to false (or
         // delete the status() call in commitDropMultimethod) once drag is confirmed working.
-        var DRAG_DEBUG = true;
+        var DRAG_DEBUG = false;        // drag confirmed working in-game — silence the per-drop status trace
 
         function status(t) { if (session.onStatus) session.onStatus(t); }
         function sfx(n) { if (MG.Sound) MG.Sound.play(n); }
@@ -445,6 +610,13 @@
                 // premove). Only block it when neither is possible (game over etc.).
                 if (!myTurn() && !canPremove()) return;
                 var sq = piece._sq;
+                // Only ever start a drag on a square that STILL holds one of MY pieces. A piece
+                // the opponent just captured lingers ~0.22s as a shrinking, still-draggable panel;
+                // grabbing it would (a) build the ghost from board[sq] — now the opponent's piece,
+                // so a wrong-colour ghost — and (b) leak that ghost forever, because the fade
+                // deletes the panel mid-drag and the engine never fires DragEnd on a dead panel.
+                // My own pieces stay mine throughout the opponent's turn, so premove-drags pass.
+                if (colorOf(board[sq]) !== myColor) return;
                 // ALWAYS provide a ghost as the drag visual so the engine never drags the
                 // real piece around (QOLLOCK sets dragEvent.displayPanel for exactly this).
                 var ghost = $.CreatePanel("Panel", piecesLayer, "");
@@ -492,6 +664,16 @@
                     clearDrag();
                     refreshHighlights();
                     return;
+                }
+                // The turn flipped to me WHILE this piece was held: the drag began during the
+                // opponent's turn (a premove-grab, so DragStart set no selection), but the polled
+                // move landed before I released. Without this, DragEnd falls through to
+                // commitDropMultimethod, which bails on `selected < 0` and snaps the piece back —
+                // the "premove teleports back instead of moving" bug. Promote the grab to a live
+                // move: select dragFromSq and let the normal drop path validate + play it.
+                if (selected < 0 && dragFromSq >= 0 && colorOf(board[dragFromSq]) === myColor) {
+                    var liveTg = targetsFor(dragFromSq);
+                    if (liveTg.length > 0) { selected = dragFromSq; legalTargets = liveTg; }
                 }
                 commitDropMultimethod(droppedPanel);
 
@@ -820,17 +1002,33 @@
             return { captured: res.captured, promoted: res.promoted, capIdx: capIdx };
         }
 
+        // Derive the turn-hand-off flag `end` for a polled hop WITHOUT the server sending it
+        // (it no longer fits the level-quantised downlink). Mirrors worker.core.js
+        // validateCheckers EXACTLY: apply the hop to a COPY, then the turn continues (end=0)
+        // only if this same piece just captured, wasn't crowned, and still has a capture
+        // available; otherwise the turn hands off (end=1). Uses a copy so the live board is
+        // untouched — the caller applies the real hop itself.
+        function deriveMoveEnd(from, to) {
+            var copy = board.slice();
+            var res = applyHop(copy, from, to);
+            var more = res.captured && !res.promoted && captureMoves(copy, to).length > 0;
+            return more ? 0 : 1;
+        }
+
         // Slide the piece from->to; shrink-fade a captured piece; crown on promotion.
         function animateHop(from, to, capIdx, promoted) {
             // While reviewing, the pieces layer shows a past snapshot, not the live model —
             // so skip the visual (the model already advanced via applyHopFx). navLive() rebuilds
             // the current position from the model when the player returns to the live game.
             if (reviewIndex !== null) { clearDrag(); return; }
-            // ANY hop can capture the very piece you're mid-drag on (an opponent's polled hop, or
-            // a bot move). That capture deletes the piece panel, taking its DragEnd handler with
-            // it, so the ghost would hang forever. Clear the drag up front. For your OWN move the
-            // drag already ended (ghost null), so this is a harmless no-op.
-            clearDrag();
+            // A hop arriving mid-drag (you're queuing a premove during the opponent's turn) must
+            // NOT yank your held piece back — that snap-back was the checkers copy of the chess
+            // "premove teleports back" bug. Only tear the drag down when this hop actually DELETES
+            // the piece you're holding (it captures on dragFromSq): its panel + DragEnd handler
+            // vanish, which would otherwise leak the ghost, and the premove is impossible anyway.
+            // Any other hop leaves the drag intact so the premove keeps tracking the cursor. (For
+            // your OWN hop the drag already ended, so dragActive is false and this is a no-op.)
+            if (dragActive && capIdx === dragFromSq) { clearPremove(); clearDrag(); }
             if (capIdx >= 0 && pieceEls[capIdx]) {
                 var dead = pieceEls[capIdx];
                 delete pieceEls[capIdx];
@@ -974,7 +1172,7 @@
             var res = applyHopFx(from, mv.to);
             if (res.captured) myTurnCapture = true;
             animateHop(from, mv.to, res.capIdx, res.promoted);
-            sfx(res.promoted ? "Promote" : "MoveSelf");
+            sfx(res.promoted ? "Promote" : res.captured ? "Capture" : "MoveSelf");
             pendingHops.push({ from: from, to: mv.to });
 
             // Can the same piece keep jumping? (only after a capture, and not if just crowned)
@@ -1051,7 +1249,7 @@
             var res = applyHopFx(seq[h].from, seq[h].to);
             if (res.captured) botTurnCapture = true;
             animateHop(seq[h].from, seq[h].to, res.capIdx, res.promoted);
-            sfx(res.promoted ? "Promote" : "MoveOpp");
+            sfx(res.promoted ? "Promote" : (res.captured ? "Capture" : "MoveOpp"));
             $.Schedule(0.35, function () { applyBotSeq(seq, h + 1); }); // step hops for visibility
         }
 
@@ -1100,8 +1298,8 @@
                 layoutPieces();
                 refreshHighlights();
                 renderMoveList();
-                if (myTurn()) status("Move rejected — resynced. Your turn.");
-                else { status("Move rejected — resyncing…"); startPolling(); }
+                if (myTurn()) status("Move rejected. Resynced, your turn.");
+                else { status("Move rejected. Resyncing…"); startPolling(); }
                 return;
             }
             Api.poll(code, seq, function (mv) {
@@ -1115,7 +1313,11 @@
                     appliedSeq = seq;
                     replayAccepted(seq);
                 }
-            }, function () { $.Schedule(0.4, function () { replayAccepted(seq); }); });
+            }, function () { $.Schedule(0.4, function () { replayAccepted(seq); }); },
+            function (from, to) {
+                var fr = (from / 8) | 0, fc = from % 8, tr = (to / 8) | 0, tc = to % 8;
+                return Math.abs(tr - fr) === Math.abs(tc - fc);
+            }, deriveMoveEnd);
         }
 
         // ── opponent polling ────────────────────────────────────────────────
@@ -1125,8 +1327,12 @@
             startPolling();
         }
 
+        // Consecutive empty polls in the CURRENT wait — drives the adaptive cadence
+        // (MG.Net.pollDelay): fast for the first few, then slower while the opponent thinks.
+        var pollMisses = 0;
         function startPolling() {
             pollToken++;
+            pollMisses = 0;
             var myToken = pollToken;
             pollOnce(myToken);
         }
@@ -1137,11 +1343,12 @@
             Api.poll(code, appliedSeq, function (mv) {
                 if (destroyed || myToken !== pollToken) return;
                 if (mv) {
+                    pollMisses = 0;                             // real move → next wait starts fast
                     if (oppSeqFrom < 0) oppTurnCapture = false; // first hop of this opponent turn
                     var res = applyHopFx(mv.from, mv.to);
                     appliedSeq++;
                     animateHop(mv.from, mv.to, res.capIdx, res.promoted);
-                    sfx(res.promoted ? "Promote" : "MoveOpp");
+                    sfx(res.promoted ? "Promote" : res.captured ? "Capture" : "MoveOpp");
                     if (res.captured) oppTurnCapture = true;
                     if (oppSeqFrom < 0) oppSeqFrom = mv.from; // first hop of this opponent turn
                     if (mv.end) {
@@ -1156,16 +1363,16 @@
                     }
                     $.Schedule(0.05, function () { pollOnce(myToken); }); // drain chain fast
                 } else {
-                    $.Schedule(0.4, function () { pollOnce(myToken); });
+                    $.Schedule(MG.Net.pollDelay(pollMisses++), function () { pollOnce(myToken); });
                 }
             }, function () {
-                $.Schedule(0.6, function () { pollOnce(myToken); });
+                $.Schedule(MG.Net.pollDelay(pollMisses++), function () { pollOnce(myToken); });
             }, function (from, to) {
                 // A real hop is always a diagonal between two board squares; anything
                 // else is a mis-scaled read and must never reach applyHop.
                 var fr = (from / 8) | 0, fc = from % 8, tr = (to / 8) | 0, tc = to % 8;
                 return Math.abs(tr - fr) === Math.abs(tc - fc);
-            });
+            }, deriveMoveEnd);
         }
 
         function checkEnd() {
@@ -1188,6 +1395,7 @@
             if (clock) clock.stop();
             var lost = reason === "time" ? " (on time)" : "";
             status(winner === myColor ? ("🏆 You win!" + lost) : ("You lose." + lost));
+            sfx("GameEnd");
             if (session.onGameOver) session.onGameOver(winner === myColor ? "win" : "lose");
         }
 
@@ -1227,10 +1435,12 @@
         var turn = X;                  // X always starts
         var appliedSeq = 0;            // placements consumed from the shared server list
         var pollToken = 0;
+        var pollMisses = 0;            // consecutive empty polls this turn (drives the adaptive cadence)
         var destroyed = false;
         var gameOver = false;
 
         function status(t) { if (session.onStatus) session.onStatus(t); }
+        function sfx(n) { if (MG.Sound) MG.Sound.play(n); }
         function myTurn() { return turn === myMark && !gameOver; }
 
         // Marks are drawn with panels, NOT font glyphs: the game font has neither
@@ -1252,6 +1462,32 @@
         root.AddClass("mg-ttt");
         var boardPanel = $.CreatePanel("Panel", root, "MG_TttBoard");
         boardPanel.AddClass("mg-ttt-board");
+
+        // Per-turn countdown (left gutter of the modal). Parented on `container` (the flow:none game
+        // host) so it parks in the left margin, clear of the centred board. Runs only while it's my
+        // move; on expiry I forfeit (TTT is always heads-up with a MANDATORY move — maintainer's
+        // ruling: timeout = loss). Online I also fire Leave so the opponent's poll learns at once.
+        // boardW = 3 cells × (104 + 2×3 margin) + 2 × 3px border = 336 → pin the timer to the
+        // board's left edge (narrow centred board; the far-left modal gutter looked detached).
+        var turnTimer = (MG.Widgets && MG.Widgets.createTurnTimer) ? MG.Widgets.createTurnTimer(container, { boardW: 336 }) : null;
+        var timerOn = false;
+        function refreshTimer() {
+            if (!turnTimer) return;
+            var live = myTurn();
+            if (live === timerOn) return;
+            timerOn = live;
+            if (!live) { turnTimer.stop(); return; }
+            turnTimer.start(onTimerExpire);
+        }
+        function onTimerExpire() {
+            timerOn = false;
+            if (destroyed || gameOver || !myTurn()) return;
+            gameOver = true;
+            if (turnTimer) turnTimer.stop();
+            if (!session.bot && code) { try { if (MG.Api && MG.Api.leave) MG.Api.leave(code, session.tok); } catch (e) {} }
+            status("Time expired. You lose.");
+            if (session.onGameOver) session.onGameOver("lose");
+        }
 
         var cells = [];
         (function buildCells() {
@@ -1278,6 +1514,7 @@
                 if (board[i]) drawMark(cell, board[i]);
             }
             if (winLine) for (var k = 0; k < winLine.length; k++) cells[winLine[k]].AddClass("mg-ttt-win");
+            refreshTimer();
         }
 
         function place(i, mark) { board[i] = mark; }
@@ -1288,6 +1525,7 @@
             if (w) {
                 gameOver = true;
                 render(w.line);
+                sfx("GameEnd");
                 status(w.mark === myMark ? "🏆 You win!" : "You lose.");
                 if (session.onGameOver) session.onGameOver(w.mark === myMark ? "win" : "lose");
                 return true;
@@ -1295,6 +1533,7 @@
             if (tttFull(board)) {
                 gameOver = true;
                 render(null);
+                sfx("GameEnd");
                 status("Draw.");
                 if (session.onGameOver) session.onGameOver("draw");
                 return true;
@@ -1359,8 +1598,8 @@
             if (destroyed) return;
             if (seq >= appliedSeq) {
                 render(null);
-                if (myTurn()) status("Move rejected — resynced. Your turn.");
-                else { status("Move rejected — resyncing…"); startPolling(); }
+                if (myTurn()) status("Move rejected. Resynced, your turn.");
+                else { status("Move rejected. Resyncing…"); startPolling(); }
                 return;
             }
             Api.poll(code, seq, function (mv) {
@@ -1377,6 +1616,7 @@
 
         function startPolling() {
             pollToken++;
+            pollMisses = 0;              // fresh wait → poll fast again (see MG.Net.pollDelay)
             pollOnce(pollToken);
         }
 
@@ -1386,6 +1626,7 @@
             Api.poll(code, appliedSeq, function (mv) {
                 if (destroyed || myToken !== pollToken) return;
                 if (mv) {
+                    pollMisses = 0;
                     var oppMark = (myMark === X ? O : X);
                     if (!board[mv.from]) place(mv.from, oppMark); // from = the cell played
                     appliedSeq++;
@@ -1394,10 +1635,10 @@
                     if (checkEnd()) return;
                     status("Your turn.");
                 } else {
-                    $.Schedule(0.4, function () { pollOnce(myToken); });
+                    $.Schedule(MG.Net.pollDelay(pollMisses++), function () { pollOnce(myToken); });
                 }
             }, function () {
-                $.Schedule(0.6, function () { pollOnce(myToken); });
+                $.Schedule(MG.Net.pollDelay(pollMisses++), function () { pollOnce(myToken); });
             }, function (from, to) {
                 // A placement is a single cell 0..8 with the fixed marker to=9.
                 return from >= 0 && from <= 8 && to === 9;
@@ -1418,7 +1659,7 @@
         }
 
         return {
-            destroy: function () { destroyed = true; pollToken++; try { root.DeleteAsync(0); } catch (e) {} }
+            destroy: function () { destroyed = true; pollToken++; if (turnTimer) turnTimer.destroy(); try { root.DeleteAsync(0); } catch (e) {} }
         };
     }
 
@@ -1449,6 +1690,7 @@
         var cst = initialChessState();
         var turn = 1;                  // white moves first
         var appliedSeq = 0;            // moves consumed from the shared server list
+        var pollMisses = 0;            // consecutive empty polls this turn (drives the adaptive cadence)
         var selected = -1;
         var legalTargets = [];         // [{to}] — shape kept identical to checkers so the drag code is shared
         var pollToken = 0;
@@ -1494,6 +1736,18 @@
 
         function status(t) { if (session.onStatus) session.onStatus(t); }
         function sfx(n) { if (MG.Sound) MG.Sound.play(n); }
+        // Pick the one sound a chess move should play, highest priority first. `fx` is
+        // applyChessMove's return ({promoted, captured, castled}); `checkNow` is whether
+        // the move leaves the side-to-move in check. Check trumps everything (it's the most
+        // important cue), then promote/castle (rare, distinct events), then capture, then a
+        // plain move. `self` picks the move sound for MY move vs the opponent's.
+        function moveSound(fx, checkNow, self) {
+            if (checkNow) return "Check";
+            if (fx.promoted) return "Promote";
+            if (fx.castled) return "Castle";
+            if (fx.captured) return "Capture";
+            return self ? "MoveSelf" : "MoveOpp";
+        }
         function parsePx(v) {
             if (typeof v !== "string" || !v.length) return null;
             var m = v.match(/-?\d+(\.\d+)?/);
@@ -1678,6 +1932,14 @@
             $.RegisterEventHandler("DragStart", piece, function (_p, dragEvent) {
                 if (destroyed || reviewIndex !== null) return; // no dragging while reviewing history
                 var sq = piece._sq;
+                // Only start a drag on a square that STILL holds one of my pieces. A piece the
+                // opponent just captured lingers ~0.22s as a shrinking panel that is still
+                // draggable (draggability is fixed at creation); grabbing it during that fade
+                // built a ghost from the OPPONENT's piece now on `sq`, and when the fade deleted
+                // the panel mid-drag the engine never fired DragEnd → the ghost leaked on screen
+                // forever. Gating on "sq is still mine" refuses that grab. My own pieces stay mine
+                // through the opponent's turn, so premoves are unaffected.
+                if (cSign(board[sq]) !== myColor) return;
                 var ghost = $.CreatePanel("Panel", piecesLayer, "");
                 ghost.AddClass("mg-piece");
                 ghost.AddClass("mg-chess-piece");
@@ -1707,6 +1969,16 @@
                     clearDrag();
                     refreshHighlights();
                     return;
+                }
+                // The turn flipped to me WHILE this piece was held: the drag began during the
+                // opponent's turn (a premove-grab, so DragStart set no selection), but the polled
+                // move landed before I released. Without this, DragEnd falls through to
+                // commitDropMultimethod, which bails on `selected < 0` and snaps the piece back —
+                // the "premove teleports back instead of moving" bug. Promote the grab to a live
+                // move: select dragFromSq and let the normal drop path validate + play it.
+                if (selected < 0 && dragFromSq >= 0 && cSign(board[dragFromSq]) === myColor) {
+                    var liveTg = targetsFor(dragFromSq);
+                    if (liveTg.length > 0) { selected = dragFromSq; legalTargets = liveTg; }
                 }
                 commitDropMultimethod(droppedPanel);
                 clearDrag();
@@ -1956,19 +2228,26 @@
             // skip all visuals; navLive() rebuilds the current position from the model on return.
             if (reviewIndex !== null) {
                 var wasPawnEdge = cType(board[from]) === C_PAWN && (cRow(to) === 0 || cRow(to) === 7);
+                var wasCap = isCaptureMove(from, to);
+                var wasCastle = cType(board[from]) === C_KING && Math.abs(cCol(to) - cCol(from)) === 2;
                 var rr = makeMove(board, cst, from, to);
                 board = rr[0]; cst = rr[1];
-                return { promoted: wasPawnEdge };
+                return { promoted: wasPawnEdge, captured: wasCap, castled: wasCastle };
             }
-            // Any move (opponent's polled move or bot) can capture the piece you're mid-drag on,
-            // deleting its panel + DragEnd handler and leaking the ghost. Clear the drag first;
-            // for your own move the drag already ended (no-op).
-            clearDrag();
             var mover = board[from], t = cType(mover), color = cSign(mover);
             var fr = cRow(from), fc = cCol(from), tr = cRow(to), tc = cCol(to);
             var capSq = -1;
             if (t === C_PAWN && tc !== fc && board[to] === 0) capSq = cSq(fr, tc);   // en passant
             else if (board[to] !== 0) capSq = to;
+            var castled = (t === C_KING && Math.abs(tc - fc) === 2);
+            // A move arriving mid-drag (you're queuing a premove during the opponent's turn) must
+            // NOT yank your held piece back — that was the "premove teleports back" bug. Only tear
+            // the drag down when this move actually DELETES the piece you're holding (it captures
+            // on dragFromSq): its panel + DragEnd handler vanish, which would otherwise leak the
+            // ghost, and the premove is impossible anyway. Any other move leaves the drag intact so
+            // the premove keeps tracking the cursor. (For your own/bot move the drag already ended,
+            // so dragActive is false and this is a no-op.)
+            if (dragActive && capSq === dragFromSq) { clearPremove(); clearDrag(); }
 
             var r = makeMove(board, cst, from, to);
             board = r[0]; cst = r[1];
@@ -1991,7 +2270,7 @@
                 if (tc - fc === 2) slidePiece(cSq(fr, 7), cSq(fr, 5));   // O-O  rook h→f
                 else slidePiece(cSq(fr, 0), cSq(fr, 3));                 // O-O-O rook a→d
             }
-            return { promoted: promoted };
+            return { promoted: promoted, captured: capSq >= 0, castled: castled };
         }
 
         // ── input / move flow ────────────────────────────────────────────────────────
@@ -2067,7 +2346,7 @@
             syncClockTurn();               // opponent's bank starts draining
             refreshHighlights();
             pushHistory(from, to, cap);
-            sfx(inCheck(board, turn) ? "Check" : (fx.promoted ? "Promote" : "MoveSelf"));
+            sfx(moveSound(fx, inCheck(board, turn), true));
 
             if (session.bot) {
                 if (!checkEnd()) { status("Bot is thinking…"); scheduleBotTurn(); }
@@ -2106,7 +2385,7 @@
             syncClockTurn();
             refreshHighlights();
             pushHistory(mv.from, mv.to, cap);
-            sfx(inCheck(board, myColor) ? "Check" : (fx.promoted ? "Promote" : "MoveOpp"));
+            sfx(moveSound(fx, inCheck(board, myColor), false));
             if (!checkEnd()) { status(inCheck(board, myColor) ? "Check! Your turn." : "Your turn."); tryPremove(); }
         }
 
@@ -2142,8 +2421,8 @@
                 layoutPieces();
                 refreshHighlights();
                 renderMoveList();
-                if (myTurn()) status("Move rejected — resynced. Your turn.");
-                else { status("Move rejected — resyncing…"); startPolling(); }
+                if (myTurn()) status("Move rejected. Resynced, your turn.");
+                else { status("Move rejected. Resyncing…"); startPolling(); }
                 return;
             }
             Api.poll(code, seq, function (mv) {
@@ -2163,6 +2442,7 @@
         }
         function startPolling() {
             pollToken++;
+            pollMisses = 0;                 // fresh wait → poll fast again (see MG.Net.pollDelay)
             pollOnce(pollToken);
         }
         function pollOnce(myToken) {
@@ -2171,6 +2451,7 @@
             Api.poll(code, appliedSeq, function (mv) {
                 if (destroyed || myToken !== pollToken) return;
                 if (mv) {
+                    pollMisses = 0;
                     appliedSeq++;
                     var oppCap = isCaptureMove(mv.from, mv.to);   // test the pre-move board
                     var fx = applyChessMove(mv.from, mv.to);
@@ -2179,13 +2460,13 @@
                     syncClockTurn();
                     refreshHighlights();
                     pushHistory(mv.from, mv.to, oppCap);
-                    sfx(inCheck(board, myColor) ? "Check" : (fx.promoted ? "Promote" : "MoveOpp"));
+                    sfx(moveSound(fx, inCheck(board, myColor), false));
                     if (!checkEnd()) { status(inCheck(board, myColor) ? "Check! Your turn." : "Your turn."); tryPremove(); }
                 } else {
-                    $.Schedule(0.4, function () { pollOnce(myToken); });
+                    $.Schedule(MG.Net.pollDelay(pollMisses++), function () { pollOnce(myToken); });
                 }
             }, function () {
-                $.Schedule(0.6, function () { pollOnce(myToken); });
+                $.Schedule(MG.Net.pollDelay(pollMisses++), function () { pollOnce(myToken); });
             }, function (from, to) {
                 return from >= 0 && from < 64 && to >= 0 && to < 64 && from !== to;
             });
@@ -2207,9 +2488,10 @@
             refreshHighlights();
             if (clock) clock.stop();
             var win = winner === myColor;
-            var how = reason === "time" ? (win ? "🏆 Opponent flagged — you win!" : "You lose on time.")
-                                        : (win ? "🏆 Checkmate — you win!" : "Checkmate — you lose.");
+            var how = reason === "time" ? (win ? "🏆 Opponent flagged. You win!" : "You lose on time.")
+                                        : (win ? "🏆 Checkmate. You win!" : "Checkmate. You lose.");
             status(how);
+            sfx("GameEnd");
             if (session.onGameOver) session.onGameOver(win ? "win" : "lose");
         }
         function finishDraw() {
@@ -2218,7 +2500,8 @@
             clearSelection();
             refreshHighlights();
             if (clock) clock.stop();
-            status("Stalemate — it's a draw.");
+            status("Stalemate. It's a draw.");
+            sfx("GameEnd");
             if (session.onGameOver) session.onGameOver("draw");
         }
 
@@ -2300,6 +2583,12 @@
             return createStub(container, session, g ? g.name : null);
         }
     };
+
+    // Shared widget factory reused by the separate game files (mg_durak / mg_poker /
+    // mg_connectfour) via MG.Widgets — they can't see this file's closure otherwise.
+    MG.Widgets = MG.Widgets || {};
+    MG.Widgets.createTurnTimer = createTurnTimer;
+    MG.Widgets.TURN_SECS = TURN_SECS;
 
     // Built-in games register their factories (their bodies live above in this file).
     MG.Games.register({ id: 1, create: createCheckers });

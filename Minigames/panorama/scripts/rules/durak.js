@@ -113,9 +113,17 @@
             phase: "attack",   // "attack" | "defend" | "over"
             discard: 0,
             out: [],
+            // Classic podkidnoy throw-in consensus: `passed[s]` = seat s has declared "done
+            // adding" for the CURRENT table. A bout ends by Bito only once EVERY in-play
+            // non-defender who still holds a legal throw-in has passed (see canBito). Any card
+            // hitting the table (attack OR cover) reopens the window, so passes reset then. This
+            // is what gives co-attackers (and the primary attacker) a real window to pile on
+            // matching ranks before the table is beaten — the mechanic the 2-player code never
+            // exercised (one non-defender = the attacker, so its single "pass" was the old Bito).
+            passed: [],
             loser: -1
         };
-        for (var s = 0; s < numPlayers; s++) st.out.push(false);
+        for (var s = 0; s < numPlayers; s++) { st.out.push(false); st.passed.push(false); }
         st.attacker = firstAttacker(st);
         st.defender = nextInPlay(st, st.attacker);
         return st;
@@ -170,16 +178,78 @@
         return out;
     }
 
+    // Clear every seat's "done adding" flag. Called whenever the table changes (a new attack
+    // card or a cover), because fresh cards can create new throw-in options for a seat that had
+    // already passed — so consensus must be re-earned before the bout can be beaten.
+    function resetPasses(st) {
+        for (var s = 0; s < st.numPlayers; s++) st.passed[s] = false;
+    }
+    // Is `seat` an in-play ATTACKER (not the defender, not out)? Only these seats throw in and
+    // vote on ending the bout; the defender's "end" action is Take, handled separately.
+    function isAttackSeat(st, seat) { return seat !== st.defender && !st.out[seat]; }
+
+    // Record that `seat` is done adding cards to the current table (a "pass"/knock). Idempotent.
+    function applyPass(st, seat) { if (isAttackSeat(st, seat)) st.passed[seat] = true; }
+
+    // Has `seat` settled the current table — i.e. it owes no further Bito confirmation? An attack
+    // seat is settled once it either passed (declared "done"/Bito) OR holds NO cards at all (an
+    // empty hand can neither throw in nor meaningfully confirm, so it auto-settles — the deadlock
+    // guard). A seat that still HOLDS cards is NOT auto-settled just because none of them is a legal
+    // throw-in: it must explicitly press Bito. That explicit-confirm rule is what keeps a covered
+    // table on screen after the defender covers — the old "no legal throw-in ⇒ auto-settled" made
+    // canBito flip true in the SAME tick a defence landed, so endBout swept the felt to discard
+    // before the player could even see what the defender covered with.
+    function attackSeatSettled(st, seat) {
+        if (!isAttackSeat(st, seat)) return true;
+        if (st.passed[seat]) return true;
+        if (st.hands[seat].length === 0) return true;   // nothing to add or hold back → auto-settle
+        return false;                                    // holds cards → must explicitly Bito/pass
+    }
+    // The table may be beaten (Bito) only when it's non-empty, fully covered, AND every in-play
+    // attack seat has settled (explicitly passed, or holds no cards). This is the throw-in/Bito
+    // consensus: every attacker (human or bot) confirms before the bout ends.
+    function canBito(st) {
+        if (st.table.length === 0 || uncoveredCount(st) !== 0) return false;
+        for (var s = 0; s < st.numPlayers; s++) if (!attackSeatSettled(st, s)) return false;
+        return true;
+    }
+    // First in-play attack seat (turn order from the primary attacker) that has NOT settled — i.e.
+    // whoever is currently "on the clock" to either throw in a card or confirm Bito on a covered
+    // table. -1 when everyone has settled (the bout is ready to be beaten). Drives actionActor so
+    // the confirm turn walks every attacker, not just those still holding a legal throw-in.
+    function firstUnsettled(st) {
+        if (uncoveredCount(st) !== 0) return -1;
+        for (var k = 0; k < st.numPlayers; k++) {
+            var s = (st.attacker + k) % st.numPlayers;
+            if (!attackSeatSettled(st, s)) return s;
+        }
+        return -1;
+    }
+    // Which attack seats could still throw a legal card in right now (table covered, not yet
+    // passed, and holding a matching-rank card), in classic turn order starting from the primary
+    // attacker. Empty ⇒ nobody left to add → the bout is ready for Bito.
+    function pendingThrowers(st) {
+        var out = [];
+        if (uncoveredCount(st) !== 0) return out;   // still defending; no throw-in window yet
+        for (var k = 0; k < st.numPlayers; k++) {
+            var s = (st.attacker + k) % st.numPlayers;
+            if (isAttackSeat(st, s) && !st.passed[s] && legalAttacks(st, s).length > 0) out.push(s);
+        }
+        return out;
+    }
+
     // mutators
     function applyAttack(st, seat, card) {
         removeCard(st.hands[seat], card);
         st.table.push({ a: card, d: -1 });
         st.phase = "defend";
+        resetPasses(st);                 // a new attack card reopens the throw-in window for everyone
     }
     function applyDefend(st, pairIndex, card) {
         removeCard(st.hands[st.defender], card);
         st.table[pairIndex].d = card;
-        if (uncoveredCount(st) === 0) st.phase = "attack"; // hand back to the attacker (add or Bito)
+        resetPasses(st);                 // a fresh cover can enable new throw-in ranks → reopen
+        if (uncoveredCount(st) === 0) st.phase = "attack"; // hand back to the attacker(s): add or Bito
     }
 
     function updateOut(st) {
@@ -220,6 +290,7 @@
             for (i = 0; i < st.table.length; i++) { st.discard++; if (st.table[i].d >= 0) st.discard++; }
         }
         st.table = [];
+        resetPasses(st);                 // fresh table → nobody has settled yet
         refill(st);
         updateOut(st);
         // Successful defense → the defender attacks next. Took → the taker is skipped.
@@ -229,6 +300,30 @@
         st.phase = "attack";
         checkOver(st);
     }
+    // A seat abandons the table mid-game (online "Leave"). Their cards leave play with them, any
+    // live bout is voided (a defender walking out can't be forced to finish), the survivors refill,
+    // and roles rotate to the next in-play seats. Deterministic so the server drives it and clients
+    // just apply the resulting LEFT + DRAW + ROLES events. inPlayCount ≤ 1 afterwards ends the game.
+    function leaveSeat(st, seat) {
+        if (st.out[seat] || st.phase === "over") return;
+        st.out[seat] = true;
+        // The leaver's hand is dead — count it into the discard pile so deck maths stay sane.
+        st.discard += st.hands[seat].length;
+        st.hands[seat] = [];
+        // Void any open bout: the table's cards go to discard (the defender may be the one leaving,
+        // so there's no clean "took"/"beaten" resolution — the bout simply doesn't count).
+        for (var i = 0; i < st.table.length; i++) { st.discard++; if (st.table[i].d >= 0) st.discard++; }
+        st.table = [];
+        resetPasses(st);
+        refill(st);                          // survivors top up (attacker-first, defender last)
+        updateOut(st);
+        var base = firstInPlayFrom(st, st.attacker);   // skip the leaver if it was the attacker
+        st.attacker = base;
+        st.defender = nextInPlay(st, base);
+        st.phase = "attack";
+        checkOver(st);
+    }
+
     // Game ends when one or zero players are still holding cards. That last player is the
     // fool (durak); zero means a rare simultaneous-empty draw.
     function checkOver(st) {
@@ -277,7 +372,10 @@
         uncoveredCount: uncoveredCount, firstUncovered: firstUncovered, canAttackWith: canAttackWith,
         legalAttacks: legalAttacks, canDefendPair: canDefendPair, legalDefends: legalDefends,
         applyAttack: applyAttack, applyDefend: applyDefend, updateOut: updateOut,
-        inPlayCount: inPlayCount, refill: refill, endBout: endBout, checkOver: checkOver,
+        resetPasses: resetPasses, isAttackSeat: isAttackSeat, applyPass: applyPass,
+        attackSeatSettled: attackSeatSettled, canBito: canBito, pendingThrowers: pendingThrowers,
+        firstUnsettled: firstUnsettled,
+        inPlayCount: inPlayCount, refill: refill, endBout: endBout, checkOver: checkOver, leaveSeat: leaveSeat,
         cardValue: cardValue, sortByValue: sortByValue,
         durakBotAttack: durakBotAttack, durakBotDefend: durakBotDefend
     };

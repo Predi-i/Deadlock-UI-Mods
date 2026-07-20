@@ -15,6 +15,9 @@
     var MG = ($.MG = $.MG || {});
     if (MG.UI) return;
 
+    // Mod version, shown bottom-left of the footer. Bump on a user-facing release.
+    var MG_VERSION = "1.0";
+
     // Route through MG.debug so nothing hits the console unless debug mode is ON.
     function log(m) {
         try { if (MG.debug) MG.debug("[ui] " + m); } catch (e) {}
@@ -250,6 +253,9 @@
         statusLabel.AddClass("mg-status");
         statusLabel.text = "";
         applyUiScale();
+        // Cache the natural (100%) modal height next frame so the >100% clamp has a baseline. Runs
+        // once; the height is view-independent (fixed-height columns), so no per-view remeasure.
+        $.Schedule(0.0, measureNaturalH);
     }
 
     function setStatus(t) {
@@ -366,9 +372,48 @@
     // The full-screen dim (#MG_Dim) is a separate sibling, and the modal stays centre-aligned in the
     // overlay, so growing the modal's layout box keeps it centred. Drag maths read window px and
     // divide by the rendered layer width, so the scale cancels either way (unchanged from before).
+    //
+    // ⚠ CLAMP TO VIEWPORT. `ui-scale` grows the modal's LAYOUT box by the factor, and the modal is
+    // vertical-align:center in the full-screen overlay, so once (natural height × scale) exceeds the
+    // viewport height the top AND bottom clip OFF-SCREEN — the maintainer's 200% screenshot with
+    // "PLAY WITH A FRIEND" cut off. `max-height: 92%` on .mg-modal can NOT stop it: that cap is in
+    // LOGICAL px, evaluated BEFORE ui-scale multiplies. Width never overflows (900px even at 200% is
+    // < the canvas), so only height is clamped.
+    //
+    // The modal's natural height is EFFECTIVELY constant across views: the menu columns are fixed at
+    // 500px (.mg-picker & .mg-detail, mg.css) and every game stage is within a few px of that (durak
+    // 500, poker 520). So we measure the height ONCE at 100% (cached in naturalModalH by
+    // measureNaturalH, scheduled from ensureOverlay while the scale is still 100%) and reuse it — NO
+    // per-view remeasure, NO forcing the scale to 100% for a frame on every pick. That frame-reset was
+    // the "buttons jump around" jitter on 150%+; killing it keeps every view switch stable. The tiny
+    // stage-vs-menu variance (~20px) is swallowed by FIT_MARGIN's 4% headroom, so a taller stage still
+    // can't clip at the clamped scale.
+    //
+    // ⚠ CONSEQUENCE, not a bug: on a 1080p screen the natural modal (~header + 500px columns) only
+    // fits up to ~150% before it would clip, so 150/175/200% all clamp to about the same size. That is
+    // the physical ceiling — a bigger modal literally can't show without cutting content off (exactly
+    // the clip this clamp exists to prevent). On a taller display (1440p+) the higher steps open up.
+    // We keep all 5 dropdown steps; they just cap where the screen runs out of room.
+    var FIT_MARGIN = 0.96;                 // scaled modal may fill up to this fraction of viewport height
+    var naturalModalH = 0;                 // cached unscaled modal height (layout px); constant across views
+    function fittedScalePct(pct) {
+        if (pct <= 100 || !naturalModalH) return pct;             // ≤100% always fits; no cache yet → don't clamp
+        var vpH = (overlay && overlay.IsValid && overlay.IsValid()) ? Number(overlay.actuallayoutheight) : NaN;
+        if (!(isFinite(vpH) && vpH > 0)) return pct;
+        var maxPct = Math.floor((vpH * FIT_MARGIN / naturalModalH) * 100);
+        return (maxPct >= 100 && pct > maxPct) ? maxPct : pct;    // clamp; never below 100 (natural fits)
+    }
+    // Read the natural height ONCE, only while the modal is genuinely at 100% (so actuallayoutheight —
+    // in layout px — is unscaled and unambiguous), then re-apply so a >100% default scale takes effect.
+    function measureNaturalH() {
+        if (!(modalPanel && modalPanel.IsValid && modalPanel.IsValid())) return;
+        if (naturalModalH || uiScalePct > 100) return;            // already cached, or not at 100% to read cleanly
+        var h = Number(modalPanel.actuallayoutheight);
+        if (isFinite(h) && h > 0) { naturalModalH = h; applyUiScale(); }
+    }
     function applyUiScale() {
         if (modalPanel && modalPanel.IsValid && modalPanel.IsValid()) {
-            try { modalPanel.style.uiScale = uiScalePct + "%"; } catch (e) {}
+            try { modalPanel.style.uiScale = fittedScalePct(uiScalePct) + "%"; } catch (e) {}
         }
     }
 
@@ -378,10 +423,13 @@
         selfTestToken++;
         if (MG.Net && MG.Net.clearQueue) try { MG.Net.clearQueue(); } catch (e) {}
         
-        // Only cancel the server lobby if the player explicitly left or closed the menu
-        if (cancelServer && currentCode && (view === "waiting" || view === "room" || view === "game")) {
-            try { MG.Api.cancel(currentCode, currentTok); } catch (e) {}
-
+        // Tell the server the player is leaving. A lobby still WAITING (waiting/room) is cancelled
+        // — it only exists to be torn down before anyone's committed. A live game uses leave
+        // instead: cancel is a no-op once players ≥ 2, so it never reached a mid-match opponent —
+        // leave folds this seat out (3–4-seat durak/poker) or ends the match (pair games) at once.
+        if (cancelServer && currentCode) {
+            if (view === "game") { try { MG.Api.leave(currentCode, currentTok); } catch (e) {} }
+            else if (view === "waiting" || view === "room") { try { MG.Api.cancel(currentCode, currentTok); } catch (e) {} }
         }
         
         // Destroy active game if any
@@ -396,6 +444,9 @@
         // reference so setStatus falls back to the centred bottom line until the menu rebuilds it.
         footerStatus = null;
         if (modalBody) modalBody.RemoveAndDeleteChildren();
+        // NO per-view re-fit: the modal's natural height is constant (fixed-height columns), and the
+        // ui-scale lives on modalPanel (NOT modalBody, which is what we just cleared), so it persists
+        // across the view switch untouched. Re-applying here was the source of the button jitter.
     }
 
     // ── card art ────────────────────────────────────────────────────────────
@@ -532,6 +583,19 @@
         desc.text = GAME_DESC[g.key] || "";
 
         if (!g.enabled) {
+            // Call to action FIRST (maintainer: the Discord request button sits ABOVE the
+            // "IN DEVELOPMENT" notice): request this game in the community Discord — same
+            // external-browser channel as the header Discord pill.
+            var reqBtn = $.CreatePanel("Button", detailPanel, "");
+            reqBtn.AddClass("mg-request-btn");
+            var reqIcon = $.CreatePanel("Panel", reqBtn, "");
+            reqIcon.AddClass("mg-request-icon");
+            setFace(reqIcon, "s2r://panorama/images/discord_logo.vtex");
+            var reqLbl = $.CreatePanel("Label", reqBtn, "");
+            reqLbl.AddClass("mg-request-label");
+            reqLbl.text = "Request a game in my Discord";
+            reqBtn.SetPanelEvent("onactivate", function () { openDiscord(); });
+
             var locked = $.CreatePanel("Label", detailPanel, "");
             locked.AddClass("mg-detail-locked");
             locked.text = "IN DEVELOPMENT";
@@ -619,7 +683,7 @@
             }
             var quickCap = $.CreatePanel("Label", detailPanel, "");
             quickCap.AddClass("mg-caption");
-            quickCap.text = isPoker ? "Poker is private-table only — Create or Join a code below."
+            quickCap.text = isPoker ? "Poker is private-table only. Create or Join a code below."
                 : isDurak ? "Public 2-player match against anyone online."
                 : "Public match against anyone online.";
 
@@ -757,8 +821,15 @@
         var footer = $.CreatePanel("Panel", modalBody, "");
         footer.AddClass("mg-footer");
 
-        // Status text on the LEFT of the footer, level with the dev tools (п2). Replaces the
-        // old separate line under the footer, so the bottom strip is one row shorter.
+        // Mod version, pinned bottom-LEFT of the footer. A discreet build stamp; the status text
+        // (below) floats CENTERED over the whole footer as an align-override, so the version and the
+        // status don't fight for the same corner.
+        var version = $.CreatePanel("Label", footer, "");
+        version.AddClass("mg-footer-version");
+        version.text = "v" + MG_VERSION;   // MG_VERSION defined at the top of the IIFE
+
+        // Status text CENTERED over the footer (align-override child), level with the dev tools.
+        // Replaces the old separate line under the footer, so the bottom strip is one row shorter.
         footerStatus = $.CreatePanel("Label", footer, "");
         footerStatus.AddClass("mg-footer-status");
         footerStatus.text = "";
@@ -798,58 +869,101 @@
     }
 
     // ── online self-test ──────────────────────────────────────────────────────
-    // Exercises the full lobby protocol against the REAL server from one client:
-    // ping → create → status → join own lobby → move → poll the move back → cancel.
-    // Verifies exactly the paths a two-player game uses, no second person needed.
-    // (Actual gameplay can be tested offline via Play vs Bot.)
+    // Exercises the full lobby protocol against the REAL deployed server from ONE client
+    // (fills both seats with two tokens), so it's the only check that validates the live
+    // transport under the actual in-game UI scale. Beyond the happy path it now drives the
+    // three AUTHORITATIVE REJECTIONS a real game relies on — a foreign token, an out-of-turn
+    // move, and an illegal move must each be refused with the right reason — so a mis-deployed
+    // worker or a decode regression is caught in-game, not just offline. Steps run sequentially
+    // (a small runner, not nested callbacks); any failure aborts and cleans the lobby up.
+    // (Full rules coverage lives offline in tools/mg_*_test.js + Play-vs-Bot.)
     function runSelfTest() {
         if (!MG.Net.isConfigured()) { setStatus("⚠ Configure the server first."); return; }
         var t = ++selfTestToken;
         function alive() { return t === selfTestToken; }
-        function fail(what) { if (alive()) setStatus("❌ Self-test failed at: " + what); }
-        function step(n, what) { if (alive()) setStatus("Self-test " + n + "/6: " + what); }
 
-        // Two tokens: this one client fills both seats to drive the full protocol solo.
-        var hostTok = MG.Session.newToken(), joinTok = MG.Session.newToken();
-        // A legal white checkers opener: (5,0)->(4,1) = squares 40 -> 33.
-        var mFrom = 40, mTo = 33;
-        step(1, "ping…");
-        MG.Api.ping(function (ms) {
-            if (!alive()) return;
-            step(2, "creating a test lobby…");
-            MG.Api.create(1, hostTok, function (code) {
-                if (!alive()) return;
-                // Always tidy up the test lobby, pass or fail.
-                function cleanup() { try { MG.Api.cancel(code, hostTok); } catch (e) {} }
+        // Three tokens: host (white/seat 0), joiner (black/seat 1), and a stranger seated
+        // in neither — used to prove a foreign token can't move.
+        var hostTok = MG.Session.newToken(), joinTok = MG.Session.newToken(), foreignTok = MG.Session.newToken();
+        var code = null, pingMs = 0;
+        var mFrom = 40, mTo = 33;   // legal white checkers opener (5,0)->(4,1) = squares 40 -> 33
+        var illFrom = 40, illTo = 41;   // (5,0)->(5,1): sideways, never a legal checkers move
+        var blkFrom = 17, blkTo = 24;   // a black man's square — used to test moving out of turn
 
-                step(3, "reading lobby status…");
+        function cleanup() { if (code) { try { MG.Api.cancel(code, hostTok); } catch (e) {} } }
+        function fail(what) { if (alive()) { cleanup(); setStatus("❌ Self-test failed at: " + what); } }
+        function netFail(label) { return function () { fail(label + " (no response)"); }; }
+
+        // Each step calls next() on success or fail(...) on a bad result; the runner advances
+        // through them one at a time and reports "N/total" progress as it goes.
+        var steps = [
+            ["pinging the server", function () {
+                MG.Api.ping(function (ms) { pingMs = ms; next(); }, netFail("ping"));
+            }],
+            ["creating a test lobby", function () {
+                MG.Api.create(1, hostTok, function (c) { code = c; next(); },
+                    function () { fail("create (server unreachable or bad decode)"); });
+            }],
+            ["reading lobby status", function () {
                 MG.Api.status(code, function (st) {
-                    if (!alive()) return;
-                    if (st.gone || st.players !== 1) { cleanup(); fail("status (got " + st.players + " players, expected 1)"); return; }
-                    step(4, "joining own lobby…");
-                    MG.Api.join(code, joinTok, function (res) {
-                        if (!alive()) return;
-                        if (!res.ok || res.game !== 1) { cleanup(); fail("join (" + (res.reason || "game=" + res.game) + ")"); return; }
-                        step(5, "relaying a test move…");
-                        // White (host seat) plays first; authorise with the host token.
-                        MG.Api.move(code, mFrom, mTo, 1, hostTok, function (r) {
-                            if (!alive()) return;
-                            if (!r.ok) { cleanup(); fail("move (rejected: " + r.reason + ")"); return; }
-                            step(6, "polling the move back…");
-                            MG.Api.poll(code, 0, function (mv) {
-                                cleanup();
-                                if (!alive()) return;
-                                if (mv && mv.from === mFrom && mv.to === mTo && mv.end === 1) {
-                                    setStatus("✅ Self-test passed: lobby, join, authorised move & poll all work. Ping " + ms + "ms.");
-                                } else {
-                                    fail("poll (move came back wrong)");
-                                }
-                            }, function () { cleanup(); fail("poll (no response)"); });
-                        }, function () { cleanup(); fail("move (no response)"); });
-                    }, function () { cleanup(); fail("join (no response)"); });
-                }, function () { cleanup(); fail("status (no response)"); });
-            }, function () { fail("create (server unreachable or bad decode)"); });
-        }, function () { fail("ping (server unreachable)"); });
+                    if (st.gone || st.players !== 1) { fail("status (got " + st.players + " players, expected 1)"); return; }
+                    next();
+                }, netFail("status"));
+            }],
+            ["joining own lobby", function () {
+                MG.Api.join(code, joinTok, function (res) {
+                    if (!res.ok || res.game !== 1) { fail("join (" + (res.reason || "game=" + res.game) + ")"); return; }
+                    next();
+                }, netFail("join"));
+            }],
+            ["rejecting a foreign-token move", function () {
+                // A token seated in neither seat must be refused with reason "token".
+                MG.Api.move(code, mFrom, mTo, 1, foreignTok, function (r) {
+                    if (r.ok || r.reason !== "token") { fail("foreign-token move not rejected (" + (r.reason || "accepted") + ")"); return; }
+                    next();
+                }, netFail("foreign move"));
+            }],
+            ["rejecting an out-of-turn move", function () {
+                // It's white's turn; the joiner (black) moving must be refused with reason "turn".
+                MG.Api.move(code, blkFrom, blkTo, 1, joinTok, function (r) {
+                    if (r.ok || r.reason !== "turn") { fail("out-of-turn move not rejected (" + (r.reason || "accepted") + ")"); return; }
+                    next();
+                }, netFail("out-of-turn move"));
+            }],
+            ["rejecting an illegal move", function () {
+                // A sideways (non-diagonal) hop by the correct player must be refused as "illegal".
+                MG.Api.move(code, illFrom, illTo, 1, hostTok, function (r) {
+                    if (r.ok || r.reason !== "illegal") { fail("illegal move not rejected (" + (r.reason || "accepted") + ")"); return; }
+                    next();
+                }, netFail("illegal move"));
+            }],
+            ["relaying a legal move", function () {
+                MG.Api.move(code, mFrom, mTo, 1, hostTok, function (r) {
+                    if (!r.ok) { fail("legal move rejected (" + r.reason + ")"); return; }
+                    next();
+                }, netFail("legal move"));
+            }],
+            ["polling the move back", function () {
+                MG.Api.poll(code, 0, function (mv) {
+                    if (!mv || mv.from !== mFrom || mv.to !== mTo) { fail("poll (move came back wrong)"); return; }
+                    next();
+                }, netFail("poll"));
+            }]
+        ];
+
+        var i = 0;
+        function next() {
+            if (!alive()) return;
+            if (i >= steps.length) {
+                cleanup();
+                setStatus("✅ Self-test passed (" + steps.length + " checks). Ping " + pingMs + "ms.");
+                return;
+            }
+            var s = steps[i++];
+            setStatus("Self-test " + i + "/" + steps.length + ": " + s[0] + "…");
+            try { s[1](); } catch (e) { fail(s[0] + " (exception)"); }
+        }
+        next();
     }
 
     // Bot games alternate your side each time so you don't always open as white/X.
@@ -864,7 +978,13 @@
         log("startBotGame game=" + selectedGameId + " iAmHost=" + iAmHost);
         // Offline room needs a concrete bank now, so "Any"(-1) collapses to the 5-min default.
         var tc = isTimedGame(selectedGameId) ? concreteTc(selectedTimeControl) : 0;
-        renderGame(selectedGameId, 0, iAmHost, true, { timeControl: tc });
+        // Poker/Durak: honour the 2/3/4 seat picker so "vs Bot" fills that many seats with bots
+        // (you + N-1 bots), instead of the controller's fixed default (poker 4 / durak 2). The
+        // offline controller already drives every non-player seat, so this is all it needs.
+        var opts = { timeControl: tc };
+        if (isPokerOnlineGame(selectedGameId)) opts.numPlayers = pokerSeatCap;
+        else if (isDurakOnlineGame(selectedGameId)) opts.numPlayers = durakSeatCap;
+        renderGame(selectedGameId, 0, iAmHost, true, opts);
     }
 
     function renderJoin() {

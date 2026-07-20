@@ -57,6 +57,34 @@
     var REQ_TIMEOUT_MS = 8000;
     var POLL_STEP = 0.05;   // seconds between dimension checks
 
+    // ── shared opponent-poll cadence (single source of truth for all games) ──
+    // Every online game polls /api/poll to learn the opponent's move. Polling is the
+    // dominant request cost of a match, so the cadence is tuned here once and reused by
+    // checkers/chess/TTT/Connect-Four. Model: poll FAST for the first few checks after
+    // it becomes the opponent's turn (a quick reply feels responsive), then BACK OFF to a
+    // slower steady rate while they think — a long think shouldn't cost ~2.5 req/s.
+    //   misses 0..(FAST_POLLS-1) → POLL_FAST_S ; misses >= FAST_POLLS → POLL_SLOW_S
+    // `misses` = consecutive empty ("nothing new") polls this turn; reset to 0 on each real
+    // move so the next wait starts fast again. Transport errors reuse the same schedule.
+    var POLL_FAST_S = 1.0, POLL_SLOW_S = 1.6, FAST_POLLS = 4;
+    function pollDelay(misses) { return (misses < FAST_POLLS) ? POLL_FAST_S : POLL_SLOW_S; }
+
+    // ── Downlink level encoding — MUST match worker.core.js `d()` exactly ──
+    // A response dimension carries a small "level", not a raw int: dim = level*STEP + BASE.
+    // The old dim=int+1 scheme died on UI-scaled displays (the engine biases small sizes
+    // up ~1px, so value 1 rendered as 2 — corrupting corner-square moves, the (1,1) marker,
+    // and every code half). STEP=9 spaces adjacent levels 9 logical px apart so a ±2px
+    // engine error can't cross a boundary even when a sub-1080p display downscales. Safe
+    // range is levels 0..63 (63*9+15 = 582px < the 600px probe envelope, so the host panel
+    // is never clamped). Proven 720p–8K by tools/mg_simulate_resolutions.js. The probe is
+    // NOT level-encoded — it stays a literal 600x1000 and is read via rawRequest, bypassing
+    // decode(). See github2/IMAGE_SIDECHANNEL_1PX_BUG.md.
+    var STEP = 9, BASE = 15;
+
+    // Host panel styled size (layout units). Parsed by the resolution simulator's drift
+    // guard, so the two stay in lockstep. Response images (all <= 582px) never exceed it.
+    var HOST_W = 640, HOST_H = 1020;
+
     // Debug logging. Ships OFF. When toggled on (overlay tools → Debug Log) every step is
     // written to Deadlock's dev CONSOLE via $.Msg — no on-screen panel. When OFF, nothing
     // is emitted at all (not even the routine step logs). Lines are still buffered so a
@@ -99,8 +127,8 @@
         host = $.CreatePanel("Panel", ctx, "MG_NetHost");
         try {
             host.style.position = "2px 2px 0px";
-            host.style.width = "640px";
-            host.style.height = "1020px";
+            host.style.width = HOST_W + "px";
+            host.style.height = HOST_H + "px";
             host.style.opacity = "0.02";
             host.style.zIndex = "99999";
         } catch (e) { log("✗ host style exc: " + (e && e.message ? e.message : e)); }
@@ -320,9 +348,16 @@
         calibrate();
     }
 
+    // Decode a raw (w,h) image back to the two protocol LEVELS the worker encoded.
+    // Mirrors worker.core.js d(): dim = level*STEP + BASE, so level = (dim/scale - BASE)/STEP.
+    // The scale-correction (÷scale) is done WITHOUT rounding and the single Math.round happens
+    // here at the end — a value is never rounded twice (double-rounding is what tipped a level
+    // across a boundary on scaled displays). Callers get the same small ints as the old
+    // dim=int+1 scheme did, so every decoder downstream is unchanged.
+    function decodeLevel(dim, scale) { return Math.round((dim / scale - BASE) / STEP); }
     function decode(w, hh) {
         if (swap) { var t = w; w = hh; hh = t; }
-        return { w: Math.round(w / scaleX), h: Math.round(hh / scaleY) };
+        return { w: decodeLevel(w, scaleX), h: decodeLevel(hh, scaleY) };
     }
 
     function request(path, params, onDone, onError) {
@@ -352,6 +387,7 @@
             reqQueue = kept;
         },
         recalibrate: function (cb) { calibrated = false; calibrate(cb); },
+        pollDelay: pollDelay,
         setDebug: setDebug,
         isDebug: function () { return DEBUG; },
         isConfigured: function () { return BASE_URL.indexOf("CHANGEME") < 0; },
@@ -389,6 +425,28 @@
         }
     };
 
+    // ── code / tc helpers (mirror worker.core.js dCode + tcIndex) ────────────
+    // A lobby code rides the downlink as width = BAND + (code>>6), height = code&63.
+    // The BAND both keeps the width clear of every sentinel (1 ok · 9 err · 20/21/22
+    // formation) AND encodes the role: 24..39 = joiner/create, 40..55 = host. Returns
+    // { code, host } or null if the width isn't in either code band (a stale-scale read).
+    var CODE_BAND_JOIN = 24, CODE_BAND_HOST = 40, CODE_MAX = 1023;
+    function decodeCode(w, h) {
+        var band = null;
+        if (w >= CODE_BAND_JOIN && w <= CODE_BAND_JOIN + 15) band = { off: CODE_BAND_JOIN, host: false };
+        else if (w >= CODE_BAND_HOST && w <= CODE_BAND_HOST + 15) band = { off: CODE_BAND_HOST, host: true };
+        if (!band || h < 0 || h > 63) return null;
+        var code = ((w - band.off) << 6) + h;
+        if (code < 0 || code > CODE_MAX) return null;
+        return { code: code, host: band.host };
+    }
+    // Client displays / re-sends a code as a plain decimal string. The server canonicalises
+    // (validCode) so zero-padding is irrelevant, but we pad to 4 for a stable on-screen code.
+    function codeStr(code) { var s = "" + code; while (s.length < 4) s = "0" + s; return s; }
+    // tc index (join height) -> seconds. Mirrors worker tcFromIndex: 0 none · 1..4 = the menu.
+    var TC_SECONDS = [0, 60, 180, 300, 600];
+    function tcFromIndex(i) { return (i >= 0 && i < TC_SECONDS.length) ? TC_SECONDS[i] : 0; }
+
     // ── Typed protocol layer ────────────────────────────────────────────────
     // Every decode is range-checked against what the protocol can actually produce.
     // An impossible value means the scale calibration is stale — reject it, trigger
@@ -412,14 +470,14 @@
         create: function (game, tok, cb, err, tc) {
             request("/api/create", { game: game, tok: tok, tc: tc || 0 }, function (w, h) {
                 if (w === 9 && h === 4) { if (err) err("busy"); return; } // rate-limited, don't recalibrate
-                var code = w * 100 + (h - 1); // CODE = hi*100 + lo
-                log("create decoded w=" + w + " h=" + h + " => code=" + code);
-                if (code < 1000 || code > 9999) {
+                var dc = decodeCode(w, h);
+                log("create decoded w=" + w + " h=" + h + " => code=" + (dc ? dc.code : "?"));
+                if (!dc) {
                     suspectDecode("create w=" + w + " h=" + h);
                     if (err) err("decode");
                     return;
                 }
-                cb(code);
+                cb(dc.code);
             }, err);
         },
 
@@ -434,14 +492,13 @@
             if (tc != null && tc !== 0) params.tc = tc;   // "any" or concrete secs; omit for untimed
             request("/api/quick", params, function (w, h) {
                 if (w === 9 && h === 4) { if (err) err("busy"); return; } // rate-limited
-                var isHost = w >= 100;
-                var code = (isHost ? w - 100 : w) * 100 + (h - 1);
-                if (code < 1000 || code > 9999) {
+                var dc = decodeCode(w, h);
+                if (!dc) {
                     suspectDecode("quick w=" + w + " h=" + h);
                     if (err) err("decode");
                     return;
                 }
-                cb({ role: isHost ? "host" : "joiner", code: code });
+                cb({ role: dc.host ? "host" : "joiner", code: dc.code });
             }, err);
         },
 
@@ -460,14 +517,13 @@
                     if (err) err(h === 6 ? "games" : h === 3 ? "token" : "error");
                     return;
                 }
-                var isHost = w >= 100;
-                var code = (isHost ? w - 100 : w) * 100 + (h - 1);
-                if (code < 1000 || code > 9999) {
+                var dc = decodeCode(w, h);
+                if (!dc) {
                     suspectDecode("mquick w=" + w + " h=" + h);
                     if (err) err("decode");
                     return;
                 }
-                cb({ role: isHost ? "host" : "joiner", code: code });
+                cb({ role: dc.host ? "host" : "joiner", code: dc.code });
             }, err);
         },
 
@@ -478,15 +534,23 @@
             request("/api/cancel", { code: code, tok: tok || "" }, function (w, h) { if (cb) cb(true); }, err);
         },
 
+        // Leave a game already in progress. Unlike cancel (which only works while a lobby waits),
+        // this reaches the server mid-match so the opponent learns at once: a pair game is torn
+        // down (their next poll returns (9,9) → "Opponent left."), while a 3–4-seat durak/poker
+        // table folds this seat out and plays on. Fire-and-forget — the caller is leaving anyway.
+        leave: function (code, tok, cb, err) {
+            request("/api/leave", { code: code, tok: tok || "" }, function (w, h) { if (cb) cb(true); }, err);
+        },
+
 
         join: function (code, tok, cb, err) {
             request("/api/join", { code: code, tok: tok }, function (w, h) {
                 log("join decoded w=" + w + " h=" + h);
-                // h carries the host's time control (seconds+1): the joiner learns the bank
-                // without picking it (0 = untimed). Squares/games can't collide — join's width
-                // is the game id (1..9) here, tc rides the height.
+                // h carries the host's time control as a small INDEX (0=untimed,1=60,2=180,
+                // 3=300,4=600), not raw seconds — 600 would overflow a level. tcFromIndex maps
+                // it back. join's width is the game id (1..9); tc rides the height.
                 if (w === 9 && h === 4) { cb({ ok: false, reason: "busy" }); return; } // rate-limited
-                if (w >= 1 && w <= 9) cb({ ok: true, game: w, tc: Math.max(0, (h | 0) - 1) });
+                if (w >= 1 && w <= 9) cb({ ok: true, game: w, tc: tcFromIndex(h) });
                 else if (w === 20) cb({ ok: false, reason: "missing" });
                 else if (w === 21) cb({ ok: false, reason: "full" });
                 else {
@@ -537,30 +601,32 @@
                 }, err);
         },
 
-        // `validate(from,to)` is an optional game-specific sanity check on the decoded
-        // move. It exists because a mis-scaled read yields plausible-but-wrong squares
-        // that, acted upon, corrupt the board (phantom moves that eat pieces). Each game
-        // knows what a legal (from,to) looks like — checkers passes a diagonal test,
-        // tic-tac-toe passes its cell-placement shape — so the transport stays generic
-        // and every caller keeps its own guard. Omitting it applies only the 0..63 range
-        // check. A failed check trips suspectDecode (stale scale → recalibrate).
-        poll: function (code, since, cb, err, validate) {
+        // `validate(from,to)` is an optional game-specific sanity check on the decoded move
+        // (a mis-scaled read yields plausible-but-wrong squares that corrupt the board). Each
+        // game knows what a legal (from,to) looks like — checkers passes a diagonal test,
+        // tic-tac-toe passes its cell-placement shape — so the transport stays generic and
+        // every caller keeps its own guard. Omitting it applies only the 0..63 range check.
+        // A failed check trips suspectDecode (stale scale → recalibrate). The
+        // move's turn-hand-off flag `end` is NO LONGER sent down — it didn't fit the level
+        // codec and is derivable: `deriveEnd(from,to)` (optional) recomputes it from the SAME
+        // shared rules engine the server used, applied to the caller's board. When omitted,
+        // end defaults to 1 (every TTT/chess/C4 move ends the turn; only checkers chains).
+        poll: function (code, since, cb, err, validate, deriveEnd) {
             request("/api/poll", { code: code, since: since }, function (w, h) {
                 if (w === 9 && h === 9) {
-                    log("opponent disconnected (9x9 received)");
-                    if (MG.UI && MG.UI.kickToMenu) MG.UI.kickToMenu("Opponent disconnected.");
+                    log("opponent left (9x9 received)");
+                    if (MG.UI && MG.UI.kickToMenu) MG.UI.kickToMenu("Opponent left.");
                     return;
                 }
-                var end = w > 100 ? 1 : 0;
-                var from = (end ? w - 100 : w) - 1;
-                var to = h - 1;
-                if (from === to) { cb(null); return; }   // (1,1) => nothing new
+                var from = w, to = h;   // RAW squares 0..63 now (worker dropped the +1 / +100)
+                if (from === to) { cb(null); return; }   // (1,1)/(0,0) => nothing new
                 var inRange = from >= 0 && from <= 63 && to >= 0 && to <= 63;
                 if (!inRange || (validate && !validate(from, to))) {
                     suspectDecode("poll w=" + w + " h=" + h);
                     if (err) err("decode");
                     return;
                 }
+                var end = deriveEnd ? (deriveEnd(from, to) ? 1 : 0) : 1;
                 cb({ from: from, to: to, end: end, seq: since + 1 });
             }, err);
         },
@@ -571,25 +637,33 @@
         },
 
         // Authoritative clocks. The server holds each seat's time bank and decides flag-fall,
-        // so both players read the SAME remaining seconds and can never drift apart. Response:
-        //   (seat0_sec+1, seat1_sec+1)   remaining whole seconds per seat (0 = flagged)
-        //   (9,9) lobby gone · (9,1) this lobby is untimed (no clock configured)
-        // `run` (which seat is ticking) and `flag` (who ran out, -1 = nobody) ride in the
-        // hundreds digit of each int server-side; here we just surface the seconds + flag.
+        // so both players read the SAME remaining seconds and can never drift apart. A bank is
+        // 0..600 s = 10 bits, which needs BOTH image dimensions under the level codec, so the
+        // route now returns ONE seat per read (&seat=S) as (CLK_BASE+hi, lo), sec = hi*64+lo.
+        // We fetch seat 0 then seat 1 and stitch them back into the same {sec:[s0,s1], flag}
+        // shape callers already consume — the two reads are ~1 frame apart, far tighter than
+        // the ~1 s poll cadence, so no visible drift. Sentinels: (9,9) gone · (9,8) untimed.
         // cb({ sec:[s0,s1], flag }) — flag is the seat that ran out of time, or -1.
         clocks: function (code, cb, err) {
-            request("/api/clocks", { code: code }, function (w, h) {
-                // Sentinels live at height >= 900 (gone=999, untimed=998), which a real reading
-                // (height <= 601) can never reach — so unlike a bare (9,x) they don't collide with
-                // a legitimate "9 seconds left" clock value. Anything else is two live banks.
-                if (h >= 900) { if (cb) cb(null); return; }
-                var s0 = w - 1, s1 = h - 1;                  // seconds = int - 1 (0 = flagged)
-                if (s0 < 0 || s1 < 0) { if (cb) cb(null); return; }
-                // The running seat that hits 0 is the flag-fall loser; the server floors it at 0
-                // and never lets the other side tick past it, so at most one seat reads 0.
-                var flag = s0 === 0 ? 0 : (s1 === 0 ? 1 : -1);
-                if (cb) cb({ sec: [s0, s1], flag: flag });
-            }, err);
+            function readSeat(seat, next) {
+                request("/api/clocks", { code: code, seat: seat }, function (w, h) {
+                    if (w === 9) { next(null); return; }          // (9,9) gone / (9,8) untimed
+                    // Real reading: width is the CLK band (30..39 = 30+hi), height is lo (0..63).
+                    var sec = (w - 30) * 64 + h;
+                    if (w < 30 || w > 45 || sec < 0 || sec > 600) { next(NaN); return; }
+                    next(sec);
+                }, function () { next(null); });
+            }
+            readSeat(0, function (s0) {
+                if (s0 === null || (s0 !== s0)) { if (cb) cb(null); return; } // gone/untimed/decode
+                readSeat(1, function (s1) {
+                    if (s1 === null || (s1 !== s1)) { if (cb) cb(null); return; }
+                    // The running seat that hits 0 is the flag-fall loser; the server floors it
+                    // at 0 and never lets the other tick past it, so at most one seat reads 0.
+                    var flag = s0 === 0 ? 0 : (s1 === 0 ? 1 : -1);
+                    if (cb) cb({ sec: [s0, s1], flag: flag });
+                });
+            });
         },
 
         // Rematch handshake. Poll this from the game-over screen with your CURRENT gen
@@ -659,7 +733,7 @@
             request("/api/dlog", { code: code, since: since }, function (w, h) {
                 if (w === 1 && h === 1) { cb(null); return; }
                 if (w === 9 && h === 9) {
-                    if (MG.UI && MG.UI.kickToMenu) MG.UI.kickToMenu("Lobby closed.");
+                    if (MG.UI && MG.UI.kickToMenu) MG.UI.kickToMenu("Opponent left.");
                     return;
                 }
                 // Seat ranges span 0..3 (2–4 players). ROLES(4, a*4+d+1) is the server-owned
@@ -672,6 +746,8 @@
                 else if (w >= 20 && w <= 25 && h >= 1 && h <= 36) ev = { type: "cover", pair: w - 20, card: h - 1 };
                 else if (w >= 30 && w <= 33 && h === 1) ev = { type: "take", seat: w - 30 };
                 else if (w === 40 && h === 1) ev = { type: "bito" };
+                else if (w >= 41 && w <= 44 && h === 1) ev = { type: "pass", seat: w - 41 };
+                else if (w >= 45 && w <= 48 && h === 1) ev = { type: "left", seat: w - 45 };
                 else if (w >= 50 && w <= 53 && h >= 1 && h <= 7) ev = { type: "draw", seat: w - 50, count: h - 1 };
                 else if (w === 60 && h >= 1 && h <= 5) ev = { type: "over", loser: h - 2 };
                 if (!ev) {
@@ -705,13 +781,13 @@
             request("/api/dcreate", { n: cap, tok: tok }, function (w, h) {
                 if (w === 9 && h === 4) { if (err) err("busy"); return; }   // rate-limited
                 if (w === 9 && h === 3) { if (err) err("token"); return; }
-                var code = (w - 100) * 100 + (h - 1);   // HOST flagged by +100 on the width
-                if (w < 100 || code < 1000 || code > 9999) {
+                var dc = decodeCode(w, h);   // host/joiner flag folded into the width band
+                if (!dc) {
                     suspectDecode("dcreate w=" + w + " h=" + h);
                     if (err) err("decode");
                     return;
                 }
-                cb({ code: code });
+                cb({ code: dc.code });
             }, err);
         },
 
@@ -734,8 +810,10 @@
                 // Same transient-vs-gone discipline as room(): only (9,1) is truly gone.
                 if (w === 9 && h === 1) { cb({ gone: true, players: 0, cap: 0, started: false }); return; }
                 if (w === 9) { if (err) err("transient"); return; }
-                var started = w >= 100;
-                var players = started ? w - 100 : w;
+                // "started" is folded into the WIDTH as a band offset (was +100, overflows a
+                // level): waiting → players 1..4, started → 51..54. Mirror worker ROOM_STARTED=50.
+                var started = w >= 50;
+                var players = started ? w - 50 : w;
                 if (players < 1 || players > 4 || h < 2 || h > 4) {
                     suspectDecode("droom w=" + w + " h=" + h);
                     if (err) err("decode");
@@ -754,14 +832,13 @@
             request("/api/pcreate", { n: cap, tok: tok }, function (w, h) {
                 if (w === 9 && h === 4) { if (err) err("busy"); return; }   // rate-limited
                 if (w === 9 && h === 3) { if (err) err("token"); return; }
-                // HOST flagged by +100 on the width, exactly like create/quick.
-                var code = (w - 100) * 100 + (h - 1);
-                if (w < 100 || code < 1000 || code > 9999) {
+                var dc = decodeCode(w, h);   // host/joiner flag folded into the width band
+                if (!dc) {
                     suspectDecode("pcreate w=" + w + " h=" + h);
                     if (err) err("decode");
                     return;
                 }
-                cb({ code: code });
+                cb({ code: dc.code });
             }, err);
         },
 
@@ -784,9 +861,10 @@
                 // Same transient-vs-gone discipline as room(): only (9,1) is truly gone.
                 if (w === 9 && h === 1) { cb({ gone: true, players: 0, cap: 0, started: false }); return; }
                 if (w === 9) { if (err) err("transient"); return; }
-                // width = players (+100 once started) · height = seat cap.
-                var started = w >= 100;
-                var players = started ? w - 100 : w;
+                // "started" folded into the WIDTH as a band offset (was +100): waiting →
+                // players 1..4, started → 51..54. Mirror worker ROOM_STARTED=50. · height = cap.
+                var started = w >= 50;
+                var players = started ? w - 50 : w;
                 if (players < 1 || players > 4 || h < 2 || h > 4) {
                     suspectDecode("proom w=" + w + " h=" + h);
                     if (err) err("decode");
@@ -839,7 +917,7 @@
             request("/api/plog", { code: code, since: since }, function (w, h) {
                 if (w === 1 && h === 1) { cb(null); return; }        // nothing new
                 if (w === 9 && h === 9) {
-                    if (MG.UI && MG.UI.kickToMenu) MG.UI.kickToMenu("Lobby closed.");
+                    if (MG.UI && MG.UI.kickToMenu) MG.UI.kickToMenu("Opponent left.");
                     return;
                 }
                 var ev = null;
@@ -848,11 +926,18 @@
                 else if (w === 5 && h >= 1 && h <= 52) ev = { type: "board", card: h - 1 };
                 else if (w === 7 && h === 1) ev = { type: "win" };
                 else if (w === 8 && h === 1) ev = { type: "over" };
-                // FOLD(10+seat,1) · CHECK(20+seat,1) · CALL(30+seat,1) · RAISE(40+seat,to+1)
+                // FOLD(10+seat,1) · CHECK(20+seat,1) · CALL(30+seat,1)
                 else if (w >= 10 && w <= 13 && h === 1) ev = { type: "fold", seat: w - 10 };
                 else if (w >= 20 && w <= 23 && h === 1) ev = { type: "check", seat: w - 20 };
                 else if (w >= 30 && w <= 33 && h === 1) ev = { type: "call", seat: w - 30 };
-                else if (w >= 40 && w <= 43 && h >= 1) ev = { type: "raise", seat: w - 40, to: h - 1 };
+                // RAISE is TWO events: the raise-to amount (0..800) exceeds one level, so the
+                // worker splits it into a low 6-bit half RAISE(40+seat, to&63) immediately
+                // followed by RAISEHI(44+seat, to>>6). Both carry RAW 6-bit values (no +1):
+                // width 40..47 can never read as (1,1). The controller stitches to = hi*64+lo.
+                else if (w >= 40 && w <= 43 && h >= 0) ev = { type: "raiselo", seat: w - 40, lo: h };
+                else if (w >= 44 && w <= 47 && h >= 0) ev = { type: "raisehi", seat: w - 44, hi: h };
+                // LEFT(50+seat, 1) — a seat abandoned the table; replayed as a fold + chip forfeit
+                else if (w >= 50 && w <= 53 && h === 1) ev = { type: "left", seat: w - 50 };
                 // SHOW(60+seat, card+1)
                 else if (w >= 60 && w <= 63 && h >= 1 && h <= 52) ev = { type: "show", seat: w - 60, card: h - 1 };
                 if (!ev) {

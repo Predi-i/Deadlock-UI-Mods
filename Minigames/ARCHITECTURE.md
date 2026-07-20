@@ -18,7 +18,15 @@ When you change layout/animation/input, say honestly which of the two it is.
 Online mini-games played **inside Deadlock's pause (Esc) menu**, without leaving the
 match. Shipping games (all online + vs bot): **Checkers** (Russian draughts),
 **Tic-Tac-Toe**, **Chess** and **Connect Four**. **Durak** plays vs bot for 2–4 players
-and **online for 2 players** (worker-as-dealer, §8.6); 3–4-seat online is deferred.
+and **online for 2 players** (worker-as-dealer, §8.6); 3–4-seat online is deferred. **Poker**
+(No-Limit Texas Hold'em, §8.8) plays vs bot and **online for 2–4 players** (worker-as-dealer,
+same private-deal channel as durak) — the online path is built + Node-tested but not yet
+in-game verified.
+
+Shared UI features across the games: a **per-turn countdown timer** (§9.1) in durak / poker /
+TTT / Connect Four, **server-authoritative side clocks** (time-control matchmaking) in chess /
+checkers, **move history + local review** (chess / checkers), a **Play Again / rematch**
+handshake, a header **UI-scale dropdown** (trap 20) and a **volume control** (`mg_sound.js`).
 
 
 Picker cards show a custom **`.vtex` image** (drawn by the maintainer, compiled from PNG),
@@ -60,31 +68,45 @@ and validates every move** (§5.1). Full protocol lives in `server/worker.js`'s 
 
 ```
 panorama/
-  layout/base_hud.xml      HUD override; <include>s the scripts + styles. LOAD ORDER MATTERS:
-                           mg_net (defines $.MG.Net/$.MG.Api) → mg_games ($.MG.Games) → mg_ui.
+  layout/base_hud.xml      HUD override; <include>s the scripts + styles. LOAD ORDER MATTERS (actual
+                           include order): mg_net → mg_sound → rules/* (checkers, ttt, chess,
+                           connectfour, durak, poker) → mg_games ($.MG.Games) → mg_durak →
+                           mg_connectfour → mg_poker → mg_ui. Rule modules load before the
+                           controllers that alias them; mg_ui loads last (it drives all views).
   styles/mg.css            all styling. Note the Panorama-specific idioms (§6).
   scripts/
     mg_net.js              image side-channel transport + typed protocol ($.MG.Net, $.MG.Api, $.MG.Session)
+    mg_sound.js            $.MG.Sound facade: play(name) + volume/mute. Names: MoveSelf/MoveOpp,
+                           Check, Promote, Illegal, Premove, GameStart, TenSeconds (§9.2).
     rules/checkers.js      SHARED pure checkers engine (client predictor + server authority)
     rules/ttt.js           SHARED pure tic-tac-toe engine
     rules/chess.js         SHARED pure chess engine
     rules/connectfour.js   SHARED pure connect-four engine
     rules/durak.js         SHARED pure durak engine (offline bot + online dealer)
+    rules/poker.js         SHARED pure No-Limit Hold'em engine (offline bot + online dealer)
     mg_games.js            checkers + TTT + chess CONTROLLERS (render, input, net); aliases MG.Rules.*
-                           and owns the $.MG.Games registry (list + register + mount).
+                           and owns the $.MG.Games registry (list + register + mount). Also hosts the
+                           shared side-clock + per-turn timer widgets ($.MG.Widgets) and move history.
     mg_connectfour.js      Connect Four CONTROLLER; self-registers game id 5 (§8.7).
     mg_durak.js            Durak CONTROLLER (render + click/drag + bot + online); self-registers game id 3.
-    mg_ui.js               Esc-menu button injection + full-screen lobby overlay ($.MG.UI)
+    mg_poker.js            Poker CONTROLLER (render + betting UI + bot + online); self-registers game id 6 (§8.8).
+    mg_ui.js               Esc-menu button injection + full-screen lobby overlay ($.MG.UI); header
+                           UI-scale + volume dropdowns; seat/time-control pickers.
 
 server/                    Cloudflare Worker (dev-only, NOT packed into the VPK)
   worker.core.js           AUTHORED relay + validators + PNG encoder (edit this)
   worker.js                GENERATED (rules/*.js + worker.core.js via tools/build_worker.js) — deploy artifact
   wrangler.jsonc, README.md
-tools/                     dev-only Node test harnesses (NOT packed)
-  build_worker.js          concatenate rules/*.js + worker.core.js → server/worker.js
+tools/                     dev-only Node test harnesses + build helpers (NOT packed)
+  build_worker.js          concatenate the 6 rules/*.js + worker.core.js → server/worker.js
+  gen_soundevents.js       generate the soundevents manifest consumed by mg_sound.js
+  strip_comments.js        strip comments from scripts for a Public (non-dev) build
+  svg_to_deck.py           compile card SVGs → the deck/<S><R> art
   mg_rules_test.js         checkers rules: captures, flying kings, full bot game
   mg_chess_test.js         chess rules: perft, castling, en passant, promotion, mate/stalemate
+  mg_connectfour_test.js   connect-four rules + bot
   mg_durak_test.js         durak rules: deal, beats(), throw-in legality, 120 full bot games
+  mg_poker_test.js         poker rules: hand ranking, betting rounds, showdown, bot
   mg_server_test.js        worker: matchmaking, seat tokens, per-move validation, concurrent lobbies
   mg_parity_test.js        client predictor vs server authority give identical legal moves
 ```
@@ -122,11 +144,11 @@ bugs and their fixes:
 - **The overlay is separate from the Esc menu**, which means:
   - Closing the Esc menu does NOT auto-destroy our overlay. We **poll** the menu's open
     state (`watchEscape()` every 0.3s) and tear the overlay down when the menu is gone.
-    (Bug #3 from the maintainer: "плашка не закрывается при закрытии esc-меню".)
+    (Bug #3 from the maintainer: "the panel doesn't close when the esc-menu closes".)
   - The menu's `#EscapeBackground` is a full-screen click-catcher whose `onactivate` calls
     `CitadelResumePlaying()`. A misclick over the game area used to close the whole menu.
     Fix: `setEscapeBackgroundActive(false)` disables its hit-testing while our modal is up,
-    restored on hide. (Bug #2: "чуть не попал по кнопке — закрылось меню".)
+    restored on hide. (Bug #2: "almost hit the button — the menu closed".)
   - Our backdrop (`#MG_Dim`) has a **no-op `onactivate`** so a click on it is explicitly
     consumed and can't fall through to `#EscapeBackground`.
 
@@ -247,11 +269,16 @@ These are the mistakes to NOT repeat. Every one was confirmed against the game's
    exist over the menu** — calibration is now lazy (see trap 7), and the host is torn down
    the moment the request queue drains (`releaseHost`).
 
-5. **Scaling in place: use `pre-transform-scale2d`, NOT `scale3d` inside `transform`.**
-   `transform: translate3d(x,y) scale3d(0.2…)` multiplies the translate offset, hurling the
-   panel toward `(0,0)` — that was the captured-checker "flies up-left" artifact.
+5. **Scaling a small effect IN PLACE: use `pre-transform-scale2d`, NOT `scale3d` inside
+   `transform`.** `transform: translate3d(x,y) scale3d(0.2…)` multiplies the translate offset,
+   hurling the panel toward `(0,0)` — that was the captured-checker "flies up-left" artifact.
    `pre-transform-scale2d` applies **before** the translate, so it scales the panel in place.
-   It's animatable; add it to the transition list. Game idiom (abilities CSS).
+   It's animatable; add it to the transition list. Game idiom (abilities CSS). **This is for tiny
+   local effects only** — hover-lift on picker cards, shrink-fade of a captured checker. ⚠ Do
+   **NOT** use it to scale the whole modal (the UI-scale control): as a TRANSFORM-family property it
+   runs AFTER layout and stretches the already-rendered texture, so text and `.vtex` art turn to
+   blurry bitmap above 100% (the "blurry raster mush" report). The modal uses layout `ui-scale` instead
+   — see trap 20.
 
 6. **Fonts lack `✕` and `◯` glyphs.** That's why TTT's X was invisible and O sat
    off-centre. Marks are **drawn with panels**: X = two bars crossed via `rotateZ`, O = a
@@ -278,7 +305,7 @@ These are the mistakes to NOT repeat. Every one was confirmed against the game's
 10. **`width: 100%` flush to the box edge clips a 1px right border — reserve column padding.**
    A right-column child at `width:100%` sits flush against the column's inner edge and Panorama
    shaves the button's 1px right border. Keep `.mg-col-right { padding-right: 5px }` (> 0) so the
-   border always has room. This is the recurring "PLAY VS BOT has no right border" bug (п4);
+   border always has room. This is the recurring "PLAY VS BOT has no right border" bug (point 4);
    `padding-right: 0` reintroduces it.
 
 11. **The native `DropDown` widget drags in the game's base styling — avoid it for skinned popups.**
@@ -355,7 +382,7 @@ These are the mistakes to NOT repeat. Every one was confirmed against the game's
      clipped edge. Boxing the DropDown in a `min/max-width: 80px` wrapper (`.mg-scale-wrap`) pins its
      flow footprint to 80px, so the X flows right after it and stays on-screen.
    - **z-index.** The X gets a higher `z-index` (12) than the dropdown (10); otherwise the native
-     widget paints OVER the X and it's invisible behind the dropdown (the "на месте крестика дропдаун"
+     widget paints OVER the X and it's invisible behind the dropdown (the "dropdown where the X should be"
      symptom). QOLLOCK's `#SettingsHeader #CloseBtn` carries `z-index: 12` for the same reason.
    Order: spacer → scale wrap → close X, so the X is the rightmost control. The DropDown's arrow is
    its own `background-image` (`:2832`, `background-size: 32px 32px`), so it can't be removed but CAN
@@ -407,12 +434,12 @@ These are the mistakes to NOT repeat. Every one was confirmed against the game's
    single-threaded. The offline bots run a deep search (`chooseBotMove` = depth-5 minimax, checkers;
    `chessBotMove` = depth-3 alpha-beta, up to 120k nodes) and the old code called it in ONE blocking
    invocation inside `botTurn`. That call holds the JS thread for its whole duration, so the entire
-   HUD stops painting and accepting input until it returns — the maintainer's "лаги когда бот делает
-   ход". Two knock-on effects made it worse than "just laggy":
+   HUD stops painting and accepting input until it returns — the maintainer's "lag when the bot makes
+   a move". Two knock-on effects made it worse than "just laggy":
    - **It ate the premove window.** A premove can only be grabbed while it's NOT your turn (during the
      bot's think). But the only live moment was the ~0.45s `$.Schedule` delay BEFORE the search; once
      `botTurn` fired, the frame locked for the search's full length, so you physically could not pick
-     up a piece. Premoves "не работают против бота" was a symptom of the freeze, not of the premove
+     up a piece. Premoves "don't work against the bot" was a symptom of the freeze, not of the premove
      code.
    - **Fix = step the search across frames.** Each rules module exposes a resumable driver next to the
      one-shot fn: `chooseBotMovePrep(b,color)` (checkers) / `chessBotMovePrep(b,st,color)` (chess),
@@ -448,6 +475,30 @@ These are the mistakes to NOT repeat. Every one was confirmed against the game's
      it doesn't freeze, trap 18), so premoves are testable offline.
    - Highlight: `.mg-premove` (orange wash) is a distinct class from `.mg-sel` (live selection) and the
      green `.mg-target` dots, cleared/rebuilt in `refreshHighlights`.
+
+20. **The UI-scale control uses layout `ui-scale`, and it MUST be viewport-clamped.** The header
+   dropdown (100/125/150/175/200%) scales the WHOLE modal — picker, boards, Durak felt, cards — via
+   `modalPanel.style.uiScale` in `applyUiScale` (`mg_ui.js`), NOT `pre-transform-scale2d` (trap 5).
+   `ui-scale` is a **layout-level** scale: the modal is re-laid-out at the new size and fonts / vectors
+   / `.vtex` are re-rasterised crisply, so text stays sharp at 200% (the game's own idiom —
+   `CitadelButton.Large/Medium/Small/XSmall` are just `ui-scale` 125/100/80/65% in
+   `citadel_base_styles.css`; QOLLOCK sets it from JS the same way). Two facts had to line up:
+   - **Blur** (the reason for the switch, commit `d5a7433`): the earlier `pre-transform-scale2d` on the
+     modal is a transform-family prop that runs AFTER layout and stretches the rendered texture → blurry
+     bitmap above 100%. `ui-scale` re-lays-out instead. **Do not revert to a raster scale.**
+   - **Clipping** (2026-07-20, the maintainer's 200% screenshot with "PLAY WITH A FRIEND" cut off):
+     `ui-scale` grows the modal's LAYOUT box by the factor, and the modal is `vertical-align: center`
+     in the full-screen overlay, so once `natural_height × scale` exceeds the viewport height the top
+     AND bottom clip off-screen. **`max-height: 92%` on `.mg-modal` can NOT stop this** — that cap is
+     in logical px, evaluated BEFORE `ui-scale` multiplies. Width never overflows (900px even ×2 is
+     < the 1920 canvas), so only height is at risk. Fix: `applyUiScale` measures the modal's natural
+     height (forcing `ui-scale:100%` for one frame first, so the reading is unambiguously unscaled and
+     the clamp can't spiral) against `overlay.actuallayoutheight` (the ui-scale-free full-screen
+     sibling = the viewport height, same layout units), and caps the applied scale to the largest whole
+     % that fits with a `FIT_MARGIN` (0.96) — **never below 100%** (the natural modal always fits under
+     the 92% cap). `clearBody` re-runs it on every view switch because a game board is taller than the
+     menu and fits a smaller max scale. ⚠ The clamp maths are reasoned + measured, not renderable from
+     a shell — needs a VPK repack to confirm the exact cap at 200% on 16:9 / ultrawide.
 
 ---
 
@@ -527,8 +578,9 @@ Because the click now lands on the piece (not the cell beneath), each piece forw
   - **First deal doesn't slide in.** The base `.mg-piece` has NO transition; the animating
     `.mg-anim` class is added one frame later (`$.Schedule(0.0)`), after the start transform
     is committed — so pieces snap onto their squares at start but every later move animates.
-  - 🔎 **`DRAG_DEBUG` diagnostic (currently ON).** `commitDropMultimethod` writes what every
-    channel produced to the on-screen status line on each `DragEnd`: `DROP OK via win->37` or
+  - 🔎 **`DRAG_DEBUG` diagnostic (now OFF — drag confirmed in-game 2026-07-20).**
+    `commitDropMultimethod` writes what every channel produced to the on-screen status line on each
+    `DragEnd`: `DROP OK via win->37` or
     `DROP MISS | win=<sq> g(<gx,gy>) L(<lx,ly>) lw=<layerWidth> | panel=.. over=..(<n>e)
     ghost=.. | targets=[..]`. The `win=`/`g(..)`/`L(..)`/`lw=` fields are the window-position
     channel; if `win` still misses, `g`/`L`/`lw` show whether `GetPositionWithinWindow`
@@ -692,7 +744,7 @@ with the worker (`initialBoard/dropRow/drop/winner/winningLine/isFull/legalCols/
 - **Fall animation** (`.mg-cf-anim`): a fresh disc starts one cell above the top edge and
   slides to its landing cell. ⚠ The timing-function matters — a plain `ease-in` over 0.42s
   hung in the last frames right before landing (its velocity peaks at the very end and
-  Panorama's long-transform interpolation stutters there, п7). Use a symmetric
+  Panorama's long-transform interpolation stutters there, point 7). Use a symmetric
   `cubic-bezier(0.45,0.05,0.55,0.95)` over ~0.36s: accelerate, then ease cleanly INTO the
   floor with no end-of-curve spike. Arm the class one frame after the start transform is
   committed (`$.Schedule(0.0)`), the checkers `.mg-anim` idiom.
@@ -706,7 +758,46 @@ with the worker (`initialBoard/dropRow/drop/winner/winningLine/isFull/legalCols/
 
 ---
 
-## 9. Turn/sync model (both games)
+## 8.8 Poker internals (mg_poker.js)
+
+No-Limit Texas Hold'em, 2–4 players. Like durak it does NOT fit the 2-int transport, so online
+uses the **worker-as-dealer** model (§8.6): the worker owns the deck/hole cards/seed and relays
+public actions; each seat pulls only its OWN hole cards through a token-gated private channel.
+Registers **game id 6** (`enabled:true`). Offline vs bot is proven in Node; online is built but
+**not yet in-game verified**.
+
+- **Two-section file** like chess/durak: `// ── poker: pure rules ──` … `// ── poker controller
+  ──`. The pure section (`rules/poker.js`, shared byte-for-byte with the worker) is self-contained
+  so `tools/mg_poker_test.js` slices and runs it under Node.
+- **Card model.** id `0..51`; `suitOf = id/13`, `rankOf = id%13`, `cardVal = rank+2` (2..14, ace
+  high). Note this is a DIFFERENT encoding from durak's `suit*9+rank` — poker uses the full
+  52-card deck. Art: `deck/<S><R>.vtex` (reuses the durak deck), faces/backs drawn by a child
+  `<Image>` (`setFace`/`setBack`, trap 14).
+- **Hand evaluation** (`score`) returns a comparable `[category, tiebreak…]` array (8 = straight
+  flush … 0 = high card), best 5 of 5–7 cards; `compareScores` orders them lexicographically.
+- **Betting** is No-Limit: fold / check / call / raise-to. **Side pots** are built from each
+  player's total committed chips at showdown, so an all-in short stack can only win what it
+  matched. Blinds rotate with the button each hand; offline carries stacks over tournament-style.
+- **Rendering.** A `flow-children:none` STAGE bigger than durak's (needs room for the 4-seat felt),
+  cards positioned by `translate3d` and persisted by id so they SLIDE (the `.mg-piece`/`.mg-anim`
+  idiom). I always sit at the bottom; opponents fill `left/top/right` by relative seat offset
+  (`seatZone`), their hole cards drawn as small face-down backs. Betting controls sit below my
+  hand: a raise **stepper** row (`−`/`+`/`Pot`/`Max`, only when a raise is legal) above one centred
+  action row (Fold / Check / Call <amt> / Bet-or-Raise-to <target>).
+- **Online (worker-as-dealer).** Routes mirror durak: `pcreate/pjoin/proom/pstart/pact/plog` plus a
+  token-gated private deal channel. A poker lobby carries `cap` (2–4, chosen at create), grows via
+  `pjoin` up to cap, and the host fires `pstart` (`pokerStart`) when ready; a mid-match leave folds
+  the seat out (`pokerLeave`). The client (`createPoker`, online branch) holds NO authority — it
+  rebuilds state from `plog` and pulls its own hole cards from the private channel, sending actions
+  via `pact` without optimistic mutation (the echoed event is the single source of truth).
+- **Bot** (`rules/poker.js` `botAction`, driven from the controller): `preflopStrength` /
+  `madeStrength` heuristics decide fold/check/call/raise; tune later.
+- Verified in Node: rules + bot + showdown (`mg_poker_test`), server routes/privacy
+  (`mg_server_test`). Reasoned only (needs a VPK repack): the render/betting UI + online sync.
+
+---
+
+## 9. Turn/sync model (the 2-int games)
 
 **Server-authoritative predict-and-confirm.** Each player applies a move locally FIRST for
 instant feedback (the local rules act as a predictor), then relays it with the seat token
@@ -723,21 +814,87 @@ nothing is polled and no token is used.
 Disconnect signals: `status` returning `(9,1)` while a host waits, or `poll` returning
 `(9,9)`, route to `MG.UI.kickToMenu(reason)`.
 
+**Adaptive poll cadence (request-budget control).** Polling `/api/poll` (or `/api/dlog`,
+`/api/plog`) for the opponent's move is the dominant request cost of a match. The cadence is
+defined ONCE in `mg_net.js` as `MG.Net.pollDelay(misses)` and reused by every online game:
+`misses < 4` → **1.0s**, else → **1.6s**. `misses` counts consecutive empty ("nothing new")
+polls this turn and is reset to 0 on each real move (and in `startPolling`), so a wait starts
+fast (responsive when the opponent replies quickly) and backs off while they think (a long
+think must not cost ~2.5 req/s). Every game keeps a local `var pollMisses = 0` and passes
+`pollMisses++` to `pollDelay` in both the "nothing new" and transport-error branches. ⚠ There
+is **no `Net` alias** in the controllers — call it fully qualified as `MG.Net.pollDelay(...)`
+(a bare `Net.pollDelay` throws `ReferenceError` and, like the TTT `sfx` crash, would only
+surface in-game — the test harnesses don't execute controller code).
+
+### 9.1 Shared clocks & the per-turn timer (`MG.Widgets`, mg_games.js)
+
+Two DIFFERENT time widgets, both built in `mg_games.js` and exposed on `MG.Widgets`:
+
+- **Server side clocks** — the time-control matchmaking (1/3/5/10 min / Any) in **chess &
+  checkers**. Each side's remaining time is server-owned; the picker lives in `renderTimeControl`
+  (`mg_ui.js`) and the concrete/"Any"(−1)→5min mapping is described there.
+  - **Display is locally interpolated, resync is rare.** The clock does NOT poll the server once a
+    second. `createClock` runs a ~4×/s LOCAL interpolation (`interpTick`) that drains the running
+    seat's bank between authoritative reads, and only resyncs against `/api/clocks` every
+    `RESYNC_S = 8` s (`resyncTick`), which snaps the banks to the server values and applies flag-fall.
+    The server stays authoritative (flag-fall is server-decided; a locally-interpolated 0 just PINS
+    at 0 until a resync confirms it). This was a real bug fix, not a cosmetic tweak: the old
+    once-a-second poll issued **2 requests/second for the whole game**, which (a) swamped the strictly
+    one-at-a-time image queue in `mg_net.js` and stalled the move-poll so an opponent's move surfaced
+    many seconds late (the "20s to see a move" / "his clock ticks on my turn" desync), and (b) burned
+    the request budget — ~2 short games ran up ~1200 Cloudflare requests almost entirely from this
+    loop. Local interpolation keeps the display live for ~free; the 8s resync corrects drift.
+- **Per-turn countdown timer** (`createTurnTimer`) — a `TURN_SECS = 25` budget per turn in
+  **durak, poker, TTT & Connect Four**. The controller calls `start(onExpire)` when the LOCAL human
+  is put on the clock and `stop()` the instant they act (or a bot / online opponent takes over). If
+  the bar empties, `onExpire()` fires exactly once — the controller turns that into a forfeit /
+  elimination (offline decided locally, online sent as a forfeit). Key constraints, all already
+  fought out in the code + trap 17:
+  - **No `@keyframes`** — a stray keyframes rule silently BRICKS the whole modded HUD stylesheet
+    (trap 17). The drain is ONE `transform: translate3d(0, H, 0)` write with a `TURN_SECS`-long
+    LINEAR transition on `.mg-tt-anim` (the `.mg-piece` "set the value, let CSS tween it" idiom).
+    A ~200ms `$.Schedule` loop only refreshes the seconds label + swaps low/crit colour classes and
+    arms expiry; the motion is pure CSS.
+  - **Never `visibility:collapse`** — the wrap is always laid out so the empty channel reserves its
+    footprint permanently and the **modal never jumps height** when a turn changes hands. `TRACK_H`
+    (280, must match `.mg-tt-track` height) is kept shorter than the shortest board so the flow host
+    measures its height from the board, not the bar.
+  - **`opts.boardW`** attaches the bar to that board's LEFT EDGE (TTT/C4 pass it — narrow centred
+    boards; durak/poker omit it and keep the wide-felt gutter placement).
+
+### 9.2 Sound (`MG.Sound`, mg_sound.js)
+
+Panorama can only play a **registered soundevent by NAME** — no file path, no volume argument.
+So volume is faked the **QOLLOCK way**: `tools/gen_soundevents.js` pre-generates one soundevent per
+(sound, volume-step) — `MG.MoveSelf_V0 .. MG.MoveSelf_V20`, 21 steps of 0.05 — and `MG.Sound.play(name)`
+picks the variant matching the current volume (silent when muted or vol ≤ 0). The header volume
+dropdown (`buildSoundControl`, mg_ui.js) drives `setVol`/`setMuted`. Logical names used by the
+games: `MoveSelf`/`MoveOpp`, `Check`, `Promote`, `Illegal`, `Premove`, `GameStart`, `TenSeconds`
+(the last fired by the per-turn timer at the 10s mark). ⚠ If you add a sound, add it to
+`gen_soundevents.js` and regenerate the manifest, or `play()` silently no-ops on the missing name.
+
 ---
 
 ## 10. How to work on this safely
 
 Before committing, always:
 ```
+npm run lint                                   # ESLint no-undef net — catches a call to a name
+                                               # not defined in scope (the class of bug that ships
+                                               # green past node --check: `sfx`/`Net` used where the
+                                               # controller never declared them). See §10.1.
 node tools/build_worker.js                     # regenerate server/worker.js from core + rules
 node --check panorama/scripts/rules/checkers.js
 node --check panorama/scripts/rules/ttt.js
 node --check panorama/scripts/rules/chess.js
 node --check panorama/scripts/rules/connectfour.js
 node --check panorama/scripts/rules/durak.js
+node --check panorama/scripts/rules/poker.js
 node --check panorama/scripts/mg_games.js
 node --check panorama/scripts/mg_connectfour.js
 node --check panorama/scripts/mg_durak.js
+node --check panorama/scripts/mg_poker.js
+node --check panorama/scripts/mg_sound.js
 node --check panorama/scripts/mg_ui.js
 node --check panorama/scripts/mg_net.js
 node --check server/worker.js
@@ -745,6 +902,7 @@ node tools/mg_rules_test.js
 node tools/mg_chess_test.js
 node tools/mg_connectfour_test.js
 node tools/mg_durak_test.js
+node tools/mg_poker_test.js
 node tools/mg_server_test.js
 node tools/mg_parity_test.js                    # client predictor == server authority
 
@@ -753,6 +911,29 @@ node tools/mg_parity_test.js                    # client predictor == server aut
 Then say plainly what is **verified** (syntax, pure rules, server protocol) vs what is
 **only reasoned** (anything visual/animated/drag/hover — needs a VPK repack + in-game run
 by the maintainer). Don't present unrendered layout or input behavior as confirmed.
+
+### 10.1 The lint net (why it exists, what it does NOT cover)
+
+The Panorama **controllers** (`mg_games.js`, `mg_connectfour.js`, `mg_durak.js`, `mg_poker.js`,
+`mg_ui.js`) have **0% automated coverage**: they call `$.CreatePanel` / `$.Schedule` /
+`$.RegisterEventHandler`, so they can't run outside the game. `node --check` only parses
+syntax; the `tools/*_test.js` harnesses exercise the pure engines (`rules/*.js`) + the worker,
+never the controllers. That gap shipped two live `ReferenceError`s in one week (`sfx` used in the
+TTT controller that never declared one; a bare `Net.pollDelay` where no `Net` alias exists) — both
+crash only when their branch runs in-game, both invisible to every check we had.
+
+`npm run lint` (ESLint 9 flat config, `eslint.config.js`) is the cheap guard for exactly that
+class. It is deliberately **narrow — a bug net, not a style linter**: `no-undef` (the one that
+catches the above) plus a handful of always-safe correctness rules (`no-unreachable`,
+`no-dupe-keys`, `no-duplicate-case`, `use-isnan`, `valid-typeof`, …). No stylistic rules, so the
+output is signal, not noise, and it stays green on the working, in-game-verified code. The config
+declares the Panorama globals (`$`, `Game`, `GameUI`, …) as read-only so real engine bridges don't
+false-positive; the `server/` block is `sourceType: module` (Cloudflare Worker), tools are CommonJS.
+
+**It still can't render.** Lint proves every referenced name exists and a few structural invariants
+hold; it says NOTHING about layout, animation, drag/drop, timing, or whether a move looks right.
+Those remain "in-game verified by the maintainer or unverified". `node_modules/` + `package-lock.json`
+are gitignored and dev-only — nothing here is packed into the VPK.
 
 When in doubt about a Panorama capability, **grep the game's own files**
 (`G:\GameTracking-Deadlock\game\citadel\pak01_dir\panorama\`) or the maintainer's working

@@ -374,7 +374,7 @@
     font-size: 16px !important;
     letter-spacing: 3px;
     text-transform: uppercase;
-    margin-top: 12px;
+    margin-top: 28px;                     /* now sits BELOW the Discord request button, so more air above */
 }
 .mg-detail-locked-sub {
     font-family: radiance !important;
@@ -383,6 +383,42 @@
     line-height: 21px;
     width: 100%;
     margin-top: 8px;
+}
+/* "Request a game in my Discord" — sits ABOVE the "IN DEVELOPMENT" notice (maintainer ordering),
+   just under the game description, as the primary call to action for a Coming Soon game. Discord
+   blurple palette, mirrors the header .mg-discord-btn but wider (a left-aligned call to action, not
+   a pill). The .vtex logo is drawn by a child <Image> (setFace) so .mg-request-icon is JUST a sized
+   box (no background-image — trap 14). */
+.mg-request-btn {
+    height: 44px;
+    width: fit-children;
+    margin-top: 22px;
+    padding-left: 16px;
+    padding-right: 18px;
+    background-color: #2c3462;
+    border: 1px solid #5865f2;
+    border-radius: 2px;
+    flow-children: right;
+    horizontal-align: left;
+    transition-property: background-color, border-color, brightness;
+    transition-duration: 0.1s;
+    transition-timing-function: ease-out;
+}
+.mg-request-btn:hover { background-color: #3a4488; border-color: #7983f5; brightness: 1.08; }
+.mg-request-btn:active { brightness: 0.97; }
+.mg-request-icon {
+    width: 22px;
+    height: 22px;
+    margin-right: 10px;
+    vertical-align: center;
+}
+.mg-request-label {
+    font-family: radiance !important;
+    font-weight: semi-bold;
+    color: #c7ccff !important;
+    font-size: 17px !important;
+    letter-spacing: 0.5px;
+    vertical-align: center;
 }
 /* small ALL-CAPS section labels (they replace the old "— text —" dividers) */
 .mg-section-label {
@@ -574,6 +610,21 @@
     font-size: 18px !important;          /* bigger per maintainer (15→18) */
     horizontal-align: center;            /* centered, not hugging the left */
     vertical-align: center;
+    white-space: nowrap;                 /* never wrap to a 2nd line — a wrapped status grew the
+                                            fit-children footer and shoved the dev-tools row (DEBUG)
+                                            upward. One line keeps the footer height constant. */
+}
+/* Discreet build stamp pinned to the footer's bottom-LEFT (align-override, so the centered status
+   floats over it without either shifting the other). Muted + small so it never competes with the
+   status message. */
+.mg-footer-version {
+    font-family: radiance !important;
+    color: #ffffff40 !important;
+    font-size: 13px !important;
+    horizontal-align: left;
+    vertical-align: center;
+    margin-bottom: 2px;                  /* lift ~2px: the 13px stamp's optical centre sat low
+                                            against the taller dev-tool buttons on the same row */
 }
 /* spacer takes the slack so the dev tools sit at the right edge */
 .mg-footer-spacer {
@@ -754,7 +805,11 @@
 }
 
 /* ── checkers board ──────────────────────────────────────────────────────── */
-.mg-game-host { width: 100%; horizontal-align: center; }
+/* flow-children:none so the per-turn timer (a left-aligned child added by the game
+   controllers) parks in the modal's LEFT GUTTER, clear of the centred board/felt, instead
+   of taking a flow row above it. The single game-root child keeps horizontal-align:center,
+   so every board still renders centred exactly as before. */
+.mg-game-host { width: 100%; horizontal-align: center; flow-children: none; }
 /* width:100% so the flow:none .mg-game-2col child below inherits the full 844px inner zone and
    can centre the board / right-pin the list against it (not against a shrunk fit-children box). */
 .mg-checkers { width: 100%; horizontal-align: center; flow-children: down; }
@@ -893,6 +948,75 @@
 .mg-clock-row.mg-clock-low .mg-clock-time { color: #e8b64c !important; }
 .mg-clock-row.mg-clock-flagged .mg-clock-time { color: #d15b5b !important; }
 .mg-clock-row.mg-clock-flagged .mg-clock-name { color: #d15b5b !important; }
+
+/* ── per-turn countdown timer (durak / poker / connect-four / tic-tac-toe) ────
+   A slim VERTICAL bar pinned just LEFT of the board, draining top→bottom over the turn
+   budget while it's the LOCAL player's turn (built by createTurnTimer in mg_games.js;
+   parented onto the game HOST — .mg-game-host is flow:none — so it takes no flow row and
+   never touches the centred board). All four games pass opts.boardW so the bar attaches to
+   that board's left EDGE (centre-align + translateX); the controller also nudges the wrap
+   down VNUDGE px so the BAR — not the taller wrap box — is vertically centred on the board.
+   The seconds remaining sit under the bar.
+   ⚠ NO @keyframes anywhere (ARCHITECTURE §17: a single @keyframes rule silently bricks this
+   whole stylesheet). The drain is a CSS transition on the transform — JS sets the translate
+   once and the browser tweens it over 25s. The transition-DURATION here MUST match TURN_SECS
+   in mg_games.js, and the .mg-tt-track height MUST match TRACK_H (280). */
+.mg-turn-timer {
+    width: 34px;
+    flow-children: down;
+    horizontal-align: left;
+    vertical-align: center;
+    margin-left: 6px;
+}
+/* TTT / Connect Four attach the bar to the BOARD's left edge instead of the modal gutter
+   (their boards are narrow + centred, so the far-left gutter looked detached). The controller
+   centre-aligns it then translateX's it left of the board; this just switches the align. */
+.mg-tt-attached { horizontal-align: center; margin-left: 0px; }
+.mg-tt-track {
+    width: 10px;
+    height: 280px;                       /* MUST match TRACK_H in createTurnTimer; < shortest board so the host never measures its height from the bar (no modal jump) */
+    horizontal-align: center;
+    border-radius: 5px;
+    background-color: #12202e;           /* the empty channel behind the fill — always visible, reserving the footprint */
+    border: 1px solid #26384c;
+    overflow: clip;                      /* clip the fill as it slides down out of view */
+    flow-children: none;
+}
+/* The draining column. The BASE class carries ONLY the colour transition and NO transform
+   transition, so createTurnTimer's snapFull() (removes .mg-tt-anim, sets translate 0) snaps the
+   bar back to full INSTANTLY on a fresh turn — exactly the .mg-cf-anim / .mg-piece arming idiom
+   used elsewhere. arm() then ADDS .mg-tt-anim (which carries the linear 25s transform transition)
+   and pushes translateY = track height one frame later → a smooth 25s slide down. Putting the 25s
+   transition on the base instead would make the snap-to-full itself animate (the bar would crawl
+   back up over 25s on every restart). Two thresholds (.mg-tt-low ≤10s amber, .mg-tt-crit ≤5s red)
+   recolour it via JS class swaps. */
+.mg-tt-fill {
+    width: 10px;
+    height: 280px;                       /* fills the track; slides DOWN by its own height to empty */
+    border-radius: 5px;
+    background-color: #4b8f5a;           /* healthy green, matches the win tint */
+    transition-property: opacity, background-color;
+    transition-duration: 0.15s, 0.3s;
+    transition-timing-function: ease-out, ease-out;
+}
+.mg-tt-fill.mg-tt-anim {                 /* armed: the 25s linear drain lives here, not on the base */
+    transition-property: transform, opacity, background-color;
+    transition-duration: 25s, 0.15s, 0.3s;   /* 25s MUST match TURN_SECS */
+    transition-timing-function: linear, ease-out, ease-out;
+}
+.mg-tt-fill.mg-tt-low { background-color: #e8b64c; }   /* ≤10s — amber, mirrors the clock-low tint */
+.mg-tt-fill.mg-tt-crit { background-color: #d15b5b; }  /* ≤5s — red, mirrors the clock-flagged tint */
+/* Fixed height so blanking the seconds label between turns never changes the widget footprint
+   (the wrap is always laid out; only the fill opacity + this text toggle). */
+.mg-tt-num {
+    font-family: radiance !important;
+    font-weight: bold;
+    color: #cdd9e7 !important;
+    font-size: 17px !important;
+    height: 22px;
+    horizontal-align: center;
+    margin-top: 6px;
+}
 
 /* ── time-control segmented picker (detail column, chess/checkers) ───────────
    One row of segments (1/3/5/10 min + Off); the picked one carries .mg-on. Mirrors the

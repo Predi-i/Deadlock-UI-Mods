@@ -41,6 +41,7 @@
         var turn = RED;                              // red always opens
         var appliedSeq = 0;                          // drops consumed from the shared server log
         var pollToken = 0;
+        var pollMisses = 0;                          // consecutive empty polls this turn (adaptive cadence)
         var destroyed = false;
         var gameOver = false;
 
@@ -49,6 +50,32 @@
 
         var root = $.CreatePanel("Panel", container, "MG_C4Root");
         root.AddClass("mg-cf");
+
+        // Per-turn countdown (left gutter of the modal). Parented on `container` (the flow:none game
+        // host) so it parks in the left margin, clear of the centred plate. Runs only while it's my
+        // move; on expiry I forfeit (Connect Four is always heads-up with a MANDATORY move —
+        // maintainer's ruling: timeout = loss). Online I also fire Leave so the opponent learns.
+        // boardW = 7 cols × 60px + 2 × 6px plate padding = 432 → the timer pins to the board's
+        // left edge (narrow centred board; the far-left modal gutter looked detached).
+        var turnTimer = (MG.Widgets && MG.Widgets.createTurnTimer) ? MG.Widgets.createTurnTimer(container, { boardW: 432 }) : null;
+        var timerOn = false;
+        function refreshTimer() {
+            if (!turnTimer) return;
+            var live = myTurn();
+            if (live === timerOn) return;
+            timerOn = live;
+            if (!live) { turnTimer.stop(); return; }
+            turnTimer.start(onTimerExpire);
+        }
+        function onTimerExpire() {
+            timerOn = false;
+            if (destroyed || gameOver || !myTurn()) return;
+            gameOver = true;
+            if (turnTimer) turnTimer.stop();
+            if (!session.bot && code) { try { if (MG.Api && MG.Api.leave) MG.Api.leave(code, session.tok); } catch (e) {} }
+            status("Time expired. You lose.");
+            if (session.onGameOver) session.onGameOver("lose");
+        }
         // Grid + discs OVERLAY are stacked siblings under a flow-children:none wrap (checkers
         // .mg-board-wrap idiom). Discs sit on the overlay ABOVE the plate; the overlay is
         // overflow:clip and sized to the plate's inner window, so a falling disc is visible only
@@ -98,18 +125,16 @@
         // the disc only becomes visible as it crosses the top slot and falls "inside" the board —
         // it is never seen above the plate or over the modal's dark windows (п3).
         //
-        // ARMING (why not $.Schedule(0.0)): the disc starts OFF-SCREEN (y ≈ -55, above the clip
-        // box). If arming relies on a next-frame Schedule, the very FIRST disc — the bot's opening
-        // move, placed at boot (session.bot + $.Schedule(0.35, botTurn)) BEFORE any user click and
-        // before the overlay's first layout pass — can have its off-screen START transform commit
-        // as the resting value while the deferred callback races the initial layout, stranding the
-        // disc above the clip box = INVISIBLE (maintainer 2026-07-16: "когда первым ходит бот его
-        // фишку не видно"). Discs placed after a click never hit this because the panel is already
-        // laid out. Checkers dodges it too: its pieces START at their final on-screen spot, so a
-        // missed arming still leaves them visible. FIX: commit the start transform SYNCHRONOUSLY by
-        // reading a layout property (the QOLLOCK actuallayout* flush idiom), THEN arm + set final in
-        // the same call. No Schedule race; worst case the disc snaps straight to final — still
-        // VISIBLE, never off-screen. Reasoned from the codebase, not yet rendered in-game.
+        // ARMING (the checkers / durak .mg-anim idiom): set the OFF-SCREEN start transform (y ≈ -55,
+        // one cell above the clip box), then ONE frame later add .mg-cf-anim and write the final
+        // transform — the browser tweens between the two. Both writes MUST land in SEPARATE frames:
+        // the earlier code did the flush + final in the SAME JS frame (reading actuallayoutheight to
+        // "commit" the start), but Panorama coalesces same-frame transform writes so the disc SNAPPED
+        // to final with NO fall (maintainer 2026-07-20: "ход оппонента не рендерится, фишки просто
+        // спавнятся"). $.Schedule(0.0) is the fix. The old worry — that the bot's OPENING disc could
+        // arm before the overlay's first layout and strand off-screen (invisible) — no longer bites:
+        // botTurn is deferred $.Schedule(0.35, ...) so layout is long settled, and if the arm ever
+        // fails to fire the disc still ends at its visible resting spot (never stranded off-screen).
         function placeDisc(i, mark, animate) {
             if (discEls[i]) return discEls[i];
             var disc = $.CreatePanel("Panel", piecesLayer, "");
@@ -118,12 +143,13 @@
             discEls[i] = disc;
             var p = discXY(i);
             if (animate) {
-                disc.style.transform = "translate3d(" + p.x + "px, " + (-CELL + INSET) + "px, 0px)";
-                // Force the off-screen start to commit before we arm the transition, so the slide
-                // has a real from-value regardless of layout timing (avoids the boot race above).
-                try { var _flush = disc.actuallayoutheight; } catch (e) {}
-                disc.AddClass("mg-cf-anim");
-                disc.style.transform = "translate3d(" + p.x + "px, " + p.y + "px, 0px)";
+                var startY = -CELL + INSET;   // one cell above the plate's top edge (above the clip box)
+                disc.style.transform = "translate3d(" + p.x + "px, " + startY + "px, 0px)";
+                $.Schedule(0.0, function () {
+                    if (destroyed || !disc.IsValid()) return;
+                    disc.AddClass("mg-cf-anim");
+                    disc.style.transform = "translate3d(" + p.x + "px, " + p.y + "px, 0px)";
+                });
             } else {
                 disc.style.transform = "translate3d(" + p.x + "px, " + p.y + "px, 0px)";
             }
@@ -183,6 +209,7 @@
             if (C.dropRow(board, col) < 0) return;       // column full — ignore
             applyDrop(col, myMark);
             turn = (myMark === RED ? YEL : RED);
+            refreshTimer();                              // I just acted → stop my clock
             if (session.bot) {
                 if (checkEnd()) return;
                 status("Bot is thinking…");
@@ -204,6 +231,7 @@
             turn = myMark;
             if (checkEnd()) return;
             status("Your turn.");
+            refreshTimer();                              // my turn opened → arm the clock
         }
 
         // ── relay + polling (mirrors tic-tac-toe) ────────────────────────────
@@ -232,8 +260,9 @@
             if (destroyed) return;
             if (seq >= appliedSeq) {
                 rebuildDiscs();
-                if (myTurn()) status("Move rejected — resynced. Your turn.");
-                else { status("Move rejected — resyncing…"); startPolling(); }
+                refreshTimer();                          // resync settled → (re)arm or stop to match
+                if (myTurn()) status("Move rejected. Resynced, your turn.");
+                else { status("Move rejected. Resyncing…"); startPolling(); }
                 return;
             }
             Api.poll(code, seq, function (mv) {
@@ -249,24 +278,26 @@
             function (from, to) { return from >= 0 && from <= 6 && to === 7; });
         }
 
-        function startPolling() { pollToken++; pollOnce(pollToken); }
+        function startPolling() { pollToken++; pollMisses = 0; pollOnce(pollToken); }
         function pollOnce(myToken) {
             if (destroyed || myToken !== pollToken || gameOver) return;
             if (turn === myMark) return;                 // our move; nothing to poll
             Api.poll(code, appliedSeq, function (mv) {
                 if (destroyed || myToken !== pollToken) return;
                 if (mv) {
+                    pollMisses = 0;                       // real move → next wait starts fast again
                     var oppMark = (myMark === RED ? YEL : RED);
                     applyDrop(mv.from, oppMark);          // from = the column the opponent dropped
                     appliedSeq++;
                     turn = myMark;
                     if (checkEnd()) return;
                     status("Your turn.");
+                    refreshTimer();                       // my turn opened → arm the clock
                 } else {
-                    $.Schedule(0.4, function () { pollOnce(myToken); });
+                    $.Schedule(MG.Net.pollDelay(pollMisses++), function () { pollOnce(myToken); });
                 }
             }, function () {
-                $.Schedule(0.6, function () { pollOnce(myToken); });
+                $.Schedule(MG.Net.pollDelay(pollMisses++), function () { pollOnce(myToken); });
             }, function (from, to) {
                 return from >= 0 && from <= 6 && to === 7;
             });
@@ -282,9 +313,10 @@
             status("Opponent's turn…");
             startPolling();
         }
+        refreshTimer();                                  // arm if I open, else stay hidden
 
         return {
-            destroy: function () { destroyed = true; pollToken++; try { root.DeleteAsync(0); } catch (e) {} }
+            destroy: function () { destroyed = true; pollToken++; if (turnTimer) turnTimer.destroy(); try { root.DeleteAsync(0); } catch (e) {} }
         };
     }
 

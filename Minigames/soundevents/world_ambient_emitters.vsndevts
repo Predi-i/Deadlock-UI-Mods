@@ -49162,7 +49162,7 @@
 	MG.MoveSelf_V1 = 
 	{
 		base = "MG.SoundBase"
-		volume = 0.200000
+		volume = 0.400000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-self.vsnd",
@@ -49171,7 +49171,7 @@
 	MG.MoveSelf_V2 = 
 	{
 		base = "MG.SoundBase"
-		volume = 0.400000
+		volume = 0.800000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-self.vsnd",
@@ -49180,7 +49180,7 @@
 	MG.MoveSelf_V3 = 
 	{
 		base = "MG.SoundBase"
-		volume = 0.600000
+		volume = 1.200000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-self.vsnd",
@@ -49189,7 +49189,7 @@
 	MG.MoveSelf_V4 = 
 	{
 		base = "MG.SoundBase"
-		volume = 0.800000
+		volume = 1.600000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-self.vsnd",
@@ -49198,7 +49198,7 @@
 	MG.MoveSelf_V5 = 
 	{
 		base = "MG.SoundBase"
-		volume = 1.000000
+		volume = 2.000000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-self.vsnd",
@@ -49207,7 +49207,7 @@
 	MG.MoveSelf_V6 = 
 	{
 		base = "MG.SoundBase"
-		volume = 1.200000
+		volume = 2.400000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-self.vsnd",
@@ -49216,7 +49216,7 @@
 	MG.MoveSelf_V7 = 
 	{
 		base = "MG.SoundBase"
-		volume = 1.400000
+		volume = 2.800000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-self.vsnd",
@@ -49225,7 +49225,7 @@
 	MG.MoveSelf_V8 = 
 	{
 		base = "MG.SoundBase"
-		volume = 1.600000
+		volume = 3.200000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-self.vsnd",
@@ -49234,7 +49234,7 @@
 	MG.MoveSelf_V9 = 
 	{
 		base = "MG.SoundBase"
-		volume = 1.800000
+		volume = 3.600000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-self.vsnd",
@@ -49243,7 +49243,7 @@
 	MG.MoveSelf_V10 = 
 	{
 		base = "MG.SoundBase"
-		volume = 2.000000
+		volume = 4.000000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-self.vsnd",
@@ -49252,7 +49252,7 @@
 	MG.MoveSelf_V11 = 
 	{
 		base = "MG.SoundBase"
-		volume = 2.200000
+		volume = 4.400000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-self.vsnd",
@@ -49261,7 +49261,7 @@
 	MG.MoveSelf_V12 = 
 	{
 		base = "MG.SoundBase"
-		volume = 2.400000
+		volume = 4.800000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-self.vsnd",
@@ -49270,7 +49270,7 @@
 	MG.MoveSelf_V13 = 
 	{
 		base = "MG.SoundBase"
-		volume = 2.600000
+		volume = 5.200000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-self.vsnd",
@@ -49279,7 +49279,7 @@
 	MG.MoveSelf_V14 = 
 	{
 		base = "MG.SoundBase"
-		volume = 2.800000
+		volume = 5.600000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-self.vsnd",
@@ -49288,7 +49288,7 @@
 	MG.MoveSelf_V15 = 
 	{
 		base = "MG.SoundBase"
-		volume = 3.000000
+		volume = 6.000000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-self.vsnd",
@@ -49297,7 +49297,7 @@
 	MG.MoveSelf_V16 = 
 	{
 		base = "MG.SoundBase"
-		volume = 3.200000
+		volume = 6.400000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-self.vsnd",
@@ -49306,7 +49306,7 @@
 	MG.MoveSelf_V17 = 
 	{
 		base = "MG.SoundBase"
-		volume = 3.400000
+		volume = 6.800000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-self.vsnd",
@@ -49315,7 +49315,7 @@
 	MG.MoveSelf_V18 = 
 	{
 		base = "MG.SoundBase"
-		volume = 3.600000
+		volume = 7.200000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-self.vsnd",
@@ -49324,7 +49324,7 @@
 	MG.MoveSelf_V19 = 
 	{
 		base = "MG.SoundBase"
-		volume = 3.800000
+		volume = 7.600000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-self.vsnd",
@@ -49333,7 +49333,7 @@
 	MG.MoveSelf_V20 = 
 	{
 		base = "MG.SoundBase"
-		volume = 4.000000
+		volume = 8.000000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-self.vsnd",
@@ -49351,7 +49351,7 @@
 	MG.MoveOpp_V1 = 
 	{
 		base = "MG.SoundBase"
-		volume = 0.200000
+		volume = 0.400000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-opponent.vsnd",
@@ -49360,7 +49360,7 @@
 	MG.MoveOpp_V2 = 
 	{
 		base = "MG.SoundBase"
-		volume = 0.400000
+		volume = 0.800000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-opponent.vsnd",
@@ -49369,7 +49369,7 @@
 	MG.MoveOpp_V3 = 
 	{
 		base = "MG.SoundBase"
-		volume = 0.600000
+		volume = 1.200000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-opponent.vsnd",
@@ -49378,7 +49378,7 @@
 	MG.MoveOpp_V4 = 
 	{
 		base = "MG.SoundBase"
-		volume = 0.800000
+		volume = 1.600000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-opponent.vsnd",
@@ -49387,7 +49387,7 @@
 	MG.MoveOpp_V5 = 
 	{
 		base = "MG.SoundBase"
-		volume = 1.000000
+		volume = 2.000000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-opponent.vsnd",
@@ -49396,7 +49396,7 @@
 	MG.MoveOpp_V6 = 
 	{
 		base = "MG.SoundBase"
-		volume = 1.200000
+		volume = 2.400000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-opponent.vsnd",
@@ -49405,7 +49405,7 @@
 	MG.MoveOpp_V7 = 
 	{
 		base = "MG.SoundBase"
-		volume = 1.400000
+		volume = 2.800000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-opponent.vsnd",
@@ -49414,7 +49414,7 @@
 	MG.MoveOpp_V8 = 
 	{
 		base = "MG.SoundBase"
-		volume = 1.600000
+		volume = 3.200000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-opponent.vsnd",
@@ -49423,7 +49423,7 @@
 	MG.MoveOpp_V9 = 
 	{
 		base = "MG.SoundBase"
-		volume = 1.800000
+		volume = 3.600000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-opponent.vsnd",
@@ -49432,7 +49432,7 @@
 	MG.MoveOpp_V10 = 
 	{
 		base = "MG.SoundBase"
-		volume = 2.000000
+		volume = 4.000000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-opponent.vsnd",
@@ -49441,7 +49441,7 @@
 	MG.MoveOpp_V11 = 
 	{
 		base = "MG.SoundBase"
-		volume = 2.200000
+		volume = 4.400000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-opponent.vsnd",
@@ -49450,7 +49450,7 @@
 	MG.MoveOpp_V12 = 
 	{
 		base = "MG.SoundBase"
-		volume = 2.400000
+		volume = 4.800000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-opponent.vsnd",
@@ -49459,7 +49459,7 @@
 	MG.MoveOpp_V13 = 
 	{
 		base = "MG.SoundBase"
-		volume = 2.600000
+		volume = 5.200000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-opponent.vsnd",
@@ -49468,7 +49468,7 @@
 	MG.MoveOpp_V14 = 
 	{
 		base = "MG.SoundBase"
-		volume = 2.800000
+		volume = 5.600000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-opponent.vsnd",
@@ -49477,7 +49477,7 @@
 	MG.MoveOpp_V15 = 
 	{
 		base = "MG.SoundBase"
-		volume = 3.000000
+		volume = 6.000000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-opponent.vsnd",
@@ -49486,7 +49486,7 @@
 	MG.MoveOpp_V16 = 
 	{
 		base = "MG.SoundBase"
-		volume = 3.200000
+		volume = 6.400000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-opponent.vsnd",
@@ -49495,7 +49495,7 @@
 	MG.MoveOpp_V17 = 
 	{
 		base = "MG.SoundBase"
-		volume = 3.400000
+		volume = 6.800000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-opponent.vsnd",
@@ -49504,7 +49504,7 @@
 	MG.MoveOpp_V18 = 
 	{
 		base = "MG.SoundBase"
-		volume = 3.600000
+		volume = 7.200000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-opponent.vsnd",
@@ -49513,7 +49513,7 @@
 	MG.MoveOpp_V19 = 
 	{
 		base = "MG.SoundBase"
-		volume = 3.800000
+		volume = 7.600000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-opponent.vsnd",
@@ -49522,7 +49522,7 @@
 	MG.MoveOpp_V20 = 
 	{
 		base = "MG.SoundBase"
-		volume = 4.000000
+		volume = 8.000000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-opponent.vsnd",
@@ -49540,7 +49540,7 @@
 	MG.Check_V1 = 
 	{
 		base = "MG.SoundBase"
-		volume = 0.200000
+		volume = 0.400000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-check.vsnd",
@@ -49549,7 +49549,7 @@
 	MG.Check_V2 = 
 	{
 		base = "MG.SoundBase"
-		volume = 0.400000
+		volume = 0.800000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-check.vsnd",
@@ -49558,7 +49558,7 @@
 	MG.Check_V3 = 
 	{
 		base = "MG.SoundBase"
-		volume = 0.600000
+		volume = 1.200000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-check.vsnd",
@@ -49567,7 +49567,7 @@
 	MG.Check_V4 = 
 	{
 		base = "MG.SoundBase"
-		volume = 0.800000
+		volume = 1.600000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-check.vsnd",
@@ -49576,7 +49576,7 @@
 	MG.Check_V5 = 
 	{
 		base = "MG.SoundBase"
-		volume = 1.000000
+		volume = 2.000000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-check.vsnd",
@@ -49585,7 +49585,7 @@
 	MG.Check_V6 = 
 	{
 		base = "MG.SoundBase"
-		volume = 1.200000
+		volume = 2.400000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-check.vsnd",
@@ -49594,7 +49594,7 @@
 	MG.Check_V7 = 
 	{
 		base = "MG.SoundBase"
-		volume = 1.400000
+		volume = 2.800000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-check.vsnd",
@@ -49603,7 +49603,7 @@
 	MG.Check_V8 = 
 	{
 		base = "MG.SoundBase"
-		volume = 1.600000
+		volume = 3.200000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-check.vsnd",
@@ -49612,7 +49612,7 @@
 	MG.Check_V9 = 
 	{
 		base = "MG.SoundBase"
-		volume = 1.800000
+		volume = 3.600000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-check.vsnd",
@@ -49621,7 +49621,7 @@
 	MG.Check_V10 = 
 	{
 		base = "MG.SoundBase"
-		volume = 2.000000
+		volume = 4.000000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-check.vsnd",
@@ -49630,7 +49630,7 @@
 	MG.Check_V11 = 
 	{
 		base = "MG.SoundBase"
-		volume = 2.200000
+		volume = 4.400000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-check.vsnd",
@@ -49639,7 +49639,7 @@
 	MG.Check_V12 = 
 	{
 		base = "MG.SoundBase"
-		volume = 2.400000
+		volume = 4.800000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-check.vsnd",
@@ -49648,7 +49648,7 @@
 	MG.Check_V13 = 
 	{
 		base = "MG.SoundBase"
-		volume = 2.600000
+		volume = 5.200000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-check.vsnd",
@@ -49657,7 +49657,7 @@
 	MG.Check_V14 = 
 	{
 		base = "MG.SoundBase"
-		volume = 2.800000
+		volume = 5.600000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-check.vsnd",
@@ -49666,7 +49666,7 @@
 	MG.Check_V15 = 
 	{
 		base = "MG.SoundBase"
-		volume = 3.000000
+		volume = 6.000000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-check.vsnd",
@@ -49675,7 +49675,7 @@
 	MG.Check_V16 = 
 	{
 		base = "MG.SoundBase"
-		volume = 3.200000
+		volume = 6.400000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-check.vsnd",
@@ -49684,7 +49684,7 @@
 	MG.Check_V17 = 
 	{
 		base = "MG.SoundBase"
-		volume = 3.400000
+		volume = 6.800000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-check.vsnd",
@@ -49693,7 +49693,7 @@
 	MG.Check_V18 = 
 	{
 		base = "MG.SoundBase"
-		volume = 3.600000
+		volume = 7.200000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-check.vsnd",
@@ -49702,7 +49702,7 @@
 	MG.Check_V19 = 
 	{
 		base = "MG.SoundBase"
-		volume = 3.800000
+		volume = 7.600000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-check.vsnd",
@@ -49711,7 +49711,7 @@
 	MG.Check_V20 = 
 	{
 		base = "MG.SoundBase"
-		volume = 4.000000
+		volume = 8.000000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/move-check.vsnd",
@@ -49729,7 +49729,7 @@
 	MG.Illegal_V1 = 
 	{
 		base = "MG.SoundBase"
-		volume = 0.200000
+		volume = 0.400000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/illegal.vsnd",
@@ -49738,7 +49738,7 @@
 	MG.Illegal_V2 = 
 	{
 		base = "MG.SoundBase"
-		volume = 0.400000
+		volume = 0.800000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/illegal.vsnd",
@@ -49747,7 +49747,7 @@
 	MG.Illegal_V3 = 
 	{
 		base = "MG.SoundBase"
-		volume = 0.600000
+		volume = 1.200000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/illegal.vsnd",
@@ -49756,7 +49756,7 @@
 	MG.Illegal_V4 = 
 	{
 		base = "MG.SoundBase"
-		volume = 0.800000
+		volume = 1.600000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/illegal.vsnd",
@@ -49765,7 +49765,7 @@
 	MG.Illegal_V5 = 
 	{
 		base = "MG.SoundBase"
-		volume = 1.000000
+		volume = 2.000000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/illegal.vsnd",
@@ -49774,7 +49774,7 @@
 	MG.Illegal_V6 = 
 	{
 		base = "MG.SoundBase"
-		volume = 1.200000
+		volume = 2.400000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/illegal.vsnd",
@@ -49783,7 +49783,7 @@
 	MG.Illegal_V7 = 
 	{
 		base = "MG.SoundBase"
-		volume = 1.400000
+		volume = 2.800000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/illegal.vsnd",
@@ -49792,7 +49792,7 @@
 	MG.Illegal_V8 = 
 	{
 		base = "MG.SoundBase"
-		volume = 1.600000
+		volume = 3.200000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/illegal.vsnd",
@@ -49801,7 +49801,7 @@
 	MG.Illegal_V9 = 
 	{
 		base = "MG.SoundBase"
-		volume = 1.800000
+		volume = 3.600000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/illegal.vsnd",
@@ -49810,7 +49810,7 @@
 	MG.Illegal_V10 = 
 	{
 		base = "MG.SoundBase"
-		volume = 2.000000
+		volume = 4.000000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/illegal.vsnd",
@@ -49819,7 +49819,7 @@
 	MG.Illegal_V11 = 
 	{
 		base = "MG.SoundBase"
-		volume = 2.200000
+		volume = 4.400000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/illegal.vsnd",
@@ -49828,7 +49828,7 @@
 	MG.Illegal_V12 = 
 	{
 		base = "MG.SoundBase"
-		volume = 2.400000
+		volume = 4.800000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/illegal.vsnd",
@@ -49837,7 +49837,7 @@
 	MG.Illegal_V13 = 
 	{
 		base = "MG.SoundBase"
-		volume = 2.600000
+		volume = 5.200000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/illegal.vsnd",
@@ -49846,7 +49846,7 @@
 	MG.Illegal_V14 = 
 	{
 		base = "MG.SoundBase"
-		volume = 2.800000
+		volume = 5.600000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/illegal.vsnd",
@@ -49855,7 +49855,7 @@
 	MG.Illegal_V15 = 
 	{
 		base = "MG.SoundBase"
-		volume = 3.000000
+		volume = 6.000000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/illegal.vsnd",
@@ -49864,7 +49864,7 @@
 	MG.Illegal_V16 = 
 	{
 		base = "MG.SoundBase"
-		volume = 3.200000
+		volume = 6.400000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/illegal.vsnd",
@@ -49873,7 +49873,7 @@
 	MG.Illegal_V17 = 
 	{
 		base = "MG.SoundBase"
-		volume = 3.400000
+		volume = 6.800000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/illegal.vsnd",
@@ -49882,7 +49882,7 @@
 	MG.Illegal_V18 = 
 	{
 		base = "MG.SoundBase"
-		volume = 3.600000
+		volume = 7.200000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/illegal.vsnd",
@@ -49891,7 +49891,7 @@
 	MG.Illegal_V19 = 
 	{
 		base = "MG.SoundBase"
-		volume = 3.800000
+		volume = 7.600000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/illegal.vsnd",
@@ -49900,7 +49900,7 @@
 	MG.Illegal_V20 = 
 	{
 		base = "MG.SoundBase"
-		volume = 4.000000
+		volume = 8.000000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/illegal.vsnd",
@@ -49918,7 +49918,7 @@
 	MG.Premove_V1 = 
 	{
 		base = "MG.SoundBase"
-		volume = 0.200000
+		volume = 0.400000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/premove.vsnd",
@@ -49927,7 +49927,7 @@
 	MG.Premove_V2 = 
 	{
 		base = "MG.SoundBase"
-		volume = 0.400000
+		volume = 0.800000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/premove.vsnd",
@@ -49936,7 +49936,7 @@
 	MG.Premove_V3 = 
 	{
 		base = "MG.SoundBase"
-		volume = 0.600000
+		volume = 1.200000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/premove.vsnd",
@@ -49945,7 +49945,7 @@
 	MG.Premove_V4 = 
 	{
 		base = "MG.SoundBase"
-		volume = 0.800000
+		volume = 1.600000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/premove.vsnd",
@@ -49954,7 +49954,7 @@
 	MG.Premove_V5 = 
 	{
 		base = "MG.SoundBase"
-		volume = 1.000000
+		volume = 2.000000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/premove.vsnd",
@@ -49963,7 +49963,7 @@
 	MG.Premove_V6 = 
 	{
 		base = "MG.SoundBase"
-		volume = 1.200000
+		volume = 2.400000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/premove.vsnd",
@@ -49972,7 +49972,7 @@
 	MG.Premove_V7 = 
 	{
 		base = "MG.SoundBase"
-		volume = 1.400000
+		volume = 2.800000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/premove.vsnd",
@@ -49981,7 +49981,7 @@
 	MG.Premove_V8 = 
 	{
 		base = "MG.SoundBase"
-		volume = 1.600000
+		volume = 3.200000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/premove.vsnd",
@@ -49990,7 +49990,7 @@
 	MG.Premove_V9 = 
 	{
 		base = "MG.SoundBase"
-		volume = 1.800000
+		volume = 3.600000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/premove.vsnd",
@@ -49999,7 +49999,7 @@
 	MG.Premove_V10 = 
 	{
 		base = "MG.SoundBase"
-		volume = 2.000000
+		volume = 4.000000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/premove.vsnd",
@@ -50008,7 +50008,7 @@
 	MG.Premove_V11 = 
 	{
 		base = "MG.SoundBase"
-		volume = 2.200000
+		volume = 4.400000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/premove.vsnd",
@@ -50017,7 +50017,7 @@
 	MG.Premove_V12 = 
 	{
 		base = "MG.SoundBase"
-		volume = 2.400000
+		volume = 4.800000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/premove.vsnd",
@@ -50026,7 +50026,7 @@
 	MG.Premove_V13 = 
 	{
 		base = "MG.SoundBase"
-		volume = 2.600000
+		volume = 5.200000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/premove.vsnd",
@@ -50035,7 +50035,7 @@
 	MG.Premove_V14 = 
 	{
 		base = "MG.SoundBase"
-		volume = 2.800000
+		volume = 5.600000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/premove.vsnd",
@@ -50044,7 +50044,7 @@
 	MG.Premove_V15 = 
 	{
 		base = "MG.SoundBase"
-		volume = 3.000000
+		volume = 6.000000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/premove.vsnd",
@@ -50053,7 +50053,7 @@
 	MG.Premove_V16 = 
 	{
 		base = "MG.SoundBase"
-		volume = 3.200000
+		volume = 6.400000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/premove.vsnd",
@@ -50062,7 +50062,7 @@
 	MG.Premove_V17 = 
 	{
 		base = "MG.SoundBase"
-		volume = 3.400000
+		volume = 6.800000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/premove.vsnd",
@@ -50071,7 +50071,7 @@
 	MG.Premove_V18 = 
 	{
 		base = "MG.SoundBase"
-		volume = 3.600000
+		volume = 7.200000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/premove.vsnd",
@@ -50080,7 +50080,7 @@
 	MG.Premove_V19 = 
 	{
 		base = "MG.SoundBase"
-		volume = 3.800000
+		volume = 7.600000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/premove.vsnd",
@@ -50089,7 +50089,7 @@
 	MG.Premove_V20 = 
 	{
 		base = "MG.SoundBase"
-		volume = 4.000000
+		volume = 8.000000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/premove.vsnd",
@@ -50107,7 +50107,7 @@
 	MG.Promote_V1 = 
 	{
 		base = "MG.SoundBase"
-		volume = 0.200000
+		volume = 0.400000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/promote.vsnd",
@@ -50116,7 +50116,7 @@
 	MG.Promote_V2 = 
 	{
 		base = "MG.SoundBase"
-		volume = 0.400000
+		volume = 0.800000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/promote.vsnd",
@@ -50125,7 +50125,7 @@
 	MG.Promote_V3 = 
 	{
 		base = "MG.SoundBase"
-		volume = 0.600000
+		volume = 1.200000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/promote.vsnd",
@@ -50134,7 +50134,7 @@
 	MG.Promote_V4 = 
 	{
 		base = "MG.SoundBase"
-		volume = 0.800000
+		volume = 1.600000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/promote.vsnd",
@@ -50143,7 +50143,7 @@
 	MG.Promote_V5 = 
 	{
 		base = "MG.SoundBase"
-		volume = 1.000000
+		volume = 2.000000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/promote.vsnd",
@@ -50152,7 +50152,7 @@
 	MG.Promote_V6 = 
 	{
 		base = "MG.SoundBase"
-		volume = 1.200000
+		volume = 2.400000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/promote.vsnd",
@@ -50161,7 +50161,7 @@
 	MG.Promote_V7 = 
 	{
 		base = "MG.SoundBase"
-		volume = 1.400000
+		volume = 2.800000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/promote.vsnd",
@@ -50170,7 +50170,7 @@
 	MG.Promote_V8 = 
 	{
 		base = "MG.SoundBase"
-		volume = 1.600000
+		volume = 3.200000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/promote.vsnd",
@@ -50179,7 +50179,7 @@
 	MG.Promote_V9 = 
 	{
 		base = "MG.SoundBase"
-		volume = 1.800000
+		volume = 3.600000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/promote.vsnd",
@@ -50188,7 +50188,7 @@
 	MG.Promote_V10 = 
 	{
 		base = "MG.SoundBase"
-		volume = 2.000000
+		volume = 4.000000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/promote.vsnd",
@@ -50197,7 +50197,7 @@
 	MG.Promote_V11 = 
 	{
 		base = "MG.SoundBase"
-		volume = 2.200000
+		volume = 4.400000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/promote.vsnd",
@@ -50206,7 +50206,7 @@
 	MG.Promote_V12 = 
 	{
 		base = "MG.SoundBase"
-		volume = 2.400000
+		volume = 4.800000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/promote.vsnd",
@@ -50215,7 +50215,7 @@
 	MG.Promote_V13 = 
 	{
 		base = "MG.SoundBase"
-		volume = 2.600000
+		volume = 5.200000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/promote.vsnd",
@@ -50224,7 +50224,7 @@
 	MG.Promote_V14 = 
 	{
 		base = "MG.SoundBase"
-		volume = 2.800000
+		volume = 5.600000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/promote.vsnd",
@@ -50233,7 +50233,7 @@
 	MG.Promote_V15 = 
 	{
 		base = "MG.SoundBase"
-		volume = 3.000000
+		volume = 6.000000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/promote.vsnd",
@@ -50242,7 +50242,7 @@
 	MG.Promote_V16 = 
 	{
 		base = "MG.SoundBase"
-		volume = 3.200000
+		volume = 6.400000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/promote.vsnd",
@@ -50251,7 +50251,7 @@
 	MG.Promote_V17 = 
 	{
 		base = "MG.SoundBase"
-		volume = 3.400000
+		volume = 6.800000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/promote.vsnd",
@@ -50260,7 +50260,7 @@
 	MG.Promote_V18 = 
 	{
 		base = "MG.SoundBase"
-		volume = 3.600000
+		volume = 7.200000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/promote.vsnd",
@@ -50269,7 +50269,7 @@
 	MG.Promote_V19 = 
 	{
 		base = "MG.SoundBase"
-		volume = 3.800000
+		volume = 7.600000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/promote.vsnd",
@@ -50278,10 +50278,388 @@
 	MG.Promote_V20 = 
 	{
 		base = "MG.SoundBase"
-		volume = 4.000000
+		volume = 8.000000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/promote.vsnd",
+		]
+	}
+	MG.Capture_V0 = 
+	{
+		base = "MG.SoundBase"
+		volume = 0.000000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/capture.vsnd",
+		]
+	}
+	MG.Capture_V1 = 
+	{
+		base = "MG.SoundBase"
+		volume = 0.400000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/capture.vsnd",
+		]
+	}
+	MG.Capture_V2 = 
+	{
+		base = "MG.SoundBase"
+		volume = 0.800000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/capture.vsnd",
+		]
+	}
+	MG.Capture_V3 = 
+	{
+		base = "MG.SoundBase"
+		volume = 1.200000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/capture.vsnd",
+		]
+	}
+	MG.Capture_V4 = 
+	{
+		base = "MG.SoundBase"
+		volume = 1.600000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/capture.vsnd",
+		]
+	}
+	MG.Capture_V5 = 
+	{
+		base = "MG.SoundBase"
+		volume = 2.000000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/capture.vsnd",
+		]
+	}
+	MG.Capture_V6 = 
+	{
+		base = "MG.SoundBase"
+		volume = 2.400000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/capture.vsnd",
+		]
+	}
+	MG.Capture_V7 = 
+	{
+		base = "MG.SoundBase"
+		volume = 2.800000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/capture.vsnd",
+		]
+	}
+	MG.Capture_V8 = 
+	{
+		base = "MG.SoundBase"
+		volume = 3.200000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/capture.vsnd",
+		]
+	}
+	MG.Capture_V9 = 
+	{
+		base = "MG.SoundBase"
+		volume = 3.600000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/capture.vsnd",
+		]
+	}
+	MG.Capture_V10 = 
+	{
+		base = "MG.SoundBase"
+		volume = 4.000000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/capture.vsnd",
+		]
+	}
+	MG.Capture_V11 = 
+	{
+		base = "MG.SoundBase"
+		volume = 4.400000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/capture.vsnd",
+		]
+	}
+	MG.Capture_V12 = 
+	{
+		base = "MG.SoundBase"
+		volume = 4.800000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/capture.vsnd",
+		]
+	}
+	MG.Capture_V13 = 
+	{
+		base = "MG.SoundBase"
+		volume = 5.200000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/capture.vsnd",
+		]
+	}
+	MG.Capture_V14 = 
+	{
+		base = "MG.SoundBase"
+		volume = 5.600000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/capture.vsnd",
+		]
+	}
+	MG.Capture_V15 = 
+	{
+		base = "MG.SoundBase"
+		volume = 6.000000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/capture.vsnd",
+		]
+	}
+	MG.Capture_V16 = 
+	{
+		base = "MG.SoundBase"
+		volume = 6.400000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/capture.vsnd",
+		]
+	}
+	MG.Capture_V17 = 
+	{
+		base = "MG.SoundBase"
+		volume = 6.800000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/capture.vsnd",
+		]
+	}
+	MG.Capture_V18 = 
+	{
+		base = "MG.SoundBase"
+		volume = 7.200000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/capture.vsnd",
+		]
+	}
+	MG.Capture_V19 = 
+	{
+		base = "MG.SoundBase"
+		volume = 7.600000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/capture.vsnd",
+		]
+	}
+	MG.Capture_V20 = 
+	{
+		base = "MG.SoundBase"
+		volume = 8.000000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/capture.vsnd",
+		]
+	}
+	MG.Castle_V0 = 
+	{
+		base = "MG.SoundBase"
+		volume = 0.000000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/castle.vsnd",
+		]
+	}
+	MG.Castle_V1 = 
+	{
+		base = "MG.SoundBase"
+		volume = 0.400000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/castle.vsnd",
+		]
+	}
+	MG.Castle_V2 = 
+	{
+		base = "MG.SoundBase"
+		volume = 0.800000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/castle.vsnd",
+		]
+	}
+	MG.Castle_V3 = 
+	{
+		base = "MG.SoundBase"
+		volume = 1.200000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/castle.vsnd",
+		]
+	}
+	MG.Castle_V4 = 
+	{
+		base = "MG.SoundBase"
+		volume = 1.600000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/castle.vsnd",
+		]
+	}
+	MG.Castle_V5 = 
+	{
+		base = "MG.SoundBase"
+		volume = 2.000000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/castle.vsnd",
+		]
+	}
+	MG.Castle_V6 = 
+	{
+		base = "MG.SoundBase"
+		volume = 2.400000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/castle.vsnd",
+		]
+	}
+	MG.Castle_V7 = 
+	{
+		base = "MG.SoundBase"
+		volume = 2.800000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/castle.vsnd",
+		]
+	}
+	MG.Castle_V8 = 
+	{
+		base = "MG.SoundBase"
+		volume = 3.200000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/castle.vsnd",
+		]
+	}
+	MG.Castle_V9 = 
+	{
+		base = "MG.SoundBase"
+		volume = 3.600000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/castle.vsnd",
+		]
+	}
+	MG.Castle_V10 = 
+	{
+		base = "MG.SoundBase"
+		volume = 4.000000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/castle.vsnd",
+		]
+	}
+	MG.Castle_V11 = 
+	{
+		base = "MG.SoundBase"
+		volume = 4.400000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/castle.vsnd",
+		]
+	}
+	MG.Castle_V12 = 
+	{
+		base = "MG.SoundBase"
+		volume = 4.800000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/castle.vsnd",
+		]
+	}
+	MG.Castle_V13 = 
+	{
+		base = "MG.SoundBase"
+		volume = 5.200000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/castle.vsnd",
+		]
+	}
+	MG.Castle_V14 = 
+	{
+		base = "MG.SoundBase"
+		volume = 5.600000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/castle.vsnd",
+		]
+	}
+	MG.Castle_V15 = 
+	{
+		base = "MG.SoundBase"
+		volume = 6.000000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/castle.vsnd",
+		]
+	}
+	MG.Castle_V16 = 
+	{
+		base = "MG.SoundBase"
+		volume = 6.400000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/castle.vsnd",
+		]
+	}
+	MG.Castle_V17 = 
+	{
+		base = "MG.SoundBase"
+		volume = 6.800000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/castle.vsnd",
+		]
+	}
+	MG.Castle_V18 = 
+	{
+		base = "MG.SoundBase"
+		volume = 7.200000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/castle.vsnd",
+		]
+	}
+	MG.Castle_V19 = 
+	{
+		base = "MG.SoundBase"
+		volume = 7.600000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/castle.vsnd",
+		]
+	}
+	MG.Castle_V20 = 
+	{
+		base = "MG.SoundBase"
+		volume = 8.000000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/castle.vsnd",
 		]
 	}
 	MG.GameStart_V0 = 
@@ -50296,7 +50674,7 @@
 	MG.GameStart_V1 = 
 	{
 		base = "MG.SoundBase"
-		volume = 0.200000
+		volume = 0.400000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/game-start.vsnd",
@@ -50305,7 +50683,7 @@
 	MG.GameStart_V2 = 
 	{
 		base = "MG.SoundBase"
-		volume = 0.400000
+		volume = 0.800000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/game-start.vsnd",
@@ -50314,7 +50692,7 @@
 	MG.GameStart_V3 = 
 	{
 		base = "MG.SoundBase"
-		volume = 0.600000
+		volume = 1.200000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/game-start.vsnd",
@@ -50323,7 +50701,7 @@
 	MG.GameStart_V4 = 
 	{
 		base = "MG.SoundBase"
-		volume = 0.800000
+		volume = 1.600000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/game-start.vsnd",
@@ -50332,7 +50710,7 @@
 	MG.GameStart_V5 = 
 	{
 		base = "MG.SoundBase"
-		volume = 1.000000
+		volume = 2.000000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/game-start.vsnd",
@@ -50341,7 +50719,7 @@
 	MG.GameStart_V6 = 
 	{
 		base = "MG.SoundBase"
-		volume = 1.200000
+		volume = 2.400000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/game-start.vsnd",
@@ -50350,7 +50728,7 @@
 	MG.GameStart_V7 = 
 	{
 		base = "MG.SoundBase"
-		volume = 1.400000
+		volume = 2.800000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/game-start.vsnd",
@@ -50359,7 +50737,7 @@
 	MG.GameStart_V8 = 
 	{
 		base = "MG.SoundBase"
-		volume = 1.600000
+		volume = 3.200000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/game-start.vsnd",
@@ -50368,7 +50746,7 @@
 	MG.GameStart_V9 = 
 	{
 		base = "MG.SoundBase"
-		volume = 1.800000
+		volume = 3.600000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/game-start.vsnd",
@@ -50377,7 +50755,7 @@
 	MG.GameStart_V10 = 
 	{
 		base = "MG.SoundBase"
-		volume = 2.000000
+		volume = 4.000000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/game-start.vsnd",
@@ -50386,7 +50764,7 @@
 	MG.GameStart_V11 = 
 	{
 		base = "MG.SoundBase"
-		volume = 2.200000
+		volume = 4.400000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/game-start.vsnd",
@@ -50395,7 +50773,7 @@
 	MG.GameStart_V12 = 
 	{
 		base = "MG.SoundBase"
-		volume = 2.400000
+		volume = 4.800000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/game-start.vsnd",
@@ -50404,7 +50782,7 @@
 	MG.GameStart_V13 = 
 	{
 		base = "MG.SoundBase"
-		volume = 2.600000
+		volume = 5.200000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/game-start.vsnd",
@@ -50413,7 +50791,7 @@
 	MG.GameStart_V14 = 
 	{
 		base = "MG.SoundBase"
-		volume = 2.800000
+		volume = 5.600000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/game-start.vsnd",
@@ -50422,7 +50800,7 @@
 	MG.GameStart_V15 = 
 	{
 		base = "MG.SoundBase"
-		volume = 3.000000
+		volume = 6.000000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/game-start.vsnd",
@@ -50431,7 +50809,7 @@
 	MG.GameStart_V16 = 
 	{
 		base = "MG.SoundBase"
-		volume = 3.200000
+		volume = 6.400000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/game-start.vsnd",
@@ -50440,7 +50818,7 @@
 	MG.GameStart_V17 = 
 	{
 		base = "MG.SoundBase"
-		volume = 3.400000
+		volume = 6.800000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/game-start.vsnd",
@@ -50449,7 +50827,7 @@
 	MG.GameStart_V18 = 
 	{
 		base = "MG.SoundBase"
-		volume = 3.600000
+		volume = 7.200000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/game-start.vsnd",
@@ -50458,7 +50836,7 @@
 	MG.GameStart_V19 = 
 	{
 		base = "MG.SoundBase"
-		volume = 3.800000
+		volume = 7.600000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/game-start.vsnd",
@@ -50467,10 +50845,199 @@
 	MG.GameStart_V20 = 
 	{
 		base = "MG.SoundBase"
-		volume = 4.000000
+		volume = 8.000000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/game-start.vsnd",
+		]
+	}
+	MG.GameEnd_V0 = 
+	{
+		base = "MG.SoundBase"
+		volume = 0.000000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/game-end.vsnd",
+		]
+	}
+	MG.GameEnd_V1 = 
+	{
+		base = "MG.SoundBase"
+		volume = 0.400000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/game-end.vsnd",
+		]
+	}
+	MG.GameEnd_V2 = 
+	{
+		base = "MG.SoundBase"
+		volume = 0.800000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/game-end.vsnd",
+		]
+	}
+	MG.GameEnd_V3 = 
+	{
+		base = "MG.SoundBase"
+		volume = 1.200000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/game-end.vsnd",
+		]
+	}
+	MG.GameEnd_V4 = 
+	{
+		base = "MG.SoundBase"
+		volume = 1.600000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/game-end.vsnd",
+		]
+	}
+	MG.GameEnd_V5 = 
+	{
+		base = "MG.SoundBase"
+		volume = 2.000000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/game-end.vsnd",
+		]
+	}
+	MG.GameEnd_V6 = 
+	{
+		base = "MG.SoundBase"
+		volume = 2.400000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/game-end.vsnd",
+		]
+	}
+	MG.GameEnd_V7 = 
+	{
+		base = "MG.SoundBase"
+		volume = 2.800000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/game-end.vsnd",
+		]
+	}
+	MG.GameEnd_V8 = 
+	{
+		base = "MG.SoundBase"
+		volume = 3.200000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/game-end.vsnd",
+		]
+	}
+	MG.GameEnd_V9 = 
+	{
+		base = "MG.SoundBase"
+		volume = 3.600000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/game-end.vsnd",
+		]
+	}
+	MG.GameEnd_V10 = 
+	{
+		base = "MG.SoundBase"
+		volume = 4.000000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/game-end.vsnd",
+		]
+	}
+	MG.GameEnd_V11 = 
+	{
+		base = "MG.SoundBase"
+		volume = 4.400000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/game-end.vsnd",
+		]
+	}
+	MG.GameEnd_V12 = 
+	{
+		base = "MG.SoundBase"
+		volume = 4.800000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/game-end.vsnd",
+		]
+	}
+	MG.GameEnd_V13 = 
+	{
+		base = "MG.SoundBase"
+		volume = 5.200000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/game-end.vsnd",
+		]
+	}
+	MG.GameEnd_V14 = 
+	{
+		base = "MG.SoundBase"
+		volume = 5.600000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/game-end.vsnd",
+		]
+	}
+	MG.GameEnd_V15 = 
+	{
+		base = "MG.SoundBase"
+		volume = 6.000000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/game-end.vsnd",
+		]
+	}
+	MG.GameEnd_V16 = 
+	{
+		base = "MG.SoundBase"
+		volume = 6.400000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/game-end.vsnd",
+		]
+	}
+	MG.GameEnd_V17 = 
+	{
+		base = "MG.SoundBase"
+		volume = 6.800000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/game-end.vsnd",
+		]
+	}
+	MG.GameEnd_V18 = 
+	{
+		base = "MG.SoundBase"
+		volume = 7.200000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/game-end.vsnd",
+		]
+	}
+	MG.GameEnd_V19 = 
+	{
+		base = "MG.SoundBase"
+		volume = 7.600000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/game-end.vsnd",
+		]
+	}
+	MG.GameEnd_V20 = 
+	{
+		base = "MG.SoundBase"
+		volume = 8.000000
+		vsnd_files = 
+		[
+			"panorama/sounds/mods/game-end.vsnd",
 		]
 	}
 	MG.TenSeconds_V0 = 
@@ -50485,7 +51052,7 @@
 	MG.TenSeconds_V1 = 
 	{
 		base = "MG.SoundBase"
-		volume = 0.200000
+		volume = 0.400000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/tenseconds.vsnd",
@@ -50494,7 +51061,7 @@
 	MG.TenSeconds_V2 = 
 	{
 		base = "MG.SoundBase"
-		volume = 0.400000
+		volume = 0.800000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/tenseconds.vsnd",
@@ -50503,7 +51070,7 @@
 	MG.TenSeconds_V3 = 
 	{
 		base = "MG.SoundBase"
-		volume = 0.600000
+		volume = 1.200000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/tenseconds.vsnd",
@@ -50512,7 +51079,7 @@
 	MG.TenSeconds_V4 = 
 	{
 		base = "MG.SoundBase"
-		volume = 0.800000
+		volume = 1.600000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/tenseconds.vsnd",
@@ -50521,7 +51088,7 @@
 	MG.TenSeconds_V5 = 
 	{
 		base = "MG.SoundBase"
-		volume = 1.000000
+		volume = 2.000000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/tenseconds.vsnd",
@@ -50530,7 +51097,7 @@
 	MG.TenSeconds_V6 = 
 	{
 		base = "MG.SoundBase"
-		volume = 1.200000
+		volume = 2.400000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/tenseconds.vsnd",
@@ -50539,7 +51106,7 @@
 	MG.TenSeconds_V7 = 
 	{
 		base = "MG.SoundBase"
-		volume = 1.400000
+		volume = 2.800000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/tenseconds.vsnd",
@@ -50548,7 +51115,7 @@
 	MG.TenSeconds_V8 = 
 	{
 		base = "MG.SoundBase"
-		volume = 1.600000
+		volume = 3.200000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/tenseconds.vsnd",
@@ -50557,7 +51124,7 @@
 	MG.TenSeconds_V9 = 
 	{
 		base = "MG.SoundBase"
-		volume = 1.800000
+		volume = 3.600000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/tenseconds.vsnd",
@@ -50566,7 +51133,7 @@
 	MG.TenSeconds_V10 = 
 	{
 		base = "MG.SoundBase"
-		volume = 2.000000
+		volume = 4.000000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/tenseconds.vsnd",
@@ -50575,7 +51142,7 @@
 	MG.TenSeconds_V11 = 
 	{
 		base = "MG.SoundBase"
-		volume = 2.200000
+		volume = 4.400000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/tenseconds.vsnd",
@@ -50584,7 +51151,7 @@
 	MG.TenSeconds_V12 = 
 	{
 		base = "MG.SoundBase"
-		volume = 2.400000
+		volume = 4.800000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/tenseconds.vsnd",
@@ -50593,7 +51160,7 @@
 	MG.TenSeconds_V13 = 
 	{
 		base = "MG.SoundBase"
-		volume = 2.600000
+		volume = 5.200000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/tenseconds.vsnd",
@@ -50602,7 +51169,7 @@
 	MG.TenSeconds_V14 = 
 	{
 		base = "MG.SoundBase"
-		volume = 2.800000
+		volume = 5.600000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/tenseconds.vsnd",
@@ -50611,7 +51178,7 @@
 	MG.TenSeconds_V15 = 
 	{
 		base = "MG.SoundBase"
-		volume = 3.000000
+		volume = 6.000000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/tenseconds.vsnd",
@@ -50620,7 +51187,7 @@
 	MG.TenSeconds_V16 = 
 	{
 		base = "MG.SoundBase"
-		volume = 3.200000
+		volume = 6.400000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/tenseconds.vsnd",
@@ -50629,7 +51196,7 @@
 	MG.TenSeconds_V17 = 
 	{
 		base = "MG.SoundBase"
-		volume = 3.400000
+		volume = 6.800000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/tenseconds.vsnd",
@@ -50638,7 +51205,7 @@
 	MG.TenSeconds_V18 = 
 	{
 		base = "MG.SoundBase"
-		volume = 3.600000
+		volume = 7.200000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/tenseconds.vsnd",
@@ -50647,7 +51214,7 @@
 	MG.TenSeconds_V19 = 
 	{
 		base = "MG.SoundBase"
-		volume = 3.800000
+		volume = 7.600000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/tenseconds.vsnd",
@@ -50656,7 +51223,7 @@
 	MG.TenSeconds_V20 = 
 	{
 		base = "MG.SoundBase"
-		volume = 4.000000
+		volume = 8.000000
 		vsnd_files = 
 		[
 			"panorama/sounds/mods/tenseconds.vsnd",
