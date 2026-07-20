@@ -1327,8 +1327,12 @@
             startPolling();
         }
 
+        // Consecutive empty polls in the CURRENT wait — drives the adaptive cadence
+        // (MG.Net.pollDelay): fast for the first few, then slower while the opponent thinks.
+        var pollMisses = 0;
         function startPolling() {
             pollToken++;
+            pollMisses = 0;
             var myToken = pollToken;
             pollOnce(myToken);
         }
@@ -1339,6 +1343,7 @@
             Api.poll(code, appliedSeq, function (mv) {
                 if (destroyed || myToken !== pollToken) return;
                 if (mv) {
+                    pollMisses = 0;                             // real move → next wait starts fast
                     if (oppSeqFrom < 0) oppTurnCapture = false; // first hop of this opponent turn
                     var res = applyHopFx(mv.from, mv.to);
                     appliedSeq++;
@@ -1358,10 +1363,10 @@
                     }
                     $.Schedule(0.05, function () { pollOnce(myToken); }); // drain chain fast
                 } else {
-                    $.Schedule(0.4, function () { pollOnce(myToken); });
+                    $.Schedule(MG.Net.pollDelay(pollMisses++), function () { pollOnce(myToken); });
                 }
             }, function () {
-                $.Schedule(0.6, function () { pollOnce(myToken); });
+                $.Schedule(MG.Net.pollDelay(pollMisses++), function () { pollOnce(myToken); });
             }, function (from, to) {
                 // A real hop is always a diagonal between two board squares; anything
                 // else is a mis-scaled read and must never reach applyHop.
@@ -1430,6 +1435,7 @@
         var turn = X;                  // X always starts
         var appliedSeq = 0;            // placements consumed from the shared server list
         var pollToken = 0;
+        var pollMisses = 0;            // consecutive empty polls this turn (drives the adaptive cadence)
         var destroyed = false;
         var gameOver = false;
 
@@ -1610,6 +1616,7 @@
 
         function startPolling() {
             pollToken++;
+            pollMisses = 0;              // fresh wait → poll fast again (see MG.Net.pollDelay)
             pollOnce(pollToken);
         }
 
@@ -1619,6 +1626,7 @@
             Api.poll(code, appliedSeq, function (mv) {
                 if (destroyed || myToken !== pollToken) return;
                 if (mv) {
+                    pollMisses = 0;
                     var oppMark = (myMark === X ? O : X);
                     if (!board[mv.from]) place(mv.from, oppMark); // from = the cell played
                     appliedSeq++;
@@ -1627,10 +1635,10 @@
                     if (checkEnd()) return;
                     status("Your turn.");
                 } else {
-                    $.Schedule(0.4, function () { pollOnce(myToken); });
+                    $.Schedule(MG.Net.pollDelay(pollMisses++), function () { pollOnce(myToken); });
                 }
             }, function () {
-                $.Schedule(0.6, function () { pollOnce(myToken); });
+                $.Schedule(MG.Net.pollDelay(pollMisses++), function () { pollOnce(myToken); });
             }, function (from, to) {
                 // A placement is a single cell 0..8 with the fixed marker to=9.
                 return from >= 0 && from <= 8 && to === 9;
@@ -1682,6 +1690,7 @@
         var cst = initialChessState();
         var turn = 1;                  // white moves first
         var appliedSeq = 0;            // moves consumed from the shared server list
+        var pollMisses = 0;            // consecutive empty polls this turn (drives the adaptive cadence)
         var selected = -1;
         var legalTargets = [];         // [{to}] — shape kept identical to checkers so the drag code is shared
         var pollToken = 0;
@@ -2433,6 +2442,7 @@
         }
         function startPolling() {
             pollToken++;
+            pollMisses = 0;                 // fresh wait → poll fast again (see MG.Net.pollDelay)
             pollOnce(pollToken);
         }
         function pollOnce(myToken) {
@@ -2441,6 +2451,7 @@
             Api.poll(code, appliedSeq, function (mv) {
                 if (destroyed || myToken !== pollToken) return;
                 if (mv) {
+                    pollMisses = 0;
                     appliedSeq++;
                     var oppCap = isCaptureMove(mv.from, mv.to);   // test the pre-move board
                     var fx = applyChessMove(mv.from, mv.to);
@@ -2452,10 +2463,10 @@
                     sfx(moveSound(fx, inCheck(board, myColor), false));
                     if (!checkEnd()) { status(inCheck(board, myColor) ? "Check! Your turn." : "Your turn."); tryPremove(); }
                 } else {
-                    $.Schedule(0.4, function () { pollOnce(myToken); });
+                    $.Schedule(MG.Net.pollDelay(pollMisses++), function () { pollOnce(myToken); });
                 }
             }, function () {
-                $.Schedule(0.6, function () { pollOnce(myToken); });
+                $.Schedule(MG.Net.pollDelay(pollMisses++), function () { pollOnce(myToken); });
             }, function (from, to) {
                 return from >= 0 && from < 64 && to >= 0 && to < 64 && from !== to;
             });

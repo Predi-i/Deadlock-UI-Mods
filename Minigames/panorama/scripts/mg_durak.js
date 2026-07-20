@@ -120,6 +120,7 @@
         // still pending gives TWO concurrent loops sharing logSeq — they double-apply one event
         // and skip the next (an opponent's card silently vanishes; dealing corrupts the state).
         var pollGen = 0;
+        var pollMisses = 0;              // consecutive empty event-log polls (drives the adaptive cadence)
         var leftSeats = [];              // online seats that abandoned the table (rendered as "left")
         var deckRemaining = DECK_SIZE;   // 36 minus every card drawn (client can't see the deck, only count it)
         for (var _s = 0; _s < numPlayers; _s++) drawCursor.push(0);
@@ -953,12 +954,15 @@
         }
         // Start (or restart) the single authoritative poll chain. Bumping pollGen kills any
         // in-flight chain so we never run two at once (see pollGen above).
-        function startPolling() { pollGen++; pollLoop(pollGen); }
+        function startPolling() { pollGen++; pollMisses = 0; pollLoop(pollGen); }
         function pollLoop(gen) {
             if (destroyed || gameOver || gen !== pollGen) return;
             MG.Api.dlog(session.code, logSeq, function (ev) {
                 if (destroyed || gen !== pollGen) return;
-                if (!ev) { $.Schedule(0.6, function () { pollLoop(gen); }); return; }   // nothing new
+                // Nothing new: back off on a slow adaptive cadence (see MG.Net.pollDelay) so a
+                // long think doesn't burn ~2 req/s. A real event resets the miss counter below.
+                if (!ev) { $.Schedule(MG.Net.pollDelay(pollMisses++), function () { pollLoop(gen); }); return; }
+                pollMisses = 0;
                 logSeq++;
                 applyEvent(ev);
                 if (ev.type === "draw" && ev.seat === mySeat) {

@@ -41,6 +41,7 @@
         var turn = RED;                              // red always opens
         var appliedSeq = 0;                          // drops consumed from the shared server log
         var pollToken = 0;
+        var pollMisses = 0;                          // consecutive empty polls this turn (adaptive cadence)
         var destroyed = false;
         var gameOver = false;
 
@@ -277,13 +278,14 @@
             function (from, to) { return from >= 0 && from <= 6 && to === 7; });
         }
 
-        function startPolling() { pollToken++; pollOnce(pollToken); }
+        function startPolling() { pollToken++; pollMisses = 0; pollOnce(pollToken); }
         function pollOnce(myToken) {
             if (destroyed || myToken !== pollToken || gameOver) return;
             if (turn === myMark) return;                 // our move; nothing to poll
             Api.poll(code, appliedSeq, function (mv) {
                 if (destroyed || myToken !== pollToken) return;
                 if (mv) {
+                    pollMisses = 0;                       // real move → next wait starts fast again
                     var oppMark = (myMark === RED ? YEL : RED);
                     applyDrop(mv.from, oppMark);          // from = the column the opponent dropped
                     appliedSeq++;
@@ -292,10 +294,10 @@
                     status("Your turn.");
                     refreshTimer();                       // my turn opened → arm the clock
                 } else {
-                    $.Schedule(0.4, function () { pollOnce(myToken); });
+                    $.Schedule(MG.Net.pollDelay(pollMisses++), function () { pollOnce(myToken); });
                 }
             }, function () {
-                $.Schedule(0.6, function () { pollOnce(myToken); });
+                $.Schedule(MG.Net.pollDelay(pollMisses++), function () { pollOnce(myToken); });
             }, function (from, to) {
                 return from >= 0 && from <= 6 && to === 7;
             });

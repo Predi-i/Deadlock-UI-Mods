@@ -93,6 +93,7 @@
         // holeCursor = how many of MY 2 hole cards I've pulled via pdraw for the current hand;
         // pendingAct blocks input between send and the echoed event.
         var logSeq = 0, pollGen = 0, holeCursor = 0, pendingAct = false, gameOver = false;
+        var pollMisses = 0;            // consecutive empty polls this turn (drives the adaptive cadence)
         var wantHole = false;                 // a HAND event landed → pull my hole cards before rendering
         var leftSeats = [];                   // online seats that abandoned the table (rendered as "left")
         var pendingRaiseLo = [0, 0, 0, 0];    // per-seat low 6 bits of a split raise-to, awaiting its hi half
@@ -539,12 +540,15 @@
 
         // Single authoritative poll chain (pollGen guards it, exactly like mg_durak — two chains
         // sharing logSeq would double-apply one event and skip the next).
-        function startPolling() { pollGen++; pollLoop(pollGen); }
+        function startPolling() { pollGen++; pollMisses = 0; pollLoop(pollGen); }
         function pollLoop(gen) {
             if (destroyed || gameOver || gen !== pollGen) return;
             MG.Api.plog(session.code, logSeq, function (ev) {
                 if (destroyed || gen !== pollGen) return;
-                if (!ev) { $.Schedule(0.6, function () { pollLoop(gen); }); return; }   // nothing new
+                // Nothing new: back off on the shared adaptive cadence (see MG.Net.pollDelay) so a
+                // long think doesn't burn ~2 req/s. A real event resets the miss counter below.
+                if (!ev) { $.Schedule(MG.Net.pollDelay(pollMisses++), function () { pollLoop(gen); }); return; }   // nothing new
+                pollMisses = 0;
                 logSeq++;
                 applyOnlineEvent(ev);
                 if (wantHole) {

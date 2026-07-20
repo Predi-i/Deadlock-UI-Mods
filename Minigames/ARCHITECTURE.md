@@ -814,6 +814,18 @@ nothing is polled and no token is used.
 Disconnect signals: `status` returning `(9,1)` while a host waits, or `poll` returning
 `(9,9)`, route to `MG.UI.kickToMenu(reason)`.
 
+**Adaptive poll cadence (request-budget control).** Polling `/api/poll` (or `/api/dlog`,
+`/api/plog`) for the opponent's move is the dominant request cost of a match. The cadence is
+defined ONCE in `mg_net.js` as `MG.Net.pollDelay(misses)` and reused by every online game:
+`misses < 4` → **1.0s**, else → **1.6s**. `misses` counts consecutive empty ("nothing new")
+polls this turn and is reset to 0 on each real move (and in `startPolling`), so a wait starts
+fast (responsive when the opponent replies quickly) and backs off while they think (a long
+think must not cost ~2.5 req/s). Every game keeps a local `var pollMisses = 0` and passes
+`pollMisses++` to `pollDelay` in both the "nothing new" and transport-error branches. ⚠ There
+is **no `Net` alias** in the controllers — call it fully qualified as `MG.Net.pollDelay(...)`
+(a bare `Net.pollDelay` throws `ReferenceError` and, like the TTT `sfx` crash, would only
+surface in-game — the test harnesses don't execute controller code).
+
 ### 9.1 Shared clocks & the per-turn timer (`MG.Widgets`, mg_games.js)
 
 Two DIFFERENT time widgets, both built in `mg_games.js` and exposed on `MG.Widgets`:

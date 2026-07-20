@@ -57,6 +57,18 @@
     var REQ_TIMEOUT_MS = 8000;
     var POLL_STEP = 0.05;   // seconds between dimension checks
 
+    // ── shared opponent-poll cadence (single source of truth for all games) ──
+    // Every online game polls /api/poll to learn the opponent's move. Polling is the
+    // dominant request cost of a match, so the cadence is tuned here once and reused by
+    // checkers/chess/TTT/Connect-Four. Model: poll FAST for the first few checks after
+    // it becomes the opponent's turn (a quick reply feels responsive), then BACK OFF to a
+    // slower steady rate while they think — a long think shouldn't cost ~2.5 req/s.
+    //   misses 0..(FAST_POLLS-1) → POLL_FAST_S ; misses >= FAST_POLLS → POLL_SLOW_S
+    // `misses` = consecutive empty ("nothing new") polls this turn; reset to 0 on each real
+    // move so the next wait starts fast again. Transport errors reuse the same schedule.
+    var POLL_FAST_S = 1.0, POLL_SLOW_S = 1.6, FAST_POLLS = 4;
+    function pollDelay(misses) { return (misses < FAST_POLLS) ? POLL_FAST_S : POLL_SLOW_S; }
+
     // ── Downlink level encoding — MUST match worker.core.js `d()` exactly ──
     // A response dimension carries a small "level", not a raw int: dim = level*STEP + BASE.
     // The old dim=int+1 scheme died on UI-scaled displays (the engine biases small sizes
@@ -375,6 +387,7 @@
             reqQueue = kept;
         },
         recalibrate: function (cb) { calibrated = false; calibrate(cb); },
+        pollDelay: pollDelay,
         setDebug: setDebug,
         isDebug: function () { return DEBUG; },
         isConfigured: function () { return BASE_URL.indexOf("CHANGEME") < 0; },
