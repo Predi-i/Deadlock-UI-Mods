@@ -72,7 +72,7 @@
             gameOver = true;
             if (turnTimer) turnTimer.stop();
             if (!session.bot && code) { try { if (MG.Api && MG.Api.leave) MG.Api.leave(code, session.tok); } catch (e) {} }
-            status("Time expired — you lose.");
+            status("Time expired. You lose.");
             if (session.onGameOver) session.onGameOver("lose");
         }
         // Grid + discs OVERLAY are stacked siblings under a flow-children:none wrap (checkers
@@ -260,8 +260,8 @@
             if (seq >= appliedSeq) {
                 rebuildDiscs();
                 refreshTimer();                          // resync settled → (re)arm or stop to match
-                if (myTurn()) status("Move rejected — resynced. Your turn.");
-                else { status("Move rejected — resyncing…"); startPolling(); }
+                if (myTurn()) status("Move rejected. Resynced, your turn.");
+                else { status("Move rejected. Resyncing…"); startPolling(); }
                 return;
             }
             Api.poll(code, seq, function (mv) {

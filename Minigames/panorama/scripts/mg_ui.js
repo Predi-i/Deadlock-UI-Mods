@@ -683,7 +683,7 @@
             }
             var quickCap = $.CreatePanel("Label", detailPanel, "");
             quickCap.AddClass("mg-caption");
-            quickCap.text = isPoker ? "Poker is private-table only — Create or Join a code below."
+            quickCap.text = isPoker ? "Poker is private-table only. Create or Join a code below."
                 : isDurak ? "Public 2-player match against anyone online."
                 : "Public match against anyone online.";
 
@@ -869,58 +869,101 @@
     }
 
     // ── online self-test ──────────────────────────────────────────────────────
-    // Exercises the full lobby protocol against the REAL server from one client:
-    // ping → create → status → join own lobby → move → poll the move back → cancel.
-    // Verifies exactly the paths a two-player game uses, no second person needed.
-    // (Actual gameplay can be tested offline via Play vs Bot.)
+    // Exercises the full lobby protocol against the REAL deployed server from ONE client
+    // (fills both seats with two tokens), so it's the only check that validates the live
+    // transport under the actual in-game UI scale. Beyond the happy path it now drives the
+    // three AUTHORITATIVE REJECTIONS a real game relies on — a foreign token, an out-of-turn
+    // move, and an illegal move must each be refused with the right reason — so a mis-deployed
+    // worker or a decode regression is caught in-game, not just offline. Steps run sequentially
+    // (a small runner, not nested callbacks); any failure aborts and cleans the lobby up.
+    // (Full rules coverage lives offline in tools/mg_*_test.js + Play-vs-Bot.)
     function runSelfTest() {
         if (!MG.Net.isConfigured()) { setStatus("⚠ Configure the server first."); return; }
         var t = ++selfTestToken;
         function alive() { return t === selfTestToken; }
-        function fail(what) { if (alive()) setStatus("❌ Self-test failed at: " + what); }
-        function step(n, what) { if (alive()) setStatus("Self-test " + n + "/6: " + what); }
 
-        // Two tokens: this one client fills both seats to drive the full protocol solo.
-        var hostTok = MG.Session.newToken(), joinTok = MG.Session.newToken();
-        // A legal white checkers opener: (5,0)->(4,1) = squares 40 -> 33.
-        var mFrom = 40, mTo = 33;
-        step(1, "ping…");
-        MG.Api.ping(function (ms) {
-            if (!alive()) return;
-            step(2, "creating a test lobby…");
-            MG.Api.create(1, hostTok, function (code) {
-                if (!alive()) return;
-                // Always tidy up the test lobby, pass or fail.
-                function cleanup() { try { MG.Api.cancel(code, hostTok); } catch (e) {} }
+        // Three tokens: host (white/seat 0), joiner (black/seat 1), and a stranger seated
+        // in neither — used to prove a foreign token can't move.
+        var hostTok = MG.Session.newToken(), joinTok = MG.Session.newToken(), foreignTok = MG.Session.newToken();
+        var code = null, pingMs = 0;
+        var mFrom = 40, mTo = 33;   // legal white checkers opener (5,0)->(4,1) = squares 40 -> 33
+        var illFrom = 40, illTo = 41;   // (5,0)->(5,1): sideways, never a legal checkers move
+        var blkFrom = 17, blkTo = 24;   // a black man's square — used to test moving out of turn
 
-                step(3, "reading lobby status…");
+        function cleanup() { if (code) { try { MG.Api.cancel(code, hostTok); } catch (e) {} } }
+        function fail(what) { if (alive()) { cleanup(); setStatus("❌ Self-test failed at: " + what); } }
+        function netFail(label) { return function () { fail(label + " (no response)"); }; }
+
+        // Each step calls next() on success or fail(...) on a bad result; the runner advances
+        // through them one at a time and reports "N/total" progress as it goes.
+        var steps = [
+            ["pinging the server", function () {
+                MG.Api.ping(function (ms) { pingMs = ms; next(); }, netFail("ping"));
+            }],
+            ["creating a test lobby", function () {
+                MG.Api.create(1, hostTok, function (c) { code = c; next(); },
+                    function () { fail("create (server unreachable or bad decode)"); });
+            }],
+            ["reading lobby status", function () {
                 MG.Api.status(code, function (st) {
-                    if (!alive()) return;
-                    if (st.gone || st.players !== 1) { cleanup(); fail("status (got " + st.players + " players, expected 1)"); return; }
-                    step(4, "joining own lobby…");
-                    MG.Api.join(code, joinTok, function (res) {
-                        if (!alive()) return;
-                        if (!res.ok || res.game !== 1) { cleanup(); fail("join (" + (res.reason || "game=" + res.game) + ")"); return; }
-                        step(5, "relaying a test move…");
-                        // White (host seat) plays first; authorise with the host token.
-                        MG.Api.move(code, mFrom, mTo, 1, hostTok, function (r) {
-                            if (!alive()) return;
-                            if (!r.ok) { cleanup(); fail("move (rejected: " + r.reason + ")"); return; }
-                            step(6, "polling the move back…");
-                            MG.Api.poll(code, 0, function (mv) {
-                                cleanup();
-                                if (!alive()) return;
-                                if (mv && mv.from === mFrom && mv.to === mTo && mv.end === 1) {
-                                    setStatus("✅ Self-test passed: lobby, join, authorised move & poll all work. Ping " + ms + "ms.");
-                                } else {
-                                    fail("poll (move came back wrong)");
-                                }
-                            }, function () { cleanup(); fail("poll (no response)"); });
-                        }, function () { cleanup(); fail("move (no response)"); });
-                    }, function () { cleanup(); fail("join (no response)"); });
-                }, function () { cleanup(); fail("status (no response)"); });
-            }, function () { fail("create (server unreachable or bad decode)"); });
-        }, function () { fail("ping (server unreachable)"); });
+                    if (st.gone || st.players !== 1) { fail("status (got " + st.players + " players, expected 1)"); return; }
+                    next();
+                }, netFail("status"));
+            }],
+            ["joining own lobby", function () {
+                MG.Api.join(code, joinTok, function (res) {
+                    if (!res.ok || res.game !== 1) { fail("join (" + (res.reason || "game=" + res.game) + ")"); return; }
+                    next();
+                }, netFail("join"));
+            }],
+            ["rejecting a foreign-token move", function () {
+                // A token seated in neither seat must be refused with reason "token".
+                MG.Api.move(code, mFrom, mTo, 1, foreignTok, function (r) {
+                    if (r.ok || r.reason !== "token") { fail("foreign-token move not rejected (" + (r.reason || "accepted") + ")"); return; }
+                    next();
+                }, netFail("foreign move"));
+            }],
+            ["rejecting an out-of-turn move", function () {
+                // It's white's turn; the joiner (black) moving must be refused with reason "turn".
+                MG.Api.move(code, blkFrom, blkTo, 1, joinTok, function (r) {
+                    if (r.ok || r.reason !== "turn") { fail("out-of-turn move not rejected (" + (r.reason || "accepted") + ")"); return; }
+                    next();
+                }, netFail("out-of-turn move"));
+            }],
+            ["rejecting an illegal move", function () {
+                // A sideways (non-diagonal) hop by the correct player must be refused as "illegal".
+                MG.Api.move(code, illFrom, illTo, 1, hostTok, function (r) {
+                    if (r.ok || r.reason !== "illegal") { fail("illegal move not rejected (" + (r.reason || "accepted") + ")"); return; }
+                    next();
+                }, netFail("illegal move"));
+            }],
+            ["relaying a legal move", function () {
+                MG.Api.move(code, mFrom, mTo, 1, hostTok, function (r) {
+                    if (!r.ok) { fail("legal move rejected (" + r.reason + ")"); return; }
+                    next();
+                }, netFail("legal move"));
+            }],
+            ["polling the move back", function () {
+                MG.Api.poll(code, 0, function (mv) {
+                    if (!mv || mv.from !== mFrom || mv.to !== mTo) { fail("poll (move came back wrong)"); return; }
+                    next();
+                }, netFail("poll"));
+            }]
+        ];
+
+        var i = 0;
+        function next() {
+            if (!alive()) return;
+            if (i >= steps.length) {
+                cleanup();
+                setStatus("✅ Self-test passed (" + steps.length + " checks). Ping " + pingMs + "ms.");
+                return;
+            }
+            var s = steps[i++];
+            setStatus("Self-test " + i + "/" + steps.length + ": " + s[0] + "…");
+            try { s[1](); } catch (e) { fail(s[0] + " (exception)"); }
+        }
+        next();
     }
 
     // Bot games alternate your side each time so you don't always open as white/X.

@@ -62,7 +62,8 @@
     }
 
     // Stage geometry (px). Bigger than Durak's 680×500 — the 4-seat felt needs the room.
-    var CARD_W = 76, CARD_H = 106;     // board / my hole card size
+    var CARD_W = 76, CARD_H = 106;     // board card size
+    var HERO_W = 106, HERO_H = 148;    // MY hole cards: ~1.4x the board so my hand reads clearly bottom-centre
     var OPP_CW = 42, OPP_CH = 59;      // opponents' small face-down backs (avoid the mushy overlap)
     var STAGE_W = 760, STAGE_H = 520;
     var START_STACK = 200, SB = 5, BB = 10;
@@ -144,8 +145,9 @@
             var c = seatCenter(seat);
             if (seat === mySeat) {
                 // Big face-up pair along the bottom edge, centred. Below the pot label, clear of
-                // my corner tile — the felt's bottom-centre is otherwise empty.
-                return { x: STAGE_W / 2 - CARD_W - 4, y: STAGE_H - CARD_H - 14, spread: CARD_W + 8, w: CARD_W, h: CARD_H };
+                // my corner tile — the felt's bottom-centre is otherwise empty. Uses HERO_* (larger
+                // than the board cards) so my own hand is the easiest thing on the felt to read.
+                return { x: STAGE_W / 2 - HERO_W - 4, y: STAGE_H - HERO_H - 14, spread: HERO_W + 8, w: HERO_W, h: HERO_H };
             }
             var pairW = OPP_CW * 2 + 6;                 // two small backs + a 6px gap
             return { x: c.x - pairW / 2, y: c.y + 36, spread: OPP_CW + 6, w: OPP_CW, h: OPP_CH };
@@ -425,7 +427,7 @@
             if (destroyed || !st || st.street === "over") return;
             var seat = st.toAct;
             if (seat < 0) return;
-            if (seat === mySeat) { status(streetName() + " — your action."); return; }
+            if (seat === mySeat) { status(streetName() + ": your action."); return; }
             status(nameOf(seat) + " is thinking…");
             $.Schedule(0.6, function () { botStep(seat); });
         }
@@ -530,7 +532,7 @@
             if (gameOver) return;
             if (!st) { status("Dealing…"); return; }
             if (st.street === "over") { status(resultText()); return; }
-            if (myTurn()) { status(streetName() + " — your action."); return; }
+            if (myTurn()) { status(streetName() + ": your action."); return; }
             if (st.toAct >= 0) { status(nameOf(st.toAct) + " to act…"); return; }
             status(streetName());
         }

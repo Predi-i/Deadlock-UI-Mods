@@ -610,6 +610,9 @@
     font-size: 18px !important;          /* bigger per maintainer (15→18) */
     horizontal-align: center;            /* centered, not hugging the left */
     vertical-align: center;
+    white-space: nowrap;                 /* never wrap to a 2nd line — a wrapped status grew the
+                                            fit-children footer and shoved the dev-tools row (DEBUG)
+                                            upward. One line keeps the footer height constant. */
 }
 /* Discreet build stamp pinned to the footer's bottom-LEFT (align-override, so the centered status
    floats over it without either shifting the other). Muted + small so it never competes with the
@@ -620,6 +623,8 @@
     font-size: 13px !important;
     horizontal-align: left;
     vertical-align: center;
+    margin-bottom: 2px;                  /* lift ~2px: the 13px stamp's optical centre sat low
+                                            against the taller dev-tool buttons on the same row */
 }
 /* spacer takes the slack so the dev tools sit at the right edge */
 .mg-footer-spacer {

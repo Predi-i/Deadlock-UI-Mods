@@ -638,6 +638,16 @@
                     refreshHighlights();
                     return;
                 }
+                // The turn flipped to me WHILE this piece was held: the drag began during the
+                // opponent's turn (a premove-grab, so DragStart set no selection), but the polled
+                // move landed before I released. Without this, DragEnd falls through to
+                // commitDropMultimethod, which bails on `selected < 0` and snaps the piece back —
+                // the "premove teleports back instead of moving" bug. Promote the grab to a live
+                // move: select dragFromSq and let the normal drop path validate + play it.
+                if (selected < 0 && dragFromSq >= 0 && colorOf(board[dragFromSq]) === myColor) {
+                    var liveTg = targetsFor(dragFromSq);
+                    if (liveTg.length > 0) { selected = dragFromSq; legalTargets = liveTg; }
+                }
                 commitDropMultimethod(droppedPanel);
 
                 // Tear the ghost + dim + drag state down regardless of outcome. A drop on empty
@@ -1132,7 +1142,7 @@
             var res = applyHopFx(from, mv.to);
             if (res.captured) myTurnCapture = true;
             animateHop(from, mv.to, res.capIdx, res.promoted);
-            sfx(res.promoted ? "Promote" : "MoveSelf");
+            sfx(res.promoted ? "Promote" : res.captured ? "Capture" : "MoveSelf");
             pendingHops.push({ from: from, to: mv.to });
 
             // Can the same piece keep jumping? (only after a capture, and not if just crowned)
@@ -1209,7 +1219,7 @@
             var res = applyHopFx(seq[h].from, seq[h].to);
             if (res.captured) botTurnCapture = true;
             animateHop(seq[h].from, seq[h].to, res.capIdx, res.promoted);
-            sfx(res.promoted ? "Promote" : "MoveOpp");
+            sfx(res.promoted ? "Promote" : (res.captured ? "Capture" : "MoveOpp"));
             $.Schedule(0.35, function () { applyBotSeq(seq, h + 1); }); // step hops for visibility
         }
 
@@ -1258,8 +1268,8 @@
                 layoutPieces();
                 refreshHighlights();
                 renderMoveList();
-                if (myTurn()) status("Move rejected — resynced. Your turn.");
-                else { status("Move rejected — resyncing…"); startPolling(); }
+                if (myTurn()) status("Move rejected. Resynced, your turn.");
+                else { status("Move rejected. Resyncing…"); startPolling(); }
                 return;
             }
             Api.poll(code, seq, function (mv) {
@@ -1303,7 +1313,7 @@
                     var res = applyHopFx(mv.from, mv.to);
                     appliedSeq++;
                     animateHop(mv.from, mv.to, res.capIdx, res.promoted);
-                    sfx(res.promoted ? "Promote" : "MoveOpp");
+                    sfx(res.promoted ? "Promote" : res.captured ? "Capture" : "MoveOpp");
                     if (res.captured) oppTurnCapture = true;
                     if (oppSeqFrom < 0) oppSeqFrom = mv.from; // first hop of this opponent turn
                     if (mv.end) {
@@ -1350,6 +1360,7 @@
             if (clock) clock.stop();
             var lost = reason === "time" ? " (on time)" : "";
             status(winner === myColor ? ("🏆 You win!" + lost) : ("You lose." + lost));
+            sfx("GameEnd");
             if (session.onGameOver) session.onGameOver(winner === myColor ? "win" : "lose");
         }
 
@@ -1437,7 +1448,7 @@
             gameOver = true;
             if (turnTimer) turnTimer.stop();
             if (!session.bot && code) { try { if (MG.Api && MG.Api.leave) MG.Api.leave(code, session.tok); } catch (e) {} }
-            status("Time expired — you lose.");
+            status("Time expired. You lose.");
             if (session.onGameOver) session.onGameOver("lose");
         }
 
@@ -1477,6 +1488,7 @@
             if (w) {
                 gameOver = true;
                 render(w.line);
+                sfx("GameEnd");
                 status(w.mark === myMark ? "🏆 You win!" : "You lose.");
                 if (session.onGameOver) session.onGameOver(w.mark === myMark ? "win" : "lose");
                 return true;
@@ -1484,6 +1496,7 @@
             if (tttFull(board)) {
                 gameOver = true;
                 render(null);
+                sfx("GameEnd");
                 status("Draw.");
                 if (session.onGameOver) session.onGameOver("draw");
                 return true;
@@ -1548,8 +1561,8 @@
             if (destroyed) return;
             if (seq >= appliedSeq) {
                 render(null);
-                if (myTurn()) status("Move rejected — resynced. Your turn.");
-                else { status("Move rejected — resyncing…"); startPolling(); }
+                if (myTurn()) status("Move rejected. Resynced, your turn.");
+                else { status("Move rejected. Resyncing…"); startPolling(); }
                 return;
             }
             Api.poll(code, seq, function (mv) {
@@ -1683,6 +1696,18 @@
 
         function status(t) { if (session.onStatus) session.onStatus(t); }
         function sfx(n) { if (MG.Sound) MG.Sound.play(n); }
+        // Pick the one sound a chess move should play, highest priority first. `fx` is
+        // applyChessMove's return ({promoted, captured, castled}); `checkNow` is whether
+        // the move leaves the side-to-move in check. Check trumps everything (it's the most
+        // important cue), then promote/castle (rare, distinct events), then capture, then a
+        // plain move. `self` picks the move sound for MY move vs the opponent's.
+        function moveSound(fx, checkNow, self) {
+            if (checkNow) return "Check";
+            if (fx.promoted) return "Promote";
+            if (fx.castled) return "Castle";
+            if (fx.captured) return "Capture";
+            return self ? "MoveSelf" : "MoveOpp";
+        }
         function parsePx(v) {
             if (typeof v !== "string" || !v.length) return null;
             var m = v.match(/-?\d+(\.\d+)?/);
@@ -1896,6 +1921,16 @@
                     clearDrag();
                     refreshHighlights();
                     return;
+                }
+                // The turn flipped to me WHILE this piece was held: the drag began during the
+                // opponent's turn (a premove-grab, so DragStart set no selection), but the polled
+                // move landed before I released. Without this, DragEnd falls through to
+                // commitDropMultimethod, which bails on `selected < 0` and snaps the piece back —
+                // the "premove teleports back instead of moving" bug. Promote the grab to a live
+                // move: select dragFromSq and let the normal drop path validate + play it.
+                if (selected < 0 && dragFromSq >= 0 && cSign(board[dragFromSq]) === myColor) {
+                    var liveTg = targetsFor(dragFromSq);
+                    if (liveTg.length > 0) { selected = dragFromSq; legalTargets = liveTg; }
                 }
                 commitDropMultimethod(droppedPanel);
                 clearDrag();
@@ -2145,19 +2180,26 @@
             // skip all visuals; navLive() rebuilds the current position from the model on return.
             if (reviewIndex !== null) {
                 var wasPawnEdge = cType(board[from]) === C_PAWN && (cRow(to) === 0 || cRow(to) === 7);
+                var wasCap = isCaptureMove(from, to);
+                var wasCastle = cType(board[from]) === C_KING && Math.abs(cCol(to) - cCol(from)) === 2;
                 var rr = makeMove(board, cst, from, to);
                 board = rr[0]; cst = rr[1];
-                return { promoted: wasPawnEdge };
+                return { promoted: wasPawnEdge, captured: wasCap, castled: wasCastle };
             }
-            // Any move (opponent's polled move or bot) can capture the piece you're mid-drag on,
-            // deleting its panel + DragEnd handler and leaking the ghost. Clear the drag first;
-            // for your own move the drag already ended (no-op).
-            clearDrag();
             var mover = board[from], t = cType(mover), color = cSign(mover);
             var fr = cRow(from), fc = cCol(from), tr = cRow(to), tc = cCol(to);
             var capSq = -1;
             if (t === C_PAWN && tc !== fc && board[to] === 0) capSq = cSq(fr, tc);   // en passant
             else if (board[to] !== 0) capSq = to;
+            var castled = (t === C_KING && Math.abs(tc - fc) === 2);
+            // A move arriving mid-drag (you're queuing a premove during the opponent's turn) must
+            // NOT yank your held piece back — that was the "premove teleports back" bug. Only tear
+            // the drag down when this move actually DELETES the piece you're holding (it captures
+            // on dragFromSq): its panel + DragEnd handler vanish, which would otherwise leak the
+            // ghost, and the premove is impossible anyway. Any other move leaves the drag intact so
+            // the premove keeps tracking the cursor. (For your own/bot move the drag already ended,
+            // so dragActive is false and this is a no-op.)
+            if (dragActive && capSq === dragFromSq) { clearPremove(); clearDrag(); }
 
             var r = makeMove(board, cst, from, to);
             board = r[0]; cst = r[1];
@@ -2180,7 +2222,7 @@
                 if (tc - fc === 2) slidePiece(cSq(fr, 7), cSq(fr, 5));   // O-O  rook h→f
                 else slidePiece(cSq(fr, 0), cSq(fr, 3));                 // O-O-O rook a→d
             }
-            return { promoted: promoted };
+            return { promoted: promoted, captured: capSq >= 0, castled: castled };
         }
 
         // ── input / move flow ────────────────────────────────────────────────────────
@@ -2256,7 +2298,7 @@
             syncClockTurn();               // opponent's bank starts draining
             refreshHighlights();
             pushHistory(from, to, cap);
-            sfx(inCheck(board, turn) ? "Check" : (fx.promoted ? "Promote" : "MoveSelf"));
+            sfx(moveSound(fx, inCheck(board, turn), true));
 
             if (session.bot) {
                 if (!checkEnd()) { status("Bot is thinking…"); scheduleBotTurn(); }
@@ -2295,7 +2337,7 @@
             syncClockTurn();
             refreshHighlights();
             pushHistory(mv.from, mv.to, cap);
-            sfx(inCheck(board, myColor) ? "Check" : (fx.promoted ? "Promote" : "MoveOpp"));
+            sfx(moveSound(fx, inCheck(board, myColor), false));
             if (!checkEnd()) { status(inCheck(board, myColor) ? "Check! Your turn." : "Your turn."); tryPremove(); }
         }
 
@@ -2331,8 +2373,8 @@
                 layoutPieces();
                 refreshHighlights();
                 renderMoveList();
-                if (myTurn()) status("Move rejected — resynced. Your turn.");
-                else { status("Move rejected — resyncing…"); startPolling(); }
+                if (myTurn()) status("Move rejected. Resynced, your turn.");
+                else { status("Move rejected. Resyncing…"); startPolling(); }
                 return;
             }
             Api.poll(code, seq, function (mv) {
@@ -2368,7 +2410,7 @@
                     syncClockTurn();
                     refreshHighlights();
                     pushHistory(mv.from, mv.to, oppCap);
-                    sfx(inCheck(board, myColor) ? "Check" : (fx.promoted ? "Promote" : "MoveOpp"));
+                    sfx(moveSound(fx, inCheck(board, myColor), false));
                     if (!checkEnd()) { status(inCheck(board, myColor) ? "Check! Your turn." : "Your turn."); tryPremove(); }
                 } else {
                     $.Schedule(0.4, function () { pollOnce(myToken); });
@@ -2396,9 +2438,10 @@
             refreshHighlights();
             if (clock) clock.stop();
             var win = winner === myColor;
-            var how = reason === "time" ? (win ? "🏆 Opponent flagged — you win!" : "You lose on time.")
-                                        : (win ? "🏆 Checkmate — you win!" : "Checkmate — you lose.");
+            var how = reason === "time" ? (win ? "🏆 Opponent flagged. You win!" : "You lose on time.")
+                                        : (win ? "🏆 Checkmate. You win!" : "Checkmate. You lose.");
             status(how);
+            sfx("GameEnd");
             if (session.onGameOver) session.onGameOver(win ? "win" : "lose");
         }
         function finishDraw() {
@@ -2407,7 +2450,8 @@
             clearSelection();
             refreshHighlights();
             if (clock) clock.stop();
-            status("Stalemate — it's a draw.");
+            status("Stalemate. It's a draw.");
+            sfx("GameEnd");
             if (session.onGameOver) session.onGameOver("draw");
         }
 

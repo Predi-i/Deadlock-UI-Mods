@@ -292,7 +292,7 @@
                 // the lobby's own Leave button so the opponent(s) learn at once and the table lives.
                 destroyed = true;
                 try { if (MG.Api && MG.Api.leave) MG.Api.leave(session.code, session.tok); } catch (e) {}
-                if (MG.UI && MG.UI.kickToMenu) MG.UI.kickToMenu("Time expired — you left the table.");
+                if (MG.UI && MG.UI.kickToMenu) MG.UI.kickToMenu("Time expired. You left the table.");
                 return;
             }
             // Heads-up (online or offline) or offline 3–4: I am the loser.
