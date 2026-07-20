@@ -879,6 +879,10 @@ games: `MoveSelf`/`MoveOpp`, `Check`, `Promote`, `Illegal`, `Premove`, `GameStar
 
 Before committing, always:
 ```
+npm run lint                                   # ESLint no-undef net — catches a call to a name
+                                               # not defined in scope (the class of bug that ships
+                                               # green past node --check: `sfx`/`Net` used where the
+                                               # controller never declared them). See §10.1.
 node tools/build_worker.js                     # regenerate server/worker.js from core + rules
 node --check panorama/scripts/rules/checkers.js
 node --check panorama/scripts/rules/ttt.js
@@ -907,6 +911,29 @@ node tools/mg_parity_test.js                    # client predictor == server aut
 Then say plainly what is **verified** (syntax, pure rules, server protocol) vs what is
 **only reasoned** (anything visual/animated/drag/hover — needs a VPK repack + in-game run
 by the maintainer). Don't present unrendered layout or input behavior as confirmed.
+
+### 10.1 The lint net (why it exists, what it does NOT cover)
+
+The Panorama **controllers** (`mg_games.js`, `mg_connectfour.js`, `mg_durak.js`, `mg_poker.js`,
+`mg_ui.js`) have **0% automated coverage**: they call `$.CreatePanel` / `$.Schedule` /
+`$.RegisterEventHandler`, so they can't run outside the game. `node --check` only parses
+syntax; the `tools/*_test.js` harnesses exercise the pure engines (`rules/*.js`) + the worker,
+never the controllers. That gap shipped two live `ReferenceError`s in one week (`sfx` used in the
+TTT controller that never declared one; a bare `Net.pollDelay` where no `Net` alias exists) — both
+crash only when their branch runs in-game, both invisible to every check we had.
+
+`npm run lint` (ESLint 9 flat config, `eslint.config.js`) is the cheap guard for exactly that
+class. It is deliberately **narrow — a bug net, not a style linter**: `no-undef` (the one that
+catches the above) plus a handful of always-safe correctness rules (`no-unreachable`,
+`no-dupe-keys`, `no-duplicate-case`, `use-isnan`, `valid-typeof`, …). No stylistic rules, so the
+output is signal, not noise, and it stays green on the working, in-game-verified code. The config
+declares the Panorama globals (`$`, `Game`, `GameUI`, …) as read-only so real engine bridges don't
+false-positive; the `server/` block is `sourceType: module` (Cloudflare Worker), tools are CommonJS.
+
+**It still can't render.** Lint proves every referenced name exists and a few structural invariants
+hold; it says NOTHING about layout, animation, drag/drop, timing, or whether a move looks right.
+Those remain "in-game verified by the maintainer or unverified". `node_modules/` + `package-lock.json`
+are gitignored and dev-only — nothing here is packed into the VPK.
 
 When in doubt about a Panorama capability, **grep the game's own files**
 (`G:\GameTracking-Deadlock\game\citadel\pak01_dir\panorama\`) or the maintainer's working
