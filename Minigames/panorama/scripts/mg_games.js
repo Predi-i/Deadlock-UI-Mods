@@ -52,8 +52,12 @@
     function createClock(parent, secs, online, code, onFlag, seatNames) {
         if (!online && !secs) return { el: null, setTurn: function () {}, stop: function () {}, isTimed: false };
         var flagged = -1, running = -1, stopped = false, revealed = false;
-        var localMs = [secs * 1000, secs * 1000];   // offline banks; online we render server values
-        var lastTick = 0;
+        // Seconds banks (floats). OFFLINE: seeded from `secs`. ONLINE: null until the first
+        // server resync fills them; from then on the display is driven by LOCAL interpolation
+        // between resyncs (see interpTick), NOT by a per-second server poll.
+        var sec = online ? [null, null] : [secs, secs];
+        var lastTick = 0;              // Date.now() of the last local interpolation step
+        var lastResync = 0;            // Date.now() of the last authoritative server read (online)
 
         var wrap = $.CreatePanel("Panel", parent, "");
         wrap.AddClass("mg-clocks");
@@ -88,52 +92,68 @@
             if (onFlag) onFlag(seat);
         }
 
-        // OFFLINE: drain the running side locally, once per ~250ms tick.
-        function localTick() {
-            if (stopped || flagged >= 0 || online) return;
+        // Interpolate the running seat's bank DOWN locally, ~4×/s. Drives the display in BOTH
+        // modes: offline it's the sole authority (flags locally at 0); online it runs BETWEEN the
+        // infrequent server resyncs so the seconds tick smoothly every frame without a network hit.
+        // Online the SERVER owns flag-fall, so a locally-interpolated 0 just PINS at 0 (no local
+        // fireFlag) until the next resync confirms it — interpolation drift must never mis-flag.
+        function interpTick() {
+            if (stopped || flagged >= 0) return;
+            if (online && sec[0] === null) { $.Schedule(0.25, interpTick); return; } // await first resync
             var now = Date.now();
             if (running >= 0 && lastTick) {
-                localMs[running] = Math.max(0, localMs[running] - (now - lastTick));
-                if (localMs[running] === 0) fireFlag(running);
+                sec[running] = Math.max(0, sec[running] - (now - lastTick) / 1000);
+                if (sec[running] === 0 && !online) fireFlag(running);
             }
             lastTick = now;
-            paint([localMs[0] / 1000, localMs[1] / 1000]);
-            if (!stopped && flagged < 0) $.Schedule(0.25, localTick);
+            paint(sec);
+            if (!stopped && flagged < 0) $.Schedule(0.25, interpTick);
         }
-        // ONLINE: poll the authoritative banks and render them; the server decides flag-fall.
-        // A null reply = the lobby is untimed (or gone): before we ever revealed the clock, that
-        // means "no clock for this game" → tear the shell down and stop. Guarded by `stopped`
-        // (set from the controller's destroy), so it dies with the view.
-        function onlineTick() {
+
+        // ONLINE resync: fetch the authoritative banks and SNAP the local banks to them, correcting
+        // any interpolation drift and applying the server's flag-fall. Deliberately INFREQUENT
+        // (RESYNC_S): the clock is the only thing that used to poll continuously, and at 2 requests
+        // per read it (a) swamped the strictly one-at-a-time image queue — stalling the move-poll so
+        // an opponent's move surfaced many seconds late, the "20s to see a move" desync — and (b)
+        // burned the daily request budget (2 short games ≈ 1200 requests came almost entirely from
+        // this loop). Interpolating locally between rare resyncs keeps the display live for ~free.
+        // Reveals the shell on the first timed reply; tears it down if the lobby is untimed.
+        var RESYNC_S = 8;
+        function resyncTick() {
             if (stopped) return;
             MG.Api.clocks(code, function (r) {
                 if (stopped) return;
                 if (r) {
                     if (!revealed && wrap.IsValid()) { wrap.style.visibility = "visible"; revealed = true; }
-                    if (r.flag >= 0) running = -1;         // once flagged nobody is "active"
-                    paint(r.sec);
-                    if (r.flag >= 0) { fireFlag(r.flag); return; }
-                    $.Schedule(1.0, onlineTick);
+                    sec = [r.sec[0], r.sec[1]];        // snap to authoritative values
+                    lastTick = Date.now();
+                    if (r.flag >= 0) { running = -1; paint(sec); fireFlag(r.flag); return; }
+                    paint(sec);
+                    $.Schedule(RESYNC_S, resyncTick);
                 } else {
                     // Server says this lobby has no clock — remove the empty shell and stop polling.
                     stopped = true;
                     if (!revealed) { try { wrap.DeleteAsync(0); } catch (e) {} }
                 }
-            }, function () { if (!stopped) $.Schedule(1.2, onlineTick); });
+                // Before the first reveal a transport hiccup should retry soon (don't leave the
+                // clock invisible for 8s); once revealed, resume the slow authoritative cadence.
+            }, function () { if (!stopped) $.Schedule(revealed ? RESYNC_S : 1.2, resyncTick); });
         }
 
-        if (online) { onlineTick(); }
-        else { lastTick = Date.now(); localTick(); }
+        lastTick = Date.now();
+        interpTick();
+        if (online) resyncTick();
 
         return {
             el: wrap,
             isTimed: true,
-            // Set which seat's clock is running (the side to move). Offline this switches which
-            // bank drains; online it's cosmetic (the server already knows) but keeps the active
-            // highlight responsive between the ~1s polls.
+            // Set which seat's clock is running (the side to move). Banks the elapsed time to the
+            // seat that was running, then switches. Works identically online and offline now — the
+            // local interpolation is accurate at turn granularity, and the ~8s resync corrects any
+            // drift against the authoritative server banks.
             setTurn: function (seat) {
-                if (!online && running >= 0 && lastTick) {
-                    localMs[running] = Math.max(0, localMs[running] - (Date.now() - lastTick));
+                if (running >= 0 && lastTick && sec[running] !== null) {
+                    sec[running] = Math.max(0, sec[running] - (Date.now() - lastTick) / 1000);
                 }
                 running = seat; lastTick = Date.now();
             },
@@ -1414,6 +1434,7 @@
         var gameOver = false;
 
         function status(t) { if (session.onStatus) session.onStatus(t); }
+        function sfx(n) { if (MG.Sound) MG.Sound.play(n); }
         function myTurn() { return turn === myMark && !gameOver; }
 
         // Marks are drawn with panels, NOT font glyphs: the game font has neither

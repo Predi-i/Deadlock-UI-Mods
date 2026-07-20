@@ -821,6 +821,17 @@ Two DIFFERENT time widgets, both built in `mg_games.js` and exposed on `MG.Widge
 - **Server side clocks** — the time-control matchmaking (1/3/5/10 min / Any) in **chess &
   checkers**. Each side's remaining time is server-owned; the picker lives in `renderTimeControl`
   (`mg_ui.js`) and the concrete/"Any"(−1)→5min mapping is described there.
+  - **Display is locally interpolated, resync is rare.** The clock does NOT poll the server once a
+    second. `createClock` runs a ~4×/s LOCAL interpolation (`interpTick`) that drains the running
+    seat's bank between authoritative reads, and only resyncs against `/api/clocks` every
+    `RESYNC_S = 8` s (`resyncTick`), which snaps the banks to the server values and applies flag-fall.
+    The server stays authoritative (flag-fall is server-decided; a locally-interpolated 0 just PINS
+    at 0 until a resync confirms it). This was a real bug fix, not a cosmetic tweak: the old
+    once-a-second poll issued **2 requests/second for the whole game**, which (a) swamped the strictly
+    one-at-a-time image queue in `mg_net.js` and stalled the move-poll so an opponent's move surfaced
+    many seconds late (the "20s to see a move" / "his clock ticks on my turn" desync), and (b) burned
+    the request budget — ~2 short games ran up ~1200 Cloudflare requests almost entirely from this
+    loop. Local interpolation keeps the display live for ~free; the 8s resync corrects drift.
 - **Per-turn countdown timer** (`createTurnTimer`) — a `TURN_SECS = 25` budget per turn in
   **durak, poker, TTT & Connect Four**. The controller calls `start(onExpire)` when the LOCAL human
   is put on the clock and `stop()` the instant they act (or a bot / online opponent takes over). If
