@@ -590,6 +590,13 @@
                 // premove). Only block it when neither is possible (game over etc.).
                 if (!myTurn() && !canPremove()) return;
                 var sq = piece._sq;
+                // Only ever start a drag on a square that STILL holds one of MY pieces. A piece
+                // the opponent just captured lingers ~0.22s as a shrinking, still-draggable panel;
+                // grabbing it would (a) build the ghost from board[sq] — now the opponent's piece,
+                // so a wrong-colour ghost — and (b) leak that ghost forever, because the fade
+                // deletes the panel mid-drag and the engine never fires DragEnd on a dead panel.
+                // My own pieces stay mine throughout the opponent's turn, so premove-drags pass.
+                if (colorOf(board[sq]) !== myColor) return;
                 // ALWAYS provide a ghost as the drag visual so the engine never drags the
                 // real piece around (QOLLOCK sets dragEvent.displayPanel for exactly this).
                 var ghost = $.CreatePanel("Panel", piecesLayer, "");
@@ -994,11 +1001,14 @@
             // so skip the visual (the model already advanced via applyHopFx). navLive() rebuilds
             // the current position from the model when the player returns to the live game.
             if (reviewIndex !== null) { clearDrag(); return; }
-            // ANY hop can capture the very piece you're mid-drag on (an opponent's polled hop, or
-            // a bot move). That capture deletes the piece panel, taking its DragEnd handler with
-            // it, so the ghost would hang forever. Clear the drag up front. For your OWN move the
-            // drag already ended (ghost null), so this is a harmless no-op.
-            clearDrag();
+            // A hop arriving mid-drag (you're queuing a premove during the opponent's turn) must
+            // NOT yank your held piece back — that snap-back was the checkers copy of the chess
+            // "premove teleports back" bug. Only tear the drag down when this hop actually DELETES
+            // the piece you're holding (it captures on dragFromSq): its panel + DragEnd handler
+            // vanish, which would otherwise leak the ghost, and the premove is impossible anyway.
+            // Any other hop leaves the drag intact so the premove keeps tracking the cursor. (For
+            // your OWN hop the drag already ended, so dragActive is false and this is a no-op.)
+            if (dragActive && capIdx === dragFromSq) { clearPremove(); clearDrag(); }
             if (capIdx >= 0 && pieceEls[capIdx]) {
                 var dead = pieceEls[capIdx];
                 delete pieceEls[capIdx];
@@ -1892,6 +1902,14 @@
             $.RegisterEventHandler("DragStart", piece, function (_p, dragEvent) {
                 if (destroyed || reviewIndex !== null) return; // no dragging while reviewing history
                 var sq = piece._sq;
+                // Only start a drag on a square that STILL holds one of my pieces. A piece the
+                // opponent just captured lingers ~0.22s as a shrinking panel that is still
+                // draggable (draggability is fixed at creation); grabbing it during that fade
+                // built a ghost from the OPPONENT's piece now on `sq`, and when the fade deleted
+                // the panel mid-drag the engine never fired DragEnd → the ghost leaked on screen
+                // forever. Gating on "sq is still mine" refuses that grab. My own pieces stay mine
+                // through the opponent's turn, so premoves are unaffected.
+                if (cSign(board[sq]) !== myColor) return;
                 var ghost = $.CreatePanel("Panel", piecesLayer, "");
                 ghost.AddClass("mg-piece");
                 ghost.AddClass("mg-chess-piece");
