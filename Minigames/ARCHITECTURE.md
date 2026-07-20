@@ -164,18 +164,26 @@ All routes are GET, all return a PNG, all take `&rnd=<random>` to defeat engine 
 Client appends `.png` to every path (Panorama's loader only fetches URLs that look like
 images; the worker strips `.png` before routing).
 
-| Route | Response (w, h) encodes |
+**Downlink is level-quantised (2026-07-20 rewrite).** Every DATA response carries a small
+*level* per dimension, not a raw pixel: `dim = level*STEP + BASE` (`STEP=9, BASE=15`). The old
+`dim = int+1` scheme died on UI-scaled displays (the engine biases a small size up ~1px, so
+value 1 rendered as 2 — corrupting corner squares, `(1,1)`, and code halves). The `(w, h)`
+pairs in the table are those **levels** (what the client decodes back), safe range `0..63` per
+dim. Only `/api/probe` stays **literal pixels** — it's the calibration reference, read raw.
+
+| Route | Response (w, h) LEVELS |
 |---|---|
-| `/api/probe` | `(600, 1000)` — swap + scale calibration reference |
+| `/api/probe` | `(600, 1000)` LITERAL px — swap + scale calibration reference |
 | `/api/ping` | `(1, 1)` |
-| `/api/create?game=G&tok=T` | `(CODE_HI, CODE_LO+1)` — new private lobby, host = seat 0 |
-| `/api/quick?game=G&tok=T` | JOINER `(CODE_HI, CODE_LO+1)` · HOST `(CODE_HI+100, CODE_LO+1)` |
+| `/api/create?game=G&tok=T` | `dCode(code, host=false)` — new private lobby, host = seat 0 |
+| `/api/quick?game=G&tok=T` | `dCode(code, HOST\|JOINER)` — role is the code **band**, not `+100` |
 | `/api/cancel?code=C` | `(1,1)` |
-| `/api/join?code=C&tok=T` | `(G,1)` ok · `(20,1)` missing · `(21,1)` full |
-| `/api/status?code=C` | `(players,1)` · `(9,1)` gone |
+| `/api/join?code=C&tok=T` | `(G, tcIndex+1)` ok · `(20,1)` missing · `(21,1)` full · `(9,3)` bad-token |
+| `/api/status?code=C` | `(players, game+1)` · `(9,1)` gone |
 | `/api/move?code=C&from=F&to=T&end=E&tok=T` | `(1,1)` ok · `(9,1)` not-your-turn · `(9,2)` illegal · `(9,3)` bad-token · `(9,9)` gone |
-| `/api/poll?code=C&since=S` | `(from+1 [+100 if end], to+1)` · `(1,1)` nothing new |
+| `/api/poll?code=C&since=S` | `(from, to)` RAW squares 0..63 · `(1,1)` nothing new |
 | `/api/reset?code=C&game=G&tok=T` | `(1,1)` · `(9,3)` bad-token |
+| `/api/clocks?code=C&seat=S` | `(30 + sec>>6, sec&63)` one seat · `(9,9)` gone · `(9,8)` untimed |
 
 ### 5.1 Server authority (seats, tokens, validation)
 
@@ -195,14 +203,29 @@ images; the worker strips `.png` before routing).
   rebuilds the board from the accepted `moves` log (`replayAccepted`), and resumes polling.
   Honest desyncs self-heal; a cheat's illegal move simply never lands.
 
-Key encoding tricks and **why**:
-- **Code split across both dims** (`hi = code/100`, `lo = code%100 + 1`) keeps both numbers
-  small (≤ ~128px) so the engine never lays out a huge image.
-- **`+1` on the low half** and on squares (`from+1`, `to+1`) — image dims are always ≥ 1
-  (the PNG encoder clamps), so a raw 0 can never be read back. Every sentinel is non-zero.
-- **`end` flag is `+100`, not a low bit** — a low bit would be eaten by ±1 rounding from
-  UI scaling; a whole hundreds-range gap survives it.
+Key encoding tricks and **why** (current codec is STEP=9 level-quantisation, 2026-07-20):
+- **Level codec, not raw pixels.** Every DATA response dimension is a small *level* 0..63,
+  emitted as `dim = level*9 + 15` (`d()` / `STEP=9, BASE=15`). The old `dim = int+1` scheme
+  died on UI-scaled displays (the engine biases small sizes up ~1px, so `1` rendered as `2`
+  and corrupted corner squares, the `(1,1)` marker and every code half). 9 logical px between
+  levels survives a ±2px engine error even when a sub-1080p display downscales. Proven 720p–8K
+  by `tools/mg_simulate_resolutions.js`. Only `/api/probe` stays literal pixels (600×1000).
+- **Codes rebased to 0..1023** (was 4-digit 1000..9999) so a code half fits one level.
+  `dCode` splits `code = hi<<6 | lo`: width = `BAND + hi`, height = `lo`. The width **band**
+  encodes the role — joiner/create = 24..39, host = 40..55 — so the fragile `+100` host flag
+  is gone. `validCode()` canonicalises the client's decimal code to the int storage key.
+- **`end` flag is NOT transmitted.** `from+to+end` is 13 bits > the 12 the codec allows, so
+  poll sends only RAW squares `(from,to)` and the client DERIVES `end` by replaying the SAME
+  shared rules engine on the SAME board (a mid-chain capture with more jumps keeps the turn;
+  else it hands off). Server stays authoritative on move *legality*; `end` is pure segmentation.
 - **`from != to` always** in a real move, so `(1,1)` is a safe "nothing new" marker.
+- **Sentinel widths** `{1 ok · 9 err · 20 missing · 21 full · 22 started}` are kept clear of
+  every band (codes 24..55, clocks 30..39, rooms 1..4/51..54) so a live reply is never misread
+  as a sentinel. The in-game hot loop (move/poll/log/draw/clocks) is NEVER rate-limited — a
+  `(9,x)` throttle sentinel there would decode as a bogus move and corrupt the board.
+- **Clocks are per-seat** (a bank is 0..600 = 10 bits, needs both dims): width `30 + (sec>>6)`,
+  height `sec&63`; caller passes `&seat=0|1` and reads both. Both clients read the SAME server
+  clock, so flag-fall is server-decided with no drift.
 - **State is one Durable Object** ("hub") → strongly consistent, no KV lag between players.
 
 ### Calibration (the subtle part)
@@ -636,10 +659,11 @@ input recipe, and the move/poll transport.
   `Play vs Bot` like checkers. ⚠ Depth/budget are a **perf guess** for Panorama — if the bot
   hitches noticeably in-game, drop `DEPTH` to 2 or lower `budget.max`.
 
-⚠ **Poll decode range.** Checkers/chess both send squares `0..63`, so `poll` encodes
-`(from + 1 [+100 if end], to + 1)` → up to **164 × 64 px**. That's larger than checkers'
-usual reads but well within the 600×1000 probe, so calibration covers it — still worth a
-sanity check on the first in-game chess sync.
+⚠ **Poll decode range.** Checkers/chess both send RAW squares `0..63`, so `poll` returns
+`(from, to)` as levels 0..63 → `dim = level*9 + 15`, at most **582 × 582 px** (level 63).
+That's within the 600×1000 probe envelope, so calibration covers it — still worth a sanity
+check on the first in-game chess sync. The `end` flag is NOT transmitted (it wouldn't fit
+the codec); the client derives it by replaying the shared rules on the same board.
 
 ---
 
