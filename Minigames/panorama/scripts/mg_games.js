@@ -49,9 +49,11 @@
     //   OFFLINE (bot) — no server, so we tick locally from `secs`: the side to move drains, and
     //             when it hits 0 that side flags. secs=0 offline → no clock (a no-op stub).
     // onFlag(seat) fires once when a side runs out. seatNames labels each clock.
-    function createClock(parent, secs, online, code, onFlag, seatNames) {
+    function createClock(parent, secs, online, code, onFlag, seatNames, mySeat) {
         if (!online && !secs) return { el: null, setTurn: function () {}, stop: function () {}, isTimed: false };
         var flagged = -1, running = -1, stopped = false, revealed = false;
+        var warned10 = false;          // TenSeconds sfx fires once when MY bank crosses 10s
+        if (typeof mySeat !== "number") mySeat = -1;   // -1 = unknown → never beep (safe default)
         // Seconds banks (floats). OFFLINE: seeded from `secs`. ONLINE: null until the first
         // server resync fills them; from then on the display is driven by LOCAL interpolation
         // between resyncs (see interpTick), NOT by a per-second server poll.
@@ -63,13 +65,19 @@
         wrap.AddClass("mg-clocks");
         if (online) wrap.style.visibility = "collapse";   // hidden until the first timed poll reveals it
         var rows = [];
-        for (var s = 0; s < 2; s++) {
+        // Build the two rows TOP→BOTTOM with MY seat at the bottom, so my clock sits under the
+        // board I'm playing from (my colour is always the bottom side — see toDisplay). The `rows`
+        // array stays SEAT-indexed (paint/setTurn/fireFlag are unchanged); only the visual creation
+        // order changes. mySeat unknown (-1) keeps the legacy white-top/black-bottom order.
+        var rowOrder = (mySeat === 0 || mySeat === 1) ? [1 - mySeat, mySeat] : [0, 1];
+        for (var oi = 0; oi < 2; oi++) {
+            var s = rowOrder[oi];
             var row = $.CreatePanel("Panel", wrap, "");
             row.AddClass("mg-clock-row");
             var name = $.CreatePanel("Label", row, ""); name.AddClass("mg-clock-name");
             name.text = (seatNames && seatNames[s]) || ("Seat " + (s + 1));
             var time = $.CreatePanel("Label", row, ""); time.AddClass("mg-clock-time");
-            rows.push({ row: row, time: time });
+            rows[s] = { row: row, time: time };
         }
 
         function fmt(sec) {
@@ -104,6 +112,12 @@
             if (running >= 0 && lastTick) {
                 sec[running] = Math.max(0, sec[running] - (now - lastTick) / 1000);
                 if (sec[running] === 0 && !online) fireFlag(running);
+            }
+            // Warn once when MY bank drops into the final 10s while it's running. A chess/checkers
+            // bank only counts down, so this fires at most once per game. mySeat = -1 (unknown) skips.
+            if (!warned10 && mySeat >= 0 && running === mySeat && sec[mySeat] !== null && sec[mySeat] <= 10) {
+                warned10 = true;
+                if (MG.Sound) MG.Sound.play("TenSeconds");
             }
             lastTick = now;
             paint(sec);
@@ -228,6 +242,7 @@
         var gen = 0;                       // bumps on every start/stop/destroy → stale ticks bail
         var dead = false, running = false, deadline = 0, expireCb = null;
         var curSecs = TURN_SECS;           // budget for the CURRENT run (start may override per call)
+        var warned10 = false;              // TenSeconds sfx fires once per turn as the bar crosses 10s
 
         // Snap the fill FULL (no transition) so a fresh turn starts from a full bar; the arm()
         // below then flips on the animated class and pushes it to empty, tweening over TURN_SECS.
@@ -261,6 +276,12 @@
             if (num.IsValid()) num.text = String(Math.ceil(remain));
             fill.SetHasClass("mg-tt-low", remain <= 10);
             fill.SetHasClass("mg-tt-crit", remain <= 5);
+            // Warn ONCE as the clock crosses into the final 10s (only if the turn had more than
+            // 10s to begin with — durak's 10s Bito window would otherwise beep the instant it opens).
+            if (!warned10 && remain <= 10 && curSecs > 10) {
+                warned10 = true;
+                if (MG.Sound) MG.Sound.play("TenSeconds");
+            }
             $.Schedule(0.2, function () { tick(myGen); });
         }
 
@@ -275,6 +296,7 @@
                 var myGen = gen;
                 running = true;
                 curSecs = (secs && secs > 0) ? secs : TURN_SECS;
+                warned10 = false;
                 expireCb = onExpire || null;
                 deadline = Date.now() + curSecs * 1000;
                 snapFull();               // reveals the fill (opacity) — the wrap is always laid out
@@ -418,7 +440,7 @@
             // Clocks sit at the TOP of the side panel (opponent above, you below — see clockSeat).
             // secs=0 → the module builds nothing and every call is a no-op, so an untimed game is
             // visually unchanged. Server seat 0 = host = white; clockSeat maps that to my view.
-            clock = createClock(panel, timeControl, !session.bot, code, onFlag, clockNames());
+            clock = createClock(panel, timeControl, !session.bot, code, onFlag, clockNames(), clockSeatFor(myColor));
             var head = $.CreatePanel("Label", panel, "");
             head.AddClass("mg-movelist-head");
             head.text = "Moves";
@@ -1795,7 +1817,7 @@
             var panel = $.CreatePanel("Panel", twoCol, "MG_ChessMoves");
             panel.AddClass("mg-movelist");
             // Clocks at the top of the side panel (untimed → builds nothing; see createClock).
-            clock = createClock(panel, timeControl, !session.bot, code, onFlag, clockNames());
+            clock = createClock(panel, timeControl, !session.bot, code, onFlag, clockNames(), clockSeatFor(myColor));
             var head = $.CreatePanel("Label", panel, "");
             head.AddClass("mg-movelist-head");
             head.text = "Moves";
