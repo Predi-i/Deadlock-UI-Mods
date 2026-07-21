@@ -816,8 +816,20 @@ Registers **game id 6** (`enabled:true`). Offline vs bot is proven in Node; onli
   via `pact` without optimistic mutation (the echoed event is the single source of truth).
 - **Bot** (`rules/poker.js` `botAction`, driven from the controller): `preflopStrength` /
   `madeStrength` heuristics decide fold/check/call/raise; tune later.
+- **⚠ The room's seat token must be CAPTURED, not read from the global at Deal-time.** `pcreate`
+  is async (~1.5s image load). The old Deal handler read the module-global `currentTok` when the
+  button fired; if the user launched another create/join during that window, `currentTok` pointed
+  at the OTHER lobby, so `pstart` sent a token seat 0 never bound → server `seatOf` miss → `(9,3)`,
+  surfaced as a silent "couldn't deal" (the maintainer's 4-digit-code DEAL report — the 4-digit
+  code was a coincidence; the server deals fine for every code 0..1023, proven by `mg_server_test`).
+  Fix: `startCreate`/`doJoin` capture the token at the call site and thread it into
+  `renderPokerRoom(…, tok)` / `renderDurakRoom(…, tok)`, which re-establish it as `currentTok` and
+  use a closure `roomTok` for the Deal/Start `pstart`/`start` call — so the shown room is always
+  self-consistent regardless of global churn. Same pattern for durak's private table.
 - Verified in Node: rules + bot + showdown (`mg_poker_test`), server routes/privacy
-  (`mg_server_test`). Reasoned only (needs a VPK repack): the render/betting UI + online sync.
+  (`mg_server_test`). Reasoned only (needs a VPK repack): the render/betting UI + online sync + the
+  room-token binding above (the `(9,3)` was never reproduced server-side — the fix is a reasoned
+  hardening of the most plausible client-side cause).
 
 ---
 
@@ -857,6 +869,16 @@ Two DIFFERENT time widgets, both built in `mg_games.js` and exposed on `MG.Widge
 - **Server side clocks** — the time-control matchmaking (1/3/5/10 min / Any) in **chess &
   checkers**. Each side's remaining time is server-owned; the picker lives in `renderTimeControl`
   (`mg_ui.js`) and the concrete/"Any"(−1)→5min mapping is described there.
+  - **My clock is always the BOTTOM row.** `createClock` takes a `mySeat` arg (the caller passes
+    `clockSeatFor(myColor)`); it builds the two rows top→bottom as `[opponentSeat, mySeat]` so my
+    clock sits under the board I play from (my colour is always the bottom side — see `toDisplay`).
+    The `rows[]` array stays SEAT-indexed, so `paint`/`setTurn`/`fireFlag` are unchanged — only the
+    visual creation order flips. `mySeat = -1` (unknown) keeps the legacy white-top/black-bottom order.
+  - **10-second warning.** `interpTick` fires `MG.Sound.play("TenSeconds")` ONCE when MY running bank
+    (`sec[mySeat]`) drops to ≤10s. A chess/checkers bank only counts down, so it's at most one beep
+    per game; `mySeat = -1` skips it. (The soundevent was always registered — the bug was that
+    nothing ever *called* `play("TenSeconds")`; the per-turn timer's `tick()` fires the same sfx for
+    durak/poker/TTT/C4, guarded by `curSecs > 10` so durak's 10s Bito window doesn't beep on open.)
   - **Display is locally interpolated, resync is rare.** The clock does NOT poll the server once a
     second. `createClock` runs a ~4×/s LOCAL interpolation (`interpTick`) that drains the running
     seat's bank between authoritative reads, and only resyncs against `/api/clocks` every
