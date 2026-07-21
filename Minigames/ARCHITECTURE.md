@@ -850,17 +850,31 @@ nothing is polled and no token is used.
 Disconnect signals: `status` returning `(9,1)` while a host waits, or `poll` returning
 `(9,9)`, route to `MG.UI.kickToMenu(reason)`.
 
-**Adaptive poll cadence (request-budget control).** Polling `/api/poll` (or `/api/dlog`,
-`/api/plog`) for the opponent's move is the dominant request cost of a match. The cadence is
-defined ONCE in `mg_net.js` as `MG.Net.pollDelay(misses)` and reused by every online game:
-`misses < 4` → **1.0s**, else → **1.6s**. `misses` counts consecutive empty ("nothing new")
-polls this turn and is reset to 0 on each real move (and in `startPolling`), so a wait starts
-fast (responsive when the opponent replies quickly) and backs off while they think (a long
-think must not cost ~2.5 req/s). Every game keeps a local `var pollMisses = 0` and passes
-`pollMisses++` to `pollDelay` in both the "nothing new" and transport-error branches. ⚠ There
-is **no `Net` alias** in the controllers — call it fully qualified as `MG.Net.pollDelay(...)`
-(a bare `Net.pollDelay` throws `ReferenceError` and, like the TTT `sfx` crash, would only
-surface in-game — the test harnesses don't execute controller code).
+**Adaptive poll cadence (request-budget control).** Cloudflare's free tier is ONE shared bucket
+for the whole mod: 100k Worker requests/day AND 100k Durable-Object requests/day (every `/api/*`
+image hits both), reset 00:00 UTC, and blowing it returns **Error 1027 for everyone** until reset.
+So request volume is the release-critical resource, and it's controlled by two DISTINCT cadences,
+both defined ONCE in `mg_net.js`:
+
+- **`MG.Net.pollDelay(misses)` — IN-GAME opponent polling** (`/api/poll`, `/api/dlog`, `/api/plog`),
+  the dominant cost of an *active* match. `misses < 4` → **1.0s**, `< 12` → **1.6s**, else →
+  **2.5s**. `misses` counts consecutive empty ("nothing new") polls this turn and is reset to 0 on
+  each real move (and in `startPolling`), so a wait starts fast (responsive when the opponent
+  replies quickly) and backs off through two tiers while they think (a long think must not cost
+  ~2.5 req/s). Every game keeps a local `var pollMisses = 0` and passes `pollMisses++` to
+  `pollDelay` in both the "nothing new" and transport-error branches.
+- **`MG.Net.waitDelay(misses)` — WAITING-ROOM polling** (lobby/room fill, rematch accept, quick /
+  multi matchmaking). Totally different cost profile: nobody's mid-move, latency is irrelevant (a
+  chess lobby, not a shooter), and these screens can sit open for MINUTES — so a fixed ~1s poll was
+  pure waste that scaled with idle players, not games played. Ramps HARD and monotonically (a
+  waiting room has no "real move" to reset on): steps `[1.5, 1.5, 3.0, 3.0, 4.0, 5.0]`s, clamped at
+  5s. Each waiting loop keeps its own `var misses = 0` and passes `misses++` in both branches. The
+  six loops on it: `pollDurakRoom`, `pollPokerRoom`, `pollDurakTable`, `waitForJoiner`,
+  `waitForMultiMatch`, and the rematch `tick` (`mg_ui.js`).
+
+⚠ There is **no `Net` alias** in the controllers — call both fully qualified as `MG.Net.pollDelay`
+/ `MG.Net.waitDelay` (a bare `Net.pollDelay` throws `ReferenceError` and, like the TTT `sfx` crash,
+would only surface in-game — the test harnesses don't execute controller code).
 
 ### 9.1 Shared clocks & the per-turn timer (`MG.Widgets`, mg_games.js)
 

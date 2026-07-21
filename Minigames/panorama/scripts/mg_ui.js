@@ -1137,15 +1137,16 @@
             if (MG.Sound) MG.Sound.play("GameStart");
             renderGame(gameId, code, isHost, false, opts);
         }
+        var misses = 0;
         function tick() {
             if (token !== rematchPollToken || view !== "game") return;
             MG.Api.rematch(code, currentTok, baseGen, function (r) {
                 if (token !== rematchPollToken || view !== "game") return;
                 if (r.state === 9) { kickToMenu("Opponent left."); return; } // (9,9) gone / (9,3) bad token
                 if (r.state === 2 || r.gen > baseGen) { rematchGen = r.gen; restart(); return; }
-                $.Schedule(0.6, tick);   // still waiting for the opponent
+                $.Schedule(MG.Net.waitDelay(misses++), tick);   // still waiting for the opponent
             }, function () {
-                $.Schedule(0.8, tick);   // transport hiccup: retry
+                $.Schedule(MG.Net.waitDelay(misses++), tick);   // transport hiccup: retry
             });
         }
         tick();
@@ -1258,6 +1259,7 @@
     function pollDurakRoom(code, isHost, seat1Label) {
         statusPollToken++;
         var token = statusPollToken;
+        var misses = 0;
         function tick() {
             if (token !== statusPollToken || view !== "room") return;
             MG.Api.room(code, function (r) {
@@ -1269,8 +1271,8 @@
                 if (r.started) { renderGame(3, code, isHost, false, { seat: isHost ? 0 : 1, numPlayers: 2 }); return; }
                 if (isHost) setStatus(r.players >= 2 ? "Player 2 joined. Press Start." : "Waiting for player 2…");
                 else setStatus("Waiting for host to start…");
-                $.Schedule(1.0, tick);
-            }, function () { $.Schedule(1.5, tick); });
+                $.Schedule(MG.Net.waitDelay(misses++), tick);
+            }, function () { $.Schedule(MG.Net.waitDelay(misses++), tick); });
         }
         tick();
     }
@@ -1337,6 +1339,7 @@
     function pollPokerRoom(code, isHost, cap, seat, seatLabels) {
         statusPollToken++;
         var token = statusPollToken;
+        var misses = 0;
         function tick() {
             if (token !== statusPollToken || view !== "room") return;
             MG.Api.proom(code, function (r) {
@@ -1350,8 +1353,8 @@
                 if (r.started) { renderGame(6, code, isHost, false, { seat: seat, numPlayers: cap }); return; }
                 if (isHost) setStatus(r.players >= 2 ? (r.players + "/" + cap + " seated. Press Deal.") : "Waiting for players…");
                 else setStatus("Waiting for the host to deal…");
-                $.Schedule(1.0, tick);
-            }, function () { $.Schedule(1.5, tick); });
+                $.Schedule(MG.Net.waitDelay(misses++), tick);
+            }, function () { $.Schedule(MG.Net.waitDelay(misses++), tick); });
         }
         tick();
     }
@@ -1417,6 +1420,7 @@
     function pollDurakTable(code, isHost, cap, seat, seatLabels) {
         statusPollToken++;
         var token = statusPollToken;
+        var misses = 0;
         function tick() {
             if (token !== statusPollToken || view !== "room") return;
             MG.Api.droom(code, function (r) {
@@ -1430,8 +1434,8 @@
                 if (r.started) { renderGame(3, code, isHost, false, { seat: seat, numPlayers: cap }); return; }
                 if (isHost) setStatus(r.players >= 2 ? (r.players + "/" + cap + " seated. Press Start.") : "Waiting for players…");
                 else setStatus("Waiting for the host to start…");
-                $.Schedule(1.0, tick);
-            }, function () { $.Schedule(1.5, tick); });
+                $.Schedule(MG.Net.waitDelay(misses++), tick);
+            }, function () { $.Schedule(MG.Net.waitDelay(misses++), tick); });
         }
         tick();
     }
@@ -1441,13 +1445,14 @@
     function waitForJoiner(code, tc) {
         statusPollToken++;
         var token = statusPollToken;
+        var misses = 0;
         function tick() {
             if (token !== statusPollToken) return;
             MG.Api.status(code, function (st) {
                 if (token !== statusPollToken) return;
                 if (st.players === 2) { renderGame(selectedGameId, code, true, false, { timeControl: tc | 0 }); return; }
-                $.Schedule(1.5, tick);
-            }, function () { $.Schedule(2.0, tick); });
+                $.Schedule(MG.Net.waitDelay(misses++), tick);
+            }, function () { $.Schedule(MG.Net.waitDelay(misses++), tick); });
         }
         tick();
     }
@@ -1597,6 +1602,7 @@
     function waitForMultiMatch(code, isHost) {
         statusPollToken++;
         var token = statusPollToken;
+        var misses = 0;
         function tick() {
             if (token !== statusPollToken) return;
             MG.Api.status(code, function (st) {
@@ -1606,8 +1612,8 @@
                     renderGame(st.game, code, isHost);
                     return;
                 }
-                $.Schedule(1.5, tick);
-            }, function () { $.Schedule(2.0, tick); });
+                $.Schedule(MG.Net.waitDelay(misses++), tick);
+            }, function () { $.Schedule(MG.Net.waitDelay(misses++), tick); });
         }
         tick();
     }
