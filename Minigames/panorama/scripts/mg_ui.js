@@ -39,6 +39,12 @@
     var activeGame = null;        // { destroy }
     var currentCode = 0;
     var currentTok = "";          // seat token for the CURRENT online game (see mg_net MG.Session)
+    // Lobby codes live in 0..1023 (the level-quantised downlink can't carry a bigger int — see
+    // mg_net dCode). That means most codes are 3 digits and a few are 4 (1000..1023). Pad the
+    // DISPLAYED code to a stable 4 digits so it always looks like a code; the join input strips
+    // non-digits and validCode() parseInt's it, so "0838" and "838" resolve to the same lobby
+    // (a padded and an unpadded client still interoperate).
+    function codeStr(code) { var s = "" + (code | 0); while (s.length < 4) s = "0" + s; return s; }
     var statusPollToken = 0;
     var rematchGen = 0;           // our view of the online lobby's rematch generation (0 = fresh)
     var rematchPollToken = 0;     // guards the rematch poll loop, like statusPollToken
@@ -1035,7 +1041,7 @@
             var box = $.CreatePanel("Panel", modalBody, "");
             box.AddClass("mg-code-box");
             var cap = $.CreatePanel("Label", box, ""); cap.AddClass("mg-code-cap"); cap.text = "Lobby code:";
-            var big = $.CreatePanel("Label", box, ""); big.AddClass("mg-code-big"); big.text = String(code);
+            var big = $.CreatePanel("Label", box, ""); big.AddClass("mg-code-big"); big.text = codeStr(code);
             var hint = $.CreatePanel("Label", box, ""); hint.AddClass("mg-code-hint");
             hint.text = "Share this code with your friend, then they click Join.";
         }
@@ -1165,9 +1171,10 @@
         // collapses to 5 min here. Untimed games send 0 (server ignores it anyway).
         // Poker owns its route set (2–4 seats) — pcreate, not the generic 2-cap create.
         if (isPokerOnlineGame(selectedGameId)) {
-            MG.Api.pcreate(pokerSeatCap, currentTok, function (res) {
+            var pokTok = currentTok;   // capture THIS lobby's token; a later create can't reassign it
+            MG.Api.pcreate(pokerSeatCap, pokTok, function (res) {
                 currentCode = res.code;
-                renderPokerRoom(res.code, true, pokerSeatCap);
+                renderPokerRoom(res.code, true, pokerSeatCap, 0, pokTok);
             }, function (why) {
                 setStatus(why === "token" ? "Session error, please retry." : "Couldn't create the poker table.");
             });
@@ -1176,9 +1183,10 @@
         // Durak's private lobby seats 2–4 on its own routes (dcreate/djoin/droom), so Create
         // routes through dcreate — never the generic 2-cap create — exactly like poker.
         if (isDurakOnlineGame(selectedGameId)) {
-            MG.Api.dcreate(durakSeatCap, currentTok, function (res) {
+            var durTok = currentTok;
+            MG.Api.dcreate(durakSeatCap, durTok, function (res) {
                 currentCode = res.code;
-                renderDurakRoom(res.code, true, durakSeatCap, 0);
+                renderDurakRoom(res.code, true, durakSeatCap, 0, durTok);
             }, function (why) {
                 setStatus(why === "token" ? "Session error, please retry." : "Couldn't create the Durak table.");
             });
@@ -1212,7 +1220,7 @@
             var box = $.CreatePanel("Panel", modalBody, "");
             box.AddClass("mg-code-box");
             var cap = $.CreatePanel("Label", box, ""); cap.AddClass("mg-code-cap"); cap.text = "Durak lobby code:";
-            var big = $.CreatePanel("Label", box, ""); big.AddClass("mg-code-big"); big.text = String(code);
+            var big = $.CreatePanel("Label", box, ""); big.AddClass("mg-code-big"); big.text = codeStr(code);
             var hint = $.CreatePanel("Label", box, ""); hint.AddClass("mg-code-hint");
             hint.text = "2-player online Durak. Host starts after the second player joins.";
         }
@@ -1270,18 +1278,24 @@
     // Poker lobby room: 2–4 seats. Host sees the shared code + a Deal button (usable once ≥2
     // seats are filled); joiners wait for the host to deal. `cap` is the table size fixed at
     // create; `mySeat` is the joiner's seat (host = 0).
-    function renderPokerRoom(code, isHost, cap, mySeat) {
+    function renderPokerRoom(code, isHost, cap, mySeat, tok) {
         cleanupCurrentView(false);
         view = "room";
         setTitle(isHost ? "Poker Table" : "Joined Poker Table");
         clearBody();
         currentCode = code;
+        // Re-establish the global seat token to THIS room's token. A create/join is async (~1.5s
+        // image load); if the user fired another create meanwhile, currentTok would hold the OTHER
+        // lobby's token and Deal would send it → server seatOf miss → (9,3) "couldn't deal". Binding
+        // it here (and capturing roomTok for the Deal handler) makes the shown room self-consistent.
+        var roomTok = tok || currentTok;
+        currentTok = roomTok;
         var seat = isHost ? 0 : (mySeat | 0);
 
         var box = $.CreatePanel("Panel", modalBody, "");
         box.AddClass("mg-code-box");
         var capL = $.CreatePanel("Label", box, ""); capL.AddClass("mg-code-cap"); capL.text = "Poker table code:";
-        var big = $.CreatePanel("Label", box, ""); big.AddClass("mg-code-big"); big.text = String(code);
+        var big = $.CreatePanel("Label", box, ""); big.AddClass("mg-code-big"); big.text = codeStr(code);
         var hint = $.CreatePanel("Label", box, ""); hint.AddClass("mg-code-hint");
         hint.text = cap + "-seat No-Limit Hold'em. Host deals once everyone's in.";
 
@@ -1302,10 +1316,11 @@
             var sl = $.CreatePanel("Label", startBtn, ""); sl.text = "Deal";
             startBtn.SetPanelEvent("onactivate", function () {
                 setStatus("Dealing…");
-                MG.Api.pstart(code, currentTok, function (r) {
-                    if (r.ok) { renderGame(6, code, true, false, { seat: 0, numPlayers: cap }); return; }
+                MG.Api.pstart(code, roomTok, function (r) {
+                    if (r.ok) { currentTok = roomTok; renderGame(6, code, true, false, { seat: 0, numPlayers: cap }); return; }
                     if (r.reason === "players") setStatus("Need at least two players before dealing.");
                     else if (r.reason === "host") setStatus("Only the host can deal.");
+                    else if (r.reason === "token") setStatus("Session desync — please recreate the table.");
                     else setStatus("Couldn't deal (" + (r.reason || "error") + ").");
                 }, function () { setStatus("Server unavailable."); });
             });
@@ -1345,18 +1360,22 @@
     // simpler renderRoom/pollDurakRoom above; this mirrors renderPokerRoom for the private table.
     // Host sees the shared code + a Start button (usable once ≥2 seats fill); joiners wait. `cap`
     // is the table size fixed at create; `seat` is this client's seat (host = 0).
-    function renderDurakRoom(code, isHost, cap, seat) {
+    function renderDurakRoom(code, isHost, cap, seat, tok) {
         cleanupCurrentView(false);
         view = "room";
         setTitle(isHost ? "Durak Table" : "Joined Durak Table");
         clearBody();
         currentCode = code;
+        // Bind the global token to THIS room's token (see renderPokerRoom for why — a concurrent
+        // create could otherwise leave currentTok pointing at the wrong lobby → Start gets (9,3)).
+        var roomTok = tok || currentTok;
+        currentTok = roomTok;
         seat = seat | 0;
 
         var box = $.CreatePanel("Panel", modalBody, "");
         box.AddClass("mg-code-box");
         var capL = $.CreatePanel("Label", box, ""); capL.AddClass("mg-code-cap"); capL.text = "Durak table code:";
-        var big = $.CreatePanel("Label", box, ""); big.AddClass("mg-code-big"); big.text = String(code);
+        var big = $.CreatePanel("Label", box, ""); big.AddClass("mg-code-big"); big.text = codeStr(code);
         var hint = $.CreatePanel("Label", box, ""); hint.AddClass("mg-code-hint");
         hint.text = cap + "-player online Durak. Host starts once everyone's in.";
 
@@ -1377,10 +1396,11 @@
             var sl = $.CreatePanel("Label", startBtn, ""); sl.text = "Start";
             startBtn.SetPanelEvent("onactivate", function () {
                 setStatus("Starting Durak…");
-                MG.Api.start(code, currentTok, function (r) {
-                    if (r.ok) { renderGame(3, code, true, false, { seat: 0, numPlayers: cap }); return; }
+                MG.Api.start(code, roomTok, function (r) {
+                    if (r.ok) { currentTok = roomTok; renderGame(3, code, true, false, { seat: 0, numPlayers: cap }); return; }
                     if (r.reason === "players") setStatus("Need at least two players before starting.");
                     else if (r.reason === "host") setStatus("Only the host can start.");
+                    else if (r.reason === "token") setStatus("Session desync — please recreate the table.");
                     else setStatus("Couldn't start Durak (" + (r.reason || "error") + ").");
                 }, function () { setStatus("Server unavailable."); });
             });
@@ -1594,15 +1614,16 @@
 
     function doJoin(code) {
         if (!MG.Net.isConfigured()) { setStatus("⚠ Configure the server first (BASE_URL in mg_net.js)."); return; }
-        setStatus("Connecting to " + code + "…");
+        setStatus("Connecting to " + codeStr(code) + "…");
         currentTok = MG.Session.newToken();
         // Poker lobbies live on their own routes; join via pjoin (which learns our seat + the
         // table cap) rather than the generic 2-seat join. The Join screen is shared, so we try
         // pjoin first ONLY when the user is browsing poker — otherwise fall through to join.
         if (isPokerOnlineGame(selectedGameId)) {
-            MG.Api.pjoin(code, currentTok, function (res) {
-                if (res.ok) { currentCode = code; renderPokerRoom(code, false, res.cap, res.seat); return; }
-                if (res.reason === "missing") setStatus("Table " + code + " not found.");
+            var pjTok = currentTok;
+            MG.Api.pjoin(code, pjTok, function (res) {
+                if (res.ok) { currentCode = code; renderPokerRoom(code, false, res.cap, res.seat, pjTok); return; }
+                if (res.reason === "missing") setStatus("Table " + codeStr(code) + " not found.");
                 else if (res.reason === "full") setStatus("That table is full.");
                 else if (res.reason === "started") setStatus("That hand has already started.");
                 else setStatus("Couldn't join the table.");
@@ -1612,9 +1633,10 @@
         // Durak private tables (2–4 seats) live on their own routes too; join via djoin so the
         // joiner learns its seat + the table cap. Same shape as poker's pjoin branch above.
         if (isDurakOnlineGame(selectedGameId)) {
-            MG.Api.djoin(code, currentTok, function (res) {
-                if (res.ok) { currentCode = code; renderDurakRoom(code, false, res.cap, res.seat); return; }
-                if (res.reason === "missing") setStatus("Table " + code + " not found.");
+            var djTok = currentTok;
+            MG.Api.djoin(code, djTok, function (res) {
+                if (res.ok) { currentCode = code; renderDurakRoom(code, false, res.cap, res.seat, djTok); return; }
+                if (res.reason === "missing") setStatus("Table " + codeStr(code) + " not found.");
                 else if (res.reason === "full") setStatus("That table is full.");
                 else if (res.reason === "started") setStatus("That game has already started.");
                 else setStatus("Couldn't join the table.");
