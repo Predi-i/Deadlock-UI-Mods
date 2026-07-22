@@ -816,8 +816,20 @@ Registers **game id 6** (`enabled:true`). Offline vs bot is proven in Node; onli
   via `pact` without optimistic mutation (the echoed event is the single source of truth).
 - **Bot** (`rules/poker.js` `botAction`, driven from the controller): `preflopStrength` /
   `madeStrength` heuristics decide fold/check/call/raise; tune later.
+- **⚠ The room's seat token must be CAPTURED, not read from the global at Deal-time.** `pcreate`
+  is async (~1.5s image load). The old Deal handler read the module-global `currentTok` when the
+  button fired; if the user launched another create/join during that window, `currentTok` pointed
+  at the OTHER lobby, so `pstart` sent a token seat 0 never bound → server `seatOf` miss → `(9,3)`,
+  surfaced as a silent "couldn't deal" (the maintainer's 4-digit-code DEAL report — the 4-digit
+  code was a coincidence; the server deals fine for every code 0..1023, proven by `mg_server_test`).
+  Fix: `startCreate`/`doJoin` capture the token at the call site and thread it into
+  `renderPokerRoom(…, tok)` / `renderDurakRoom(…, tok)`, which re-establish it as `currentTok` and
+  use a closure `roomTok` for the Deal/Start `pstart`/`start` call — so the shown room is always
+  self-consistent regardless of global churn. Same pattern for durak's private table.
 - Verified in Node: rules + bot + showdown (`mg_poker_test`), server routes/privacy
-  (`mg_server_test`). Reasoned only (needs a VPK repack): the render/betting UI + online sync.
+  (`mg_server_test`). Reasoned only (needs a VPK repack): the render/betting UI + online sync + the
+  room-token binding above (the `(9,3)` was never reproduced server-side — the fix is a reasoned
+  hardening of the most plausible client-side cause).
 
 ---
 
@@ -838,17 +850,31 @@ nothing is polled and no token is used.
 Disconnect signals: `status` returning `(9,1)` while a host waits, or `poll` returning
 `(9,9)`, route to `MG.UI.kickToMenu(reason)`.
 
-**Adaptive poll cadence (request-budget control).** Polling `/api/poll` (or `/api/dlog`,
-`/api/plog`) for the opponent's move is the dominant request cost of a match. The cadence is
-defined ONCE in `mg_net.js` as `MG.Net.pollDelay(misses)` and reused by every online game:
-`misses < 4` → **1.0s**, else → **1.6s**. `misses` counts consecutive empty ("nothing new")
-polls this turn and is reset to 0 on each real move (and in `startPolling`), so a wait starts
-fast (responsive when the opponent replies quickly) and backs off while they think (a long
-think must not cost ~2.5 req/s). Every game keeps a local `var pollMisses = 0` and passes
-`pollMisses++` to `pollDelay` in both the "nothing new" and transport-error branches. ⚠ There
-is **no `Net` alias** in the controllers — call it fully qualified as `MG.Net.pollDelay(...)`
-(a bare `Net.pollDelay` throws `ReferenceError` and, like the TTT `sfx` crash, would only
-surface in-game — the test harnesses don't execute controller code).
+**Adaptive poll cadence (request-budget control).** Cloudflare's free tier is ONE shared bucket
+for the whole mod: 100k Worker requests/day AND 100k Durable-Object requests/day (every `/api/*`
+image hits both), reset 00:00 UTC, and blowing it returns **Error 1027 for everyone** until reset.
+So request volume is the release-critical resource, and it's controlled by two DISTINCT cadences,
+both defined ONCE in `mg_net.js`:
+
+- **`MG.Net.pollDelay(misses)` — IN-GAME opponent polling** (`/api/poll`, `/api/dlog`, `/api/plog`),
+  the dominant cost of an *active* match. `misses < 4` → **1.0s**, `< 12` → **1.6s**, else →
+  **2.5s**. `misses` counts consecutive empty ("nothing new") polls this turn and is reset to 0 on
+  each real move (and in `startPolling`), so a wait starts fast (responsive when the opponent
+  replies quickly) and backs off through two tiers while they think (a long think must not cost
+  ~2.5 req/s). Every game keeps a local `var pollMisses = 0` and passes `pollMisses++` to
+  `pollDelay` in both the "nothing new" and transport-error branches.
+- **`MG.Net.waitDelay(misses)` — WAITING-ROOM polling** (lobby/room fill, rematch accept, quick /
+  multi matchmaking). Totally different cost profile: nobody's mid-move, latency is irrelevant (a
+  chess lobby, not a shooter), and these screens can sit open for MINUTES — so a fixed ~1s poll was
+  pure waste that scaled with idle players, not games played. Ramps HARD and monotonically (a
+  waiting room has no "real move" to reset on): steps `[1.5, 1.5, 3.0, 3.0, 4.0, 5.0]`s, clamped at
+  5s. Each waiting loop keeps its own `var misses = 0` and passes `misses++` in both branches. The
+  six loops on it: `pollDurakRoom`, `pollPokerRoom`, `pollDurakTable`, `waitForJoiner`,
+  `waitForMultiMatch`, and the rematch `tick` (`mg_ui.js`).
+
+⚠ There is **no `Net` alias** in the controllers — call both fully qualified as `MG.Net.pollDelay`
+/ `MG.Net.waitDelay` (a bare `Net.pollDelay` throws `ReferenceError` and, like the TTT `sfx` crash,
+would only surface in-game — the test harnesses don't execute controller code).
 
 ### 9.1 Shared clocks & the per-turn timer (`MG.Widgets`, mg_games.js)
 
@@ -857,6 +883,16 @@ Two DIFFERENT time widgets, both built in `mg_games.js` and exposed on `MG.Widge
 - **Server side clocks** — the time-control matchmaking (1/3/5/10 min / Any) in **chess &
   checkers**. Each side's remaining time is server-owned; the picker lives in `renderTimeControl`
   (`mg_ui.js`) and the concrete/"Any"(−1)→5min mapping is described there.
+  - **My clock is always the BOTTOM row.** `createClock` takes a `mySeat` arg (the caller passes
+    `clockSeatFor(myColor)`); it builds the two rows top→bottom as `[opponentSeat, mySeat]` so my
+    clock sits under the board I play from (my colour is always the bottom side — see `toDisplay`).
+    The `rows[]` array stays SEAT-indexed, so `paint`/`setTurn`/`fireFlag` are unchanged — only the
+    visual creation order flips. `mySeat = -1` (unknown) keeps the legacy white-top/black-bottom order.
+  - **10-second warning.** `interpTick` fires `MG.Sound.play("TenSeconds")` ONCE when MY running bank
+    (`sec[mySeat]`) drops to ≤10s. A chess/checkers bank only counts down, so it's at most one beep
+    per game; `mySeat = -1` skips it. (The soundevent was always registered — the bug was that
+    nothing ever *called* `play("TenSeconds")`; the per-turn timer's `tick()` fires the same sfx for
+    durak/poker/TTT/C4, guarded by `curSecs > 10` so durak's 10s Bito window doesn't beep on open.)
   - **Display is locally interpolated, resync is rare.** The clock does NOT poll the server once a
     second. `createClock` runs a ~4×/s LOCAL interpolation (`interpTick`) that drains the running
     seat's bank between authoritative reads, and only resyncs against `/api/clocks` every

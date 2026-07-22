@@ -361,8 +361,12 @@
             var names = [];
             for (var i = 0; i < w.length; i++) names.push(nameOf(w[i]));
             var who = names.join(" & ");
-            if (st.result.uncontested) return who + " win" + (w.length === 1 ? "s" : "") + " (everyone folded).";
-            return who + " win" + (w.length === 1 ? "s" : "") + " at showdown.";
+            // Verb agrees with the SUBJECT, not the count: "You win" / "They win" take the bare
+            // verb, only a single third-person winner ("Bot 2 wins") takes the -s. The old
+            // `w.length === 1 ? "s"` produced "You wins" for a solo human winner.
+            var verb = (w.length === 1 && w[0] !== mySeat) ? " wins" : " win";
+            if (st.result.uncontested) return who + verb + " (everyone folded).";
+            return who + verb + " at showdown.";
         }
 
         function mkButton(parent, text, kind, onClick) {
@@ -416,7 +420,9 @@
                 // absorb the new stacks back into the tournament carryover
                 stacks = st.stacks.slice();
                 render();
-                status(resultText());
+                // The result is shown ONCE, on the felt banner above "Next hand" (buildNextHand).
+                // Don't ALSO push it to the footer status — that was the doubled "You win" report.
+                status("");
                 return;
             }
             render();
@@ -532,7 +538,9 @@
         function onlineStatus() {
             if (gameOver) return;
             if (!st) { status("Dealing…"); return; }
-            if (st.street === "over") { status(resultText()); return; }
+            // At hand-over the felt banner (buildNextHand) already shows the result — keep the
+            // footer blank so it isn't printed twice (the doubled "You win" report).
+            if (st.street === "over") { status(""); return; }
             if (myTurn()) { status(streetName() + ": your action."); return; }
             if (st.toAct >= 0) { status(nameOf(st.toAct) + " to act…"); return; }
             status(streetName());

@@ -49,9 +49,11 @@
     //   OFFLINE (bot) — no server, so we tick locally from `secs`: the side to move drains, and
     //             when it hits 0 that side flags. secs=0 offline → no clock (a no-op stub).
     // onFlag(seat) fires once when a side runs out. seatNames labels each clock.
-    function createClock(parent, secs, online, code, onFlag, seatNames) {
+    function createClock(parent, secs, online, code, onFlag, seatNames, mySeat) {
         if (!online && !secs) return { el: null, setTurn: function () {}, stop: function () {}, isTimed: false };
         var flagged = -1, running = -1, stopped = false, revealed = false;
+        var warned10 = false;          // TenSeconds sfx fires once when MY bank crosses 10s
+        if (typeof mySeat !== "number") mySeat = -1;   // -1 = unknown → never beep (safe default)
         // Seconds banks (floats). OFFLINE: seeded from `secs`. ONLINE: null until the first
         // server resync fills them; from then on the display is driven by LOCAL interpolation
         // between resyncs (see interpTick), NOT by a per-second server poll.
@@ -63,13 +65,19 @@
         wrap.AddClass("mg-clocks");
         if (online) wrap.style.visibility = "collapse";   // hidden until the first timed poll reveals it
         var rows = [];
-        for (var s = 0; s < 2; s++) {
+        // Build the two rows TOP→BOTTOM with MY seat at the bottom, so my clock sits under the
+        // board I'm playing from (my colour is always the bottom side — see toDisplay). The `rows`
+        // array stays SEAT-indexed (paint/setTurn/fireFlag are unchanged); only the visual creation
+        // order changes. mySeat unknown (-1) keeps the legacy white-top/black-bottom order.
+        var rowOrder = (mySeat === 0 || mySeat === 1) ? [1 - mySeat, mySeat] : [0, 1];
+        for (var oi = 0; oi < 2; oi++) {
+            var s = rowOrder[oi];
             var row = $.CreatePanel("Panel", wrap, "");
             row.AddClass("mg-clock-row");
             var name = $.CreatePanel("Label", row, ""); name.AddClass("mg-clock-name");
             name.text = (seatNames && seatNames[s]) || ("Seat " + (s + 1));
             var time = $.CreatePanel("Label", row, ""); time.AddClass("mg-clock-time");
-            rows.push({ row: row, time: time });
+            rows[s] = { row: row, time: time };
         }
 
         function fmt(sec) {
@@ -104,6 +112,12 @@
             if (running >= 0 && lastTick) {
                 sec[running] = Math.max(0, sec[running] - (now - lastTick) / 1000);
                 if (sec[running] === 0 && !online) fireFlag(running);
+            }
+            // Warn once when MY bank drops into the final 10s while it's running. A chess/checkers
+            // bank only counts down, so this fires at most once per game. mySeat = -1 (unknown) skips.
+            if (!warned10 && mySeat >= 0 && running === mySeat && sec[mySeat] !== null && sec[mySeat] <= 10) {
+                warned10 = true;
+                if (MG.Sound) MG.Sound.play("TenSeconds");
             }
             lastTick = now;
             paint(sec);
@@ -228,6 +242,7 @@
         var gen = 0;                       // bumps on every start/stop/destroy → stale ticks bail
         var dead = false, running = false, deadline = 0, expireCb = null;
         var curSecs = TURN_SECS;           // budget for the CURRENT run (start may override per call)
+        var warned10 = false;              // TenSeconds sfx fires once per turn as the bar crosses 10s
 
         // Snap the fill FULL (no transition) so a fresh turn starts from a full bar; the arm()
         // below then flips on the animated class and pushes it to empty, tweening over TURN_SECS.
@@ -261,6 +276,12 @@
             if (num.IsValid()) num.text = String(Math.ceil(remain));
             fill.SetHasClass("mg-tt-low", remain <= 10);
             fill.SetHasClass("mg-tt-crit", remain <= 5);
+            // Warn ONCE as the clock crosses into the final 10s (only if the turn had more than
+            // 10s to begin with — durak's 10s Bito window would otherwise beep the instant it opens).
+            if (!warned10 && remain <= 10 && curSecs > 10) {
+                warned10 = true;
+                if (MG.Sound) MG.Sound.play("TenSeconds");
+            }
             $.Schedule(0.2, function () { tick(myGen); });
         }
 
@@ -275,6 +296,7 @@
                 var myGen = gen;
                 running = true;
                 curSecs = (secs && secs > 0) ? secs : TURN_SECS;
+                warned10 = false;
                 expireCb = onExpire || null;
                 deadline = Date.now() + curSecs * 1000;
                 snapFull();               // reveals the fill (opacity) — the wrap is always laid out
@@ -418,7 +440,7 @@
             // Clocks sit at the TOP of the side panel (opponent above, you below — see clockSeat).
             // secs=0 → the module builds nothing and every call is a no-op, so an untimed game is
             // visually unchanged. Server seat 0 = host = white; clockSeat maps that to my view.
-            clock = createClock(panel, timeControl, !session.bot, code, onFlag, clockNames());
+            clock = createClock(panel, timeControl, !session.bot, code, onFlag, clockNames(), clockSeatFor(myColor));
             var head = $.CreatePanel("Label", panel, "");
             head.AddClass("mg-movelist-head");
             head.text = "Moves";
@@ -660,7 +682,10 @@
                 if (!myTurn() && canPremove()) {
                     // Dragged during the opponent's turn → queue a PREMOVE to the dropped square.
                     var pmTo = dropSquare(droppedPanel);
-                    if (pmTo >= 0 && pmTo !== dragFromSq) { premove = { from: dragFromSq, to: pmTo }; preSelected = -1; }
+                    if (pmTo >= 0 && pmTo !== dragFromSq) {
+                        if (premoveGeometryOk(dragFromSq, pmTo)) { premove = { from: dragFromSq, to: pmTo }; preSelected = -1; }
+                        else sfx("Illegal");   // impossible shape for this piece — don't queue it
+                    }
                     clearDrag();
                     refreshHighlights();
                     return;
@@ -1103,15 +1128,36 @@
         // (the position will change after the opponent moves — e.g. a recapture lands on a square
         // that's still occupied by my own piece right now); the queued {from,to} is validated when
         // it's actually my turn (tryPremove) and silently dropped if it's no longer legal.
+        // We DO gate on the piece's MOVEMENT GEOMETRY, though: occupancy changes after the
+        // opponent moves but a man can never step sideways and a piece never leaves a diagonal,
+        // so an impossible shape is rejected up-front (sound feedback) instead of being painted
+        // orange only to be silently discarded — the "premove anywhere" complaint.
+        function premoveGeometryOk(from, to) {
+            var v = board[from];
+            if (colorOf(v) !== myColor || from === to) return false;
+            if (!isDark(rowOf(to), colOf(to))) return false;          // checkers lives on dark squares
+            var dr = rowOf(to) - rowOf(from), dc = colOf(to) - colOf(from);
+            if (Math.abs(dr) !== Math.abs(dc)) return false;          // off a diagonal → impossible
+            if (isKing(v)) return true;                                // flying king: any diagonal distance
+            var dist = Math.abs(dr);
+            if (dist === 2) return true;                               // man capture hop (jumps any direction)
+            if (dist === 1) return dr === (v === 1 ? -1 : 1);          // simple step: forward only
+            return false;
+        }
         function premoveClick(i) {
             if (colorOf(board[i]) === myColor) { preSelected = i; premove = null; refreshHighlights(); return; }
-            if (preSelected >= 0 && i !== preSelected) { premove = { from: preSelected, to: i }; preSelected = -1; refreshHighlights(); return; }
+            if (preSelected >= 0 && i !== preSelected) {
+                if (!premoveGeometryOk(preSelected, i)) { sfx("Illegal"); return; }   // keep the piece picked; let them retry
+                premove = { from: preSelected, to: i }; preSelected = -1; refreshHighlights(); return;
+            }
             clearPremove();
         }
         // Called the instant the turn flips to me (opponent's move just landed). Replays the
-        // queued premove if it's legal on the NEW board, else discards it.
+        // queued premove if it's legal on the NEW board, else discards it. A bare source pick with
+        // no destination (preSelected set, premove null) is ALSO cleared here — else the orange
+        // "pending" wash on the picked cell would survive the turn flip forever (the stuck-orange bug).
         function tryPremove() {
-            if (!premove) return;
+            if (!premove) { if (preSelected >= 0) { preSelected = -1; refreshHighlights(); } return; }
             var pm = premove; premove = null; preSelected = -1;
             if (!myTurn()) { refreshHighlights(); return; }
             var tg = targetsFor(pm.from);
@@ -1670,7 +1716,8 @@
     // just bind local names identical to the old inline copies so the controller is
     // untouched. Colour is +1 (white) / -1 (black) — the sign of the piece.
     var RX = MG.Rules.chess;
-    var C_PAWN = RX.C_PAWN, C_QUEEN = RX.C_QUEEN, C_KING = RX.C_KING;
+    var C_PAWN = RX.C_PAWN, C_KNIGHT = RX.C_KNIGHT, C_BISHOP = RX.C_BISHOP;
+    var C_ROOK = RX.C_ROOK, C_QUEEN = RX.C_QUEEN, C_KING = RX.C_KING;
     var cSq = RX.cSq, cRow = RX.cRow, cCol = RX.cCol, cSign = RX.cSign, cType = RX.cType;
     var initialChessBoard = RX.initialChessBoard, initialChessState = RX.initialChessState;
     var makeMove = RX.makeMove, legalMoves = RX.legalMoves, inCheck = RX.inCheck;
@@ -1795,7 +1842,7 @@
             var panel = $.CreatePanel("Panel", twoCol, "MG_ChessMoves");
             panel.AddClass("mg-movelist");
             // Clocks at the top of the side panel (untimed → builds nothing; see createClock).
-            clock = createClock(panel, timeControl, !session.bot, code, onFlag, clockNames());
+            clock = createClock(panel, timeControl, !session.bot, code, onFlag, clockNames(), clockSeatFor(myColor));
             var head = $.CreatePanel("Label", panel, "");
             head.AddClass("mg-movelist-head");
             head.text = "Moves";
@@ -1965,7 +2012,10 @@
                 if (!myTurn() && canPremove()) {
                     // Dragged during the opponent's turn → queue a PREMOVE to the dropped square.
                     var pmTo = dropSquare(droppedPanel);
-                    if (pmTo >= 0 && pmTo !== dragFromSq) { premove = { from: dragFromSq, to: pmTo }; preSelected = -1; }
+                    if (pmTo >= 0 && pmTo !== dragFromSq) {
+                        if (premoveGeometryOk(dragFromSq, pmTo)) { premove = { from: dragFromSq, to: pmTo }; preSelected = -1; }
+                        else sfx("Illegal");   // impossible shape for this piece — don't queue it
+                    }
                     clearDrag();
                     refreshHighlights();
                     return;
@@ -2284,17 +2334,45 @@
         }
 
         // Premove (online only): pick a piece then a destination while it's the opponent's turn.
-        // Not validated now (the position changes after the opponent moves); tryPremove replays it
-        // when it's actually my turn and drops it if illegal on the new board. Mirrors createCheckers.
+        // Occupancy isn't validated now (the position changes after the opponent moves); tryPremove
+        // replays it when it's actually my turn and drops it if illegal on the new board. But we DO
+        // gate on the piece's MOVEMENT GEOMETRY up-front — a knight's L, a bishop's diagonal etc. —
+        // so you can't queue a shape the piece can never make (the "premove anywhere" complaint).
+        // Mirrors createCheckers.
         function canPremove() { return !gameOver && !destroyed && reviewIndex === null && !myTurn(); }
         function clearPremove() { premove = null; preSelected = -1; refreshHighlights(); }
+        // True if `to` is a geometrically reachable square for whatever of my pieces sits on `from`
+        // RIGHT NOW, ignoring occupancy/pins/check (those depend on the post-opponent board and are
+        // re-checked by tryPremove). Sliding pieces pass on direction alone — blockers may clear.
+        function premoveGeometryOk(from, to) {
+            var v = board[from];
+            if (cSign(v) !== myColor || from === to) return false;
+            var t = cType(v);
+            var dr = cRow(to) - cRow(from), dc = cCol(to) - cCol(from);
+            var adr = Math.abs(dr), adc = Math.abs(dc);
+            if (t === C_KNIGHT) return (adr === 1 && adc === 2) || (adr === 2 && adc === 1);
+            if (t === C_BISHOP) return adr === adc;
+            if (t === C_ROOK)   return dr === 0 || dc === 0;
+            if (t === C_QUEEN)  return adr === adc || dr === 0 || dc === 0;
+            if (t === C_KING)   return (adr <= 1 && adc <= 1) || (dr === 0 && adc === 2);   // step or castle
+            // pawn: forward push (1 or 2 on the home row) or a diagonal capture step. White (+1)
+            // moves toward row 0, so its forward row delta is -1; black's is +1 → forward = -color.
+            var fwd = -myColor;
+            if (dc === 0) return dr === fwd || (dr === 2 * fwd && cRow(from) === (myColor === 1 ? 6 : 1));
+            return adc === 1 && dr === fwd;
+        }
         function premoveClick(i) {
             if (cSign(board[i]) === myColor) { preSelected = i; premove = null; refreshHighlights(); return; }
-            if (preSelected >= 0 && i !== preSelected) { premove = { from: preSelected, to: i }; preSelected = -1; refreshHighlights(); return; }
+            if (preSelected >= 0 && i !== preSelected) {
+                if (!premoveGeometryOk(preSelected, i)) { sfx("Illegal"); return; }   // keep the piece picked; let them retry
+                premove = { from: preSelected, to: i }; preSelected = -1; refreshHighlights(); return;
+            }
             clearPremove();
         }
+        // A bare source pick with no destination (preSelected set, premove null) is cleared here too,
+        // else the orange "pending" wash on the picked cell would survive the turn flip forever.
         function tryPremove() {
-            if (!premove) return;
+            if (!premove) { if (preSelected >= 0) { preSelected = -1; refreshHighlights(); } return; }
             var pm = premove; premove = null; preSelected = -1;
             if (!myTurn()) { refreshHighlights(); return; }
             var tg = targetsFor(pm.from);

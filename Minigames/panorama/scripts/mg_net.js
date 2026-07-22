@@ -63,11 +63,30 @@
     // checkers/chess/TTT/Connect-Four. Model: poll FAST for the first few checks after
     // it becomes the opponent's turn (a quick reply feels responsive), then BACK OFF to a
     // slower steady rate while they think — a long think shouldn't cost ~2.5 req/s.
-    //   misses 0..(FAST_POLLS-1) → POLL_FAST_S ; misses >= FAST_POLLS → POLL_SLOW_S
+    //   misses 0..(FAST_POLLS-1) → POLL_FAST_S ; then POLL_SLOW_S ; a long think → POLL_IDLE_S
     // `misses` = consecutive empty ("nothing new") polls this turn; reset to 0 on each real
     // move so the next wait starts fast again. Transport errors reuse the same schedule.
-    var POLL_FAST_S = 1.0, POLL_SLOW_S = 1.6, FAST_POLLS = 4;
-    function pollDelay(misses) { return (misses < FAST_POLLS) ? POLL_FAST_S : POLL_SLOW_S; }
+    var POLL_FAST_S = 1.0, POLL_SLOW_S = 1.6, POLL_IDLE_S = 2.5, FAST_POLLS = 4, SLOW_POLLS = 12;
+    function pollDelay(misses) {
+        if (misses < FAST_POLLS) return POLL_FAST_S;   // snappy for the first ~4s after their turn
+        if (misses < SLOW_POLLS) return POLL_SLOW_S;   // steady while they think
+        return POLL_IDLE_S;                            // long think (>~15s): don't burn requests
+    }
+
+    // ── shared WAITING-ROOM cadence (lobbies, rematch, matchmaking) ──────────
+    // A completely different cost profile from in-game polling: nobody's mid-move, we're just
+    // waiting for a friend to type a code / click Join / accept a rematch. Latency here is
+    // irrelevant (a chess lobby, not a shooter — 1s vs 5s to notice a join is unnoticeable), and
+    // these screens can sit OPEN for minutes, so a fixed ~1s poll is pure waste that scales with
+    // idle players, not games played. Ramp HARD: a couple of quick checks, then settle to 5s.
+    //   misses:  0    1    2    3    4    5+
+    //   delay:  1.5  1.5  3.0  3.0  4.0  5.0   (seconds)
+    // Monotonic — a waiting room has no "real move" to reset on; it just resolves when it fills.
+    var WAIT_STEPS = [1.5, 1.5, 3.0, 3.0, 4.0, 5.0];
+    function waitDelay(misses) {
+        var i = misses < 0 ? 0 : (misses < WAIT_STEPS.length ? misses : WAIT_STEPS.length - 1);
+        return WAIT_STEPS[i];
+    }
 
     // ── Downlink level encoding — MUST match worker.core.js `d()` exactly ──
     // A response dimension carries a small "level", not a raw int: dim = level*STEP + BASE.
@@ -388,6 +407,7 @@
         },
         recalibrate: function (cb) { calibrated = false; calibrate(cb); },
         pollDelay: pollDelay,
+        waitDelay: waitDelay,
         setDebug: setDebug,
         isDebug: function () { return DEBUG; },
         isConfigured: function () { return BASE_URL.indexOf("CHANGEME") < 0; },
