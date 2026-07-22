@@ -519,9 +519,20 @@ while ($true) {
             Write-Host "  Force rebuild enabled for this run." -ForegroundColor Yellow
         }
         
+        # Only files living under a known Source 2 content root are build inputs.
+        # Everything else in a mod folder (node_modules, package.json, *.md, a
+        # server/ or tools/ dir, etc.) is dev clutter: a whitelist keeps it out
+        # of hashing and, crucially, stops stray node_modules\**\*.js from being
+        # compiled to .vjs_c and packed into the VPK. Dot files/dirs stay excluded.
+        $ContentRoots = @(
+            'panorama', 'soundevents', 'sounds', 'materials', 'models',
+            'particles', 'scripts', 'resource', 'maps', 'shaders', 'vscripts'
+        )
         $SourceFiles = Get-ChildItem -Path $ModSourcePath -Recurse -File | Where-Object {
             $rel = $_.FullName.Substring($ModSourcePath.Length + 1)
-            -not (($rel -split '[\\/]') | Where-Object { $_.StartsWith('.') })
+            $segments = $rel -split '[\\/]'
+            if ($segments | Where-Object { $_.StartsWith('.') }) { return $false }
+            return ($ContentRoots -contains $segments[0].ToLowerInvariant())
         }
         $CurrentFiles = @{}
         $FilesToCompile = New-Object System.Collections.Generic.List[string]
@@ -570,7 +581,6 @@ while ($true) {
             $compiledMissing = $compiledDest -and -not (Test-Path $compiledDest)
 
             if ($AutoVtexSourceExts -contains $file.Extension) {
-                $extNoDot = $file.Extension.TrimStart('.').ToLowerInvariant()
                 $relDir = Split-Path $relPath
                 $relBase = [System.IO.Path]::GetFileNameWithoutExtension($relPath)
                 $bareCompiled = Join-Path $TempGame (Join-Path $relDir "$relBase.vtex_c")
@@ -599,23 +609,30 @@ while ($true) {
                 $FilesToCompile.Add($contentDest)
             }
 
-            if ($AutoVtexSourceExts -contains $file.Extension -and ($needsCopy -or $needsCompile)) {
-                $relFileName = $relPath -replace '\\', '/'
-                $vtexBody = Get-AutoVtexBody -RelFileName $relFileName
-                $contentDir = Split-Path $contentDest
-                $contentBase = [System.IO.Path]::GetFileNameWithoutExtension($contentDest)
-                $extNoDot = $file.Extension.TrimStart('.').ToLowerInvariant()
-
+            if ($AutoVtexSourceExts -contains $file.Extension) {
                 $bareVtexSourcePath = [System.IO.Path]::ChangeExtension($file.FullName, '.vtex')
                 if (Test-Path $bareVtexSourcePath) {
-                    Write-Host "  Skipping bare auto-vtex for $relPath (custom .vtex present)" -ForegroundColor DarkGray
+                    if ($needsCopy -or $needsCompile) {
+                        Write-Host "  Skipping bare auto-vtex for $relPath (custom .vtex present)" -ForegroundColor DarkGray
+                    }
                 } else {
                     $genBareVtexPath = [System.IO.Path]::ChangeExtension($contentDest, '.vtex')
-                    [System.IO.File]::WriteAllText($genBareVtexPath, $vtexBody, $Utf8NoBom)
-                    $FilesToCompile.Add($genBareVtexPath)
-
                     $genBareRelPath = $genBareVtexPath.Substring($TempContent.Length + 1)
+
+                    # Always claim the generated .vtex as a live file, even when the
+                    # source image is unchanged this run. Otherwise the orphan sweep
+                    # below sees an unregistered .vtex in TempContent, deletes it AND
+                    # its compiled .vtex_c from TempGame, and the image vanishes from
+                    # the VPK on the next incremental build (the classic "need -f
+                    # every time or my pictures disappear" bug).
                     $CurrentFiles["${SelectedMod}|${genBareRelPath}".ToLower()] = $true
+
+                    if ($needsCopy -or $needsCompile) {
+                        $relFileName = $relPath -replace '\\', '/'
+                        $vtexBody = Get-AutoVtexBody -RelFileName $relFileName
+                        [System.IO.File]::WriteAllText($genBareVtexPath, $vtexBody, $Utf8NoBom)
+                        $FilesToCompile.Add($genBareVtexPath)
+                    }
                 }
             }
 
