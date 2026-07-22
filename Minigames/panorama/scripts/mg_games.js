@@ -682,7 +682,10 @@
                 if (!myTurn() && canPremove()) {
                     // Dragged during the opponent's turn → queue a PREMOVE to the dropped square.
                     var pmTo = dropSquare(droppedPanel);
-                    if (pmTo >= 0 && pmTo !== dragFromSq) { premove = { from: dragFromSq, to: pmTo }; preSelected = -1; }
+                    if (pmTo >= 0 && pmTo !== dragFromSq) {
+                        if (premoveGeometryOk(dragFromSq, pmTo)) { premove = { from: dragFromSq, to: pmTo }; preSelected = -1; }
+                        else sfx("Illegal");   // impossible shape for this piece — don't queue it
+                    }
                     clearDrag();
                     refreshHighlights();
                     return;
@@ -1125,15 +1128,36 @@
         // (the position will change after the opponent moves — e.g. a recapture lands on a square
         // that's still occupied by my own piece right now); the queued {from,to} is validated when
         // it's actually my turn (tryPremove) and silently dropped if it's no longer legal.
+        // We DO gate on the piece's MOVEMENT GEOMETRY, though: occupancy changes after the
+        // opponent moves but a man can never step sideways and a piece never leaves a diagonal,
+        // so an impossible shape is rejected up-front (sound feedback) instead of being painted
+        // orange only to be silently discarded — the "premove anywhere" complaint.
+        function premoveGeometryOk(from, to) {
+            var v = board[from];
+            if (colorOf(v) !== myColor || from === to) return false;
+            if (!isDark(rowOf(to), colOf(to))) return false;          // checkers lives on dark squares
+            var dr = rowOf(to) - rowOf(from), dc = colOf(to) - colOf(from);
+            if (Math.abs(dr) !== Math.abs(dc)) return false;          // off a diagonal → impossible
+            if (isKing(v)) return true;                                // flying king: any diagonal distance
+            var dist = Math.abs(dr);
+            if (dist === 2) return true;                               // man capture hop (jumps any direction)
+            if (dist === 1) return dr === (v === 1 ? -1 : 1);          // simple step: forward only
+            return false;
+        }
         function premoveClick(i) {
             if (colorOf(board[i]) === myColor) { preSelected = i; premove = null; refreshHighlights(); return; }
-            if (preSelected >= 0 && i !== preSelected) { premove = { from: preSelected, to: i }; preSelected = -1; refreshHighlights(); return; }
+            if (preSelected >= 0 && i !== preSelected) {
+                if (!premoveGeometryOk(preSelected, i)) { sfx("Illegal"); return; }   // keep the piece picked; let them retry
+                premove = { from: preSelected, to: i }; preSelected = -1; refreshHighlights(); return;
+            }
             clearPremove();
         }
         // Called the instant the turn flips to me (opponent's move just landed). Replays the
-        // queued premove if it's legal on the NEW board, else discards it.
+        // queued premove if it's legal on the NEW board, else discards it. A bare source pick with
+        // no destination (preSelected set, premove null) is ALSO cleared here — else the orange
+        // "pending" wash on the picked cell would survive the turn flip forever (the stuck-orange bug).
         function tryPremove() {
-            if (!premove) return;
+            if (!premove) { if (preSelected >= 0) { preSelected = -1; refreshHighlights(); } return; }
             var pm = premove; premove = null; preSelected = -1;
             if (!myTurn()) { refreshHighlights(); return; }
             var tg = targetsFor(pm.from);
@@ -1692,7 +1716,8 @@
     // just bind local names identical to the old inline copies so the controller is
     // untouched. Colour is +1 (white) / -1 (black) — the sign of the piece.
     var RX = MG.Rules.chess;
-    var C_PAWN = RX.C_PAWN, C_QUEEN = RX.C_QUEEN, C_KING = RX.C_KING;
+    var C_PAWN = RX.C_PAWN, C_KNIGHT = RX.C_KNIGHT, C_BISHOP = RX.C_BISHOP;
+    var C_ROOK = RX.C_ROOK, C_QUEEN = RX.C_QUEEN, C_KING = RX.C_KING;
     var cSq = RX.cSq, cRow = RX.cRow, cCol = RX.cCol, cSign = RX.cSign, cType = RX.cType;
     var initialChessBoard = RX.initialChessBoard, initialChessState = RX.initialChessState;
     var makeMove = RX.makeMove, legalMoves = RX.legalMoves, inCheck = RX.inCheck;
@@ -1987,7 +2012,10 @@
                 if (!myTurn() && canPremove()) {
                     // Dragged during the opponent's turn → queue a PREMOVE to the dropped square.
                     var pmTo = dropSquare(droppedPanel);
-                    if (pmTo >= 0 && pmTo !== dragFromSq) { premove = { from: dragFromSq, to: pmTo }; preSelected = -1; }
+                    if (pmTo >= 0 && pmTo !== dragFromSq) {
+                        if (premoveGeometryOk(dragFromSq, pmTo)) { premove = { from: dragFromSq, to: pmTo }; preSelected = -1; }
+                        else sfx("Illegal");   // impossible shape for this piece — don't queue it
+                    }
                     clearDrag();
                     refreshHighlights();
                     return;
@@ -2306,17 +2334,45 @@
         }
 
         // Premove (online only): pick a piece then a destination while it's the opponent's turn.
-        // Not validated now (the position changes after the opponent moves); tryPremove replays it
-        // when it's actually my turn and drops it if illegal on the new board. Mirrors createCheckers.
+        // Occupancy isn't validated now (the position changes after the opponent moves); tryPremove
+        // replays it when it's actually my turn and drops it if illegal on the new board. But we DO
+        // gate on the piece's MOVEMENT GEOMETRY up-front — a knight's L, a bishop's diagonal etc. —
+        // so you can't queue a shape the piece can never make (the "premove anywhere" complaint).
+        // Mirrors createCheckers.
         function canPremove() { return !gameOver && !destroyed && reviewIndex === null && !myTurn(); }
         function clearPremove() { premove = null; preSelected = -1; refreshHighlights(); }
+        // True if `to` is a geometrically reachable square for whatever of my pieces sits on `from`
+        // RIGHT NOW, ignoring occupancy/pins/check (those depend on the post-opponent board and are
+        // re-checked by tryPremove). Sliding pieces pass on direction alone — blockers may clear.
+        function premoveGeometryOk(from, to) {
+            var v = board[from];
+            if (cSign(v) !== myColor || from === to) return false;
+            var t = cType(v);
+            var dr = cRow(to) - cRow(from), dc = cCol(to) - cCol(from);
+            var adr = Math.abs(dr), adc = Math.abs(dc);
+            if (t === C_KNIGHT) return (adr === 1 && adc === 2) || (adr === 2 && adc === 1);
+            if (t === C_BISHOP) return adr === adc;
+            if (t === C_ROOK)   return dr === 0 || dc === 0;
+            if (t === C_QUEEN)  return adr === adc || dr === 0 || dc === 0;
+            if (t === C_KING)   return (adr <= 1 && adc <= 1) || (dr === 0 && adc === 2);   // step or castle
+            // pawn: forward push (1 or 2 on the home row) or a diagonal capture step. White (+1)
+            // moves toward row 0, so its forward row delta is -1; black's is +1 → forward = -color.
+            var fwd = -myColor;
+            if (dc === 0) return dr === fwd || (dr === 2 * fwd && cRow(from) === (myColor === 1 ? 6 : 1));
+            return adc === 1 && dr === fwd;
+        }
         function premoveClick(i) {
             if (cSign(board[i]) === myColor) { preSelected = i; premove = null; refreshHighlights(); return; }
-            if (preSelected >= 0 && i !== preSelected) { premove = { from: preSelected, to: i }; preSelected = -1; refreshHighlights(); return; }
+            if (preSelected >= 0 && i !== preSelected) {
+                if (!premoveGeometryOk(preSelected, i)) { sfx("Illegal"); return; }   // keep the piece picked; let them retry
+                premove = { from: preSelected, to: i }; preSelected = -1; refreshHighlights(); return;
+            }
             clearPremove();
         }
+        // A bare source pick with no destination (preSelected set, premove null) is cleared here too,
+        // else the orange "pending" wash on the picked cell would survive the turn flip forever.
         function tryPremove() {
-            if (!premove) return;
+            if (!premove) { if (preSelected >= 0) { preSelected = -1; refreshHighlights(); } return; }
             var pm = premove; premove = null; preSelected = -1;
             if (!myTurn()) { refreshHighlights(); return; }
             var tg = targetsFor(pm.from);
