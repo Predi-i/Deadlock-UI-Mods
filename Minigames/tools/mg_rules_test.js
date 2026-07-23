@@ -15,11 +15,29 @@ loadRules("checkers.js");
 loadRules("ttt.js");
 const R = globalThis.MGRules;
 const M = Object.assign({}, R.checkers, R.ttt);
+const E = R.checkersEnglish;
 
 
 let failures = 0;
 function ok(cond, msg) { if (!cond) { failures++; console.log("  ✗ " + msg); } else { console.log("  ✓ " + msg); } }
 function empty() { return new Array(64).fill(0); }
+
+// English draughts differ from Russian draughts in the two rule branches that
+// matter to move validation: men only jump forward, and kings move one square.
+(function () {
+    ok(!!E, "English draughts rules are exposed");
+    if (!E) return;
+
+    var b = empty();
+    b[E.idx(3, 3)] = 1; // white man
+    b[E.idx(4, 4)] = 3; // black man behind it
+    ok(E.captureMoves(b, E.idx(3, 3)).length === 0, "English man cannot capture backward");
+
+    b = empty();
+    b[E.idx(7, 0)] = 2; // white king
+    var moves = E.simpleMoves(b, E.idx(7, 0)).map(function (m) { return m.to; });
+    ok(moves.length === 1 && moves[0] === E.idx(6, 1), "English king moves one diagonal square");
+})();
 
 // 1) Man captures BACKWARD (white moves up, this capture goes down a row).
 (function () {

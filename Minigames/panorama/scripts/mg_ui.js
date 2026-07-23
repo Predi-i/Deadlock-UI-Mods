@@ -66,10 +66,19 @@
     var TC_GAMES = { 1: true, 4: true };            // checkers=1, chess=4 (mirror server CLOCK_GAMES)
     var TC_CHOICES = [60, 180, 300, 600];           // 1 / 3 / 5 / 10 minutes
     var TC_ANY_DEFAULT = 300;                       // "Any" collapses to 5 min where a concrete bank is required
-    var selectedTimeControl = 300;                  // host's pick (persists while browsing)
+    var selectedTimeControl = -1;                   // host's pick (persists while browsing); default "Any"
     function isTimedGame(id) { return !!TC_GAMES[id]; }
     // Concrete bank for a room that must fix one now (Create / vs-Bot): map "Any"(-1) → 5 min.
     function concreteTc(sec) { return sec === -1 ? TC_ANY_DEFAULT : sec; }
+    // Checkers variant (checkers only). Russian draughts (flying kings, men capture any direction)
+    // vs English draughts (kings step one square, men capture forward only). "any" is the quick-
+    // match wildcard: pair with any waiting variant, else Russian. A room that must fix one now
+    // (Create / vs-Bot) collapses "any" → Russian (CV_ANY_DEFAULT), exactly like tc's 5-min fallback.
+    var CV_GAMES = { 1: true };                     // checkers only (mirror server: variant applies to game 1)
+    var CV_ANY_DEFAULT = "russian";
+    var selectedVariant = "any";                    // host's pick (persists while browsing); default "Any"
+    function hasVariant(id) { return !!CV_GAMES[id]; }
+    function concreteVariant(v) { return v === "any" ? CV_ANY_DEFAULT : v; }
     // Games that can be TICKED in Select-Multiple. Durak (3) is included so it can be picked
     // too (maintainer). Public mquick still can't pair durak — its online path is a room — so
     // ticking durak alone falls back to its Create/room flow; ticked alongside others it's just
@@ -653,6 +662,7 @@
             if (isTimedGame(selectedGameId)) renderTimeControl();
             else if (isDurakOnlineGame(selectedGameId)) renderDurakSeatPicker();
             else if (isPokerOnlineGame(selectedGameId)) renderPokerSeatPicker();
+            if (hasVariant(selectedGameId)) renderCheckersVariant();
         }
 
         // Flexible spacer between the top cluster (title/blurb/toggle/time-control) and the action
@@ -803,6 +813,36 @@
             b.SetPanelEvent("onactivate", function () {
                 if (selectedTimeControl === o.sec) return;
                 selectedTimeControl = o.sec;
+                renderDetail();     // re-skin the segments (cheap; whole column rebuilds)
+            });
+        });
+    }
+
+    // Checkers variant segmented control (checkers only), same skin/idiom as renderTimeControl.
+    // Russian / English / "Any" (the quick-match wildcard). selectedVariant persists while
+    // browsing. For Create / vs-Bot a room needs a concrete variant, so "Any" collapses to
+    // Russian (concreteVariant); for Quick Match "Any" rides up as cv="any" and the server pairs
+    // it with any waiting variant (else Russian). Mirrors server checkersVariantFor.
+    function renderCheckersVariant() {
+        var label = $.CreatePanel("Label", detailPanel, "");
+        label.AddClass("mg-section-label");
+        label.AddClass("mg-tc-label");
+        label.text = "Variant";
+        var seg = $.CreatePanel("Panel", detailPanel, "");
+        seg.AddClass("mg-tc-seg");
+        var opts = [
+            { cv: "russian", text: "Russian" },
+            { cv: "english", text: "English" },
+            { cv: "any", text: "Any" }
+        ];
+        opts.forEach(function (o) {
+            var b = $.CreatePanel("Button", seg, "");
+            b.AddClass("mg-tc-opt");
+            if (selectedVariant === o.cv) b.AddClass("mg-on");
+            var l = $.CreatePanel("Label", b, ""); l.text = o.text;
+            b.SetPanelEvent("onactivate", function () {
+                if (selectedVariant === o.cv) return;
+                selectedVariant = o.cv;
                 renderDetail();     // re-skin the segments (cheap; whole column rebuilds)
             });
         });
@@ -988,6 +1028,7 @@
         // (you + N-1 bots), instead of the controller's fixed default (poker 4 / durak 2). The
         // offline controller already drives every non-player seat, so this is all it needs.
         var opts = { timeControl: tc };
+        if (hasVariant(selectedGameId)) opts.variant = concreteVariant(selectedVariant);
         if (isPokerOnlineGame(selectedGameId)) opts.numPlayers = pokerSeatCap;
         else if (isDurakOnlineGame(selectedGameId)) opts.numPlayers = durakSeatCap;
         renderGame(selectedGameId, 0, iAmHost, true, opts);
@@ -1090,6 +1131,10 @@
             // controller ticks it locally; online it's advisory — the controller polls the
             // server-authoritative /api/clocks — but we still pass it so the clock UI is built.
             timeControl: (opts && opts.timeControl) | 0,
+            // Checkers variant: "russian" (default) or "english". Concrete by mount time — the
+            // picker's "Any" is resolved to a real variant before we get here (offline: collapsed
+            // to Russian; online: read back from /api/match once the lobby is settled).
+            variant: (opts && opts.variant) || "russian",
             onStatus: setStatus,
             onGameOver: onGameOver
         });
@@ -1117,6 +1162,23 @@
         leave.AddClass("mg-btn");
         var ll = $.CreatePanel("Label", leave, ""); ll.text = "Leave";
         leave.SetPanelEvent("onactivate", function () { renderMenu(); });
+    }
+
+    // Mount an ONLINE game once its lobby is settled. Checkers carries a server-resolved variant
+    // (the picker's "Any" may have paired with either engine), and the 2-int join/quick replies
+    // can't carry it — so for checkers we first read /api/match to learn the chosen variant, then
+    // mount. Every other game has no variant, so it mounts straight away. On a match() failure we
+    // fall back to Russian (the server default) rather than block the game from starting.
+    function mountOnlineGame(gameId, code, isHost, opts) {
+        opts = opts || {};
+        if (gameId !== 1) { renderGame(gameId, code, isHost, false, opts); return; }
+        MG.Api.match(code, function (m) {
+            opts.variant = (!m.gone && m.variant) ? m.variant : "russian";
+            renderGame(gameId, code, isHost, false, opts);
+        }, function () {
+            opts.variant = "russian";
+            renderGame(gameId, code, isHost, false, opts);
+        });
     }
 
     // Online rematch: both seats poll /api/rematch from the game-over screen. The server bumps
@@ -1194,7 +1256,8 @@
             return;
         }
         var tc = isTimedGame(selectedGameId) ? concreteTc(selectedTimeControl) : 0;
-        log("startCreate game=" + selectedGameId + " base=" + MG.Net.getBaseUrl() + " tc=" + tc);
+        var cv = hasVariant(selectedGameId) ? concreteVariant(selectedVariant) : "";
+        log("startCreate game=" + selectedGameId + " base=" + MG.Net.getBaseUrl() + " tc=" + tc + " cv=" + cv);
         MG.Api.create(selectedGameId, currentTok, function (code) {
             log("create ok, code=" + code);
             currentCode = code;
@@ -1203,7 +1266,7 @@
         }, function () {
             log("create FAILED (request errored)");
             setStatus("Couldn't create lobby. Check the server.");
-        }, tc);
+        }, tc, cv);
     }
 
     function renderRoom(code, isHost, isPublic) {
@@ -1450,7 +1513,7 @@
             if (token !== statusPollToken) return;
             MG.Api.status(code, function (st) {
                 if (token !== statusPollToken) return;
-                if (st.players === 2) { renderGame(selectedGameId, code, true, false, { timeControl: tc | 0 }); return; }
+                if (st.players === 2) { mountOnlineGame(selectedGameId, code, true, { timeControl: tc | 0 }); return; }
                 $.Schedule(MG.Net.waitDelay(misses++), tick);
             }, function () { $.Schedule(MG.Net.waitDelay(misses++), tick); });
         }
@@ -1469,13 +1532,14 @@
         // present, so the client no longer knows it up-front — the online clock is poll-discovered
         // from /api/clocks, hence renderGame gets timeControl:0 (untimed games send it too, no-op).
         var tcArg = isTimedGame(selectedGameId) ? (selectedTimeControl === -1 ? "any" : selectedTimeControl) : 0;
-        log("startQuickMatch game=" + selectedGameId + " tc=" + tcArg);
+        var cvArg = hasVariant(selectedGameId) ? selectedVariant : "";   // "any"/"russian"/"english"
+        log("startQuickMatch game=" + selectedGameId + " tc=" + tcArg + " cv=" + cvArg);
         MG.Api.quick(selectedGameId, currentTok, function (res) {
             if (res.role === "joiner") {
                 log("quick joined, code=" + res.code);
                 currentCode = res.code;
                 if (isDurakOnlineGame(selectedGameId)) { renderRoom(res.code, false, true); return; }
-                renderGame(selectedGameId, res.code, false, false, { timeControl: 0 }); // seated by the server; we play black
+                mountOnlineGame(selectedGameId, res.code, false, { timeControl: 0 }); // seated by the server; we play black
             } else {
                 log("quick hosting, code=" + res.code);
                 currentCode = res.code;
@@ -1486,7 +1550,7 @@
         }, function () {
             log("quick FAILED (request errored)");
             setStatus("Couldn't reach matchmaking. Check the server.");
-        }, tcArg);
+        }, tcArg, cvArg);
     }
 
     // ── multi-select quick match ──────────────────────────────────────────────
@@ -1576,7 +1640,12 @@
         if (ids.length === 0) { setStatus("Tick at least one game to search."); return; }
         setStatus("Finding a match…");
         currentTok = MG.Session.newToken();
-        log("startMultiQuick games=" + ids.join(","));
+        // The multi-search carries the SAME time-control + variant preferences as single Quick
+        // Match (they apply only to the clock/checkers games in the ticked set; the server ignores
+        // them for the others). "Any"(-1) → tc="any"; the variant picker's value rides as-is.
+        var tcArg = selectedTimeControl === -1 ? "any" : selectedTimeControl;
+        var cvArg = selectedVariant;   // "any"/"russian"/"english"
+        log("startMultiQuick games=" + ids.join(",") + " tc=" + tcArg + " cv=" + cvArg);
         MG.Api.mquick(ids, currentTok, function (res) {
             currentCode = res.code;
             if (res.role === "joiner") {
@@ -1593,7 +1662,7 @@
         }, function (why) {
             log("mquick FAILED (" + why + ")");
             setStatus(why === "games" ? "Pick at least one valid game." : "Couldn't reach matchmaking. Check the server.");
-        });
+        }, tcArg, cvArg);
     }
 
     // Poll status until the lobby fills AND the game is fixed (game > 0). Works for both
@@ -1609,7 +1678,7 @@
                 if (token !== statusPollToken) return;
                 if (st.gone) { renderMenu(); setStatus("⚠ Lobby closed."); return; }
                 if (st.players === 2 && st.game > 0) {
-                    renderGame(st.game, code, isHost);
+                    mountOnlineGame(st.game, code, isHost, {});
                     return;
                 }
                 $.Schedule(MG.Net.waitDelay(misses++), tick);
@@ -1659,7 +1728,8 @@
                 if (res.game === 3) { renderRoom(code, false, false); return; }
                 // res.tc = the host's time control (seconds), decoded from the join reply. The
                 // clock itself is server-authoritative; we pass tc only so the clock UI is built.
-                renderGame(res.game, code, false, false, { timeControl: res.tc | 0 });
+                // Checkers also carries a variant — mountOnlineGame reads it from /api/match.
+                mountOnlineGame(res.game, code, false, { timeControl: res.tc | 0 });
                 return;
             }
             if (res.reason === "missing") setStatus("Lobby " + code + " not found.");

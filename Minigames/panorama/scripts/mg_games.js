@@ -332,6 +332,15 @@
     function createCheckers(container, session) {
         var Api = MG.Api;
         var code = session.code;
+        // Pick the rules engine for this game's variant. English draughts (kings step one square,
+        // men capture forward only) lives in MG.Rules.checkersEnglish; anything else = Russian.
+        // Shadow the module-level aliases with the chosen engine so every helper below (board init,
+        // legal moves, bot search) routes through it — the server does the same via lobby.cv.
+        var RCv = (session.variant === "english" && MG.Rules.checkersEnglish) ? MG.Rules.checkersEnglish : RC;
+        var initialBoard = RCv.initialBoard;
+        var simpleMoves = RCv.simpleMoves, captureMoves = RCv.captureMoves;
+        var anyCaptureFor = RCv.anyCaptureFor, applyHop = RCv.applyHop, hasAnyMove = RCv.hasAnyMove;
+        var legalSequences = RCv.legalSequences, chooseBotMove = RCv.chooseBotMove, chooseBotMovePrep = RCv.chooseBotMovePrep;
         var myColor = session.isHost ? WHITE : BLACK;
         var board = initialBoard();
         var turn = WHITE;              // white (host) moves first

@@ -657,6 +657,19 @@ async function main() {
         ok(s.sec === 600, "tc/any: the Any host adopts the joiner's 10-min bank (600s)");
     })();
 
+    // ── checkers variants: Russian / English / Any ────────────────────────────
+    await (async function () {
+        var hv = new Hub({ storage: new FakeStorage() });
+        var russian = qdec(await req(hv, "/api/quick.png?game=1&tok=CVRUSH01&tc=180&cv=russian"));
+        ok(russian.host, "cv: first Russian checkers seeker HOSTS");
+        var english = qdec(await req(hv, "/api/quick.png?game=1&tok=CVENGL01&tc=180&cv=english"));
+        ok(english.host && english.code !== russian.code, "cv: English seeker does not join a Russian waiting lobby");
+        var any = qdec(await req(hv, "/api/quick.png?game=1&tok=CVANY001&tc=any&cv=any"));
+        ok(!any.host && any.code === russian.code, "cv/any: Any seeker joins the compatible Russian lobby");
+        var meta = await req(hv, "/api/match.png?code=" + russian.code);
+        ok(meta.w === 1 && meta.h === 5, "cv: match metadata reports Russian 3-minute checkers");
+    })();
+
     // ── multi-select quick match (mquick): intersection matching + status game ──
     await (async function () {
         var hm = new Hub({ storage: new FakeStorage() });

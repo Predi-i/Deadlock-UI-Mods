@@ -64,7 +64,7 @@
         return b;
     }
 
-    // Men move forward only; kings slide any distance along a diagonal ("flying").
+    // Russian draughts: men move forward only; kings slide any distance along a diagonal ("flying").
     var ALL_DIRS = [[-1, -1], [-1, 1], [1, -1], [1, 1]];
     function moveDirs(v) {
         if (v === 1) return [[-1, -1], [-1, 1]]; // white man: up
@@ -95,7 +95,7 @@
         return out;
     }
 
-    // Men capture in ANY diagonal direction (forward or backward), one square over.
+    // Russian men capture in ANY diagonal direction (forward or backward), one square over.
     // A flying king slides over empties, takes exactly one enemy, and may land on
     // any empty square beyond it.
     function captureMoves(b, i) {
@@ -125,13 +125,6 @@
         return out;
     }
 
-    function anyCaptureFor(b, color) {
-        for (var i = 0; i < 64; i++) {
-            if (colorOf(b[i]) === color && captureMoves(b, i).length > 0) return true;
-        }
-        return false;
-    }
-
     // Apply a single hop in place. Any piece on the diagonal between `from` and `to`
     // is captured — this covers both a man's 1-over jump and a flying king's ranged
     // capture without needing the captured square passed in (keeps the net protocol
@@ -158,147 +151,176 @@
         return { captured: captured, promoted: promoted };
     }
 
-    function hasAnyMove(b, color) {
-        for (var i = 0; i < 64; i++) {
-            if (colorOf(b[i]) !== color) continue;
-            if (simpleMoves(b, i).length || captureMoves(b, i).length) return true;
+    // English draughts: men move and jump forward only. Kings move/jump exactly one
+    // square at a time in either direction, rather than flying across a diagonal.
+    function englishSimpleMoves(b, i) {
+        var v = b[i]; if (!v) return [];
+        var r = rowOf(i), c = colOf(i), dirs = isKing(v) ? ALL_DIRS : moveDirs(v), out = [];
+        for (var k = 0; k < dirs.length; k++) {
+            var nr = r + dirs[k][0], nc = c + dirs[k][1];
+            if (inBounds(nr, nc) && b[idx(nr, nc)] === 0) out.push({ to: idx(nr, nc) });
         }
-        return false;
+        return out;
     }
 
-    // ── AI (bot mode) ────────────────────────────────────────────────────────
-    // A "sequence" is a full legal turn: an array of hops [{from,to}, ...]. Multi-
-    // jumps are expanded into their full chains so the bot evaluates whole turns.
-    function captureSequencesFrom(b, i) {
-        var caps = captureMoves(b, i);
-        if (caps.length === 0) return [];
-        var seqs = [];
-        for (var k = 0; k < caps.length; k++) {
-            var mv = caps[k];
-            var nb = b.slice();
-            var res = applyHop(nb, i, mv.to);
-            if (!res.promoted && captureMoves(nb, mv.to).length > 0) {
-                var tails = captureSequencesFrom(nb, mv.to);
-                for (var t = 0; t < tails.length; t++) {
-                    seqs.push([{ from: i, to: mv.to }].concat(tails[t]));
-                }
-            } else {
-                seqs.push([{ from: i, to: mv.to }]);
+    function englishCaptureMoves(b, i) {
+        var v = b[i]; if (!v) return [];
+        var color = colorOf(v), r = rowOf(i), c = colOf(i);
+        var dirs = isKing(v) ? ALL_DIRS : moveDirs(v), out = [];
+        for (var k = 0; k < dirs.length; k++) {
+            var mr = r + dirs[k][0], mc = c + dirs[k][1];
+            var lr = r + 2 * dirs[k][0], lc = c + 2 * dirs[k][1];
+            if (!inBounds(lr, lc) || b[idx(lr, lc)] !== 0) continue;
+            if (isEnemy(b[idx(mr, mc)], color)) out.push({ to: idx(lr, lc), cap: idx(mr, mc) });
+        }
+        return out;
+    }
+
+    // Both variants share board encoding, promotion and the bot driver. Only their
+    // simple/capture generators differ, so keep all turn sequencing in one factory.
+    function makeRules(simpleMovesFor, captureMovesFor) {
+        function anyCaptureFor(b, color) {
+            for (var i = 0; i < 64; i++) {
+                if (colorOf(b[i]) === color && captureMovesFor(b, i).length > 0) return true;
             }
+            return false;
         }
-        return seqs;
-    }
 
-    function legalSequences(b, color) {
-        var i, k, seqs = [], hasCap = false;
-        for (i = 0; i < 64; i++) {
-            if (colorOf(b[i]) === color && captureMoves(b, i).length) { hasCap = true; break; }
-        }
-        if (hasCap) { // forced capture: only capture chains are legal
-            for (i = 0; i < 64; i++) {
+        function hasAnyMove(b, color) {
+            for (var i = 0; i < 64; i++) {
                 if (colorOf(b[i]) !== color) continue;
-                var cs = captureSequencesFrom(b, i);
-                for (k = 0; k < cs.length; k++) seqs.push(cs[k]);
+                if (simpleMovesFor(b, i).length || captureMovesFor(b, i).length) return true;
+            }
+            return false;
+        }
+
+        // A sequence is one complete turn. Multi-jumps are expanded so promotion ends a
+        // turn in both variants before the newly crowned king can jump again.
+        function captureSequencesFrom(b, i) {
+            var caps = captureMovesFor(b, i);
+            if (caps.length === 0) return [];
+            var seqs = [];
+            for (var k = 0; k < caps.length; k++) {
+                var mv = caps[k];
+                var nb = b.slice();
+                var res = applyHop(nb, i, mv.to);
+                if (!res.promoted && captureMovesFor(nb, mv.to).length > 0) {
+                    var tails = captureSequencesFrom(nb, mv.to);
+                    for (var t = 0; t < tails.length; t++) seqs.push([{ from: i, to: mv.to }].concat(tails[t]));
+                } else {
+                    seqs.push([{ from: i, to: mv.to }]);
+                }
             }
             return seqs;
         }
-        for (i = 0; i < 64; i++) {
-            if (colorOf(b[i]) !== color) continue;
-            var sm = simpleMoves(b, i);
-            for (k = 0; k < sm.length; k++) seqs.push([{ from: i, to: sm[k].to }]);
+
+        function legalSequences(b, color) {
+            var i, k, seqs = [], hasCap = false;
+            for (i = 0; i < 64; i++) {
+                if (colorOf(b[i]) === color && captureMovesFor(b, i).length) { hasCap = true; break; }
+            }
+            if (hasCap) {
+                for (i = 0; i < 64; i++) {
+                    if (colorOf(b[i]) !== color) continue;
+                    var cs = captureSequencesFrom(b, i);
+                    for (k = 0; k < cs.length; k++) seqs.push(cs[k]);
+                }
+                return seqs;
+            }
+            for (i = 0; i < 64; i++) {
+                if (colorOf(b[i]) !== color) continue;
+                var sm = simpleMovesFor(b, i);
+                for (k = 0; k < sm.length; k++) seqs.push([{ from: i, to: sm[k].to }]);
+            }
+            return seqs;
         }
-        return seqs;
-    }
 
-    function applySequence(b, seq) {
-        for (var h = 0; h < seq.length; h++) applyHop(b, seq[h].from, seq[h].to);
-    }
-
-    function evalBoard(b, me) {
-        var score = 0;
-        for (var i = 0; i < 64; i++) {
-            var v = b[i]; if (!v) continue;
-            var val = isKing(v) ? 25 : 10; // flying kings are worth far more than a man
-            if (v === 1) val += (7 - rowOf(i));   // white man: advance toward row 0
-            else if (v === 3) val += rowOf(i);    // black man: advance toward row 7
-            score += (colorOf(v) === me ? val : -val);
+        function applySequence(b, seq) {
+            for (var h = 0; h < seq.length; h++) applyHop(b, seq[h].from, seq[h].to);
         }
-        return score;
-    }
 
-    function minimax(b, color, me, depth, alpha, beta) {
-        var seqs = legalSequences(b, color);
-        if (seqs.length === 0) return color === me ? -100000 + depth : 100000 - depth;
-        if (depth === 0) return evalBoard(b, me);
-        var opp = color === WHITE ? BLACK : WHITE, k, nb, sc;
-        if (color === me) {
-            var best = -1e9;
+        function evalBoard(b, me) {
+            var score = 0;
+            for (var i = 0; i < 64; i++) {
+                var v = b[i]; if (!v) continue;
+                var val = isKing(v) ? 25 : 10;
+                if (v === 1) val += 7 - rowOf(i);
+                else if (v === 3) val += rowOf(i);
+                score += colorOf(v) === me ? val : -val;
+            }
+            return score;
+        }
+
+        function minimax(b, color, me, depth, alpha, beta) {
+            var seqs = legalSequences(b, color);
+            if (seqs.length === 0) return color === me ? -100000 + depth : 100000 - depth;
+            if (depth === 0) return evalBoard(b, me);
+            var opp = color === WHITE ? BLACK : WHITE, k, nb, sc;
+            if (color === me) {
+                var best = -1e9;
+                for (k = 0; k < seqs.length; k++) {
+                    nb = b.slice(); applySequence(nb, seqs[k]);
+                    sc = minimax(nb, opp, me, depth - 1, alpha, beta);
+                    if (sc > best) best = sc;
+                    if (best > alpha) alpha = best;
+                    if (alpha >= beta) break;
+                }
+                return best;
+            }
+            var worst = 1e9;
             for (k = 0; k < seqs.length; k++) {
                 nb = b.slice(); applySequence(nb, seqs[k]);
                 sc = minimax(nb, opp, me, depth - 1, alpha, beta);
-                if (sc > best) best = sc;
-                if (best > alpha) alpha = best;
+                if (sc < worst) worst = sc;
+                if (worst < beta) beta = worst;
                 if (alpha >= beta) break;
             }
-            return best;
+            return worst;
         }
-        var worst = 1e9;
-        for (k = 0; k < seqs.length; k++) {
-            nb = b.slice(); applySequence(nb, seqs[k]);
-            sc = minimax(nb, opp, me, depth - 1, alpha, beta);
-            if (sc < worst) worst = sc;
-            if (worst < beta) beta = worst;
-            if (alpha >= beta) break;
-        }
-        return worst;
-    }
 
-    function chooseBotMove(b, color) {
-        var seqs = legalSequences(b, color);
-        if (seqs.length === 0) return null;
-        var opp = color === WHITE ? BLACK : WHITE;
-        var DEPTH = 5, best = -1e9, pick = seqs[0];
-        for (var k = 0; k < seqs.length; k++) {
-            var nb = b.slice(); applySequence(nb, seqs[k]);
-            // small random tie-break so the bot isn't perfectly repetitive
-            var sc = minimax(nb, opp, color, DEPTH - 1, -1e9, 1e9) + Math.random() * 0.5;
-            if (sc > best) { best = sc; pick = seqs[k]; }
-        }
-        return pick;
-    }
-
-    // Resumable variant of chooseBotMove: the SAME depth-5 search, but exposed as a driver so
-    // the caller can evaluate ONE root move per frame and yield between them. Panorama JS is
-    // single-threaded, so the old one-shot call froze the whole HUD for the length of the search
-    // (the "лаги при ходе бота"); worse, that freeze ate the only window in which a premove could
-    // be grabbed. Stepping across frames keeps the UI live and the bot exactly as strong.
-    // Usage: var d = chooseBotMovePrep(b,color); while(!d.done()) d.step(); var seq = d.result();
-    function chooseBotMovePrep(b, color) {
-        var seqs = legalSequences(b, color);
-        var opp = color === WHITE ? BLACK : WHITE;
-        var DEPTH = 5, i = 0, best = -1e9, pick = seqs.length ? seqs[0] : null;
-        return {
-            done: function () { return i >= seqs.length; },
-            step: function () {
-                if (i >= seqs.length) return;
-                var nb = b.slice(); applySequence(nb, seqs[i]);
+        function chooseBotMove(b, color) {
+            var seqs = legalSequences(b, color);
+            if (seqs.length === 0) return null;
+            var opp = color === WHITE ? BLACK : WHITE;
+            var DEPTH = 5, best = -1e9, pick = seqs[0];
+            for (var k = 0; k < seqs.length; k++) {
+                var nb = b.slice(); applySequence(nb, seqs[k]);
                 var sc = minimax(nb, opp, color, DEPTH - 1, -1e9, 1e9) + Math.random() * 0.5;
-                if (sc > best) { best = sc; pick = seqs[i]; }
-                i++;
-            },
-            result: function () { return pick; }
+                if (sc > best) { best = sc; pick = seqs[k]; }
+            }
+            return pick;
+        }
+
+        function chooseBotMovePrep(b, color) {
+            var seqs = legalSequences(b, color);
+            var opp = color === WHITE ? BLACK : WHITE;
+            var DEPTH = 5, i = 0, best = -1e9, pick = seqs.length ? seqs[0] : null;
+            return {
+                done: function () { return i >= seqs.length; },
+                step: function () {
+                    if (i >= seqs.length) return;
+                    var nb = b.slice(); applySequence(nb, seqs[i]);
+                    var sc = minimax(nb, opp, color, DEPTH - 1, -1e9, 1e9) + Math.random() * 0.5;
+                    if (sc > best) { best = sc; pick = seqs[i]; }
+                    i++;
+                },
+                result: function () { return pick; }
+            };
+        }
+
+        return {
+            WHITE: WHITE, BLACK: BLACK,
+            idx: idx, rowOf: rowOf, colOf: colOf, isDark: isDark,
+            colorOf: colorOf, isKing: isKing,
+            initialBoard: initialBoard,
+            simpleMoves: simpleMovesFor, captureMoves: captureMovesFor,
+            anyCaptureFor: anyCaptureFor, applyHop: applyHop, hasAnyMove: hasAnyMove,
+            legalSequences: legalSequences, chooseBotMove: chooseBotMove, chooseBotMovePrep: chooseBotMovePrep
         };
     }
 
-    R.checkers = {
-        WHITE: WHITE, BLACK: BLACK,
-        idx: idx, rowOf: rowOf, colOf: colOf, isDark: isDark,
-        colorOf: colorOf, isKing: isKing,
-        initialBoard: initialBoard,
-        simpleMoves: simpleMoves, captureMoves: captureMoves,
-        anyCaptureFor: anyCaptureFor, applyHop: applyHop, hasAnyMove: hasAnyMove,
-        legalSequences: legalSequences, chooseBotMove: chooseBotMove, chooseBotMovePrep: chooseBotMovePrep
-    };
+    R.checkers = makeRules(simpleMoves, captureMoves);
+    R.checkersEnglish = makeRules(englishSimpleMoves, englishCaptureMoves);
 })();
 
 // ---- rules/ttt.js ----
@@ -1871,12 +1893,14 @@ export class Hub {
         const newCode = await this.freshCode();
 
         const tc = clockSecFor(game, q.get("tc"));         // 0 unless chess/checkers with a bank
+        const cv = checkersVariantFor(game, q.get("cv"));
         const lobby = {
           game, players: 1, moves: [], pub: 0, t: nowSeq(),
           seats: [{ tok: q.get("tok") || "" }, null], // seat 0 = host = white/X/+1, moves first
           turn: 0,                                     // seat index whose turn it is
           tc: tc,                                      // per-seat bank in SECONDS (0 = no clock)
-          state: initState(game)                       // authoritative board/state
+          cv: cv,                                      // Russian or English checkers (empty for other games)
+          state: initState(game, cv)                   // authoritative board/state
         };
         initClock(lobby);
         await this.storage.put("l:" + newCode, lobby);
@@ -1887,98 +1911,86 @@ export class Hub {
       if (p === "/api/quick") {
         await this.maybeSweep();
         const game = clampInt(q.get("game"), 1, 1, 9);
-        if (!SUPPORTED_GAMES[game]) return d(9, 6);      // unsupported game id (6..9 have no engine)
-        if (!validTok(q.get("tok"))) return d(9, 3);     // reject empty/garbage seat token
+        if (!SUPPORTED_GAMES[game]) return d(9, 6);
+        if (!validTok(q.get("tok"))) return d(9, 3);
 
-        // TIME-CONTROL matchmaking (chess/checkers only; other games have no bank). The picker
-        // sends tc = concrete SECONDS (60/180/300/600) or the literal "any". Searchers pool by
-        // (game, tc-bucket) so a 1-min seeker never gets force-matched into a 10-min waiter:
-        //   • concrete T  → join a same-T waiter, else an "any" waiter (which then adopts T),
-        //                   else host a T lobby.
-        //   • "any"       → join ANY waiter (adopt its bank; if that waiter is itself "any",
-        //                   the game resolves to 5 min), else host an "any" lobby.
-        // Non-clock games ignore tc entirely and share one bucket ("0"). Single-quick queues use
-        // the prefix pubq:q:<game>:<bucket> so they never collide with mquick's pubq:<game>.
-        const clockGame = !!CLOCK_GAMES[game];
-        const rawTc = q.get("tc");
-        const wantAny = clockGame && rawTc === "any";
-        const wantTc = clockGame && !wantAny ? clockSecFor(game, rawTc) : 0;  // concrete secs, else 0
-        // The bank this seeker will impose once paired: a concrete pick fixes to itself; "Any"
-        // resolves to 5 min against an unbanked/undecided host. (When joining a single-quick host
-        // that already holds a concrete bank, that host's bank stands instead — see below.)
-        const seekerTc = clockGame ? (wantAny ? 300 : wantTc) : 0;
-        // Candidate queues to try joining, in order:
-        //   • single-quick tc buckets (pubq:q:<game>:<bucket>) — a concrete seeker also accepts an
-        //     "any" host; an "any" seeker sweeps every bucket.
-        //   • the shared mquick queue (pubq:<game>) — an undecided multi-select host (game 0) whose
-        //     candidate set includes this game; finalizeJoin fixes the game for it.
-        // Each entry is [storageKey, isMquickQueue].
-        const buckets = !clockGame ? ["0"]
-          : wantAny ? ["60", "180", "300", "600", "any"]
-          : [String(wantTc), "any"];
-        const qkey = (b) => "pubq:q:" + game + ":" + b;
-        const queues = buckets.map((b) => [qkey(b), false]);
-        queues.push(["pubq:" + game, true]);   // mquick multi-hosts live here (undecided game 0)
+        const rawTc = q.get("tc") || "0";
+        const rawCv = q.get("cv") || CHECKERS_DEFAULT_VARIANT;
+        const timeBuckets = timeBucketsFor(game, rawTc);
+        const variantBuckets = variantBucketsFor(game, rawCv);
+        const queues = [], seenQueues = {};
+        function addQueue(key) { if (!seenQueues[key]) { seenQueues[key] = 1; queues.push(key); } }
+        for (let ti = 0; ti < timeBuckets.length; ti++) {
+          for (let vi = 0; vi < variantBuckets.length; vi++) {
+            addQueue(quickQueueKey(game, timeBuckets[ti], variantBuckets[vi]));
+            addQueue(multiQueueKey(game, timeBuckets[ti], variantBuckets[vi]));
+          }
+        }
 
         for (let i = 0; i < queues.length; i++) {
-          const waitCode = await this.storage.get(queues[i][0]);
+          const waitCode = await this.storage.get(queues[i]);
           if (!waitCode) continue;
           const w = await this.storage.get("l:" + waitCode);
           const isMulti = w && w.game === 0 && w.games && w.games.indexOf(game) >= 0;
-          if (w && w.pub && w.players < 2 && (w.game === game || isMulti)) {
-            // Resolve the bank now that both seats are known:
-            //   • single-quick host with a concrete bank (w.tc>0, not qtcAny) → that bank stands.
-            //   • single-quick "any" host (qtcAny) or an mquick multi-host (no bank) → the seeker
-            //     imposes seekerTc (its own concrete T, or 5 min if it too asked for "Any").
-            if (!clockGame) w.tc = 0;
-            else if (w.qtcAny || isMulti || !w.tc) { w.tc = seekerTc; delete w.qtcAny; }
-            // else the host's concrete w.tc stands and the joiner plays at it.
-            await this.finalizeJoin(waitCode, w, q.get("tok"), game);
-            return dCode(Number(waitCode), false); // JOINER (black)
+          if (w && w.pub && w.players < 2 && (w.game === game || isMulti) && preferencesMatch(w, game, rawTc, rawCv)) {
+            await this.finalizeJoin(waitCode, w, q.get("tok"), game, resolveMatchOptions(w, game, rawTc, rawCv));
+            return dCode(Number(waitCode), false);
           }
-          // stale/closed slot — try the next queue, then fall through to hosting.
         }
 
-        // No match: host a fresh public lobby in OUR bucket and wait.
-        const hostBucket = !clockGame ? "0" : wantAny ? "any" : String(wantTc);
+        const hostTimeBucket = timeBucketFor(game, rawTc);
+        const hostVariantBucket = variantBucketFor(game, rawCv);
+        const cv = checkersVariantFor(game, rawCv);
         const newCode = await this.freshCode();
         const lobby = {
           game, players: 1, moves: [], pub: 1, t: nowSeq(),
-          seats: [{ tok: q.get("tok") || "" }, null], // host takes seat 0 (white/X/+1)
+          seats: [{ tok: q.get("tok") || "" }, null],
           turn: 0,
-          tc: clockGame && !wantAny ? wantTc : 0,      // concrete bank, or 0 while an "any" host is unresolved
-          qtcAny: clockGame && wantAny ? 1 : 0,        // unresolved "any" host — its bank is fixed at join
-          qk: qkey(hostBucket),                        // the queue slot this lobby holds (for clearQueuesFor)
-          state: initState(game)
+          tc: CLOCK_GAMES[game] && rawTc !== "any" ? clockSecFor(game, rawTc) : 0,
+          qtcAny: CLOCK_GAMES[game] && rawTc === "any" ? 1 : 0,
+          cv: cv,
+          qcvAny: wantsAnyCheckersVariant(game, rawCv) ? 1 : 0,
+          qk: quickQueueKey(game, hostTimeBucket, hostVariantBucket),
+          state: initState(game, cv)
         };
         initClock(lobby);
         await this.storage.put("l:" + newCode, lobby);
-        await this.storage.put(qkey(hostBucket), newCode);
-        // HOST (white): +100 on the width flags the role without a fragile extra value.
+        await this.storage.put(lobby.qk, newCode);
         return dCode(newCode, true);
       }
 
-      // Multi-select quick match. The caller sends a SET of games it will accept
-      // (games=1,2,4,5 — the uplink is unlimited, so the whole set rides up freely).
-      // A joiner takes any waiting host whose game (or candidate set) intersects ours,
-      // FIXING the lobby to the matched game. With no match, we host ONE undecided lobby
-      // (game 0) registered in EVERY selected per-game queue; the first joiner to pick one
-      // of them fixes the game. Both sides learn the chosen game from /api/status (its
-      // height carries game+1), so no extra downlink value is needed.
+      // Multi-select uses the same time-control and checkers-variant preferences as Quick
+      // Match. The first compatible game fixes the lobby; /api/match exposes the result.
       if (p === "/api/mquick") {
         await this.maybeSweep();
         if (!validTok(q.get("tok"))) return d(9, 3);     // reject empty/garbage seat token
         const set = parseGameSet(q.get("games"));
         if (set.length === 0) return d(9, 6);            // no valid multi-capable game ids
+        const rawTc = q.get("tc") || "0";
+        const rawCv = q.get("cv") || CHECKERS_DEFAULT_VARIANT;
+        const seenQueues = {};
         for (let i = 0; i < set.length; i++) {
           const g = set[i];
-          const waitCode = await this.storage.get("pubq:" + g);
-          if (!waitCode) continue;
-          const w = await this.storage.get("l:" + waitCode);
-          if (w && w.pub && w.players < 2 &&
-              (w.game === g || (w.game === 0 && w.games && w.games.indexOf(g) >= 0))) {
-            await this.finalizeJoin(waitCode, w, q.get("tok"), g);
-            return dCode(Number(waitCode), false); // JOINER
+          const timeBuckets = timeBucketsFor(g, rawTc);
+          const variantBuckets = variantBucketsFor(g, rawCv);
+          for (let kind = 0; kind < 2; kind++) {
+            for (let ti = 0; ti < timeBuckets.length; ti++) {
+              for (let vi = 0; vi < variantBuckets.length; vi++) {
+                const key = kind === 0
+                  ? quickQueueKey(g, timeBuckets[ti], variantBuckets[vi])
+                  : multiQueueKey(g, timeBuckets[ti], variantBuckets[vi]);
+                if (seenQueues[key]) continue;
+                seenQueues[key] = 1;
+                const waitCode = await this.storage.get(key);
+                if (!waitCode) continue;
+                const w = await this.storage.get("l:" + waitCode);
+                const isMulti = w && w.game === 0 && w.games && w.games.indexOf(g) >= 0;
+                if (w && w.pub && w.players < 2 && (w.game === g || isMulti) && preferencesMatch(w, g, rawTc, rawCv)) {
+                  await this.finalizeJoin(waitCode, w, q.get("tok"), g, resolveMatchOptions(w, g, rawTc, rawCv));
+                  return dCode(Number(waitCode), false);
+                }
+              }
+            }
           }
         }
         const newCode = await this.freshCode();
@@ -1986,10 +1998,18 @@ export class Hub {
           game: 0, games: set, players: 1, moves: [], pub: 1, t: nowSeq(),
           seats: [{ tok: q.get("tok") || "" }, null],      // host takes seat 0
           turn: 0,
+          mtc: rawTc,
+          mcv: rawCv,
+          mqs: [],
           state: null                                      // fixed once a joiner picks a game
         };
+        for (let i = 0; i < set.length; i++) {
+          const g = set[i];
+          const key = multiQueueKey(g, timeBucketFor(g, rawTc), variantBucketFor(g, rawCv));
+          lobby.mqs.push(key);
+          await this.storage.put(key, newCode);
+        }
         await this.storage.put("l:" + newCode, lobby);
-        for (let i = 0; i < set.length; i++) await this.storage.put("pubq:" + set[i], newCode);
         // HOST: +100 on the width flags the role, exactly like /api/quick.
         return dCode(newCode, true);
       }
@@ -2071,6 +2091,23 @@ export class Hub {
         // game=0). A multi-select HOST reads it to learn which game a joiner picked; the
         // single-game callers ignore it (they already know their game). Never (9,x).
         return d(lobby.players, (lobby.game || 0) + 1); // w: 1|2 players · h: game+1
+      }
+
+      // Resolved-options readout: once a lobby is settled (both seats seated, or a single host
+      // holding concrete prefs), report the CHOSEN game + time-control + checkers variant so a
+      // client can mount the correct engine. The 2-int join/quick replies only carry role+code,
+      // so the variant (and the exact bank for a resolved "Any") needs its own tiny channel.
+      //   width  = game (1..9)
+      //   height = tcIndex*2 + variantBit + 1   (variantBit: english=1, else 0; +1 keeps it ≥1)
+      // e.g. Russian 3-min checkers = (1, 2*2+0+1) = (1,5). An undecided mquick lobby → (9,1).
+      if (p === "/api/match") {
+        const lobby = code ? await this.storage.get("l:" + code) : null;
+        if (!lobby) return d(9, 1);              // gone
+        if (!lobby.game) return d(9, 1);         // still-undecided mquick lobby: no game fixed yet
+        const g = lobby.game;
+        const ti = CLOCK_GAMES[g] ? tcIndex(lobby.tc || 0) : 0;
+        const variantBit = g === 1 && checkersVariantFor(g, lobby.cv) === "english" ? 1 : 0;
+        return d(g, ti * 2 + variantBit + 1);
       }
 
       if (p === "/api/move") {
@@ -2426,8 +2463,20 @@ export class Hub {
   // undecided multi-select lobby (game 0 → the picked game, and initialise its board now
   // that we know which engine it needs). Clears EVERY per-game queue the host held, so a
   // multi-lobby registered under several games can never be double-joined.
-  async finalizeJoin(waitCode, w, tok, game) {
-    if (w.game === 0) { w.game = game; w.games = null; w.state = initState(game); }
+  async finalizeJoin(waitCode, w, tok, game, opts) {
+    opts = opts || {};
+    // Resolve the pair's bank + checkers variant now that BOTH seats are known. resolveMatchOptions
+    // has already reconciled the host's and seeker's preferences (a concrete pick wins over "Any";
+    // two "Any"s fall to the 5-min / Russian defaults). Fix the lobby to those concrete values and
+    // clear the "unresolved Any" flags so lobbyTimeChoice/lobbyVariantChoice read the settled state.
+    if (w.game === 0) { w.game = game; w.games = null; }
+    w.cv = game === 1 ? (opts.cv || checkersVariantFor(game, w.cv)) : "";
+    if (CLOCK_GAMES[game]) w.tc = opts.tc || 0;
+    else w.tc = 0;
+    delete w.qtcAny; delete w.qcvAny;
+    // (Re)initialise the board with the RESOLVED variant. An undecided mquick lobby had no state;
+    // a single-quick "Any"-variant host may have been built for the wrong engine, so rebuild it.
+    w.state = initState(w.game, w.cv);
     w.players = 2;
     w.seats = w.seats || [null, null];
     w.seats[1] = { tok: tok || "" };           // joiner takes seat 1
@@ -2437,22 +2486,19 @@ export class Hub {
     await this.clearQueuesFor(w, waitCode);
   }
 
-  // Remove a lobby's code from every public queue it registered under. Three queue shapes:
-  //   • single-quick  → one (game, tc-bucket) slot stored in lobby.qk (pubq:q:<game>:<bucket>)
-  //   • multi-select  → one pubq:<game> per candidate game in lobby.games[]
+  // Remove a lobby's code from every public queue it registered under. Two queue shapes, both
+  // now keyed by (game, tc-bucket, variant-bucket):
+  //   • single-quick  → one slot stored in lobby.qk        (pubq:q:<game>:<tc>:<cv>)
+  //   • multi-select  → one pubq:m:… per candidate game, all stored in lobby.mqs[]
   // Only deletes a queue entry that still points at THIS code (a newer host may have replaced
   // it). Both shapes are cleared idempotently, so a mislabeled lobby can't strand a slot.
   async clearQueuesFor(lobby, code) {
-    if (lobby.qk) {
-      const wc = await this.storage.get(lobby.qk);
-      if (wc != null && Number(wc) === Number(code)) await this.storage.delete(lobby.qk);
-    }
-    const ids = lobby.games && lobby.games.length ? lobby.games : [lobby.game];
-    for (let i = 0; i < ids.length; i++) {
-      const g = ids[i];
-      if (!g) continue;
-      const wc = await this.storage.get("pubq:" + g);
-      if (wc != null && Number(wc) === Number(code)) await this.storage.delete("pubq:" + g);
+    const keys = [];
+    if (lobby.qk) keys.push(lobby.qk);
+    if (lobby.mqs && lobby.mqs.length) for (let i = 0; i < lobby.mqs.length; i++) keys.push(lobby.mqs[i]);
+    for (let i = 0; i < keys.length; i++) {
+      const wc = await this.storage.get(keys[i]);
+      if (wc != null && Number(wc) === Number(code)) await this.storage.delete(keys[i]);
     }
   }
 
@@ -2582,10 +2628,73 @@ function parseGameSet(raw) {
 const CLOCK_GAMES = { 1: 1, 4: 1 };
 const CLOCK_CHOICES = { 60: 1, 180: 1, 300: 1, 600: 1 };
 const QUICK_CLOCK_SEC = { 1: 300, 4: 300 };
+const CHECKERS_VARIANTS = { russian: 1, english: 1 };
+const CHECKERS_DEFAULT_VARIANT = "russian";
 function clockSecFor(game, raw) {
   if (!CLOCK_GAMES[game]) return 0;
   const n = parseInt(raw, 10);
   return CLOCK_CHOICES[n] ? n : 0;   // reject anything not on the menu (0 = play untimed)
+}
+function checkersVariantFor(game, raw) {
+  if (game !== 1) return "";
+  return CHECKERS_VARIANTS[raw] ? raw : CHECKERS_DEFAULT_VARIANT;
+}
+function wantsAnyCheckersVariant(game, raw) { return game === 1 && raw === "any"; }
+function timeBucketFor(game, raw) {
+  if (!CLOCK_GAMES[game]) return "0";
+  return raw === "any" ? "any" : String(clockSecFor(game, raw));
+}
+function variantBucketFor(game, raw) {
+  if (game !== 1) return "0";
+  return wantsAnyCheckersVariant(game, raw) ? "any" : checkersVariantFor(game, raw);
+}
+function timeBucketsFor(game, raw) {
+  if (!CLOCK_GAMES[game]) return ["0"];
+  if (raw === "any") return ["60", "180", "300", "600", "any"];
+  return [String(clockSecFor(game, raw)), "any"];
+}
+function variantBucketsFor(game, raw) {
+  if (game !== 1) return ["0"];
+  if (wantsAnyCheckersVariant(game, raw)) return ["russian", "english", "any"];
+  return [checkersVariantFor(game, raw), "any"];
+}
+function quickQueueKey(game, tc, cv) { return "pubq:q:" + game + ":" + tc + ":" + cv; }
+function multiQueueKey(game, tc, cv) { return "pubq:m:" + game + ":" + tc + ":" + cv; }
+function lobbyTimeChoice(lobby, game) {
+  if (!CLOCK_GAMES[game]) return "0";
+  if (lobby.game === 0 && lobby.mtc != null) return lobby.mtc === "any" ? "any" : String(clockSecFor(game, lobby.mtc));
+  if (lobby.qtcAny) return "any";
+  return String(lobby.tc | 0);
+}
+function lobbyVariantChoice(lobby, game) {
+  if (game !== 1) return "0";
+  if (lobby.game === 0 && lobby.mcv != null) return wantsAnyCheckersVariant(game, lobby.mcv) ? "any" : checkersVariantFor(game, lobby.mcv);
+  if (lobby.qcvAny) return "any";
+  return checkersVariantFor(game, lobby.cv);
+}
+function preferencesMatch(lobby, game, rawTc, rawCv) {
+  const hostTc = lobbyTimeChoice(lobby, game);
+  const seekerTc = CLOCK_GAMES[game] ? (rawTc === "any" ? "any" : String(clockSecFor(game, rawTc))) : "0";
+  if (hostTc !== "any" && seekerTc !== "any" && hostTc !== seekerTc) return false;
+  const hostCv = lobbyVariantChoice(lobby, game);
+  const seekerCv = game === 1 ? (wantsAnyCheckersVariant(game, rawCv) ? "any" : checkersVariantFor(game, rawCv)) : "0";
+  return hostCv === "any" || seekerCv === "any" || hostCv === seekerCv;
+}
+function resolveMatchOptions(lobby, game, rawTc, rawCv) {
+  const hostTc = lobbyTimeChoice(lobby, game);
+  const seekerTc = CLOCK_GAMES[game] ? (rawTc === "any" ? "any" : String(clockSecFor(game, rawTc))) : "0";
+  let tc = 0;
+  if (CLOCK_GAMES[game]) {
+    if (hostTc !== "any" && Number(hostTc) > 0) tc = Number(hostTc);
+    else if (seekerTc !== "any" && Number(seekerTc) > 0) tc = Number(seekerTc);
+    else tc = QUICK_CLOCK_SEC[game];
+  }
+  const hostCv = lobbyVariantChoice(lobby, game);
+  const seekerCv = game === 1 ? (wantsAnyCheckersVariant(game, rawCv) ? "any" : checkersVariantFor(game, rawCv)) : "";
+  const cv = game === 1
+    ? (hostCv !== "any" ? hostCv : (seekerCv !== "any" ? seekerCv : CHECKERS_DEFAULT_VARIANT))
+    : "";
+  return { tc: tc, cv: cv };
 }
 // The time control is one of a tiny fixed menu, so it rides the downlink as a small INDEX
 // (0..4) rather than raw seconds (0..600 would overflow one level dimension). Client mirror:
@@ -2655,9 +2764,12 @@ function seatOf(lobby, tok) {
 }
 
 // Fresh authoritative state per game. null = no server engine → legacy relay.
-function initState(game) {
+function initState(game, checkersVariant) {
   const R = rules();
-  if (game === 1) return { board: R.checkers.initialBoard(), chainSq: -1 }; // checkers
+  if (game === 1) {
+    const C = checkersVariantFor(game, checkersVariant) === "english" ? R.checkersEnglish : R.checkers;
+    return { board: C.initialBoard(), chainSq: -1 };
+  }
   if (game === 2) return { board: [0, 0, 0, 0, 0, 0, 0, 0, 0] };            // tic-tac-toe
   if (game === 4) return { board: R.chess.initialChessBoard(), cst: R.chess.initialChessState() }; // chess
   if (game === 3) return { started: 0, pub: [], priv: [[], []] };                                  // durak (dealt on /api/start)
@@ -2675,7 +2787,10 @@ function validateMove(lobby, seat, from, to, end) {
   // No authoritative engine for this lobby → REJECT. We never blindly relay an unchecked
   // move (that would make the server a dumb, cheatable relay for any unknown game id).
   if (!lobby.state) return { ok: false, code: 2 };
-  if (lobby.game === 1) return validateCheckers(R.checkers, lobby, seat, from, to);
+  if (lobby.game === 1) {
+    const C = checkersVariantFor(1, lobby.cv) === "english" ? R.checkersEnglish : R.checkers;
+    return validateCheckers(C, lobby, seat, from, to);
+  }
   if (lobby.game === 2) return validateTtt(lobby, seat, from, to);
   if (lobby.game === 4) return validateChess(R.chess, lobby, seat, from, to);
   if (lobby.game === 5) return validateConnectFour(R.connectfour, lobby, seat, from, to);

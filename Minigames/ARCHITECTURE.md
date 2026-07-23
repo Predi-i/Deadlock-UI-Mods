@@ -175,10 +175,11 @@ dim. Only `/api/probe` stays **literal pixels** — it's the calibration referen
 |---|---|
 | `/api/probe` | `(600, 1000)` LITERAL px — swap + scale calibration reference |
 | `/api/ping` | `(1, 1)` |
-| `/api/create?game=G&tok=T` | `dCode(code, host=false)` — new private lobby, host = seat 0 |
-| `/api/quick?game=G&tok=T` | `dCode(code, HOST\|JOINER)` — role is the code **band**, not `+100` |
+| `/api/create?game=G&tok=T&tc=..&cv=..` | `dCode(code, host=false)` — new private lobby, host = seat 0 |
+| `/api/quick?game=G&tok=T&tc=..&cv=..` | `dCode(code, HOST\|JOINER)` — role is the code **band**, not `+100` |
 | `/api/cancel?code=C` | `(1,1)` |
 | `/api/join?code=C&tok=T` | `(G, tcIndex+1)` ok · `(20,1)` missing · `(21,1)` full · `(9,3)` bad-token |
+| `/api/match?code=C` | `(game, tcIndex*2+variantBit+1)` — resolved game/bank/checkers-variant · `(9,1)` gone/undecided |
 | `/api/status?code=C` | `(players, game+1)` · `(9,1)` gone |
 | `/api/move?code=C&from=F&to=T&end=E&tok=T` | `(1,1)` ok · `(9,1)` not-your-turn · `(9,2)` illegal · `(9,3)` bad-token · `(9,9)` gone |
 | `/api/poll?code=C&since=S` | `(from, to)` RAW squares 0..63 · `(1,1)` nothing new |
@@ -534,6 +535,18 @@ These are the mistakes to NOT repeat. Every one was confirmed against the game's
   direction**; **flying kings** slide any distance; **forced capture**; **multi-jump
   chains**. Pure helpers (`simpleMoves`, `captureMoves`, `applyHop`, `legalSequences`) are
   UI-free so `tools/mg_rules_test.js` can slice them.
+- **Two variants** (2026-07-23). `rules/checkers.js` builds both engines from one
+  `makeRules(simpleMovesFor, captureMovesFor)` factory: `R.checkers` (Russian — flying kings,
+  men capture any direction) and `R.checkersEnglish` (English draughts — kings step **one**
+  square, men jump **forward only**). Board encoding, promotion, `applyHop` and the depth-5 bot
+  driver are shared; only the simple/capture generators differ. The **variant is matched like
+  time control**: server pools quick/multi seekers by `(game, tc-bucket, variant-bucket)` into
+  `pubq:q:<g>:<tc>:<cv>` / `pubq:m:…` queues; `preferencesMatch` gates a join and
+  `resolveMatchOptions` settles the pair (a concrete pick beats "Any"; two "Any"s fall to
+  Russian). The 2-int join/quick reply can't carry the resolved variant, so a checkers client
+  reads it back from **`/api/match`** before mounting (`mountOnlineGame` in `mg_ui.js`); the
+  controller shadows its checkers helpers with the chosen engine (`createCheckers`, `session.variant`).
+  The picker (`renderCheckersVariant`, `mg_ui.js`) defaults to **Any** — as does time control now.
 - **`applyHop(b, from, to)`** walks the diagonal and clears whatever it passes, so the net
   protocol only needs `{from, to, end}` — the captured square is derived, not transmitted.
   A bounded guard (max 8 steps) makes a corrupt/desynced hop fail safe instead of looping.

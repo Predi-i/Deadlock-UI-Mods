@@ -466,6 +466,10 @@
     // tc index (join height) -> seconds. Mirrors worker tcFromIndex: 0 none · 1..4 = the menu.
     var TC_SECONDS = [0, 60, 180, 300, 600];
     function tcFromIndex(i) { return (i >= 0 && i < TC_SECONDS.length) ? TC_SECONDS[i] : 0; }
+    // /api/match height codec (mirrors worker): height = tcIndex*2 + variantBit + 1, variantBit
+    // english=1 else 0. Recover the bank (seconds) and checkers variant from one height value.
+    function matchTcFromHeight(h) { var v = h - 1; return v >= 0 ? tcFromIndex(v >> 1) : 0; }
+    function matchVariantFromHeight(h) { var v = h - 1; return v >= 0 && (v & 1) ? "english" : "russian"; }
 
     // ── Typed protocol layer ────────────────────────────────────────────────
     // Every decode is range-checked against what the protocol can actually produce.
@@ -487,8 +491,10 @@
 
         // tc = time control in SECONDS (chess/checkers only; server rejects off-menu / other
         // games → untimed). Omit or 0 for an untimed lobby. The joiner learns tc from join().
-        create: function (game, tok, cb, err, tc) {
-            request("/api/create", { game: game, tok: tok, tc: tc || 0 }, function (w, h) {
+        create: function (game, tok, cb, err, tc, cv) {
+            var params = { game: game, tok: tok, tc: tc || 0 };
+            if (cv) params.cv = cv;                       // "russian"/"english"; checkers only. Joiner learns it via match()
+            request("/api/create", params, function (w, h) {
                 if (w === 9 && h === 4) { if (err) err("busy"); return; } // rate-limited, don't recalibrate
                 var dc = decodeCode(w, h);
                 log("create decoded w=" + w + " h=" + h + " => code=" + (dc ? dc.code : "?"));
@@ -507,9 +513,10 @@
         // the literal "any" (wildcard — pairs with any waiter, else 5 min), or omitted/0 for a
         // non-clock game. The server pools waiters by (game, tc) so banks never force-mismatch;
         // the resolved bank is discovered by both clients from the authoritative /api/clocks.
-        quick: function (game, tok, cb, err, tc) {
+        quick: function (game, tok, cb, err, tc, cv) {
             var params = { game: game, tok: tok };
             if (tc != null && tc !== 0) params.tc = tc;   // "any" or concrete secs; omit for untimed
+            if (cv) params.cv = cv;                       // "any"/"russian"/"english"; checkers only
             request("/api/quick", params, function (w, h) {
                 if (w === 9 && h === 4) { if (err) err("busy"); return; } // rate-limited
                 var dc = decodeCode(w, h);
@@ -528,9 +535,12 @@
         // and the server FIXES the shared lobby to the matched game — but the 2-int response
         // can't also carry which game was chosen, so BOTH sides read it from status() (whose
         // height now carries game+1). The caller resolves the game before mounting.
-        mquick: function (games, tok, cb, err) {
+        mquick: function (games, tok, cb, err, tc, cv) {
             var list = (games || []).join(",");
-            request("/api/mquick", { games: list, tok: tok }, function (w, h) {
+            var params = { games: list, tok: tok };
+            if (tc != null && tc !== 0) params.tc = tc;   // "any" or concrete secs (chess/checkers in the set)
+            if (cv) params.cv = cv;                       // "any"/"russian"/"english" (checkers in the set)
+            request("/api/mquick", params, function (w, h) {
                 if (w === 9 && h === 4) { if (err) err("busy"); return; } // rate-limited
                 if (w === 9) {                                   // (9,6) no valid ids · (9,3) bad token
                     suspectDecode("mquick w=" + w + " h=" + h);
@@ -601,6 +611,18 @@
                 // callers ignore `game`; the multi-select flow reads it to learn which game a
                 // joiner picked once the lobby fixes (players === 2, game > 0).
                 cb({ gone: false, players: w, game: h - 1 });
+            }, err);
+        },
+
+        // Resolved-options readout for a settled lobby. The 2-int join/quick replies carry only
+        // role+code, so the CHOSEN checkers variant (and the exact bank a resolved "Any" landed on)
+        // need their own channel. width = game (1..9); height = tcIndex*2 + variantBit + 1.
+        // Returns { gone } for a swept / still-undecided lobby, else { game, tc, variant }.
+        match: function (code, cb, err) {
+            request("/api/match", { code: code }, function (w, h) {
+                if (w === 9 && h === 4) { if (err) err("busy"); return; } // rate-limited: caller retries
+                if (w < 1 || w > 9) { cb({ gone: true }); return; }        // (9,1) gone/undecided
+                cb({ gone: false, game: w, tc: matchTcFromHeight(h), variant: matchVariantFromHeight(h) });
             }, err);
         },
 
