@@ -536,10 +536,14 @@ These are the mistakes to NOT repeat. Every one was confirmed against the game's
   chains**. Pure helpers (`simpleMoves`, `captureMoves`, `applyHop`, `legalSequences`) are
   UI-free so `tools/mg_rules_test.js` can slice them.
 - **Two variants** (2026-07-23). `rules/checkers.js` builds both engines from one
-  `makeRules(simpleMovesFor, captureMovesFor)` factory: `R.checkers` (Russian — flying kings,
-  men capture any direction) and `R.checkersEnglish` (English draughts — kings step **one**
-  square, men jump **forward only**). Board encoding, promotion, `applyHop` and the depth-5 bot
-  driver are shared; only the simple/capture generators differ. The **variant is matched like
+  `makeRules(simpleMovesFor, captureMovesFor, promotionEndsTurn)` factory: `R.checkers`
+  (Russian — flying kings, men capture any direction) and `R.checkersEnglish` (English
+  draughts — kings step **one** square, men jump **forward only**). Board encoding, promotion,
+  `applyHop` and the depth-5 bot driver are shared; the variants differ in their simple/capture
+  generators **and in what a mid-capture promotion does** (2026-07-24): Russian
+  (`promotionEndsTurn=false`) — a man crowned DURING a capture keeps capturing **as a flying
+  king** if it can (canon rule); English (`promotionEndsTurn=true`) — promotion ends the turn
+  immediately. The **variant is matched like
   time control**: server pools quick/multi seekers by `(game, tc-bucket, variant-bucket)` into
   `pubq:q:<g>:<tc>:<cv>` / `pubq:m:…` queues; `preferencesMatch` gates a join and
   `resolveMatchOptions` settles the pair (a concrete pick beats "Any"; two "Any"s fall to

@@ -1045,7 +1045,7 @@
         function deriveMoveEnd(from, to) {
             var copy = board.slice();
             var res = applyHop(copy, from, to);
-            var more = res.captured && !res.promoted && captureMoves(copy, to).length > 0;
+            var more = res.captured && (!res.promoted || !RCv.promotionEndsTurn) && captureMoves(copy, to).length > 0;
             return more ? 0 : 1;
         }
 
@@ -1230,8 +1230,9 @@
             sfx(res.promoted ? "Promote" : res.captured ? "Capture" : "MoveSelf");
             pendingHops.push({ from: from, to: mv.to });
 
-            // Can the same piece keep jumping? (only after a capture, and not if just crowned)
-            var more = res.captured && !res.promoted && captureMoves(board, mv.to).length > 0;
+            // Can the same piece keep jumping? Russian canon: a man crowned mid-capture keeps
+            // capturing as a flying king; English: promotion ends the turn (promotionEndsTurn).
+            var more = res.captured && (!res.promoted || !RCv.promotionEndsTurn) && captureMoves(board, mv.to).length > 0;
             if (more) {
                 chaining = true;
                 selected = mv.to;

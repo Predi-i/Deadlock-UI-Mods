@@ -1070,8 +1070,9 @@ function validateCheckers(RC, lobby, seat, from, to) {
   for (let i = 0; i < targets.length; i++) if (targets[i].to === to) { ok = true; break; }
   if (!ok) return { ok: false, code: 2 };
   const res = RC.applyHop(b, from, to); // mutates the authoritative board
-  // Same piece may keep jumping (a capture, and not just crowned) → chain continues.
-  const more = res.captured && !res.promoted && RC.captureMoves(b, to).length > 0;
+  // Same piece may keep jumping → chain continues. A mid-capture promotion ends the chain
+  // only where the variant says so (English); Russian canon: the fresh king keeps capturing.
+  const more = res.captured && (!res.promoted || !RC.promotionEndsTurn) && RC.captureMoves(b, to).length > 0;
   let e;
   if (more) { st.chainSq = to; e = 0; }                       // turn stays with this seat
   else { st.chainSq = -1; e = 1; lobby.turn = seat === 0 ? 1 : 0; } // hand off

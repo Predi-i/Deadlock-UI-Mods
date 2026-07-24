@@ -176,9 +176,14 @@
         return out;
     }
 
-    // Both variants share board encoding, promotion and the bot driver. Only their
-    // simple/capture generators differ, so keep all turn sequencing in one factory.
-    function makeRules(simpleMovesFor, captureMovesFor) {
+    // Both variants share board encoding, promotion and the bot driver. They differ in
+    // (a) their simple/capture generators and (b) what a mid-capture promotion does:
+    //   • Russian (promotionEndsTurn=false): a man that reaches the crowning row DURING a
+    //     capture becomes a king and MUST keep capturing as a flying king if it can (canon).
+    //   • English (promotionEndsTurn=true): promotion ends the turn immediately, even if the
+    //     freshly crowned king could jump again.
+    // Everything else (turn sequencing, bot) stays in this one factory.
+    function makeRules(simpleMovesFor, captureMovesFor, promotionEndsTurn) {
         function anyCaptureFor(b, color) {
             for (var i = 0; i < 64; i++) {
                 if (colorOf(b[i]) === color && captureMovesFor(b, i).length > 0) return true;
@@ -194,8 +199,9 @@
             return false;
         }
 
-        // A sequence is one complete turn. Multi-jumps are expanded so promotion ends a
-        // turn in both variants before the newly crowned king can jump again.
+        // A sequence is one complete turn. For English (promotionEndsTurn=true) a promotion
+        // during a capture ends the turn immediately. For Russian (promotionEndsTurn=false) the
+        // newly crowned king must keep capturing as a flying king if it can (canon).
         function captureSequencesFrom(b, i) {
             var caps = captureMovesFor(b, i);
             if (caps.length === 0) return [];
@@ -204,7 +210,17 @@
                 var mv = caps[k];
                 var nb = b.slice();
                 var res = applyHop(nb, i, mv.to);
-                if (!res.promoted && captureMovesFor(nb, mv.to).length > 0) {
+                var canContinue;
+                if (res.promoted && promotionEndsTurn) {
+                    canContinue = false;
+                } else if (res.promoted && !promotionEndsTurn) {
+                    // Now a king — use the king capture generator (captureMovesFor already
+                    // handles kings via the piece value in nb, which applyHop updated).
+                    canContinue = captureMovesFor(nb, mv.to).length > 0;
+                } else {
+                    canContinue = captureMovesFor(nb, mv.to).length > 0;
+                }
+                if (canContinue) {
                     var tails = captureSequencesFrom(nb, mv.to);
                     for (var t = 0; t < tails.length; t++) seqs.push([{ from: i, to: mv.to }].concat(tails[t]));
                 } else {
@@ -312,6 +328,7 @@
             WHITE: WHITE, BLACK: BLACK,
             idx: idx, rowOf: rowOf, colOf: colOf, isDark: isDark,
             colorOf: colorOf, isKing: isKing,
+            promotionEndsTurn: promotionEndsTurn,
             initialBoard: initialBoard,
             simpleMoves: simpleMovesFor, captureMoves: captureMovesFor,
             anyCaptureFor: anyCaptureFor, applyHop: applyHop, hasAnyMove: hasAnyMove,
@@ -319,8 +336,8 @@
         };
     }
 
-    R.checkers = makeRules(simpleMoves, captureMoves);
-    R.checkersEnglish = makeRules(englishSimpleMoves, englishCaptureMoves);
+    R.checkers = makeRules(simpleMoves, captureMoves, false);
+    R.checkersEnglish = makeRules(englishSimpleMoves, englishCaptureMoves, true);
 })();
 
 // ---- rules/ttt.js ----
@@ -2814,8 +2831,9 @@ function validateCheckers(RC, lobby, seat, from, to) {
   for (let i = 0; i < targets.length; i++) if (targets[i].to === to) { ok = true; break; }
   if (!ok) return { ok: false, code: 2 };
   const res = RC.applyHop(b, from, to); // mutates the authoritative board
-  // Same piece may keep jumping (a capture, and not just crowned) → chain continues.
-  const more = res.captured && !res.promoted && RC.captureMoves(b, to).length > 0;
+  // Same piece may keep jumping → chain continues. A mid-capture promotion ends the chain
+  // only where the variant says so (English); Russian canon: the fresh king keeps capturing.
+  const more = res.captured && (!res.promoted || !RC.promotionEndsTurn) && RC.captureMoves(b, to).length > 0;
   let e;
   if (more) { st.chainSq = to; e = 0; }                       // turn stays with this seat
   else { st.chainSq = -1; e = 1; lobby.turn = seat === 0 ? 1 : 0; } // hand off
