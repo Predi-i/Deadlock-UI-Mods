@@ -70,9 +70,11 @@ and validates every move** (§5.1). Full protocol lives in `server/worker.js`'s 
 panorama/
   layout/base_hud.xml      HUD override; <include>s the scripts + styles. LOAD ORDER MATTERS (actual
                            include order): mg_net → mg_sound → rules/* (checkers, ttt, chess,
-                           connectfour, durak, poker) → mg_games ($.MG.Games) → mg_durak →
-                           mg_connectfour → mg_poker → mg_ui. Rule modules load before the
-                           controllers that alias them; mg_ui loads last (it drives all views).
+                           connectfour, durak, poker) → mg_games ($.MG.Games + $.MG.Widgets) →
+                           mg_checkers → mg_ttt → mg_chess → mg_durak → mg_connectfour → mg_poker
+                           → mg_ui. Rule modules load before the controllers that alias them;
+                           mg_games loads before the per-game controllers (they need MG.Widgets +
+                           MG.Games); mg_ui loads last (it drives all views).
   styles/mg.css            all styling. Note the Panorama-specific idioms (§6).
   scripts/
     mg_net.js              image side-channel transport + typed protocol ($.MG.Net, $.MG.Api, $.MG.Session)
@@ -84,14 +86,18 @@ panorama/
     rules/connectfour.js   SHARED pure connect-four engine
     rules/durak.js         SHARED pure durak engine (offline bot + online dealer)
     rules/poker.js         SHARED pure No-Limit Hold'em engine (offline bot + online dealer)
-    mg_games.js            checkers + TTT + chess CONTROLLERS (render, input, net); aliases MG.Rules.*
-                           and owns the $.MG.Games registry (list + register + mount). Also hosts the
-                           shared side-clock + per-turn timer widgets ($.MG.Widgets) and move history.
+    mg_games.js            SHARED INFRASTRUCTURE ONLY: createClock (two-side game clock, used by
+                           checkers + chess), createTurnTimer (per-turn countdown, used by ttt +
+                           durak + poker + c4), createStub (placeholder), MG.Games registry, and
+                           MG.Widgets exports. No game controllers live here any more.
+    mg_checkers.js         Checkers CONTROLLER (render, input, net); self-registers game id 1.
+    mg_ttt.js              Tic-Tac-Toe CONTROLLER; self-registers game id 2.
+    mg_chess.js            Chess CONTROLLER; self-registers game id 4.
     mg_connectfour.js      Connect Four CONTROLLER; self-registers game id 5 (§8.7).
     mg_durak.js            Durak CONTROLLER (render + click/drag + bot + online); self-registers game id 3.
     mg_poker.js            Poker CONTROLLER (render + betting UI + bot + online); self-registers game id 6 (§8.8).
     mg_ui.js               Esc-menu button injection + full-screen lobby overlay ($.MG.UI); header
-                           UI-scale + volume dropdowns; seat/time-control pickers.
+                           UI-scale + volume dropdowns; seat/time-control/variant pickers.
 
 server/                    Cloudflare Worker (dev-only, NOT packed into the VPK)
   worker.core.js           AUTHORED relay + validators + PNG encoder (edit this)
