@@ -121,11 +121,8 @@ export class Hub {
     // client appends ".png" to every route. Strip it here before routing.
     const p = url.pathname.replace(/\.png$/, "");
     const q = url.searchParams;
-    // Normalise `code` to a canonical 4-digit integer string, or "" if it isn't one. All
-    // real lobby codes are 1000..9999 (freshCode), so anything else (unicode, "1e3", a
-    // giant string) can never name a live lobby — reject it here so it can't create junk
-    // "l:<garbage>" keys or match via loose string coercion. "" makes every `code ? …`
-    // guard below fall straight to the missing/gone branch.
+    // Normalise `code` to a canonical 0..1023 integer string, or "" if it is malformed.
+    // Code "0" is VALID, so route lookups must compare with "" rather than use truthiness.
     const code = validCode(q.get("code"));
 
     // Rate-limit the formation + existence-probe routes by client IP (Cloudflare sets
@@ -147,6 +144,7 @@ export class Hub {
 
         if (!validTok(q.get("tok"))) return d(9, 3);     // reject empty/garbage seat token
         const newCode = await this.freshCode();
+        if (newCode < 0) return d(9, 5);                 // all 1024 lobby codes are occupied
 
         const tc = clockSecFor(game, q.get("tc"));         // 0 unless chess/checkers with a bank
         const cv = checkersVariantFor(game, q.get("cv"));
@@ -198,6 +196,7 @@ export class Hub {
         const hostVariantBucket = variantBucketFor(game, rawCv);
         const cv = checkersVariantFor(game, rawCv);
         const newCode = await this.freshCode();
+        if (newCode < 0) return d(9, 5);                 // all 1024 lobby codes are occupied
         const lobby = {
           game, players: 1, moves: [], pub: 1, t: nowSeq(),
           seats: [{ tok: q.get("tok") || "" }, null],
@@ -250,6 +249,7 @@ export class Hub {
           }
         }
         const newCode = await this.freshCode();
+        if (newCode < 0) return d(9, 5);                 // all 1024 lobby codes are occupied
         const lobby = {
           game: 0, games: set, players: 1, moves: [], pub: 1, t: nowSeq(),
           seats: [{ tok: q.get("tok") || "" }, null],      // host takes seat 0
@@ -271,7 +271,7 @@ export class Hub {
       }
 
       if (p === "/api/cancel") {
-        const lobby = code ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
         // Only a SEATED player (valid token) may cancel, and only while the lobby is still
         // waiting for the second player. Never let a 4-digit code-guesser nuke an active match.
         if (lobby && seatOf(lobby, q.get("tok")) >= 0 && lobby.players < 2) {
@@ -293,7 +293,7 @@ export class Hub {
       //     which appends a LEFT event (+ DRAW/ROLES or board/WIN) to the public log so the table
       //     plays on without the leaver. The game only ends here if it drops to one player.
       if (p === "/api/leave") {
-        const lobby = code ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
         if (!lobby) return d(1, 1);                       // already gone — nothing to do
         const seat = seatOf(lobby, q.get("tok"));
         if (seat < 0) return d(1, 1);                     // not a seated player: ignore, don't leak
@@ -319,7 +319,7 @@ export class Hub {
 
       if (p === "/api/join") {
         if (!validTok(q.get("tok"))) return d(9, 3); // reject empty/garbage seat token
-        const lobby = code ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
         if (!lobby) return d(20, 1);             // missing
         // Game-type guard (H2): the generic 2-seat join hard-sets players=2/seats[1], which would
         // CORRUPT an N-seat poker/durak lobby (those carry `cap` and grow via seats.push through
@@ -341,7 +341,7 @@ export class Hub {
       }
 
       if (p === "/api/status") {
-        const lobby = code ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
         if (!lobby) return d(9, 1);              // gone
         // height carries the chosen game + 1 (1 while an mquick lobby is still undecided,
         // game=0). A multi-select HOST reads it to learn which game a joiner picked; the
@@ -357,7 +357,7 @@ export class Hub {
       //   height = tcIndex*2 + variantBit + 1   (variantBit: english=1, else 0; +1 keeps it ≥1)
       // e.g. Russian 3-min checkers = (1, 2*2+0+1) = (1,5). An undecided mquick lobby → (9,1).
       if (p === "/api/match") {
-        const lobby = code ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
         if (!lobby) return d(9, 1);              // gone
         if (!lobby.game) return d(9, 1);         // still-undecided mquick lobby: no game fixed yet
         const g = lobby.game;
@@ -367,7 +367,7 @@ export class Hub {
       }
 
       if (p === "/api/move") {
-        const lobby = code ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
         if (!lobby) return d(9, 9);              // no lobby
         if (lobby.players < 2) return d(9, 1);   // can't move before the opponent has joined
         const seat = seatOf(lobby, q.get("tok"));
@@ -401,7 +401,7 @@ export class Hub {
 
 
       if (p === "/api/poll") {
-        const lobby = code ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
         if (!lobby) return d(9, 9);              // 9x9 signals lobby destroyed / opponent left
         const since = clampInt(q.get("since"), 0, 0, 100000);
         const mv = lobby.moves[since]; // 0-based; this move is seq = since+1
@@ -428,7 +428,7 @@ export class Hub {
       // Both clients read the SAME server clock, so they can't disagree on the time or on who
       // flagged: a seat's bank reaching 0 IS the flag-fall signal (that seat loses).
       if (p === "/api/clocks") {
-        const lobby = code ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
         if (!lobby) return d(9, 9);              // gone
         if (!lobby.clkMs) return d(9, 8);        // untimed game → no clocks
         // Persist a freshly-detected flag so the outcome sticks for later polls / moves.
@@ -439,18 +439,9 @@ export class Hub {
       }
 
       if (p === "/api/reset") {
-        const lobby = code ? await this.storage.get("l:" + code) : null;
-        if (!lobby) return d(9, 9);
-        if (seatOf(lobby, q.get("tok")) < 0) return d(9, 3); // only a seated player may reset
-        // Rematch = same game, fresh state. The game TYPE is fixed at create time and can
-        // never be switched mid-lobby (that would desync / void the opponent's board).
-        lobby.moves = [];
-        lobby.turn = 0;
-        lobby.state = initState(lobby.game);
-        initClock(lobby);                          // fresh banks for the rematch
-        lobby.t = nowSeq();
-        await this.storage.put("l:" + code, lobby);
-        return d(1, 1);
+        // Deprecated unsafe endpoint. A unilateral reset desynchronises the opponent and used to
+        // lose the English-checkers variant. Rematches must use the two-seat /api/rematch handshake.
+        return d(9, 8);
       }
 
       // Rematch handshake. Both seats poll this from the game-over screen; when BOTH have
@@ -464,7 +455,7 @@ export class Hub {
       // re-arm the next rematch, it just reads the bumped gen and the client restarts. This is
       // what stops the flag "sticking" across consecutive rematches (no extra clear round-trip).
       if (p === "/api/rematch") {
-        const lobby = code ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
         if (!lobby) return d(9, 9);
         const seat = seatOf(lobby, q.get("tok"));
         if (seat < 0) return d(9, 3);
@@ -477,7 +468,7 @@ export class Hub {
         if (lobby.rm[0] && lobby.rm[1]) {
           lobby.moves = [];
           lobby.turn = 0;
-          lobby.state = initState(lobby.game);
+          lobby.state = initState(lobby.game, lobby.cv);
           initClock(lobby);                        // fresh banks for the rematch
           // Wrap the generation into 6 bits so gen+1 stays a valid level (<=63) on the
           // downlink. gen is only used for equality / "did a restart happen" detection, and
@@ -500,13 +491,13 @@ export class Hub {
       // a seat token (tok → seat), which also gates ddraw so a cheat can't read a foreign
       // seat's private cards. Only 2 players are wired for now (3–4 seating is deferred).
       if (p === "/api/room") {
-        const lobby = code ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
         if (!lobby) return d(9, 1);                        // gone
         const started = lobby.state && lobby.state.started ? 2 : 1; // h: 2 started, 1 waiting
         return d(lobby.players, started);
       }
       if (p === "/api/start") {
-        const lobby = code ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
         if (!lobby) return d(9, 9);
         const seat = seatOf(lobby, q.get("tok"));
         if (seat < 0) return d(9, 3);
@@ -517,7 +508,7 @@ export class Hub {
         return d(1, 1);
       }
       if (p === "/api/dact") {
-        const lobby = code ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
         if (!lobby) return d(9, 9);
         const seat = seatOf(lobby, q.get("tok"));
         if (seat < 0) return d(9, 3);
@@ -531,7 +522,7 @@ export class Hub {
         return d(1, 1);
       }
       if (p === "/api/dlog") {
-        const lobby = code ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
         if (!lobby) return d(9, 9);
         const since = clampInt(q.get("since"), 0, 0, 100000);
         const ev = lobby.state && lobby.state.pub ? lobby.state.pub[since] : null;
@@ -539,7 +530,7 @@ export class Hub {
         return d(ev.w, ev.h);
       }
       if (p === "/api/ddraw") {
-        const lobby = code ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
         if (!lobby) return d(9, 9);
         const seat = seatOf(lobby, q.get("tok"));
         if (seat < 0) return d(9, 3);                      // only your own seat's private cards
@@ -561,6 +552,7 @@ export class Hub {
         if (!validTok(q.get("tok"))) return d(9, 3);
         const cap = clampInt(q.get("n"), 2, 2, 4);           // seat cap 2..4
         const newCode = await this.freshCode();
+        if (newCode < 0) return d(9, 5);                    // all 1024 lobby codes are occupied
         const lobby = {
           game: 3, players: 1, moves: [], pub: 0, t: nowSeq(), cap: cap,
           seats: [{ tok: q.get("tok") || "" }],              // host = seat 0
@@ -574,11 +566,12 @@ export class Hub {
       }
       if (p === "/api/djoin") {
         if (!validTok(q.get("tok"))) return d(9, 3);
-        const lobby = code ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
         if (!lobby || lobby.game !== 3 || !lobby.cap) return d(20, 1); // missing / not an N-seat durak lobby
         if (lobby.state && lobby.state.started) return d(22, 1);       // already started
-        if (seatOf(lobby, q.get("tok")) >= 0)                           // idempotent re-join (poll safety)
-          return d(lobby.cap, lobby.players);
+        const existingSeat = seatOf(lobby, q.get("tok"));
+        if (existingSeat >= 0)                                           // idempotent re-join (poll safety)
+          return d(lobby.cap, existingSeat + 1);                         // preserve the caller's seat
         if (lobby.players >= lobby.cap) return d(21, 1);              // full
         lobby.seats.push({ tok: q.get("tok") || "" });
         lobby.players++;
@@ -588,7 +581,7 @@ export class Hub {
         return d(lobby.cap, lobby.players);
       }
       if (p === "/api/droom") {
-        const lobby = code ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
         if (!lobby || lobby.game !== 3 || !lobby.cap) return d(9, 1); // gone / not an N-seat durak lobby
         const started = lobby.state && lobby.state.started ? ROOM_STARTED : 0;
         // width = players joined (+ROOM_STARTED band once dealt) · height = seat cap
@@ -603,6 +596,7 @@ export class Hub {
         if (!validTok(q.get("tok"))) return d(9, 3);
         const cap = clampInt(q.get("n"), 2, 2, 4);           // seat cap 2..4
         const newCode = await this.freshCode();
+        if (newCode < 0) return d(9, 5);                    // all 1024 lobby codes are occupied
         const lobby = {
           game: 6, players: 1, pub: 0, t: nowSeq(), cap: cap,
           seats: [{ tok: q.get("tok") || "" }],              // host = seat 0
@@ -615,11 +609,12 @@ export class Hub {
       }
       if (p === "/api/pjoin") {
         if (!validTok(q.get("tok"))) return d(9, 3);
-        const lobby = code ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
         if (!lobby || lobby.game !== 6) return d(20, 1);   // missing / not a poker lobby
         if (lobby.state && lobby.state.started) return d(22, 1); // already started
-        if (seatOf(lobby, q.get("tok")) >= 0)                // idempotent re-join (poll safety)
-          return d(lobby.cap || 4, lobby.players);
+        const existingSeat = seatOf(lobby, q.get("tok"));
+        if (existingSeat >= 0)                                // idempotent re-join (poll safety)
+          return d(lobby.cap || 4, existingSeat + 1);          // preserve the caller's seat
         if (lobby.players >= (lobby.cap || 4)) return d(21, 1); // full
         lobby.seats.push({ tok: q.get("tok") || "" });
         lobby.players++;
@@ -629,14 +624,14 @@ export class Hub {
         return d(lobby.cap || 4, lobby.players);
       }
       if (p === "/api/proom") {
-        const lobby = code ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
         if (!lobby || lobby.game !== 6) return d(9, 1);    // gone
         const started = lobby.state && lobby.state.started ? ROOM_STARTED : 0;
         // width = players joined (+ROOM_STARTED band once started) · height = seat cap
         return d(lobby.players + started, lobby.cap || 4);
       }
       if (p === "/api/pstart") {
-        const lobby = code ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
         if (!lobby || lobby.game !== 6) return d(9, 9);
         const seat = seatOf(lobby, q.get("tok"));
         if (seat < 0) return d(9, 3);
@@ -647,7 +642,7 @@ export class Hub {
         return d(1, 1);
       }
       if (p === "/api/pact") {
-        const lobby = code ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
         if (!lobby || lobby.game !== 6) return d(9, 9);
         const seat = seatOf(lobby, q.get("tok"));
         if (seat < 0) return d(9, 3);
@@ -660,7 +655,7 @@ export class Hub {
         return d(1, 1);
       }
       if (p === "/api/pnext") {
-        const lobby = code ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
         if (!lobby || lobby.game !== 6) return d(9, 9);
         const seat = seatOf(lobby, q.get("tok"));
         if (seat < 0) return d(9, 3);
@@ -671,7 +666,7 @@ export class Hub {
         return d(1, 1);
       }
       if (p === "/api/plog") {
-        const lobby = code ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
         if (!lobby || lobby.game !== 6) return d(9, 9);
         const since = clampInt(q.get("since"), 0, 0, 100000);
         const ev = lobby.state && lobby.state.log ? lobby.state.log[since] : null;
@@ -679,7 +674,7 @@ export class Hub {
         return d(ev.w, ev.h);
       }
       if (p === "/api/pdraw") {
-        const lobby = code ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
         if (!lobby || lobby.game !== 6) return d(9, 9);
         const seat = seatOf(lobby, q.get("tok"));
         if (seat < 0) return d(9, 3);

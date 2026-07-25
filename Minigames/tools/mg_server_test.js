@@ -157,6 +157,37 @@ async function main() {
     d = await req(hub, "/api/join.png?code=1&tok=MISSING00"); // no such lobby
     ok(d.w === 20, "join a missing lobby returns 20");
 
+    // Code 0 is valid in the rebased 0..1023 space. Force the allocator to return it so
+    // every lookup proves it does not confuse "0" with an absent code.
+    await (async function () {
+        var h0 = new Hub({ storage: new FakeStorage() });
+        h0.freshCode = async function () { return 0; };
+        var c0 = await req(h0, "/api/create.png?game=2&tok=ZEROHOST");
+        ok(decCode(c0) === 0, "code 0000: create round-trips code 0");
+        var s0 = await req(h0, "/api/status.png?code=0000");
+        ok(s0.w === 1 && s0.h === 3, "code 0000: status finds the lobby");
+        var j0 = await req(h0, "/api/join.png?code=0000&tok=ZEROJOIN");
+        ok(j0.w === 2, "code 0000: join reaches the lobby");
+    })();
+
+    // The 10-bit code space is finite. A saturated allocator must fail cleanly instead of
+    // writing/returning a bogus l:-1 lobby (which aliases every later saturated create).
+    await (async function () {
+        var full = new Hub({ storage: new FakeStorage() });
+        full.freshCode = async function () { return -1; };
+        var cr = await req(full, "/api/create.png?game=2&tok=FULLHOST");
+        ok(cr.w === 9 && cr.h === 5, "full code space: create → (9,5) unavailable");
+        var qr = await req(full, "/api/quick.png?game=2&tok=FULLQUICK");
+        ok(qr.w === 9 && qr.h === 5, "full code space: quick → (9,5) unavailable");
+        var mr = await req(full, "/api/mquick.png?games=1,2&tok=FULLMULTI");
+        ok(mr.w === 9 && mr.h === 5, "full code space: mquick → (9,5) unavailable");
+        var dr = await req(full, "/api/dcreate.png?n=3&tok=FULLDURAK");
+        ok(dr.w === 9 && dr.h === 5, "full code space: dcreate → (9,5) unavailable");
+        var pr = await req(full, "/api/pcreate.png?n=3&tok=FULLPOKER");
+        ok(pr.w === 9 && pr.h === 5, "full code space: pcreate → (9,5) unavailable");
+        ok(!(await full.storage.get("l:-1")), "full code space: no l:-1 lobby is written");
+    })();
+
     // ── security hardening (2026-07-18 audit) ──
     await (async function () {
         // L1: a non-4-digit code can never name a lobby — normalised to "" → missing, not a
@@ -354,6 +385,10 @@ async function main() {
         ok(j1b.w === 3 && j1b.h === 2, "durak-N: djoin re-join idempotent");
         var j2 = await req(hub, "/api/djoin.png?code=" + code + "&tok=DKPLR301");
         ok(j2.w === 3 && j2.h === 3, "durak-N: djoin → cap 3, seat index 2");
+        // Simulate a lost response: seat 1 retries only after seat 2 has joined. The response
+        // must still carry seat 1, not the table's current player count.
+        var j1c = await req(hub, "/api/djoin.png?code=" + code + "&tok=DKPLR201");
+        ok(j1c.w === 3 && j1c.h === 2, "durak-N: late re-join preserves the original seat index");
         // Table now full: a 4th join is refused.
         var j3 = await req(hub, "/api/djoin.png?code=" + code + "&tok=DKPLR401");
         ok(j3.w === 21, "durak-N: djoin into a full table → (21,1)");
