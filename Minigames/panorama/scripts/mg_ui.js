@@ -37,8 +37,35 @@
     var view = "menu";
     var selectedGameId = 1;
     var activeGame = null;        // { destroy }
-    var currentCode = 0;
+    var currentCode = null;
     var currentTok = "";          // seat token for the CURRENT online game (see mg_net MG.Session)
+    // Every user-initiated Create/Join/Quick flow gets an immutable generation. Image requests
+    // cannot be aborted once active, so callbacks must prove they still belong to the latest flow.
+    var uiActionGen = 0;
+    var currentAction = null;
+    function beginOnlineAction(gameId) {
+        var ctx = { gen: ++uiActionGen, gameId: gameId, tok: MG.Session.newToken() };
+        currentAction = ctx;
+        currentCode = null;
+        currentTok = ctx.tok;
+        rematchGen = 0;
+        return ctx;
+    }
+    function actionAlive(ctx) { return !!ctx && currentAction === ctx && ctx.gen === uiActionGen; }
+    function bindActionCode(ctx, code) {
+        if (!actionAlive(ctx)) return false;
+        ctx.code = code;
+        currentCode = code;
+        currentTok = ctx.tok;
+        return true;
+    }
+    function discardStaleSeat(ctx, code, waitingHost) {
+        if (code === null || code === undefined) return;
+        try {
+            if (waitingHost) MG.Api.cancel(code, ctx.tok);
+            else MG.Api.leave(code, ctx.tok);
+        } catch (e) {}
+    }
     // Lobby codes live in 0..1023 (the level-quantised downlink can't carry a bigger int — see
     // mg_net dCode). That means most codes are 3 digits and a few are 4 (1000..1023). Pad the
     // DISPLAYED code to a stable 4 digits so it always looks like a code; the join input strips
@@ -66,10 +93,19 @@
     var TC_GAMES = { 1: true, 4: true };            // checkers=1, chess=4 (mirror server CLOCK_GAMES)
     var TC_CHOICES = [60, 180, 300, 600];           // 1 / 3 / 5 / 10 minutes
     var TC_ANY_DEFAULT = 300;                       // "Any" collapses to 5 min where a concrete bank is required
-    var selectedTimeControl = 300;                  // host's pick (persists while browsing)
+    var selectedTimeControl = -1;                   // host's pick (persists while browsing); default "Any"
     function isTimedGame(id) { return !!TC_GAMES[id]; }
     // Concrete bank for a room that must fix one now (Create / vs-Bot): map "Any"(-1) → 5 min.
     function concreteTc(sec) { return sec === -1 ? TC_ANY_DEFAULT : sec; }
+    // Checkers variant (checkers only). Russian draughts (flying kings, men capture any direction)
+    // vs English draughts (kings step one square, men capture forward only). "any" is the quick-
+    // match wildcard: pair with any waiting variant, else Russian. A room that must fix one now
+    // (Create / vs-Bot) collapses "any" → Russian (CV_ANY_DEFAULT), exactly like tc's 5-min fallback.
+    var CV_GAMES = { 1: true };                     // checkers only (mirror server: variant applies to game 1)
+    var CV_ANY_DEFAULT = "russian";
+    var selectedVariant = "any";                    // host's pick (persists while browsing); default "Any"
+    function hasVariant(id) { return !!CV_GAMES[id]; }
+    function concreteVariant(v) { return v === "any" ? CV_ANY_DEFAULT : v; }
     // Games that can be TICKED in Select-Multiple. Durak (3) is included so it can be picked
     // too (maintainer). Public mquick still can't pair durak — its online path is a room — so
     // ticking durak alone falls back to its Create/room flow; ticked alongside others it's just
@@ -433,9 +469,17 @@
         // — it only exists to be torn down before anyone's committed. A live game uses leave
         // instead: cancel is a no-op once players ≥ 2, so it never reached a mid-match opponent —
         // leave folds this seat out (3–4-seat durak/poker) or ends the match (pair games) at once.
-        if (cancelServer && currentCode) {
-            if (view === "game") { try { MG.Api.leave(currentCode, currentTok); } catch (e) {} }
-            else if (view === "waiting" || view === "room") { try { MG.Api.cancel(currentCode, currentTok); } catch (e) {} }
+        if (cancelServer) {
+            var oldCode = currentCode, oldTok = currentTok, oldView = view;
+            currentAction = null;
+            uiActionGen++;
+            currentCode = null;
+            currentTok = "";
+            rematchGen = 0;
+            if (oldCode !== null && oldCode !== undefined) {
+                if (oldView === "waiting") { try { MG.Api.cancel(oldCode, oldTok); } catch (e) {} }
+                else if (oldView === "room" || oldView === "game") { try { MG.Api.leave(oldCode, oldTok); } catch (e) {} }
+            }
         }
         
         // Destroy active game if any
@@ -653,6 +697,7 @@
             if (isTimedGame(selectedGameId)) renderTimeControl();
             else if (isDurakOnlineGame(selectedGameId)) renderDurakSeatPicker();
             else if (isPokerOnlineGame(selectedGameId)) renderPokerSeatPicker();
+            if (hasVariant(selectedGameId)) renderCheckersVariant();
         }
 
         // Flexible spacer between the top cluster (title/blurb/toggle/time-control) and the action
@@ -803,6 +848,36 @@
             b.SetPanelEvent("onactivate", function () {
                 if (selectedTimeControl === o.sec) return;
                 selectedTimeControl = o.sec;
+                renderDetail();     // re-skin the segments (cheap; whole column rebuilds)
+            });
+        });
+    }
+
+    // Checkers variant segmented control (checkers only), same skin/idiom as renderTimeControl.
+    // Russian / English / "Any" (the quick-match wildcard). selectedVariant persists while
+    // browsing. For Create / vs-Bot a room needs a concrete variant, so "Any" collapses to
+    // Russian (concreteVariant); for Quick Match "Any" rides up as cv="any" and the server pairs
+    // it with any waiting variant (else Russian). Mirrors server checkersVariantFor.
+    function renderCheckersVariant() {
+        var label = $.CreatePanel("Label", detailPanel, "");
+        label.AddClass("mg-section-label");
+        label.AddClass("mg-tc-label");
+        label.text = "Variant";
+        var seg = $.CreatePanel("Panel", detailPanel, "");
+        seg.AddClass("mg-tc-seg");
+        var opts = [
+            { cv: "russian", text: "Russian" },
+            { cv: "english", text: "English" },
+            { cv: "any", text: "Any" }
+        ];
+        opts.forEach(function (o) {
+            var b = $.CreatePanel("Button", seg, "");
+            b.AddClass("mg-tc-opt");
+            if (selectedVariant === o.cv) b.AddClass("mg-on");
+            var l = $.CreatePanel("Label", b, ""); l.text = o.text;
+            b.SetPanelEvent("onactivate", function () {
+                if (selectedVariant === o.cv) return;
+                selectedVariant = o.cv;
                 renderDetail();     // re-skin the segments (cheap; whole column rebuilds)
             });
         });
@@ -988,6 +1063,7 @@
         // (you + N-1 bots), instead of the controller's fixed default (poker 4 / durak 2). The
         // offline controller already drives every non-player seat, so this is all it needs.
         var opts = { timeControl: tc };
+        if (hasVariant(selectedGameId)) opts.variant = concreteVariant(selectedVariant);
         if (isPokerOnlineGame(selectedGameId)) opts.numPlayers = pokerSeatCap;
         else if (isDurakOnlineGame(selectedGameId)) opts.numPlayers = durakSeatCap;
         renderGame(selectedGameId, 0, iAmHost, true, opts);
@@ -1015,8 +1091,12 @@
         go.AddClass("mg-btn"); go.AddClass("mg-btn-primary");
         var gl = $.CreatePanel("Label", go, ""); gl.text = "Join";
         go.SetPanelEvent("onactivate", function () {
-            var code = parseInt(String(entry.text || "").replace(/[^0-9]/g, ""), 10);
-            if (!code || code < 1000 || code > 9999) { setStatus("The code is 4 digits."); return; }
+            var rawCode = String(entry.text || "").replace(/[^0-9]/g, "");
+            var code = parseInt(rawCode, 10);
+            if (!/^\d{1,4}$/.test(rawCode) || code < 0 || code > 1023) {
+                setStatus("The code is between 0000 and 1023.");
+                return;
+            }
             doJoin(code);
         });
 
@@ -1026,9 +1106,10 @@
         back.SetPanelEvent("onactivate", function () { renderMenu(); });
     }
 
-    function renderWaiting(code, isPublic) {
+    function renderWaiting(code, isPublic, ctx) {
         cleanupCurrentView(false);
         view = "waiting";
+        if (ctx) { ctx.code = code; ctx.phase = "waiting"; currentCode = code; currentTok = ctx.tok; }
         setTitle(isPublic ? "Finding a Match" : "Waiting for Opponent");
         clearBody();
 
@@ -1059,7 +1140,7 @@
         setStatus(isPublic ? "Searching for an opponent…" : "Waiting for a player…");
     }
 
-    function renderGame(gameId, code, isHost, bot, opts) {
+    function renderGame(gameId, code, isHost, bot, opts, ctx) {
         cleanupCurrentView(false);
         view = "game";
         var g = MG.Games.byId(gameId);
@@ -1083,13 +1164,17 @@
             code: code,
             isHost: isHost,
             bot: !!bot,
-            tok: currentTok,          // seat token: authorises this client's moves (unused offline)
+            tok: ctx ? ctx.tok : currentTok, // immutable action token; unused offline
             seat: opts && opts.seat,
             numPlayers: opts && opts.numPlayers,
             // Time control in SECONDS (0 = untimed). Only chess/checkers ever set it. Offline the
             // controller ticks it locally; online it's advisory — the controller polls the
             // server-authoritative /api/clocks — but we still pass it so the clock UI is built.
             timeControl: (opts && opts.timeControl) | 0,
+            // Checkers variant: "russian" (default) or "english". Concrete by mount time — the
+            // picker's "Any" is resolved to a real variant before we get here (offline: collapsed
+            // to Russian; online: read back from /api/match once the lobby is settled).
+            variant: (opts && opts.variant) || "russian",
             onStatus: setStatus,
             onGameOver: onGameOver
         });
@@ -1117,6 +1202,26 @@
         leave.AddClass("mg-btn");
         var ll = $.CreatePanel("Label", leave, ""); ll.text = "Leave";
         leave.SetPanelEvent("onactivate", function () { renderMenu(); });
+    }
+
+    // Mount an ONLINE game once its lobby is settled. Checkers carries a server-resolved variant
+    // (the picker's "Any" may have paired with either engine), and the 2-int join/quick replies
+    // can't carry it — so for checkers we first read /api/match to learn the chosen variant, then
+    // mount. Every other game has no variant, so it mounts straight away. On a match() failure we
+    // fall back to Russian (the server default) rather than block the game from starting.
+    function mountOnlineGame(gameId, code, isHost, opts, ctx) {
+        opts = opts || {};
+        if (ctx && !actionAlive(ctx)) return;
+        if (gameId !== 1) { renderGame(gameId, code, isHost, false, opts, ctx); return; }
+        MG.Api.match(code, function (m) {
+            if (ctx && !actionAlive(ctx)) return;
+            opts.variant = (!m.gone && m.variant) ? m.variant : "russian";
+            renderGame(gameId, code, isHost, false, opts, ctx);
+        }, function () {
+            if (ctx && !actionAlive(ctx)) return;
+            opts.variant = "russian";
+            renderGame(gameId, code, isHost, false, opts, ctx);
+        });
     }
 
     // Online rematch: both seats poll /api/rematch from the game-over screen. The server bumps
@@ -1166,17 +1271,17 @@
         var g = MG.Games.byId(selectedGameId);
         if (!g || !g.enabled) { setStatus("Pick an available game."); return; }
         setStatus("Creating lobby…");
-        currentTok = MG.Session.newToken();   // one seat token for this whole game
+        var ctx = beginOnlineAction(selectedGameId);
         // The host's time-control pick rides the create request (chess/checkers only); the joiner
         // learns it back from join(). A private room must fix a concrete bank, so "Any"(-1)
         // collapses to 5 min here. Untimed games send 0 (server ignores it anyway).
         // Poker owns its route set (2–4 seats) — pcreate, not the generic 2-cap create.
         if (isPokerOnlineGame(selectedGameId)) {
-            var pokTok = currentTok;   // capture THIS lobby's token; a later create can't reassign it
-            MG.Api.pcreate(pokerSeatCap, pokTok, function (res) {
-                currentCode = res.code;
-                renderPokerRoom(res.code, true, pokerSeatCap, 0, pokTok);
+            MG.Api.pcreate(pokerSeatCap, ctx.tok, function (res) {
+                if (!bindActionCode(ctx, res.code)) { discardStaleSeat(ctx, res.code, true); return; }
+                renderPokerRoom(res.code, true, pokerSeatCap, 0, ctx);
             }, function (why) {
+                if (!actionAlive(ctx)) return;
                 setStatus(why === "token" ? "Session error, please retry." : "Couldn't create the poker table.");
             });
             return;
@@ -1184,29 +1289,31 @@
         // Durak's private lobby seats 2–4 on its own routes (dcreate/djoin/droom), so Create
         // routes through dcreate — never the generic 2-cap create — exactly like poker.
         if (isDurakOnlineGame(selectedGameId)) {
-            var durTok = currentTok;
-            MG.Api.dcreate(durakSeatCap, durTok, function (res) {
-                currentCode = res.code;
-                renderDurakRoom(res.code, true, durakSeatCap, 0, durTok);
+            MG.Api.dcreate(durakSeatCap, ctx.tok, function (res) {
+                if (!bindActionCode(ctx, res.code)) { discardStaleSeat(ctx, res.code, true); return; }
+                renderDurakRoom(res.code, true, durakSeatCap, 0, ctx);
             }, function (why) {
+                if (!actionAlive(ctx)) return;
                 setStatus(why === "token" ? "Session error, please retry." : "Couldn't create the Durak table.");
             });
             return;
         }
         var tc = isTimedGame(selectedGameId) ? concreteTc(selectedTimeControl) : 0;
-        log("startCreate game=" + selectedGameId + " base=" + MG.Net.getBaseUrl() + " tc=" + tc);
-        MG.Api.create(selectedGameId, currentTok, function (code) {
+        var cv = hasVariant(selectedGameId) ? concreteVariant(selectedVariant) : "";
+        log("startCreate game=" + selectedGameId + " base=" + MG.Net.getBaseUrl() + " tc=" + tc + " cv=" + cv);
+        MG.Api.create(ctx.gameId, ctx.tok, function (code) {
             log("create ok, code=" + code);
-            currentCode = code;
-            renderWaiting(code);
-            waitForJoiner(code, tc);
+            if (!bindActionCode(ctx, code)) { discardStaleSeat(ctx, code, true); return; }
+            renderWaiting(code, false, ctx);
+            waitForJoiner(code, tc, ctx);
         }, function () {
+            if (!actionAlive(ctx)) return;
             log("create FAILED (request errored)");
             setStatus("Couldn't create lobby. Check the server.");
-        }, tc);
+        }, tc, cv);
     }
 
-    function renderRoom(code, isHost, isPublic) {
+    function renderRoom(code, isHost, isPublic, ctx) {
         cleanupCurrentView(false);
         view = "room";
         setTitle(isHost ? "Durak Room" : "Joined Durak Room");
@@ -1239,12 +1346,13 @@
             var sl = $.CreatePanel("Label", start, ""); sl.text = "Start";
             start.SetPanelEvent("onactivate", function () {
                 setStatus("Starting Durak…");
-                MG.Api.start(code, currentTok, function (r) {
-                    if (r.ok) { renderGame(3, code, true, false, { seat: 0, numPlayers: 2 }); return; }
+                MG.Api.start(code, ctx.tok, function (r) {
+                    if (!actionAlive(ctx)) return;
+                    if (r.ok) { renderGame(3, code, true, false, { seat: 0, numPlayers: 2 }, ctx); return; }
                     if (r.reason === "players") setStatus("Need a second player before starting.");
                     else if (r.reason === "host") setStatus("Only the host can start.");
                     else setStatus("Couldn't start Durak (" + (r.reason || "error") + ").");
-                }, function () { setStatus("Server unavailable."); });
+                }, function () { if (actionAlive(ctx)) setStatus("Server unavailable."); });
             });
         }
         var back = $.CreatePanel("Button", row, "");
@@ -1253,22 +1361,22 @@
         back.SetPanelEvent("onactivate", function () { renderMenu(); });
 
         setStatus(isHost ? "Waiting for player 2…" : "Waiting for host to start…");
-        pollDurakRoom(code, isHost, seat1);
+        pollDurakRoom(code, isHost, seat1, ctx);
     }
 
-    function pollDurakRoom(code, isHost, seat1Label) {
+    function pollDurakRoom(code, isHost, seat1Label, ctx) {
         statusPollToken++;
         var token = statusPollToken;
         var misses = 0;
         function tick() {
-            if (token !== statusPollToken || view !== "room") return;
+            if (token !== statusPollToken || view !== "room" || !actionAlive(ctx)) return;
             MG.Api.room(code, function (r) {
-                if (token !== statusPollToken || view !== "room") return;
+                if (token !== statusPollToken || view !== "room" || !actionAlive(ctx)) return;
                 if (r.gone) { renderMenu(); setStatus("⚠ Lobby closed."); return; }
                 if (seat1Label && seat1Label.IsValid && seat1Label.IsValid()) {
                     seat1Label.text = isHost ? (r.players >= 2 ? "Seat 2: Player joined" : "Seat 2: Waiting…") : "Seat 2: You";
                 }
-                if (r.started) { renderGame(3, code, isHost, false, { seat: isHost ? 0 : 1, numPlayers: 2 }); return; }
+                if (r.started) { renderGame(3, code, isHost, false, { seat: isHost ? 0 : 1, numPlayers: 2 }, ctx); return; }
                 if (isHost) setStatus(r.players >= 2 ? "Player 2 joined. Press Start." : "Waiting for player 2…");
                 else setStatus("Waiting for host to start…");
                 $.Schedule(MG.Net.waitDelay(misses++), tick);
@@ -1280,17 +1388,19 @@
     // Poker lobby room: 2–4 seats. Host sees the shared code + a Deal button (usable once ≥2
     // seats are filled); joiners wait for the host to deal. `cap` is the table size fixed at
     // create; `mySeat` is the joiner's seat (host = 0).
-    function renderPokerRoom(code, isHost, cap, mySeat, tok) {
+    function renderPokerRoom(code, isHost, cap, mySeat, ctx) {
         cleanupCurrentView(false);
         view = "room";
         setTitle(isHost ? "Poker Table" : "Joined Poker Table");
         clearBody();
+        // Re-establish the global seat/code from THIS action's generation-guarded ctx. A create/join
+        // is async (~1.5s image load); if the user fired another create meanwhile, the globals would
+        // hold the OTHER lobby's token and Deal would send it → server seatOf miss → (9,3) "couldn't
+        // deal". Binding here (and closing over roomTok for the Deal handler) keeps the room self-
+        // consistent regardless of later churn; the ctx guard drops a stale room's callbacks entirely.
+        if (ctx) { ctx.code = code; ctx.phase = "room"; }
         currentCode = code;
-        // Re-establish the global seat token to THIS room's token. A create/join is async (~1.5s
-        // image load); if the user fired another create meanwhile, currentTok would hold the OTHER
-        // lobby's token and Deal would send it → server seatOf miss → (9,3) "couldn't deal". Binding
-        // it here (and capturing roomTok for the Deal handler) makes the shown room self-consistent.
-        var roomTok = tok || currentTok;
+        var roomTok = ctx ? ctx.tok : currentTok;
         currentTok = roomTok;
         var seat = isHost ? 0 : (mySeat | 0);
 
@@ -1319,12 +1429,13 @@
             startBtn.SetPanelEvent("onactivate", function () {
                 setStatus("Dealing…");
                 MG.Api.pstart(code, roomTok, function (r) {
-                    if (r.ok) { currentTok = roomTok; renderGame(6, code, true, false, { seat: 0, numPlayers: cap }); return; }
+                    if (ctx && !actionAlive(ctx)) return;
+                    if (r.ok) { currentTok = roomTok; renderGame(6, code, true, false, { seat: 0, numPlayers: cap }, ctx); return; }
                     if (r.reason === "players") setStatus("Need at least two players before dealing.");
                     else if (r.reason === "host") setStatus("Only the host can deal.");
                     else if (r.reason === "token") setStatus("Session desync — please recreate the table.");
                     else setStatus("Couldn't deal (" + (r.reason || "error") + ").");
-                }, function () { setStatus("Server unavailable."); });
+                }, function () { if (!ctx || actionAlive(ctx)) setStatus("Server unavailable."); });
             });
         }
         var back = $.CreatePanel("Button", row, "");
@@ -1333,24 +1444,24 @@
         back.SetPanelEvent("onactivate", function () { renderMenu(); });
 
         setStatus(isHost ? "Waiting for players…" : "Waiting for the host to deal…");
-        pollPokerRoom(code, isHost, cap, seat, seatLabels);
+        pollPokerRoom(code, isHost, cap, seat, seatLabels, ctx);
     }
 
-    function pollPokerRoom(code, isHost, cap, seat, seatLabels) {
+    function pollPokerRoom(code, isHost, cap, seat, seatLabels, ctx) {
         statusPollToken++;
         var token = statusPollToken;
         var misses = 0;
         function tick() {
-            if (token !== statusPollToken || view !== "room") return;
+            if (token !== statusPollToken || view !== "room" || (ctx && !actionAlive(ctx))) return;
             MG.Api.proom(code, function (r) {
-                if (token !== statusPollToken || view !== "room") return;
+                if (token !== statusPollToken || view !== "room" || (ctx && !actionAlive(ctx))) return;
                 if (r.gone) { renderMenu(); setStatus("⚠ Table closed."); return; }
                 for (var s = 0; s < cap; s++) {
                     if (s === seat) continue;   // never overwrite "You"
                     if (!seatLabels[s] || !seatLabels[s].IsValid || !seatLabels[s].IsValid()) continue;
                     seatLabels[s].text = "Seat " + (s + 1) + ": " + (s < r.players ? "Player joined" : "Waiting…");
                 }
-                if (r.started) { renderGame(6, code, isHost, false, { seat: seat, numPlayers: cap }); return; }
+                if (r.started) { renderGame(6, code, isHost, false, { seat: seat, numPlayers: cap }, ctx); return; }
                 if (isHost) setStatus(r.players >= 2 ? (r.players + "/" + cap + " seated. Press Deal.") : "Waiting for players…");
                 else setStatus("Waiting for the host to deal…");
                 $.Schedule(MG.Net.waitDelay(misses++), tick);
@@ -1363,15 +1474,16 @@
     // simpler renderRoom/pollDurakRoom above; this mirrors renderPokerRoom for the private table.
     // Host sees the shared code + a Start button (usable once ≥2 seats fill); joiners wait. `cap`
     // is the table size fixed at create; `seat` is this client's seat (host = 0).
-    function renderDurakRoom(code, isHost, cap, seat, tok) {
+    function renderDurakRoom(code, isHost, cap, seat, ctx) {
         cleanupCurrentView(false);
         view = "room";
         setTitle(isHost ? "Durak Table" : "Joined Durak Table");
         clearBody();
-        currentCode = code;
-        // Bind the global token to THIS room's token (see renderPokerRoom for why — a concurrent
+        // Bind the globals to THIS action's ctx (see renderPokerRoom for why — a concurrent
         // create could otherwise leave currentTok pointing at the wrong lobby → Start gets (9,3)).
-        var roomTok = tok || currentTok;
+        if (ctx) { ctx.code = code; ctx.phase = "room"; }
+        currentCode = code;
+        var roomTok = ctx ? ctx.tok : currentTok;
         currentTok = roomTok;
         seat = seat | 0;
 
@@ -1400,12 +1512,13 @@
             startBtn.SetPanelEvent("onactivate", function () {
                 setStatus("Starting Durak…");
                 MG.Api.start(code, roomTok, function (r) {
-                    if (r.ok) { currentTok = roomTok; renderGame(3, code, true, false, { seat: 0, numPlayers: cap }); return; }
+                    if (ctx && !actionAlive(ctx)) return;
+                    if (r.ok) { currentTok = roomTok; renderGame(3, code, true, false, { seat: 0, numPlayers: cap }, ctx); return; }
                     if (r.reason === "players") setStatus("Need at least two players before starting.");
                     else if (r.reason === "host") setStatus("Only the host can start.");
                     else if (r.reason === "token") setStatus("Session desync — please recreate the table.");
                     else setStatus("Couldn't start Durak (" + (r.reason || "error") + ").");
-                }, function () { setStatus("Server unavailable."); });
+                }, function () { if (!ctx || actionAlive(ctx)) setStatus("Server unavailable."); });
             });
         }
         var back = $.CreatePanel("Button", row, "");
@@ -1414,24 +1527,24 @@
         back.SetPanelEvent("onactivate", function () { renderMenu(); });
 
         setStatus(isHost ? "Waiting for players…" : "Waiting for the host to start…");
-        pollDurakTable(code, isHost, cap, seat, seatLabels);
+        pollDurakTable(code, isHost, cap, seat, seatLabels, ctx);
     }
 
-    function pollDurakTable(code, isHost, cap, seat, seatLabels) {
+    function pollDurakTable(code, isHost, cap, seat, seatLabels, ctx) {
         statusPollToken++;
         var token = statusPollToken;
         var misses = 0;
         function tick() {
-            if (token !== statusPollToken || view !== "room") return;
+            if (token !== statusPollToken || view !== "room" || (ctx && !actionAlive(ctx))) return;
             MG.Api.droom(code, function (r) {
-                if (token !== statusPollToken || view !== "room") return;
+                if (token !== statusPollToken || view !== "room" || (ctx && !actionAlive(ctx))) return;
                 if (r.gone) { renderMenu(); setStatus("⚠ Table closed."); return; }
                 for (var s = 0; s < cap; s++) {
                     if (s === seat) continue;   // never overwrite "You"
                     if (!seatLabels[s] || !seatLabels[s].IsValid || !seatLabels[s].IsValid()) continue;
                     seatLabels[s].text = "Seat " + (s + 1) + ": " + (s < r.players ? "Player joined" : "Waiting…");
                 }
-                if (r.started) { renderGame(3, code, isHost, false, { seat: seat, numPlayers: cap }); return; }
+                if (r.started) { renderGame(3, code, isHost, false, { seat: seat, numPlayers: cap }, ctx); return; }
                 if (isHost) setStatus(r.players >= 2 ? (r.players + "/" + cap + " seated. Press Start.") : "Waiting for players…");
                 else setStatus("Waiting for the host to start…");
                 $.Schedule(MG.Net.waitDelay(misses++), tick);
@@ -1442,15 +1555,15 @@
 
     // `tc` (seconds) is the host's chosen time control, threaded through so the host mounts its
     // clock with the same bank the joiner will read from the server. 0 for untimed / non-clock games.
-    function waitForJoiner(code, tc) {
+    function waitForJoiner(code, tc, ctx) {
         statusPollToken++;
         var token = statusPollToken;
         var misses = 0;
         function tick() {
-            if (token !== statusPollToken) return;
+            if (token !== statusPollToken || (ctx && !actionAlive(ctx))) return;
             MG.Api.status(code, function (st) {
-                if (token !== statusPollToken) return;
-                if (st.players === 2) { renderGame(selectedGameId, code, true, false, { timeControl: tc | 0 }); return; }
+                if (token !== statusPollToken || (ctx && !actionAlive(ctx))) return;
+                if (st.players === 2) { mountOnlineGame(selectedGameId, code, true, { timeControl: tc | 0 }, ctx); return; }
                 $.Schedule(MG.Net.waitDelay(misses++), tick);
             }, function () { $.Schedule(MG.Net.waitDelay(misses++), tick); });
         }
@@ -1462,31 +1575,32 @@
         var g = MG.Games.byId(selectedGameId);
         if (!g || !g.enabled) { setStatus("Pick an available game."); return; }
         setStatus("Finding a match…");
-        currentTok = MG.Session.newToken();
+        var ctx = beginOnlineAction(selectedGameId);
         // Quick Match time control (chess/checkers only): a concrete pick pools with same-bank
         // searchers; "Any"(-1) rides up as tc="any" and the server pairs it with any waiter (or
         // 5 min if two "Any" seekers meet). The server resolves the final bank when both seats are
         // present, so the client no longer knows it up-front — the online clock is poll-discovered
         // from /api/clocks, hence renderGame gets timeControl:0 (untimed games send it too, no-op).
         var tcArg = isTimedGame(selectedGameId) ? (selectedTimeControl === -1 ? "any" : selectedTimeControl) : 0;
-        log("startQuickMatch game=" + selectedGameId + " tc=" + tcArg);
-        MG.Api.quick(selectedGameId, currentTok, function (res) {
+        var cvArg = hasVariant(selectedGameId) ? selectedVariant : "";   // "any"/"russian"/"english"
+        log("startQuickMatch game=" + selectedGameId + " tc=" + tcArg + " cv=" + cvArg);
+        MG.Api.quick(selectedGameId, ctx.tok, function (res) {
+            if (!bindActionCode(ctx, res.code)) { discardStaleSeat(ctx, res.code, res.role !== "joiner"); return; }
             if (res.role === "joiner") {
                 log("quick joined, code=" + res.code);
-                currentCode = res.code;
-                if (isDurakOnlineGame(selectedGameId)) { renderRoom(res.code, false, true); return; }
-                renderGame(selectedGameId, res.code, false, false, { timeControl: 0 }); // seated by the server; we play black
+                if (isDurakOnlineGame(selectedGameId)) { renderRoom(res.code, false, true, ctx); return; }
+                mountOnlineGame(selectedGameId, res.code, false, { timeControl: 0 }, ctx); // seated by the server; we play black
             } else {
                 log("quick hosting, code=" + res.code);
-                currentCode = res.code;
-                if (isDurakOnlineGame(selectedGameId)) { renderRoom(res.code, true, true); return; }
-                renderWaiting(res.code, true);
-                waitForJoiner(res.code, 0);
+                if (isDurakOnlineGame(selectedGameId)) { renderRoom(res.code, true, true, ctx); return; }
+                renderWaiting(res.code, true, ctx);
+                waitForJoiner(res.code, 0, ctx);
             }
         }, function () {
+            if (!actionAlive(ctx)) return;
             log("quick FAILED (request errored)");
             setStatus("Couldn't reach matchmaking. Check the server.");
-        }, tcArg);
+        }, tcArg, cvArg);
     }
 
     // ── multi-select quick match ──────────────────────────────────────────────
@@ -1575,41 +1689,49 @@
         var ids = multiCheckedIds();
         if (ids.length === 0) { setStatus("Tick at least one game to search."); return; }
         setStatus("Finding a match…");
-        currentTok = MG.Session.newToken();
-        log("startMultiQuick games=" + ids.join(","));
-        MG.Api.mquick(ids, currentTok, function (res) {
-            currentCode = res.code;
+        // A multi-search's game is server-decided, so seed the action with a placeholder id; the
+        // resolved game arrives via waitForMultiMatch and drives the mount.
+        var ctx = beginOnlineAction(0);
+        // The multi-search carries the SAME time-control + variant preferences as single Quick
+        // Match (they apply only to the clock/checkers games in the ticked set; the server ignores
+        // them for the others). "Any"(-1) → tc="any"; the variant picker's value rides as-is.
+        var tcArg = selectedTimeControl === -1 ? "any" : selectedTimeControl;
+        var cvArg = selectedVariant;   // "any"/"russian"/"english"
+        log("startMultiQuick games=" + ids.join(",") + " tc=" + tcArg + " cv=" + cvArg);
+        MG.Api.mquick(ids, ctx.tok, function (res) {
+            if (!bindActionCode(ctx, res.code)) { discardStaleSeat(ctx, res.code, res.role !== "joiner"); return; }
             if (res.role === "joiner") {
                 // We were paired instantly; the server FIXED the game. Resolve it via status,
                 // then mount as the joiner (seat 1). A short searching view covers the lookup.
                 log("mquick joined, code=" + res.code);
-                renderWaiting(res.code, true);
-                waitForMultiMatch(res.code, false);
+                renderWaiting(res.code, true, ctx);
+                waitForMultiMatch(res.code, false, ctx);
             } else {
                 log("mquick hosting, code=" + res.code);
-                renderWaiting(res.code, true);
-                waitForMultiMatch(res.code, true);
+                renderWaiting(res.code, true, ctx);
+                waitForMultiMatch(res.code, true, ctx);
             }
         }, function (why) {
+            if (!actionAlive(ctx)) return;
             log("mquick FAILED (" + why + ")");
             setStatus(why === "games" ? "Pick at least one valid game." : "Couldn't reach matchmaking. Check the server.");
-        });
+        }, tcArg, cvArg);
     }
 
     // Poll status until the lobby fills AND the game is fixed (game > 0). Works for both
     // roles: a HOST waits for a joiner to arrive and pick the game; a JOINER already
     // triggered the fix, so its first tick resolves. Then mount that game.
-    function waitForMultiMatch(code, isHost) {
+    function waitForMultiMatch(code, isHost, ctx) {
         statusPollToken++;
         var token = statusPollToken;
         var misses = 0;
         function tick() {
-            if (token !== statusPollToken) return;
+            if (token !== statusPollToken || (ctx && !actionAlive(ctx))) return;
             MG.Api.status(code, function (st) {
-                if (token !== statusPollToken) return;
+                if (token !== statusPollToken || (ctx && !actionAlive(ctx))) return;
                 if (st.gone) { renderMenu(); setStatus("⚠ Lobby closed."); return; }
                 if (st.players === 2 && st.game > 0) {
-                    renderGame(st.game, code, isHost);
+                    mountOnlineGame(st.game, code, isHost, {}, ctx);
                     return;
                 }
                 $.Schedule(MG.Net.waitDelay(misses++), tick);
@@ -1621,51 +1743,59 @@
     function doJoin(code) {
         if (!MG.Net.isConfigured()) { setStatus("⚠ Configure the server first (BASE_URL in mg_net.js)."); return; }
         setStatus("Connecting to " + codeStr(code) + "…");
-        currentTok = MG.Session.newToken();
+        var ctx = beginOnlineAction(selectedGameId);
         // Poker lobbies live on their own routes; join via pjoin (which learns our seat + the
         // table cap) rather than the generic 2-seat join. The Join screen is shared, so we try
         // pjoin first ONLY when the user is browsing poker — otherwise fall through to join.
         if (isPokerOnlineGame(selectedGameId)) {
-            var pjTok = currentTok;
-            MG.Api.pjoin(code, pjTok, function (res) {
-                if (res.ok) { currentCode = code; renderPokerRoom(code, false, res.cap, res.seat, pjTok); return; }
+            MG.Api.pjoin(code, ctx.tok, function (res) {
+                if (res.ok) {
+                    if (!bindActionCode(ctx, code)) { discardStaleSeat(ctx, code, false); return; }
+                    renderPokerRoom(code, false, res.cap, res.seat, ctx); return;
+                }
+                if (!actionAlive(ctx)) return;
                 if (res.reason === "missing") setStatus("Table " + codeStr(code) + " not found.");
                 else if (res.reason === "full") setStatus("That table is full.");
                 else if (res.reason === "started") setStatus("That hand has already started.");
                 else setStatus("Couldn't join the table.");
-            }, function () { setStatus("Server unavailable."); });
+            }, function () { if (actionAlive(ctx)) setStatus("Server unavailable."); });
             return;
         }
         // Durak private tables (2–4 seats) live on their own routes too; join via djoin so the
         // joiner learns its seat + the table cap. Same shape as poker's pjoin branch above.
         if (isDurakOnlineGame(selectedGameId)) {
-            var djTok = currentTok;
-            MG.Api.djoin(code, djTok, function (res) {
-                if (res.ok) { currentCode = code; renderDurakRoom(code, false, res.cap, res.seat, djTok); return; }
+            MG.Api.djoin(code, ctx.tok, function (res) {
+                if (res.ok) {
+                    if (!bindActionCode(ctx, code)) { discardStaleSeat(ctx, code, false); return; }
+                    renderDurakRoom(code, false, res.cap, res.seat, ctx); return;
+                }
+                if (!actionAlive(ctx)) return;
                 if (res.reason === "missing") setStatus("Table " + codeStr(code) + " not found.");
                 else if (res.reason === "full") setStatus("That table is full.");
                 else if (res.reason === "started") setStatus("That game has already started.");
                 else setStatus("Couldn't join the table.");
-            }, function () { setStatus("Server unavailable."); });
+            }, function () { if (actionAlive(ctx)) setStatus("Server unavailable."); });
             return;
         }
-        MG.Api.join(code, currentTok, function (res) {
+        MG.Api.join(code, ctx.tok, function (res) {
             if (res.ok) {
                 // The game id must decode to a real, playable game — mounting a
                 // disabled stub would leave the host playing against a ghost.
                 var g = MG.Games.byId(res.game);
-                if (!g || !g.enabled) { setStatus("Couldn't read the lobby. Please try again."); return; }
-                currentCode = code;
-                if (res.game === 3) { renderRoom(code, false, false); return; }
+                if (!g || !g.enabled) { if (actionAlive(ctx)) setStatus("Couldn't read the lobby. Please try again."); return; }
+                if (!bindActionCode(ctx, code)) { discardStaleSeat(ctx, code, false); return; }
+                if (res.game === 3) { renderRoom(code, false, false, ctx); return; }
                 // res.tc = the host's time control (seconds), decoded from the join reply. The
                 // clock itself is server-authoritative; we pass tc only so the clock UI is built.
-                renderGame(res.game, code, false, false, { timeControl: res.tc | 0 });
+                // Checkers also carries a variant — mountOnlineGame reads it from /api/match.
+                mountOnlineGame(res.game, code, false, { timeControl: res.tc | 0 }, ctx);
                 return;
             }
-            if (res.reason === "missing") setStatus("Lobby " + code + " not found.");
+            if (!actionAlive(ctx)) return;
+            if (res.reason === "missing") setStatus("Lobby " + codeStr(code) + " not found.");
             else if (res.reason === "full") setStatus("Lobby is already full.");
             else setStatus("Connection error.");
-        }, function () { setStatus("Server unavailable."); });
+        }, function () { if (actionAlive(ctx)) setStatus("Server unavailable."); });
     }
 
     // ── show / hide ───────────────────────────────────────────────────────────
@@ -1701,7 +1831,10 @@
     function kickToMenu(reason) {
         if (view !== "game" && view !== "waiting") return;
         log("kicked to menu: " + reason);
-        currentCode = 0; // Prevent sending cancel back to the server
+        // 0 is now a VALID lobby code (0..1023 space), so null — not 0 — is the "no lobby" sentinel
+        // that stops cleanupCurrentView from firing a stray cancel/leave at a real lobby.
+        currentCode = null;
+        currentAction = null;
         renderMenu();
         if (reason) setStatus("⚠ " + reason);
     }

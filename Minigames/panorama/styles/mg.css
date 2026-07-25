@@ -365,7 +365,7 @@
     line-height: 24px;
     height: 52px;
     width: 100%;
-    margin-bottom: 20px;
+    margin-bottom: 12px;                 /* was 20px; spacer compensates for games without variant */
 }
 .mg-detail-locked {
     font-family: radiance !important;
@@ -428,7 +428,7 @@
     font-size: 13px !important;
     letter-spacing: 2px;
     text-transform: uppercase;
-    margin-top: 22px;
+    margin-top: 14px;                    /* was 22px; spacer compensates for games without variant */
     margin-bottom: 8px;
 }
 
@@ -522,14 +522,14 @@
     color: #8093a9 !important;           /* C: lifted from #6b7f96 */
     font-size: 14px !important;
     width: 100%;
-    margin-top: 8px;
+    margin-top: 4px;                     /* was 8px; spacer compensates for games without variant */
 }
 
 /* ── Quick Match "Select Multiple" ─────────────────────────────────────────
  * A toggle pill + a checkbox list over the multi-capable games, in the firm palette
  * (#161f2b fill, #2a3849 hairline). Checkboxes are panel-drawn (no glyph reliance):
  * a bordered box whose "x" mark shows only when ticked. */
-.mg-multi-toggle-row { width: 100%; margin-bottom: 8px; }
+.mg-multi-toggle-row { width: 100%; margin-bottom: 4px; }
 .mg-multi-toggle {
     width: 100%; height: 34px;
     flow-children: right;

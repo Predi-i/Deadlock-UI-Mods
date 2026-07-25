@@ -70,9 +70,11 @@ and validates every move** (§5.1). Full protocol lives in `server/worker.js`'s 
 panorama/
   layout/base_hud.xml      HUD override; <include>s the scripts + styles. LOAD ORDER MATTERS (actual
                            include order): mg_net → mg_sound → rules/* (checkers, ttt, chess,
-                           connectfour, durak, poker) → mg_games ($.MG.Games) → mg_durak →
-                           mg_connectfour → mg_poker → mg_ui. Rule modules load before the
-                           controllers that alias them; mg_ui loads last (it drives all views).
+                           connectfour, durak, poker) → mg_games ($.MG.Games + $.MG.Widgets) →
+                           mg_checkers → mg_ttt → mg_chess → mg_durak → mg_connectfour → mg_poker
+                           → mg_ui. Rule modules load before the controllers that alias them;
+                           mg_games loads before the per-game controllers (they need MG.Widgets +
+                           MG.Games); mg_ui loads last (it drives all views).
   styles/mg.css            all styling. Note the Panorama-specific idioms (§6).
   scripts/
     mg_net.js              image side-channel transport + typed protocol ($.MG.Net, $.MG.Api, $.MG.Session)
@@ -84,14 +86,18 @@ panorama/
     rules/connectfour.js   SHARED pure connect-four engine
     rules/durak.js         SHARED pure durak engine (offline bot + online dealer)
     rules/poker.js         SHARED pure No-Limit Hold'em engine (offline bot + online dealer)
-    mg_games.js            checkers + TTT + chess CONTROLLERS (render, input, net); aliases MG.Rules.*
-                           and owns the $.MG.Games registry (list + register + mount). Also hosts the
-                           shared side-clock + per-turn timer widgets ($.MG.Widgets) and move history.
+    mg_games.js            SHARED INFRASTRUCTURE ONLY: createClock (two-side game clock, used by
+                           checkers + chess), createTurnTimer (per-turn countdown, used by ttt +
+                           durak + poker + c4), createStub (placeholder), MG.Games registry, and
+                           MG.Widgets exports. No game controllers live here any more.
+    mg_checkers.js         Checkers CONTROLLER (render, input, net); self-registers game id 1.
+    mg_ttt.js              Tic-Tac-Toe CONTROLLER; self-registers game id 2.
+    mg_chess.js            Chess CONTROLLER; self-registers game id 4.
     mg_connectfour.js      Connect Four CONTROLLER; self-registers game id 5 (§8.7).
     mg_durak.js            Durak CONTROLLER (render + click/drag + bot + online); self-registers game id 3.
     mg_poker.js            Poker CONTROLLER (render + betting UI + bot + online); self-registers game id 6 (§8.8).
     mg_ui.js               Esc-menu button injection + full-screen lobby overlay ($.MG.UI); header
-                           UI-scale + volume dropdowns; seat/time-control pickers.
+                           UI-scale + volume dropdowns; seat/time-control/variant pickers.
 
 server/                    Cloudflare Worker (dev-only, NOT packed into the VPK)
   worker.core.js           AUTHORED relay + validators + PNG encoder (edit this)
@@ -175,10 +181,11 @@ dim. Only `/api/probe` stays **literal pixels** — it's the calibration referen
 |---|---|
 | `/api/probe` | `(600, 1000)` LITERAL px — swap + scale calibration reference |
 | `/api/ping` | `(1, 1)` |
-| `/api/create?game=G&tok=T` | `dCode(code, host=false)` — new private lobby, host = seat 0 |
-| `/api/quick?game=G&tok=T` | `dCode(code, HOST\|JOINER)` — role is the code **band**, not `+100` |
+| `/api/create?game=G&tok=T&tc=..&cv=..` | `dCode(code, host=false)` — new private lobby, host = seat 0 |
+| `/api/quick?game=G&tok=T&tc=..&cv=..` | `dCode(code, HOST\|JOINER)` — role is the code **band**, not `+100` |
 | `/api/cancel?code=C` | `(1,1)` |
 | `/api/join?code=C&tok=T` | `(G, tcIndex+1)` ok · `(20,1)` missing · `(21,1)` full · `(9,3)` bad-token |
+| `/api/match?code=C` | `(game, tcIndex*2+variantBit+1)` — resolved game/bank/checkers-variant · `(9,1)` gone/undecided |
 | `/api/status?code=C` | `(players, game+1)` · `(9,1)` gone |
 | `/api/move?code=C&from=F&to=T&end=E&tok=T` | `(1,1)` ok · `(9,1)` not-your-turn · `(9,2)` illegal · `(9,3)` bad-token · `(9,9)` gone |
 | `/api/poll?code=C&since=S` | `(from, to)` RAW squares 0..63 · `(1,1)` nothing new |
@@ -534,6 +541,22 @@ These are the mistakes to NOT repeat. Every one was confirmed against the game's
   direction**; **flying kings** slide any distance; **forced capture**; **multi-jump
   chains**. Pure helpers (`simpleMoves`, `captureMoves`, `applyHop`, `legalSequences`) are
   UI-free so `tools/mg_rules_test.js` can slice them.
+- **Two variants** (2026-07-23). `rules/checkers.js` builds both engines from one
+  `makeRules(simpleMovesFor, captureMovesFor, promotionEndsTurn)` factory: `R.checkers`
+  (Russian — flying kings, men capture any direction) and `R.checkersEnglish` (English
+  draughts — kings step **one** square, men jump **forward only**). Board encoding, promotion,
+  `applyHop` and the depth-5 bot driver are shared; the variants differ in their simple/capture
+  generators **and in what a mid-capture promotion does** (2026-07-24): Russian
+  (`promotionEndsTurn=false`) — a man crowned DURING a capture keeps capturing **as a flying
+  king** if it can (canon rule); English (`promotionEndsTurn=true`) — promotion ends the turn
+  immediately. The **variant is matched like
+  time control**: server pools quick/multi seekers by `(game, tc-bucket, variant-bucket)` into
+  `pubq:q:<g>:<tc>:<cv>` / `pubq:m:…` queues; `preferencesMatch` gates a join and
+  `resolveMatchOptions` settles the pair (a concrete pick beats "Any"; two "Any"s fall to
+  Russian). The 2-int join/quick reply can't carry the resolved variant, so a checkers client
+  reads it back from **`/api/match`** before mounting (`mountOnlineGame` in `mg_ui.js`); the
+  controller shadows its checkers helpers with the chosen engine (`createCheckers`, `session.variant`).
+  The picker (`renderCheckersVariant`, `mg_ui.js`) defaults to **Any** — as does time control now.
 - **`applyHop(b, from, to)`** walks the diagonal and clears whatever it passes, so the net
   protocol only needs `{from, to, end}` — the captured square is derived, not transmitted.
   A bounded guard (max 8 steps) makes a corrupt/desynced hop fail safe instead of looping.

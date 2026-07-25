@@ -2,13 +2,14 @@
     'use strict';
 
     var WAVE_COUNT = 2;
-    var CLICK_DELAY = 3.0;
+    var CLICK_DELAY = 3.0; 
     var WAVE_DELAY = 3.0;
     var TRIGGER_KEY = 'key_m';
 
     var State = {
         isPinging: false,
-        rootPanel: null
+        rootPanel: null,
+        minimapPanel: null
     };
 
     function IsPanelValid(panel) {
@@ -16,15 +17,12 @@
     }
 
     function GetUIRoot() {
-        var root;
-        var guard;
-
         if (IsPanelValid(State.rootPanel)) {
             return State.rootPanel;
         }
 
-        root = $.GetContextPanel();
-        guard = 0;
+        var root = $.GetContextPanel();
+        var guard = 0;
         while (root && root.GetParent && root.GetParent() && guard < 50) {
             root = root.GetParent();
             guard++;
@@ -34,8 +32,17 @@
         return State.rootPanel;
     }
 
-    function PerformClick(btn, root) {
-        var minimap = root ? (root.FindChildTraverse('hud_minimap') || root.FindChildTraverse('minimap_container')) : null;
+    function GetMinimap(root) {
+        if (IsPanelValid(State.minimapPanel)) {
+            return State.minimapPanel;
+        }
+        if (root) {
+            State.minimapPanel = root.FindChildTraverse('hud_minimap') || root.FindChildTraverse('minimap_container');
+        }
+        return State.minimapPanel;
+    }
+
+    function PerformClick(btn, minimap) {
         var hoverPanel = btn ? (btn.FindChildTraverse('HoverPanel') || btn.FindChildTraverse('hover_panel') || btn) : null;
 
         if (!IsPanelValid(btn) || !IsPanelValid(hoverPanel)) {
@@ -63,19 +70,14 @@
     }
 
     function CollectEnemyButtons(root) {
-        var buttons;
-        var enemies;
-        var i;
-        var btn;
-
-        enemies = [];
+        var enemies = [];
         if (!root || !root.FindChildrenWithClassTraverse) {
             return enemies;
         }
 
-        buttons = root.FindChildrenWithClassTraverse('map_button') || [];
-        for (i = 0; i < buttons.length; i++) {
-            btn = buttons[i];
+        var buttons = root.FindChildrenWithClassTraverse('map_button') || [];
+        for (var i = 0; i < buttons.length; i++) {
+            var btn = buttons[i];
             if (IsPanelValid(btn) && btn.BHasClass('enemy') && btn.BHasClass('player')) {
                 enemies.push(btn);
             }
@@ -85,20 +87,16 @@
     }
 
     function FirePingWave(waveIndex) {
-        var root;
-        var enemies;
-
         if (waveIndex >= WAVE_COUNT) {
             State.isPinging = false;
             return;
         }
 
-        root = GetUIRoot();
-        enemies = CollectEnemyButtons(root);
+        var root = GetUIRoot();
+        var enemies = CollectEnemyButtons(root);
+        var minimap = GetMinimap(root);
 
         function ClickNextEnemy(enemyIndex) {
-            var targetBtn;
-
             if (enemyIndex >= enemies.length) {
                 $.Schedule(WAVE_DELAY, function() {
                     FirePingWave(waveIndex + 1);
@@ -106,9 +104,9 @@
                 return;
             }
 
-            targetBtn = enemies[enemyIndex];
+            var targetBtn = enemies[enemyIndex];
             if (IsPanelValid(targetBtn)) {
-                PerformClick(targetBtn, root);
+                PerformClick(targetBtn, minimap);
             }
 
             $.Schedule(CLICK_DELAY, function() {
@@ -123,7 +121,6 @@
         if (State.isPinging) {
             return;
         }
-
         State.isPinging = true;
         FirePingWave(0);
     }

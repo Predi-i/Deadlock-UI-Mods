@@ -1,5 +1,6 @@
 <!-- Deadlock Minigames — base_hud override. Injects the mod's scripts + styles.
-     Load order matters: net (defines $.MG.Net/Api) -> games (defines $.MG.Games) -> ui. -->
+     Load order matters: net → rules/* → mg_games (registry + shared widgets) →
+     mg_checkers → mg_ttt → mg_chess → mg_durak → mg_connectfour → mg_poker → ui. -->
 <root>
 	<styles>
 		<include src="s2r://panorama/styles/base.vcss_c" />
@@ -15,7 +16,9 @@
 		<include src="s2r://panorama/scripts/rules/durak.vjs_c" />
 		<include src="s2r://panorama/scripts/rules/poker.vjs_c" />
 		<include src="s2r://panorama/scripts/mg_games.vjs_c" />
-
+		<include src="s2r://panorama/scripts/mg_checkers.vjs_c" />
+		<include src="s2r://panorama/scripts/mg_ttt.vjs_c" />
+		<include src="s2r://panorama/scripts/mg_chess.vjs_c" />
 		<include src="s2r://panorama/scripts/mg_durak.vjs_c" />
 		<include src="s2r://panorama/scripts/mg_connectfour.vjs_c" />
 		<include src="s2r://panorama/scripts/mg_poker.vjs_c" />

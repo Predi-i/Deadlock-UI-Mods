@@ -54,7 +54,7 @@
         return b;
     }
 
-    // Men move forward only; kings slide any distance along a diagonal ("flying").
+    // Russian draughts: men move forward only; kings slide any distance along a diagonal ("flying").
     var ALL_DIRS = [[-1, -1], [-1, 1], [1, -1], [1, 1]];
     function moveDirs(v) {
         if (v === 1) return [[-1, -1], [-1, 1]]; // white man: up
@@ -85,7 +85,7 @@
         return out;
     }
 
-    // Men capture in ANY diagonal direction (forward or backward), one square over.
+    // Russian men capture in ANY diagonal direction (forward or backward), one square over.
     // A flying king slides over empties, takes exactly one enemy, and may land on
     // any empty square beyond it.
     function captureMoves(b, i) {
@@ -115,13 +115,6 @@
         return out;
     }
 
-    function anyCaptureFor(b, color) {
-        for (var i = 0; i < 64; i++) {
-            if (colorOf(b[i]) === color && captureMoves(b, i).length > 0) return true;
-        }
-        return false;
-    }
-
     // Apply a single hop in place. Any piece on the diagonal between `from` and `to`
     // is captured — this covers both a man's 1-over jump and a flying king's ranged
     // capture without needing the captured square passed in (keeps the net protocol
@@ -148,145 +141,184 @@
         return { captured: captured, promoted: promoted };
     }
 
-    function hasAnyMove(b, color) {
-        for (var i = 0; i < 64; i++) {
-            if (colorOf(b[i]) !== color) continue;
-            if (simpleMoves(b, i).length || captureMoves(b, i).length) return true;
+    // English draughts: men move and jump forward only. Kings move/jump exactly one
+    // square at a time in either direction, rather than flying across a diagonal.
+    function englishSimpleMoves(b, i) {
+        var v = b[i]; if (!v) return [];
+        var r = rowOf(i), c = colOf(i), dirs = isKing(v) ? ALL_DIRS : moveDirs(v), out = [];
+        for (var k = 0; k < dirs.length; k++) {
+            var nr = r + dirs[k][0], nc = c + dirs[k][1];
+            if (inBounds(nr, nc) && b[idx(nr, nc)] === 0) out.push({ to: idx(nr, nc) });
         }
-        return false;
+        return out;
     }
 
-    // ── AI (bot mode) ────────────────────────────────────────────────────────
-    // A "sequence" is a full legal turn: an array of hops [{from,to}, ...]. Multi-
-    // jumps are expanded into their full chains so the bot evaluates whole turns.
-    function captureSequencesFrom(b, i) {
-        var caps = captureMoves(b, i);
-        if (caps.length === 0) return [];
-        var seqs = [];
-        for (var k = 0; k < caps.length; k++) {
-            var mv = caps[k];
-            var nb = b.slice();
-            var res = applyHop(nb, i, mv.to);
-            if (!res.promoted && captureMoves(nb, mv.to).length > 0) {
-                var tails = captureSequencesFrom(nb, mv.to);
-                for (var t = 0; t < tails.length; t++) {
-                    seqs.push([{ from: i, to: mv.to }].concat(tails[t]));
-                }
-            } else {
-                seqs.push([{ from: i, to: mv.to }]);
+    function englishCaptureMoves(b, i) {
+        var v = b[i]; if (!v) return [];
+        var color = colorOf(v), r = rowOf(i), c = colOf(i);
+        var dirs = isKing(v) ? ALL_DIRS : moveDirs(v), out = [];
+        for (var k = 0; k < dirs.length; k++) {
+            var mr = r + dirs[k][0], mc = c + dirs[k][1];
+            var lr = r + 2 * dirs[k][0], lc = c + 2 * dirs[k][1];
+            if (!inBounds(lr, lc) || b[idx(lr, lc)] !== 0) continue;
+            if (isEnemy(b[idx(mr, mc)], color)) out.push({ to: idx(lr, lc), cap: idx(mr, mc) });
+        }
+        return out;
+    }
+
+    // Both variants share board encoding, promotion and the bot driver. They differ in
+    // (a) their simple/capture generators and (b) what a mid-capture promotion does:
+    //   • Russian (promotionEndsTurn=false): a man that reaches the crowning row DURING a
+    //     capture becomes a king and MUST keep capturing as a flying king if it can (canon).
+    //   • English (promotionEndsTurn=true): promotion ends the turn immediately, even if the
+    //     freshly crowned king could jump again.
+    // Everything else (turn sequencing, bot) stays in this one factory.
+    function makeRules(simpleMovesFor, captureMovesFor, promotionEndsTurn) {
+        function anyCaptureFor(b, color) {
+            for (var i = 0; i < 64; i++) {
+                if (colorOf(b[i]) === color && captureMovesFor(b, i).length > 0) return true;
             }
+            return false;
         }
-        return seqs;
-    }
 
-    function legalSequences(b, color) {
-        var i, k, seqs = [], hasCap = false;
-        for (i = 0; i < 64; i++) {
-            if (colorOf(b[i]) === color && captureMoves(b, i).length) { hasCap = true; break; }
-        }
-        if (hasCap) { // forced capture: only capture chains are legal
-            for (i = 0; i < 64; i++) {
+        function hasAnyMove(b, color) {
+            for (var i = 0; i < 64; i++) {
                 if (colorOf(b[i]) !== color) continue;
-                var cs = captureSequencesFrom(b, i);
-                for (k = 0; k < cs.length; k++) seqs.push(cs[k]);
+                if (simpleMovesFor(b, i).length || captureMovesFor(b, i).length) return true;
+            }
+            return false;
+        }
+
+        // A sequence is one complete turn. For English (promotionEndsTurn=true) a promotion
+        // during a capture ends the turn immediately. For Russian (promotionEndsTurn=false) the
+        // newly crowned king must keep capturing as a flying king if it can (canon).
+        function captureSequencesFrom(b, i) {
+            var caps = captureMovesFor(b, i);
+            if (caps.length === 0) return [];
+            var seqs = [];
+            for (var k = 0; k < caps.length; k++) {
+                var mv = caps[k];
+                var nb = b.slice();
+                var res = applyHop(nb, i, mv.to);
+                // English: a promotion ends the turn. Russian: the fresh king (nb already holds
+                // the king value, so captureMovesFor routes to the king generator) keeps capturing.
+                var canContinue = (!res.promoted || !promotionEndsTurn) && captureMovesFor(nb, mv.to).length > 0;
+                if (canContinue) {
+                    var tails = captureSequencesFrom(nb, mv.to);
+                    for (var t = 0; t < tails.length; t++) seqs.push([{ from: i, to: mv.to }].concat(tails[t]));
+                } else {
+                    seqs.push([{ from: i, to: mv.to }]);
+                }
             }
             return seqs;
         }
-        for (i = 0; i < 64; i++) {
-            if (colorOf(b[i]) !== color) continue;
-            var sm = simpleMoves(b, i);
-            for (k = 0; k < sm.length; k++) seqs.push([{ from: i, to: sm[k].to }]);
+
+        function legalSequences(b, color) {
+            var i, k, seqs = [], hasCap = false;
+            for (i = 0; i < 64; i++) {
+                if (colorOf(b[i]) === color && captureMovesFor(b, i).length) { hasCap = true; break; }
+            }
+            if (hasCap) {
+                for (i = 0; i < 64; i++) {
+                    if (colorOf(b[i]) !== color) continue;
+                    var cs = captureSequencesFrom(b, i);
+                    for (k = 0; k < cs.length; k++) seqs.push(cs[k]);
+                }
+                return seqs;
+            }
+            for (i = 0; i < 64; i++) {
+                if (colorOf(b[i]) !== color) continue;
+                var sm = simpleMovesFor(b, i);
+                for (k = 0; k < sm.length; k++) seqs.push([{ from: i, to: sm[k].to }]);
+            }
+            return seqs;
         }
-        return seqs;
-    }
 
-    function applySequence(b, seq) {
-        for (var h = 0; h < seq.length; h++) applyHop(b, seq[h].from, seq[h].to);
-    }
-
-    function evalBoard(b, me) {
-        var score = 0;
-        for (var i = 0; i < 64; i++) {
-            var v = b[i]; if (!v) continue;
-            var val = isKing(v) ? 25 : 10; // flying kings are worth far more than a man
-            if (v === 1) val += (7 - rowOf(i));   // white man: advance toward row 0
-            else if (v === 3) val += rowOf(i);    // black man: advance toward row 7
-            score += (colorOf(v) === me ? val : -val);
+        function applySequence(b, seq) {
+            for (var h = 0; h < seq.length; h++) applyHop(b, seq[h].from, seq[h].to);
         }
-        return score;
-    }
 
-    function minimax(b, color, me, depth, alpha, beta) {
-        var seqs = legalSequences(b, color);
-        if (seqs.length === 0) return color === me ? -100000 + depth : 100000 - depth;
-        if (depth === 0) return evalBoard(b, me);
-        var opp = color === WHITE ? BLACK : WHITE, k, nb, sc;
-        if (color === me) {
-            var best = -1e9;
+        function evalBoard(b, me) {
+            var score = 0;
+            for (var i = 0; i < 64; i++) {
+                var v = b[i]; if (!v) continue;
+                var val = isKing(v) ? 25 : 10;
+                if (v === 1) val += 7 - rowOf(i);
+                else if (v === 3) val += rowOf(i);
+                score += colorOf(v) === me ? val : -val;
+            }
+            return score;
+        }
+
+        function minimax(b, color, me, depth, alpha, beta) {
+            var seqs = legalSequences(b, color);
+            if (seqs.length === 0) return color === me ? -100000 + depth : 100000 - depth;
+            if (depth === 0) return evalBoard(b, me);
+            var opp = color === WHITE ? BLACK : WHITE, k, nb, sc;
+            if (color === me) {
+                var best = -1e9;
+                for (k = 0; k < seqs.length; k++) {
+                    nb = b.slice(); applySequence(nb, seqs[k]);
+                    sc = minimax(nb, opp, me, depth - 1, alpha, beta);
+                    if (sc > best) best = sc;
+                    if (best > alpha) alpha = best;
+                    if (alpha >= beta) break;
+                }
+                return best;
+            }
+            var worst = 1e9;
             for (k = 0; k < seqs.length; k++) {
                 nb = b.slice(); applySequence(nb, seqs[k]);
                 sc = minimax(nb, opp, me, depth - 1, alpha, beta);
-                if (sc > best) best = sc;
-                if (best > alpha) alpha = best;
+                if (sc < worst) worst = sc;
+                if (worst < beta) beta = worst;
                 if (alpha >= beta) break;
             }
-            return best;
+            return worst;
         }
-        var worst = 1e9;
-        for (k = 0; k < seqs.length; k++) {
-            nb = b.slice(); applySequence(nb, seqs[k]);
-            sc = minimax(nb, opp, me, depth - 1, alpha, beta);
-            if (sc < worst) worst = sc;
-            if (worst < beta) beta = worst;
-            if (alpha >= beta) break;
-        }
-        return worst;
-    }
 
-    function chooseBotMove(b, color) {
-        var seqs = legalSequences(b, color);
-        if (seqs.length === 0) return null;
-        var opp = color === WHITE ? BLACK : WHITE;
-        var DEPTH = 5, best = -1e9, pick = seqs[0];
-        for (var k = 0; k < seqs.length; k++) {
-            var nb = b.slice(); applySequence(nb, seqs[k]);
-            // small random tie-break so the bot isn't perfectly repetitive
-            var sc = minimax(nb, opp, color, DEPTH - 1, -1e9, 1e9) + Math.random() * 0.5;
-            if (sc > best) { best = sc; pick = seqs[k]; }
-        }
-        return pick;
-    }
-
-    // Resumable variant of chooseBotMove: the SAME depth-5 search, but exposed as a driver so
-    // the caller can evaluate ONE root move per frame and yield between them. Panorama JS is
-    // single-threaded, so the old one-shot call froze the whole HUD for the length of the search
-    // (the "лаги при ходе бота"); worse, that freeze ate the only window in which a premove could
-    // be grabbed. Stepping across frames keeps the UI live and the bot exactly as strong.
-    // Usage: var d = chooseBotMovePrep(b,color); while(!d.done()) d.step(); var seq = d.result();
-    function chooseBotMovePrep(b, color) {
-        var seqs = legalSequences(b, color);
-        var opp = color === WHITE ? BLACK : WHITE;
-        var DEPTH = 5, i = 0, best = -1e9, pick = seqs.length ? seqs[0] : null;
-        return {
-            done: function () { return i >= seqs.length; },
-            step: function () {
-                if (i >= seqs.length) return;
-                var nb = b.slice(); applySequence(nb, seqs[i]);
+        function chooseBotMove(b, color) {
+            var seqs = legalSequences(b, color);
+            if (seqs.length === 0) return null;
+            var opp = color === WHITE ? BLACK : WHITE;
+            var DEPTH = 5, best = -1e9, pick = seqs[0];
+            for (var k = 0; k < seqs.length; k++) {
+                var nb = b.slice(); applySequence(nb, seqs[k]);
                 var sc = minimax(nb, opp, color, DEPTH - 1, -1e9, 1e9) + Math.random() * 0.5;
-                if (sc > best) { best = sc; pick = seqs[i]; }
-                i++;
-            },
-            result: function () { return pick; }
+                if (sc > best) { best = sc; pick = seqs[k]; }
+            }
+            return pick;
+        }
+
+        function chooseBotMovePrep(b, color) {
+            var seqs = legalSequences(b, color);
+            var opp = color === WHITE ? BLACK : WHITE;
+            var DEPTH = 5, i = 0, best = -1e9, pick = seqs.length ? seqs[0] : null;
+            return {
+                done: function () { return i >= seqs.length; },
+                step: function () {
+                    if (i >= seqs.length) return;
+                    var nb = b.slice(); applySequence(nb, seqs[i]);
+                    var sc = minimax(nb, opp, color, DEPTH - 1, -1e9, 1e9) + Math.random() * 0.5;
+                    if (sc > best) { best = sc; pick = seqs[i]; }
+                    i++;
+                },
+                result: function () { return pick; }
+            };
+        }
+
+        return {
+            WHITE: WHITE, BLACK: BLACK,
+            idx: idx, rowOf: rowOf, colOf: colOf, isDark: isDark,
+            colorOf: colorOf, isKing: isKing,
+            promotionEndsTurn: promotionEndsTurn,
+            initialBoard: initialBoard,
+            simpleMoves: simpleMovesFor, captureMoves: captureMovesFor,
+            anyCaptureFor: anyCaptureFor, applyHop: applyHop, hasAnyMove: hasAnyMove,
+            legalSequences: legalSequences, chooseBotMove: chooseBotMove, chooseBotMovePrep: chooseBotMovePrep
         };
     }
 
-    R.checkers = {
-        WHITE: WHITE, BLACK: BLACK,
-        idx: idx, rowOf: rowOf, colOf: colOf, isDark: isDark,
-        colorOf: colorOf, isKing: isKing,
-        initialBoard: initialBoard,
-        simpleMoves: simpleMoves, captureMoves: captureMoves,
-        anyCaptureFor: anyCaptureFor, applyHop: applyHop, hasAnyMove: hasAnyMove,
-        legalSequences: legalSequences, chooseBotMove: chooseBotMove, chooseBotMovePrep: chooseBotMovePrep
-    };
+    R.checkers = makeRules(simpleMoves, captureMoves, false);
+    R.checkersEnglish = makeRules(englishSimpleMoves, englishCaptureMoves, true);
 })();

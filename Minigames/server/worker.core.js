@@ -30,10 +30,12 @@
  *   /api/probe                                    -> (600,1000) LITERAL px      swap + scale calibration
  *   /api/ping                                     -> (1,1)                       UI tester route
  *   /api/create?game=G&tok=T                      -> dCode(code, host=false)     new PRIVATE lobby, host = seat 0
- *   /api/quick?game=G&tok=T                        -> dCode(code, JOINER|HOST)   role is the code BAND, not +100
+ *   /api/quick?game=G&tok=T&tc=..&cv=..            -> dCode(code, JOINER|HOST)   role is the code BAND, not +100
+ *   /api/mquick?games=..&tok=T&tc=..&cv=..         -> dCode(code, JOINER|HOST)   multi-select; game fixed on join
  *   /api/cancel?code=C                            -> (1,1)                       drop a still-waiting lobby
  *   /api/join?code=C&tok=T                         -> (G, tcIndex+1) ok · (20,1) missing · (21,1) full
  *   /api/status?code=C                            -> (players, game+1) · (9,1) gone
+ *   /api/match?code=C                             -> (game, tcIndex*2+variantBit+1) · (9,1) gone/undecided
  *   /api/move?code=C&from=F&to=T&end=E&tok=T       -> (1,1) ok · (9,1) not-your-turn · (9,2) illegal · (9,3) bad-token · (9,9) gone
  *   /api/poll?code=C&since=S                       -> (from, to) RAW squares · (1,1) nothing new
  *   /api/reset?code=C&game=G&tok=T                 -> (1,1)
@@ -119,11 +121,8 @@ export class Hub {
     // client appends ".png" to every route. Strip it here before routing.
     const p = url.pathname.replace(/\.png$/, "");
     const q = url.searchParams;
-    // Normalise `code` to a canonical 4-digit integer string, or "" if it isn't one. All
-    // real lobby codes are 1000..9999 (freshCode), so anything else (unicode, "1e3", a
-    // giant string) can never name a live lobby — reject it here so it can't create junk
-    // "l:<garbage>" keys or match via loose string coercion. "" makes every `code ? …`
-    // guard below fall straight to the missing/gone branch.
+    // Normalise `code` to a canonical 0..1023 integer string, or "" if it is malformed.
+    // Code "0" is VALID, so route lookups must compare with "" rather than use truthiness.
     const code = validCode(q.get("code"));
 
     // Rate-limit the formation + existence-probe routes by client IP (Cloudflare sets
@@ -145,14 +144,17 @@ export class Hub {
 
         if (!validTok(q.get("tok"))) return d(9, 3);     // reject empty/garbage seat token
         const newCode = await this.freshCode();
+        if (newCode < 0) return d(9, 5);                 // all 1024 lobby codes are occupied
 
         const tc = clockSecFor(game, q.get("tc"));         // 0 unless chess/checkers with a bank
+        const cv = checkersVariantFor(game, q.get("cv"));
         const lobby = {
           game, players: 1, moves: [], pub: 0, t: nowSeq(),
           seats: [{ tok: q.get("tok") || "" }, null], // seat 0 = host = white/X/+1, moves first
           turn: 0,                                     // seat index whose turn it is
           tc: tc,                                      // per-seat bank in SECONDS (0 = no clock)
-          state: initState(game)                       // authoritative board/state
+          cv: cv,                                      // Russian or English checkers (empty for other games)
+          state: initState(game, cv)                   // authoritative board/state
         };
         initClock(lobby);
         await this.storage.put("l:" + newCode, lobby);
@@ -163,115 +165,113 @@ export class Hub {
       if (p === "/api/quick") {
         await this.maybeSweep();
         const game = clampInt(q.get("game"), 1, 1, 9);
-        if (!SUPPORTED_GAMES[game]) return d(9, 6);      // unsupported game id (6..9 have no engine)
-        if (!validTok(q.get("tok"))) return d(9, 3);     // reject empty/garbage seat token
+        if (!SUPPORTED_GAMES[game]) return d(9, 6);
+        if (!validTok(q.get("tok"))) return d(9, 3);
 
-        // TIME-CONTROL matchmaking (chess/checkers only; other games have no bank). The picker
-        // sends tc = concrete SECONDS (60/180/300/600) or the literal "any". Searchers pool by
-        // (game, tc-bucket) so a 1-min seeker never gets force-matched into a 10-min waiter:
-        //   • concrete T  → join a same-T waiter, else an "any" waiter (which then adopts T),
-        //                   else host a T lobby.
-        //   • "any"       → join ANY waiter (adopt its bank; if that waiter is itself "any",
-        //                   the game resolves to 5 min), else host an "any" lobby.
-        // Non-clock games ignore tc entirely and share one bucket ("0"). Single-quick queues use
-        // the prefix pubq:q:<game>:<bucket> so they never collide with mquick's pubq:<game>.
-        const clockGame = !!CLOCK_GAMES[game];
-        const rawTc = q.get("tc");
-        const wantAny = clockGame && rawTc === "any";
-        const wantTc = clockGame && !wantAny ? clockSecFor(game, rawTc) : 0;  // concrete secs, else 0
-        // The bank this seeker will impose once paired: a concrete pick fixes to itself; "Any"
-        // resolves to 5 min against an unbanked/undecided host. (When joining a single-quick host
-        // that already holds a concrete bank, that host's bank stands instead — see below.)
-        const seekerTc = clockGame ? (wantAny ? 300 : wantTc) : 0;
-        // Candidate queues to try joining, in order:
-        //   • single-quick tc buckets (pubq:q:<game>:<bucket>) — a concrete seeker also accepts an
-        //     "any" host; an "any" seeker sweeps every bucket.
-        //   • the shared mquick queue (pubq:<game>) — an undecided multi-select host (game 0) whose
-        //     candidate set includes this game; finalizeJoin fixes the game for it.
-        // Each entry is [storageKey, isMquickQueue].
-        const buckets = !clockGame ? ["0"]
-          : wantAny ? ["60", "180", "300", "600", "any"]
-          : [String(wantTc), "any"];
-        const qkey = (b) => "pubq:q:" + game + ":" + b;
-        const queues = buckets.map((b) => [qkey(b), false]);
-        queues.push(["pubq:" + game, true]);   // mquick multi-hosts live here (undecided game 0)
+        const rawTc = q.get("tc") || "0";
+        const rawCv = q.get("cv") || CHECKERS_DEFAULT_VARIANT;
+        const timeBuckets = timeBucketsFor(game, rawTc);
+        const variantBuckets = variantBucketsFor(game, rawCv);
+        const queues = [], seenQueues = {};
+        function addQueue(key) { if (!seenQueues[key]) { seenQueues[key] = 1; queues.push(key); } }
+        for (let ti = 0; ti < timeBuckets.length; ti++) {
+          for (let vi = 0; vi < variantBuckets.length; vi++) {
+            addQueue(quickQueueKey(game, timeBuckets[ti], variantBuckets[vi]));
+            addQueue(multiQueueKey(game, timeBuckets[ti], variantBuckets[vi]));
+          }
+        }
 
         for (let i = 0; i < queues.length; i++) {
-          const waitCode = await this.storage.get(queues[i][0]);
+          const waitCode = await this.storage.get(queues[i]);
           if (!waitCode) continue;
           const w = await this.storage.get("l:" + waitCode);
           const isMulti = w && w.game === 0 && w.games && w.games.indexOf(game) >= 0;
-          if (w && w.pub && w.players < 2 && (w.game === game || isMulti)) {
-            // Resolve the bank now that both seats are known:
-            //   • single-quick host with a concrete bank (w.tc>0, not qtcAny) → that bank stands.
-            //   • single-quick "any" host (qtcAny) or an mquick multi-host (no bank) → the seeker
-            //     imposes seekerTc (its own concrete T, or 5 min if it too asked for "Any").
-            if (!clockGame) w.tc = 0;
-            else if (w.qtcAny || isMulti || !w.tc) { w.tc = seekerTc; delete w.qtcAny; }
-            // else the host's concrete w.tc stands and the joiner plays at it.
-            await this.finalizeJoin(waitCode, w, q.get("tok"), game);
-            return dCode(Number(waitCode), false); // JOINER (black)
+          if (w && w.pub && w.players < 2 && (w.game === game || isMulti) && preferencesMatch(w, game, rawTc, rawCv)) {
+            await this.finalizeJoin(waitCode, w, q.get("tok"), game, resolveMatchOptions(w, game, rawTc, rawCv));
+            return dCode(Number(waitCode), false);
           }
-          // stale/closed slot — try the next queue, then fall through to hosting.
         }
 
-        // No match: host a fresh public lobby in OUR bucket and wait.
-        const hostBucket = !clockGame ? "0" : wantAny ? "any" : String(wantTc);
+        const hostTimeBucket = timeBucketFor(game, rawTc);
+        const hostVariantBucket = variantBucketFor(game, rawCv);
+        const cv = checkersVariantFor(game, rawCv);
         const newCode = await this.freshCode();
+        if (newCode < 0) return d(9, 5);                 // all 1024 lobby codes are occupied
         const lobby = {
           game, players: 1, moves: [], pub: 1, t: nowSeq(),
-          seats: [{ tok: q.get("tok") || "" }, null], // host takes seat 0 (white/X/+1)
+          seats: [{ tok: q.get("tok") || "" }, null],
           turn: 0,
-          tc: clockGame && !wantAny ? wantTc : 0,      // concrete bank, or 0 while an "any" host is unresolved
-          qtcAny: clockGame && wantAny ? 1 : 0,        // unresolved "any" host — its bank is fixed at join
-          qk: qkey(hostBucket),                        // the queue slot this lobby holds (for clearQueuesFor)
-          state: initState(game)
+          tc: CLOCK_GAMES[game] && rawTc !== "any" ? clockSecFor(game, rawTc) : 0,
+          qtcAny: CLOCK_GAMES[game] && rawTc === "any" ? 1 : 0,
+          cv: cv,
+          qcvAny: wantsAnyCheckersVariant(game, rawCv) ? 1 : 0,
+          qk: quickQueueKey(game, hostTimeBucket, hostVariantBucket),
+          state: initState(game, cv)
         };
         initClock(lobby);
         await this.storage.put("l:" + newCode, lobby);
-        await this.storage.put(qkey(hostBucket), newCode);
-        // HOST (white): +100 on the width flags the role without a fragile extra value.
+        await this.storage.put(lobby.qk, newCode);
         return dCode(newCode, true);
       }
 
-      // Multi-select quick match. The caller sends a SET of games it will accept
-      // (games=1,2,4,5 — the uplink is unlimited, so the whole set rides up freely).
-      // A joiner takes any waiting host whose game (or candidate set) intersects ours,
-      // FIXING the lobby to the matched game. With no match, we host ONE undecided lobby
-      // (game 0) registered in EVERY selected per-game queue; the first joiner to pick one
-      // of them fixes the game. Both sides learn the chosen game from /api/status (its
-      // height carries game+1), so no extra downlink value is needed.
+      // Multi-select uses the same time-control and checkers-variant preferences as Quick
+      // Match. The first compatible game fixes the lobby; /api/match exposes the result.
       if (p === "/api/mquick") {
         await this.maybeSweep();
         if (!validTok(q.get("tok"))) return d(9, 3);     // reject empty/garbage seat token
         const set = parseGameSet(q.get("games"));
         if (set.length === 0) return d(9, 6);            // no valid multi-capable game ids
+        const rawTc = q.get("tc") || "0";
+        const rawCv = q.get("cv") || CHECKERS_DEFAULT_VARIANT;
+        const seenQueues = {};
         for (let i = 0; i < set.length; i++) {
           const g = set[i];
-          const waitCode = await this.storage.get("pubq:" + g);
-          if (!waitCode) continue;
-          const w = await this.storage.get("l:" + waitCode);
-          if (w && w.pub && w.players < 2 &&
-              (w.game === g || (w.game === 0 && w.games && w.games.indexOf(g) >= 0))) {
-            await this.finalizeJoin(waitCode, w, q.get("tok"), g);
-            return dCode(Number(waitCode), false); // JOINER
+          const timeBuckets = timeBucketsFor(g, rawTc);
+          const variantBuckets = variantBucketsFor(g, rawCv);
+          for (let kind = 0; kind < 2; kind++) {
+            for (let ti = 0; ti < timeBuckets.length; ti++) {
+              for (let vi = 0; vi < variantBuckets.length; vi++) {
+                const key = kind === 0
+                  ? quickQueueKey(g, timeBuckets[ti], variantBuckets[vi])
+                  : multiQueueKey(g, timeBuckets[ti], variantBuckets[vi]);
+                if (seenQueues[key]) continue;
+                seenQueues[key] = 1;
+                const waitCode = await this.storage.get(key);
+                if (!waitCode) continue;
+                const w = await this.storage.get("l:" + waitCode);
+                const isMulti = w && w.game === 0 && w.games && w.games.indexOf(g) >= 0;
+                if (w && w.pub && w.players < 2 && (w.game === g || isMulti) && preferencesMatch(w, g, rawTc, rawCv)) {
+                  await this.finalizeJoin(waitCode, w, q.get("tok"), g, resolveMatchOptions(w, g, rawTc, rawCv));
+                  return dCode(Number(waitCode), false);
+                }
+              }
+            }
           }
         }
         const newCode = await this.freshCode();
+        if (newCode < 0) return d(9, 5);                 // all 1024 lobby codes are occupied
         const lobby = {
           game: 0, games: set, players: 1, moves: [], pub: 1, t: nowSeq(),
           seats: [{ tok: q.get("tok") || "" }, null],      // host takes seat 0
           turn: 0,
+          mtc: rawTc,
+          mcv: rawCv,
+          mqs: [],
           state: null                                      // fixed once a joiner picks a game
         };
+        for (let i = 0; i < set.length; i++) {
+          const g = set[i];
+          const key = multiQueueKey(g, timeBucketFor(g, rawTc), variantBucketFor(g, rawCv));
+          lobby.mqs.push(key);
+          await this.storage.put(key, newCode);
+        }
         await this.storage.put("l:" + newCode, lobby);
-        for (let i = 0; i < set.length; i++) await this.storage.put("pubq:" + set[i], newCode);
         // HOST: +100 on the width flags the role, exactly like /api/quick.
         return dCode(newCode, true);
       }
 
       if (p === "/api/cancel") {
-        const lobby = code ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
         // Only a SEATED player (valid token) may cancel, and only while the lobby is still
         // waiting for the second player. Never let a 4-digit code-guesser nuke an active match.
         if (lobby && seatOf(lobby, q.get("tok")) >= 0 && lobby.players < 2) {
@@ -293,7 +293,7 @@ export class Hub {
       //     which appends a LEFT event (+ DRAW/ROLES or board/WIN) to the public log so the table
       //     plays on without the leaver. The game only ends here if it drops to one player.
       if (p === "/api/leave") {
-        const lobby = code ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
         if (!lobby) return d(1, 1);                       // already gone — nothing to do
         const seat = seatOf(lobby, q.get("tok"));
         if (seat < 0) return d(1, 1);                     // not a seated player: ignore, don't leak
@@ -319,7 +319,7 @@ export class Hub {
 
       if (p === "/api/join") {
         if (!validTok(q.get("tok"))) return d(9, 3); // reject empty/garbage seat token
-        const lobby = code ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
         if (!lobby) return d(20, 1);             // missing
         // Game-type guard (H2): the generic 2-seat join hard-sets players=2/seats[1], which would
         // CORRUPT an N-seat poker/durak lobby (those carry `cap` and grow via seats.push through
@@ -341,7 +341,7 @@ export class Hub {
       }
 
       if (p === "/api/status") {
-        const lobby = code ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
         if (!lobby) return d(9, 1);              // gone
         // height carries the chosen game + 1 (1 while an mquick lobby is still undecided,
         // game=0). A multi-select HOST reads it to learn which game a joiner picked; the
@@ -349,8 +349,25 @@ export class Hub {
         return d(lobby.players, (lobby.game || 0) + 1); // w: 1|2 players · h: game+1
       }
 
+      // Resolved-options readout: once a lobby is settled (both seats seated, or a single host
+      // holding concrete prefs), report the CHOSEN game + time-control + checkers variant so a
+      // client can mount the correct engine. The 2-int join/quick replies only carry role+code,
+      // so the variant (and the exact bank for a resolved "Any") needs its own tiny channel.
+      //   width  = game (1..9)
+      //   height = tcIndex*2 + variantBit + 1   (variantBit: english=1, else 0; +1 keeps it ≥1)
+      // e.g. Russian 3-min checkers = (1, 2*2+0+1) = (1,5). An undecided mquick lobby → (9,1).
+      if (p === "/api/match") {
+        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
+        if (!lobby) return d(9, 1);              // gone
+        if (!lobby.game) return d(9, 1);         // still-undecided mquick lobby: no game fixed yet
+        const g = lobby.game;
+        const ti = CLOCK_GAMES[g] ? tcIndex(lobby.tc || 0) : 0;
+        const variantBit = g === 1 && checkersVariantFor(g, lobby.cv) === "english" ? 1 : 0;
+        return d(g, ti * 2 + variantBit + 1);
+      }
+
       if (p === "/api/move") {
-        const lobby = code ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
         if (!lobby) return d(9, 9);              // no lobby
         if (lobby.players < 2) return d(9, 1);   // can't move before the opponent has joined
         const seat = seatOf(lobby, q.get("tok"));
@@ -384,7 +401,7 @@ export class Hub {
 
 
       if (p === "/api/poll") {
-        const lobby = code ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
         if (!lobby) return d(9, 9);              // 9x9 signals lobby destroyed / opponent left
         const since = clampInt(q.get("since"), 0, 0, 100000);
         const mv = lobby.moves[since]; // 0-based; this move is seq = since+1
@@ -411,7 +428,7 @@ export class Hub {
       // Both clients read the SAME server clock, so they can't disagree on the time or on who
       // flagged: a seat's bank reaching 0 IS the flag-fall signal (that seat loses).
       if (p === "/api/clocks") {
-        const lobby = code ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
         if (!lobby) return d(9, 9);              // gone
         if (!lobby.clkMs) return d(9, 8);        // untimed game → no clocks
         // Persist a freshly-detected flag so the outcome sticks for later polls / moves.
@@ -422,18 +439,9 @@ export class Hub {
       }
 
       if (p === "/api/reset") {
-        const lobby = code ? await this.storage.get("l:" + code) : null;
-        if (!lobby) return d(9, 9);
-        if (seatOf(lobby, q.get("tok")) < 0) return d(9, 3); // only a seated player may reset
-        // Rematch = same game, fresh state. The game TYPE is fixed at create time and can
-        // never be switched mid-lobby (that would desync / void the opponent's board).
-        lobby.moves = [];
-        lobby.turn = 0;
-        lobby.state = initState(lobby.game);
-        initClock(lobby);                          // fresh banks for the rematch
-        lobby.t = nowSeq();
-        await this.storage.put("l:" + code, lobby);
-        return d(1, 1);
+        // Deprecated unsafe endpoint. A unilateral reset desynchronises the opponent and used to
+        // lose the English-checkers variant. Rematches must use the two-seat /api/rematch handshake.
+        return d(9, 8);
       }
 
       // Rematch handshake. Both seats poll this from the game-over screen; when BOTH have
@@ -447,7 +455,7 @@ export class Hub {
       // re-arm the next rematch, it just reads the bumped gen and the client restarts. This is
       // what stops the flag "sticking" across consecutive rematches (no extra clear round-trip).
       if (p === "/api/rematch") {
-        const lobby = code ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
         if (!lobby) return d(9, 9);
         const seat = seatOf(lobby, q.get("tok"));
         if (seat < 0) return d(9, 3);
@@ -460,7 +468,7 @@ export class Hub {
         if (lobby.rm[0] && lobby.rm[1]) {
           lobby.moves = [];
           lobby.turn = 0;
-          lobby.state = initState(lobby.game);
+          lobby.state = initState(lobby.game, lobby.cv);
           initClock(lobby);                        // fresh banks for the rematch
           // Wrap the generation into 6 bits so gen+1 stays a valid level (<=63) on the
           // downlink. gen is only used for equality / "did a restart happen" detection, and
@@ -483,13 +491,13 @@ export class Hub {
       // a seat token (tok → seat), which also gates ddraw so a cheat can't read a foreign
       // seat's private cards. Only 2 players are wired for now (3–4 seating is deferred).
       if (p === "/api/room") {
-        const lobby = code ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
         if (!lobby) return d(9, 1);                        // gone
         const started = lobby.state && lobby.state.started ? 2 : 1; // h: 2 started, 1 waiting
         return d(lobby.players, started);
       }
       if (p === "/api/start") {
-        const lobby = code ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
         if (!lobby) return d(9, 9);
         const seat = seatOf(lobby, q.get("tok"));
         if (seat < 0) return d(9, 3);
@@ -500,7 +508,7 @@ export class Hub {
         return d(1, 1);
       }
       if (p === "/api/dact") {
-        const lobby = code ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
         if (!lobby) return d(9, 9);
         const seat = seatOf(lobby, q.get("tok"));
         if (seat < 0) return d(9, 3);
@@ -514,7 +522,7 @@ export class Hub {
         return d(1, 1);
       }
       if (p === "/api/dlog") {
-        const lobby = code ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
         if (!lobby) return d(9, 9);
         const since = clampInt(q.get("since"), 0, 0, 100000);
         const ev = lobby.state && lobby.state.pub ? lobby.state.pub[since] : null;
@@ -522,7 +530,7 @@ export class Hub {
         return d(ev.w, ev.h);
       }
       if (p === "/api/ddraw") {
-        const lobby = code ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
         if (!lobby) return d(9, 9);
         const seat = seatOf(lobby, q.get("tok"));
         if (seat < 0) return d(9, 3);                      // only your own seat's private cards
@@ -544,6 +552,7 @@ export class Hub {
         if (!validTok(q.get("tok"))) return d(9, 3);
         const cap = clampInt(q.get("n"), 2, 2, 4);           // seat cap 2..4
         const newCode = await this.freshCode();
+        if (newCode < 0) return d(9, 5);                    // all 1024 lobby codes are occupied
         const lobby = {
           game: 3, players: 1, moves: [], pub: 0, t: nowSeq(), cap: cap,
           seats: [{ tok: q.get("tok") || "" }],              // host = seat 0
@@ -557,11 +566,12 @@ export class Hub {
       }
       if (p === "/api/djoin") {
         if (!validTok(q.get("tok"))) return d(9, 3);
-        const lobby = code ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
         if (!lobby || lobby.game !== 3 || !lobby.cap) return d(20, 1); // missing / not an N-seat durak lobby
         if (lobby.state && lobby.state.started) return d(22, 1);       // already started
-        if (seatOf(lobby, q.get("tok")) >= 0)                           // idempotent re-join (poll safety)
-          return d(lobby.cap, lobby.players);
+        const existingSeat = seatOf(lobby, q.get("tok"));
+        if (existingSeat >= 0)                                           // idempotent re-join (poll safety)
+          return d(lobby.cap, existingSeat + 1);                         // preserve the caller's seat
         if (lobby.players >= lobby.cap) return d(21, 1);              // full
         lobby.seats.push({ tok: q.get("tok") || "" });
         lobby.players++;
@@ -571,7 +581,7 @@ export class Hub {
         return d(lobby.cap, lobby.players);
       }
       if (p === "/api/droom") {
-        const lobby = code ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
         if (!lobby || lobby.game !== 3 || !lobby.cap) return d(9, 1); // gone / not an N-seat durak lobby
         const started = lobby.state && lobby.state.started ? ROOM_STARTED : 0;
         // width = players joined (+ROOM_STARTED band once dealt) · height = seat cap
@@ -586,6 +596,7 @@ export class Hub {
         if (!validTok(q.get("tok"))) return d(9, 3);
         const cap = clampInt(q.get("n"), 2, 2, 4);           // seat cap 2..4
         const newCode = await this.freshCode();
+        if (newCode < 0) return d(9, 5);                    // all 1024 lobby codes are occupied
         const lobby = {
           game: 6, players: 1, pub: 0, t: nowSeq(), cap: cap,
           seats: [{ tok: q.get("tok") || "" }],              // host = seat 0
@@ -598,11 +609,12 @@ export class Hub {
       }
       if (p === "/api/pjoin") {
         if (!validTok(q.get("tok"))) return d(9, 3);
-        const lobby = code ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
         if (!lobby || lobby.game !== 6) return d(20, 1);   // missing / not a poker lobby
         if (lobby.state && lobby.state.started) return d(22, 1); // already started
-        if (seatOf(lobby, q.get("tok")) >= 0)                // idempotent re-join (poll safety)
-          return d(lobby.cap || 4, lobby.players);
+        const existingSeat = seatOf(lobby, q.get("tok"));
+        if (existingSeat >= 0)                                // idempotent re-join (poll safety)
+          return d(lobby.cap || 4, existingSeat + 1);          // preserve the caller's seat
         if (lobby.players >= (lobby.cap || 4)) return d(21, 1); // full
         lobby.seats.push({ tok: q.get("tok") || "" });
         lobby.players++;
@@ -612,14 +624,14 @@ export class Hub {
         return d(lobby.cap || 4, lobby.players);
       }
       if (p === "/api/proom") {
-        const lobby = code ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
         if (!lobby || lobby.game !== 6) return d(9, 1);    // gone
         const started = lobby.state && lobby.state.started ? ROOM_STARTED : 0;
         // width = players joined (+ROOM_STARTED band once started) · height = seat cap
         return d(lobby.players + started, lobby.cap || 4);
       }
       if (p === "/api/pstart") {
-        const lobby = code ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
         if (!lobby || lobby.game !== 6) return d(9, 9);
         const seat = seatOf(lobby, q.get("tok"));
         if (seat < 0) return d(9, 3);
@@ -630,7 +642,7 @@ export class Hub {
         return d(1, 1);
       }
       if (p === "/api/pact") {
-        const lobby = code ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
         if (!lobby || lobby.game !== 6) return d(9, 9);
         const seat = seatOf(lobby, q.get("tok"));
         if (seat < 0) return d(9, 3);
@@ -643,7 +655,7 @@ export class Hub {
         return d(1, 1);
       }
       if (p === "/api/pnext") {
-        const lobby = code ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
         if (!lobby || lobby.game !== 6) return d(9, 9);
         const seat = seatOf(lobby, q.get("tok"));
         if (seat < 0) return d(9, 3);
@@ -654,7 +666,7 @@ export class Hub {
         return d(1, 1);
       }
       if (p === "/api/plog") {
-        const lobby = code ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
         if (!lobby || lobby.game !== 6) return d(9, 9);
         const since = clampInt(q.get("since"), 0, 0, 100000);
         const ev = lobby.state && lobby.state.log ? lobby.state.log[since] : null;
@@ -662,7 +674,7 @@ export class Hub {
         return d(ev.w, ev.h);
       }
       if (p === "/api/pdraw") {
-        const lobby = code ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
         if (!lobby || lobby.game !== 6) return d(9, 9);
         const seat = seatOf(lobby, q.get("tok"));
         if (seat < 0) return d(9, 3);
@@ -702,8 +714,20 @@ export class Hub {
   // undecided multi-select lobby (game 0 → the picked game, and initialise its board now
   // that we know which engine it needs). Clears EVERY per-game queue the host held, so a
   // multi-lobby registered under several games can never be double-joined.
-  async finalizeJoin(waitCode, w, tok, game) {
-    if (w.game === 0) { w.game = game; w.games = null; w.state = initState(game); }
+  async finalizeJoin(waitCode, w, tok, game, opts) {
+    opts = opts || {};
+    // Resolve the pair's bank + checkers variant now that BOTH seats are known. resolveMatchOptions
+    // has already reconciled the host's and seeker's preferences (a concrete pick wins over "Any";
+    // two "Any"s fall to the 5-min / Russian defaults). Fix the lobby to those concrete values and
+    // clear the "unresolved Any" flags so lobbyTimeChoice/lobbyVariantChoice read the settled state.
+    if (w.game === 0) { w.game = game; w.games = null; }
+    w.cv = game === 1 ? (opts.cv || checkersVariantFor(game, w.cv)) : "";
+    if (CLOCK_GAMES[game]) w.tc = opts.tc || 0;
+    else w.tc = 0;
+    delete w.qtcAny; delete w.qcvAny;
+    // (Re)initialise the board with the RESOLVED variant. An undecided mquick lobby had no state;
+    // a single-quick "Any"-variant host may have been built for the wrong engine, so rebuild it.
+    w.state = initState(w.game, w.cv);
     w.players = 2;
     w.seats = w.seats || [null, null];
     w.seats[1] = { tok: tok || "" };           // joiner takes seat 1
@@ -713,22 +737,19 @@ export class Hub {
     await this.clearQueuesFor(w, waitCode);
   }
 
-  // Remove a lobby's code from every public queue it registered under. Three queue shapes:
-  //   • single-quick  → one (game, tc-bucket) slot stored in lobby.qk (pubq:q:<game>:<bucket>)
-  //   • multi-select  → one pubq:<game> per candidate game in lobby.games[]
+  // Remove a lobby's code from every public queue it registered under. Two queue shapes, both
+  // now keyed by (game, tc-bucket, variant-bucket):
+  //   • single-quick  → one slot stored in lobby.qk        (pubq:q:<game>:<tc>:<cv>)
+  //   • multi-select  → one pubq:m:… per candidate game, all stored in lobby.mqs[]
   // Only deletes a queue entry that still points at THIS code (a newer host may have replaced
   // it). Both shapes are cleared idempotently, so a mislabeled lobby can't strand a slot.
   async clearQueuesFor(lobby, code) {
-    if (lobby.qk) {
-      const wc = await this.storage.get(lobby.qk);
-      if (wc != null && Number(wc) === Number(code)) await this.storage.delete(lobby.qk);
-    }
-    const ids = lobby.games && lobby.games.length ? lobby.games : [lobby.game];
-    for (let i = 0; i < ids.length; i++) {
-      const g = ids[i];
-      if (!g) continue;
-      const wc = await this.storage.get("pubq:" + g);
-      if (wc != null && Number(wc) === Number(code)) await this.storage.delete("pubq:" + g);
+    const keys = [];
+    if (lobby.qk) keys.push(lobby.qk);
+    if (lobby.mqs && lobby.mqs.length) for (let i = 0; i < lobby.mqs.length; i++) keys.push(lobby.mqs[i]);
+    for (let i = 0; i < keys.length; i++) {
+      const wc = await this.storage.get(keys[i]);
+      if (wc != null && Number(wc) === Number(code)) await this.storage.delete(keys[i]);
     }
   }
 
@@ -858,10 +879,73 @@ function parseGameSet(raw) {
 const CLOCK_GAMES = { 1: 1, 4: 1 };
 const CLOCK_CHOICES = { 60: 1, 180: 1, 300: 1, 600: 1 };
 const QUICK_CLOCK_SEC = { 1: 300, 4: 300 };
+const CHECKERS_VARIANTS = { russian: 1, english: 1 };
+const CHECKERS_DEFAULT_VARIANT = "russian";
 function clockSecFor(game, raw) {
   if (!CLOCK_GAMES[game]) return 0;
   const n = parseInt(raw, 10);
   return CLOCK_CHOICES[n] ? n : 0;   // reject anything not on the menu (0 = play untimed)
+}
+function checkersVariantFor(game, raw) {
+  if (game !== 1) return "";
+  return CHECKERS_VARIANTS[raw] ? raw : CHECKERS_DEFAULT_VARIANT;
+}
+function wantsAnyCheckersVariant(game, raw) { return game === 1 && raw === "any"; }
+function timeBucketFor(game, raw) {
+  if (!CLOCK_GAMES[game]) return "0";
+  return raw === "any" ? "any" : String(clockSecFor(game, raw));
+}
+function variantBucketFor(game, raw) {
+  if (game !== 1) return "0";
+  return wantsAnyCheckersVariant(game, raw) ? "any" : checkersVariantFor(game, raw);
+}
+function timeBucketsFor(game, raw) {
+  if (!CLOCK_GAMES[game]) return ["0"];
+  if (raw === "any") return ["60", "180", "300", "600", "any"];
+  return [String(clockSecFor(game, raw)), "any"];
+}
+function variantBucketsFor(game, raw) {
+  if (game !== 1) return ["0"];
+  if (wantsAnyCheckersVariant(game, raw)) return ["russian", "english", "any"];
+  return [checkersVariantFor(game, raw), "any"];
+}
+function quickQueueKey(game, tc, cv) { return "pubq:q:" + game + ":" + tc + ":" + cv; }
+function multiQueueKey(game, tc, cv) { return "pubq:m:" + game + ":" + tc + ":" + cv; }
+function lobbyTimeChoice(lobby, game) {
+  if (!CLOCK_GAMES[game]) return "0";
+  if (lobby.game === 0 && lobby.mtc != null) return lobby.mtc === "any" ? "any" : String(clockSecFor(game, lobby.mtc));
+  if (lobby.qtcAny) return "any";
+  return String(lobby.tc | 0);
+}
+function lobbyVariantChoice(lobby, game) {
+  if (game !== 1) return "0";
+  if (lobby.game === 0 && lobby.mcv != null) return wantsAnyCheckersVariant(game, lobby.mcv) ? "any" : checkersVariantFor(game, lobby.mcv);
+  if (lobby.qcvAny) return "any";
+  return checkersVariantFor(game, lobby.cv);
+}
+function preferencesMatch(lobby, game, rawTc, rawCv) {
+  const hostTc = lobbyTimeChoice(lobby, game);
+  const seekerTc = CLOCK_GAMES[game] ? (rawTc === "any" ? "any" : String(clockSecFor(game, rawTc))) : "0";
+  if (hostTc !== "any" && seekerTc !== "any" && hostTc !== seekerTc) return false;
+  const hostCv = lobbyVariantChoice(lobby, game);
+  const seekerCv = game === 1 ? (wantsAnyCheckersVariant(game, rawCv) ? "any" : checkersVariantFor(game, rawCv)) : "0";
+  return hostCv === "any" || seekerCv === "any" || hostCv === seekerCv;
+}
+function resolveMatchOptions(lobby, game, rawTc, rawCv) {
+  const hostTc = lobbyTimeChoice(lobby, game);
+  const seekerTc = CLOCK_GAMES[game] ? (rawTc === "any" ? "any" : String(clockSecFor(game, rawTc))) : "0";
+  let tc = 0;
+  if (CLOCK_GAMES[game]) {
+    if (hostTc !== "any" && Number(hostTc) > 0) tc = Number(hostTc);
+    else if (seekerTc !== "any" && Number(seekerTc) > 0) tc = Number(seekerTc);
+    else tc = QUICK_CLOCK_SEC[game];
+  }
+  const hostCv = lobbyVariantChoice(lobby, game);
+  const seekerCv = game === 1 ? (wantsAnyCheckersVariant(game, rawCv) ? "any" : checkersVariantFor(game, rawCv)) : "";
+  const cv = game === 1
+    ? (hostCv !== "any" ? hostCv : (seekerCv !== "any" ? seekerCv : CHECKERS_DEFAULT_VARIANT))
+    : "";
+  return { tc: tc, cv: cv };
 }
 // The time control is one of a tiny fixed menu, so it rides the downlink as a small INDEX
 // (0..4) rather than raw seconds (0..600 would overflow one level dimension). Client mirror:
@@ -931,9 +1015,12 @@ function seatOf(lobby, tok) {
 }
 
 // Fresh authoritative state per game. null = no server engine → legacy relay.
-function initState(game) {
+function initState(game, checkersVariant) {
   const R = rules();
-  if (game === 1) return { board: R.checkers.initialBoard(), chainSq: -1 }; // checkers
+  if (game === 1) {
+    const C = checkersVariantFor(game, checkersVariant) === "english" ? R.checkersEnglish : R.checkers;
+    return { board: C.initialBoard(), chainSq: -1 };
+  }
   if (game === 2) return { board: [0, 0, 0, 0, 0, 0, 0, 0, 0] };            // tic-tac-toe
   if (game === 4) return { board: R.chess.initialChessBoard(), cst: R.chess.initialChessState() }; // chess
   if (game === 3) return { started: 0, pub: [], priv: [[], []] };                                  // durak (dealt on /api/start)
@@ -951,7 +1038,10 @@ function validateMove(lobby, seat, from, to, end) {
   // No authoritative engine for this lobby → REJECT. We never blindly relay an unchecked
   // move (that would make the server a dumb, cheatable relay for any unknown game id).
   if (!lobby.state) return { ok: false, code: 2 };
-  if (lobby.game === 1) return validateCheckers(R.checkers, lobby, seat, from, to);
+  if (lobby.game === 1) {
+    const C = checkersVariantFor(1, lobby.cv) === "english" ? R.checkersEnglish : R.checkers;
+    return validateCheckers(C, lobby, seat, from, to);
+  }
   if (lobby.game === 2) return validateTtt(lobby, seat, from, to);
   if (lobby.game === 4) return validateChess(R.chess, lobby, seat, from, to);
   if (lobby.game === 5) return validateConnectFour(R.connectfour, lobby, seat, from, to);
@@ -975,8 +1065,9 @@ function validateCheckers(RC, lobby, seat, from, to) {
   for (let i = 0; i < targets.length; i++) if (targets[i].to === to) { ok = true; break; }
   if (!ok) return { ok: false, code: 2 };
   const res = RC.applyHop(b, from, to); // mutates the authoritative board
-  // Same piece may keep jumping (a capture, and not just crowned) → chain continues.
-  const more = res.captured && !res.promoted && RC.captureMoves(b, to).length > 0;
+  // Same piece may keep jumping → chain continues. A mid-capture promotion ends the chain
+  // only where the variant says so (English); Russian canon: the fresh king keeps capturing.
+  const more = res.captured && (!res.promoted || !RC.promotionEndsTurn) && RC.captureMoves(b, to).length > 0;
   let e;
   if (more) { st.chainSq = to; e = 0; }                       // turn stays with this seat
   else { st.chainSq = -1; e = 1; lobby.turn = seat === 0 ? 1 : 0; } // hand off
