@@ -5,7 +5,7 @@
   "description": "Dev-only tooling for the Deadlock Minigames mod (lint + Node test harnesses). NOT packed into the VPK.",
   "scripts": {
     "lint": "eslint panorama/scripts server/worker.core.js tools",
-    "test": "node tools/mg_chess_test.js && node tools/mg_rules_test.js && node tools/mg_server_test.js && node tools/mg_parity_test.js"
+    "test": "node tools/mg_chess_test.js && node tools/mg_rules_test.js && node tools/mg_server_test.js && node tools/mg_parity_test.js && node tools/mg_update_marker_test.js"
   },
   "devDependencies": {
     "eslint": "9.15.0"

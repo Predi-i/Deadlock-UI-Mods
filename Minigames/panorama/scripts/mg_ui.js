@@ -17,6 +17,12 @@
 
     // Mod version, shown bottom-left of the footer. Bump on a user-facing release.
     var MG_VERSION = "1.0";
+    // Each shipped version checks its own marker on the public main branch. A square marker means
+    // the release is still relevant; changing that marker to a wide image marks it outdated.
+    // Aspect ratio is intentional: Panorama may UI-scale or swap the reported dimensions.
+    var UPDATE_MARKER_BASE = "https://raw.githubusercontent.com/Predi-i/Deadlock-UI-Mods/main/Minigames/update-markers/";
+    var UPDATE_CHECK_TIMEOUT_MS = 8000;
+    var UPDATE_CHECK_POLL_S = 0.05;
 
     // Route through MG.debug so nothing hits the console unless debug mode is ON.
     function log(m) {
@@ -24,6 +30,7 @@
     }
 
     var overlay = null, modalBody = null, statusLabel = null, titleLabel = null;
+    var updateProbeHost = null;
     // UI-scale control (dropdown left of the close X): scales the WHOLE modal — picker,
     // boards, Durak felt & cards — via the `ui-scale` LAYOUT-scale on .mg-modal (crisp re-layout,
     // NOT the blurry pre-transform raster; see applyUiScale). Kept for the session; the drag maths
@@ -31,7 +38,7 @@
     var modalPanel = null, uiScalePct = 100, scaleDropdown = null;
     // In the MENU view the status text lives on the LEFT of the footer row (same line as the
     // dev tools) instead of on its own line below — shorter panel, and the message sits level
-    // with Test Connection / Self-Test. Other views keep the centred bottom statusLabel.
+    // with Test Connection / Check Updates. Other views keep the centred bottom statusLabel.
     var footerStatus = null;
     var overlayShown = false;     // our modal is up (independent of the menu's own state)
     var view = "menu";
@@ -76,6 +83,7 @@
     var rematchGen = 0;           // our view of the online lobby's rematch generation (0 = fresh)
     var rematchPollToken = 0;     // guards the rematch poll loop, like statusPollToken
     var selfTestToken = 0;
+    var updateCheckToken = 0;
     var cardEls = [];        // [{ id, panel }] — picker cards, so selection can re-skin them without a full rebuild
     var detailPanel = null;  // right-column detail container (title + description + action buttons)
     // Quick Match "Select Multiple": when ON, the right panel shows a checkbox list over the
@@ -221,6 +229,7 @@
         var dim = $.CreatePanel("Panel", overlay, "MG_Dim");
         dim.AddClass("mg-dim");
         dim.SetPanelEvent("onactivate", function () { });
+        updateProbeHost = dim;
 
         var modal = $.CreatePanel("Panel", overlay, "MG_Modal");
         modal.AddClass("mg-modal");
@@ -463,6 +472,7 @@
         // Stop any background polling and drop pending requests from the queue
         statusPollToken++;
         selfTestToken++;
+        updateCheckToken++;
         if (MG.Net && MG.Net.clearQueue) try { MG.Net.clearQueue(); } catch (e) {}
         
         // Tell the server the player is leaving. A lobby still WAITING (waiting/room) is cancelled
@@ -623,6 +633,8 @@
         detailPanel.RemoveAndDeleteChildren();
         var g = MG.Games.byId(selectedGameId);
         if (!g) return;
+        if (g.id === 1) detailPanel.AddClass("mg-detail-checkers");
+        else detailPanel.RemoveClass("mg-detail-checkers");
 
         var title = $.CreatePanel("Label", detailPanel, "");
         title.AddClass("mg-detail-title");
@@ -893,7 +905,7 @@
         });
     }
 
-    // Footer: the dev tools (connection test / self-test / debug log) live here as
+    // Footer: the discreet tools (connection test / update check / debug log) live here as
     // small, low-contrast text links so they no longer compete with the play buttons.
     // A Support link sits at the far right. (Tools get hidden wholesale near release.)
     // Footer: only the discreet dev tools now (Support moved up to the header). The Debug
@@ -939,7 +951,7 @@
                 setStatus("❌ Ping failed. Server unreachable.");
             });
         });
-        mkTool("Self-Test", function () { runSelfTest(); });
+        mkTool("Check Updates", function () { checkUpdates(); });
         // Debug toggle: flips console logging on/off (no on-screen panel anymore).
         function dbgText() { return MG.Net.isDebug && MG.Net.isDebug() ? "Debug: ON" : "Debug: OFF"; }
         var dbgLbl = mkTool(dbgText(), function () {
@@ -949,7 +961,8 @@
         });
     }
 
-    // ── online self-test ──────────────────────────────────────────────────────
+    // ── update check / legacy online self-test ───────────────────────────────
+    // Legacy self-test notes (the footer entry is disabled; implementation remains below):
     // Exercises the full lobby protocol against the REAL deployed server from ONE client
     // (fills both seats with two tokens), so it's the only check that validates the live
     // transport under the actual in-game UI scale. Beyond the happy path it now drives the
@@ -958,6 +971,62 @@
     // worker or a decode regression is caught in-game, not just offline. Steps run sequentially
     // (a small runner, not nested callbacks); any failure aborts and cleans the lobby up.
     // (Full rules coverage lives offline in tools/mg_*_test.js + Play-vs-Bot.)
+    // The update check deliberately bypasses the Workers transport. Panorama loads a tiny PNG
+    // straight from GitHub and exposes only its layout dimensions. A square means this version is
+    // current; a deliberately wide marker means a newer release superseded it. We compare aspect
+    // ratio instead of literal 16x16 because UI scale multiplies both dimensions and some setups
+    // report them swapped.
+    function checkUpdates() {
+        if (!(updateProbeHost && updateProbeHost.IsValid && updateProbeHost.IsValid())) {
+            setStatus("Couldn't check for updates.");
+            return;
+        }
+
+        var token = ++updateCheckToken;
+        var img = null;
+        var elapsed = 0;
+        var versionSlug = MG_VERSION.replace(/\./g, "-");
+        var url = UPDATE_MARKER_BASE + "is-" + versionSlug + "-relevant.png?rnd=" + Math.random();
+
+        function alive() { return token === updateCheckToken; }
+        function cleanup() {
+            if (!img) return;
+            try { img.SetImage(""); } catch (e) {}
+            try { img.DeleteAsync(0); } catch (e) {}
+            img = null;
+        }
+        function fail() {
+            cleanup();
+            if (alive()) setStatus("Couldn't check for updates.");
+        }
+        function poll() {
+            if (!alive()) { cleanup(); return; }
+            var w = Number(img.actuallayoutwidth), h = Number(img.actuallayoutheight);
+            if (w > 0 && h > 0) {
+                cleanup();
+                var ratio = Math.max(w, h) / Math.min(w, h);
+                if (ratio <= 1.35) setStatus("v" + MG_VERSION + " is up to date.");
+                else setStatus("An update is available for v" + MG_VERSION + ".");
+                return;
+            }
+            elapsed += UPDATE_CHECK_POLL_S * 1000;
+            if (elapsed >= UPDATE_CHECK_TIMEOUT_MS) { fail(); return; }
+            $.Schedule(UPDATE_CHECK_POLL_S, poll);
+        }
+
+        setStatus("Checking for updates...");
+        try {
+            img = $.CreatePanel("Image", updateProbeHost, "MG_UpdateProbe_" + token);
+            try { img.SetAttributeString("hittest", "false"); } catch (e) {}
+            img.style.opacity = "0.01";
+            img.SetImage(url);
+            $.Schedule(UPDATE_CHECK_POLL_S, poll);
+        } catch (e) {
+            fail();
+        }
+    }
+
+    // Legacy dev-only self-test, intentionally not linked from the footer.
     function runSelfTest() {
         if (!MG.Net.isConfigured()) { setStatus("⚠ Configure the server first."); return; }
         var t = ++selfTestToken;
