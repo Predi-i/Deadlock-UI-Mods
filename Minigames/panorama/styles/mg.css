@@ -1053,6 +1053,17 @@
 }
 .mg-tc-opt.mg-on Label { color: #eaf1f8 !important; }
 
+/* Checkers has two compact pickers (time control + variant), so tighten only that game's
+   vertical rhythm enough to keep PLAY VS BOT above the footer. The shared 500px columns stay
+   untouched: switching games still never resizes or re-centres the modal. */
+.mg-detail-checkers .mg-detail-title { margin-bottom: 6px; }
+.mg-detail-checkers .mg-detail-desc { height: 48px; margin-bottom: 7px; }
+.mg-detail-checkers .mg-multi-toggle-row { margin-bottom: 2px; }
+.mg-detail-checkers .mg-section-label { margin-top: 9px; margin-bottom: 6px; }
+.mg-detail-checkers .mg-tc-label { margin-top: 7px; margin-bottom: 4px; }
+.mg-detail-checkers .mg-tc-seg { margin-bottom: 2px; }
+.mg-detail-checkers .mg-btn-quick { height: 52px; }
+
 /* Board grid + pieces overlay are stacked siblings (flow-children:none parks both at the
    wrap's top-left; Panorama has no position:absolute). Size = 8*60 + 2*3 border = 486px. */
 .mg-board-wrap {
