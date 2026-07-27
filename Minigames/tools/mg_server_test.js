@@ -15,6 +15,7 @@
 // tokens (foreign/short) are used only where a rejection is the expected result.
 const fs = require("fs");
 const path = require("path");
+const zlib = require("zlib");
 
 let src = fs.readFileSync(path.join(__dirname, "..", "server", "worker.js"), "utf8");
 src = src.replace("export default", "const __workerDefault =").replace("export class Hub", "class Hub");
@@ -41,10 +42,10 @@ class FakeStorage {
 // every assertion compares the LOGICAL value (which IS the level) exactly as before.
 // The probe alone is sent literally (it's the calibration reference), so it's read raw.
 var STEP = 9, BASE = 15;
+function readU32(b, o) { return ((b[o] << 24) | (b[o + 1] << 16) | (b[o + 2] << 8) | b[o + 3]) >>> 0; }
 async function rawDims(res) {
     var b = new Uint8Array(await res.arrayBuffer());
-    var rd = function (o) { return ((b[o] << 24) | (b[o + 1] << 16) | (b[o + 2] << 8) | b[o + 3]) >>> 0; };
-    return { w: rd(16), h: rd(20) }; // IHDR width @16, height @20 (big-endian)
+    return { w: readU32(b, 16), h: readU32(b, 20) }; // IHDR width @16, height @20 (big-endian)
 }
 function delevel(d) { return { w: Math.round((d.w - BASE) / STEP), h: Math.round((d.h - BASE) / STEP) }; }
 async function reqRaw(hub, pathAndQuery) {
@@ -96,6 +97,122 @@ async function main() {
     var hub = new Hub({ storage: new FakeStorage() });
     d = await reqRaw(hub, "/api/probe.png");   // probe is sent LITERALLY (calibration reference)
     ok(d.w === 600 && d.h === 1000, "probe = (600,1000)");
+
+    // ── Pixel Battle: transparent shared layer + authoritative bank/batching ──
+    var pxRes = await hub.fetch(new Request("https://mg.test/api/pxcanvas.png"));
+    var pxBytes = new Uint8Array(await pxRes.arrayBuffer());
+    ok(readU32(pxBytes, 16) === 512 && readU32(pxBytes, 20) === 256,
+        "pixel canvas PNG = 512x256");
+    ok(pxBytes[24] === 8 && pxBytes[25] === 3,
+        "pixel canvas uses 8-bit indexed colour");
+    var hasPlte = false, hasTrns = false, idatParts = [];
+    for (var po = 8; po + 12 <= pxBytes.length;) {
+        var plen = readU32(pxBytes, po);
+        var ptype = String.fromCharCode(pxBytes[po + 4], pxBytes[po + 5], pxBytes[po + 6], pxBytes[po + 7]);
+        if (ptype === "PLTE") hasPlte = plen >= 3;
+        if (ptype === "tRNS") hasTrns = plen >= 19 && pxBytes[po + 8] === 0;
+        if (ptype === "IDAT") idatParts.push(Buffer.from(pxBytes.slice(po + 8, po + 8 + plen)));
+        po += 12 + plen;
+    }
+    ok(hasPlte && hasTrns, "pixel canvas carries palette + transparent index");
+    var pxRaw = zlib.inflateSync(Buffer.concat(idatParts));
+    ok(pxRaw.length === 256 * 513, "pixel canvas scanlines inflate cleanly");
+    function pxIndex(x, y) { return pxRaw[y * 513 + 1 + x]; } // +1 skips row filter byte
+    ok(pxIndex(0, 0) === 0 && pxIndex(511, 255) === 0,
+        "new pixel canvas is fully transparent");
+
+    d = await req(hub, "/api/pxversion.png");
+    ok(d.w === 0 && d.h === 0, "pixel canvas starts at version 0");
+    d = await req(hub, "/api/pxbank.png?id=bad");
+    ok(d.w === 1 && d.h === 63, "pixel bank rejects malformed Steam32 id");
+    d = await req(hub, "/api/pxbank.png?id=123456789");
+    ok(d.h * 64 + d.w === 100, "new Pixel Battle account starts with 100 pixels");
+    await hub.storage.put("px:u:77777777", { balance: 80, at: Date.now() - 61000 });
+    d = await req(hub, "/api/pxbank.png?id=77777777");
+    ok(d.h * 64 + d.w === 82, "pixel bank regenerates one pixel per 30 seconds");
+
+    var tooSmall = [];
+    for (var pi = 0; pi < 9; pi++) tooSmall.push(pi + ",0,5");
+    d = await req(hub, "/api/pxput.png?id=123456789&b=" + tooSmall.join(";"));
+    ok(d.w === 2 && d.h === 63, "pixel upload rejects batches below 10 unique pixels");
+
+    var batch = [];
+    for (pi = 0; pi < 10; pi++) batch.push(pi + ",0,5");
+    d = await req(hub, "/api/pxput.png?id=123456789&b=" + batch.join(";"));
+    ok(d.h * 64 + d.w === 90, "10-pixel upload spends 10 from the server bank");
+    d = await req(hub, "/api/pxversion.png");
+    ok(d.w === 1 && d.h === 0, "accepted upload advances the shared canvas version");
+
+    pxRes = await hub.fetch(new Request("https://mg.test/api/pxcanvas.png?v=1"));
+    pxBytes = new Uint8Array(await pxRes.arrayBuffer());
+    idatParts = [];
+    for (po = 8; po + 12 <= pxBytes.length;) {
+        plen = readU32(pxBytes, po);
+        ptype = String.fromCharCode(pxBytes[po + 4], pxBytes[po + 5], pxBytes[po + 6], pxBytes[po + 7]);
+        if (ptype === "IDAT") idatParts.push(Buffer.from(pxBytes.slice(po + 8, po + 8 + plen)));
+        po += 12 + plen;
+    }
+    pxRaw = zlib.inflateSync(Buffer.concat(idatParts));
+    ok(pxIndex(0, 0) === 5 && pxIndex(9, 0) === 5 && pxIndex(10, 0) === 0,
+        "accepted pixels appear in the shared transparent PNG");
+
+    // The max-zoom editor receives a native 800x400 composite: each logical
+    // canvas pixel occupies one exact 25x25 block with no filtered boundary.
+    var viewRes = await hub.fetch(new Request("https://mg.test/api/pxview.png?x=0&y=0&v=1"));
+    var viewBytes = new Uint8Array(await viewRes.arrayBuffer());
+    ok(readU32(viewBytes, 16) === 800 && readU32(viewBytes, 20) === 400,
+        "pixel edit viewport PNG = native 800x400");
+    ok(viewBytes.length < 50000,
+        "pixel viewport is compressed instead of sending a 320KB raw frame");
+    var viewIdatParts = [];
+    for (po = 8; po + 12 <= viewBytes.length;) {
+        plen = readU32(viewBytes, po);
+        ptype = String.fromCharCode(viewBytes[po + 4], viewBytes[po + 5], viewBytes[po + 6], viewBytes[po + 7]);
+        if (ptype === "IDAT") viewIdatParts.push(Buffer.from(viewBytes.slice(po + 8, po + 8 + plen)));
+        po += 12 + plen;
+    }
+    var viewRaw = zlib.inflateSync(Buffer.concat(viewIdatParts));
+    function viewIndex(x, y) { return viewRaw[y * 801 + 1 + x]; }
+    ok(viewRaw.length === 400 * 801,
+        "pixel edit viewport scanlines inflate cleanly");
+    ok(viewIndex(0, 0) === 6 && viewIndex(24, 24) === 6 &&
+        viewIndex(25, 0) === 6 && viewIndex(249, 24) === 6,
+        "each painted logical pixel fills its exact 25x25 edit cell");
+    ok(viewIndex(250, 0) !== 6 && viewIndex(250, 0) <= 1,
+        "paint stops exactly at the next logical-pixel boundary");
+
+    // Preview zooms use the same server-side nearest-neighbour rasterisation.
+    // At 8x the 64 logical columns divide into alternating 12/13px blocks;
+    // the boundary after ten painted pixels must still be exact and unblended.
+    viewRes = await hub.fetch(new Request("https://mg.test/api/pxview.png?x=0&y=0&z=8&v=1"));
+    viewBytes = new Uint8Array(await viewRes.arrayBuffer());
+    viewIdatParts = [];
+    for (po = 8; po + 12 <= viewBytes.length;) {
+        plen = readU32(viewBytes, po);
+        ptype = String.fromCharCode(viewBytes[po + 4], viewBytes[po + 5], viewBytes[po + 6], viewBytes[po + 7]);
+        if (ptype === "IDAT") viewIdatParts.push(Buffer.from(viewBytes.slice(po + 8, po + 8 + plen)));
+        po += 12 + plen;
+    }
+    viewRaw = zlib.inflateSync(Buffer.concat(viewIdatParts));
+    ok(viewIndex(124, 0) === 6 && viewIndex(125, 0) <= 1,
+        "8x preview has an exact nearest-neighbour paint boundary");
+    var previewScalesOk = true;
+    for (var previewZoom of [1, 2, 4]) {
+        var previewRes = await hub.fetch(new Request(
+            "https://mg.test/api/pxview.png?x=0&y=0&z=" + previewZoom + "&v=1"));
+        var previewBytes = new Uint8Array(await previewRes.arrayBuffer());
+        previewScalesOk = previewScalesOk &&
+            readU32(previewBytes, 16) === 800 && readU32(previewBytes, 20) === 400 &&
+            previewBytes.length < 50000;
+    }
+    ok(previewScalesOk, "1x/2x/4x previews are native-size and compressed");
+
+    var eraseBatch = [];
+    for (pi = 0; pi < 10; pi++) eraseBatch.push(pi + ",0,0");
+    d = await req(hub, "/api/pxput.png?id=123456789&b=" + eraseBatch.join(";"));
+    ok(d.h * 64 + d.w === 80, "eraser spends pixels and restores the base map");
+    ok((await hub.storage.get("px:t:0")) === undefined,
+        "fully erased sparse tile is removed from storage");
 
     // ── token & game-id validation on create ──
     d = await req(hub, "/api/create.png?game=1");                  // no token

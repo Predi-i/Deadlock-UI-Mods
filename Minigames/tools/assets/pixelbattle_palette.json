@@ -1,0 +1,24 @@
+{
+  "ocean": "#183443",
+  "land": "#a5ab91",
+  "paint": [
+    { "name": "white",      "hex": "#ffffff" },
+    { "name": "light_gray", "hex": "#c4c9cc" },
+    { "name": "dark_gray",  "hex": "#5e6670" },
+    { "name": "black",      "hex": "#000000" },
+    { "name": "red",        "hex": "#ff4500" },
+    { "name": "orange",     "hex": "#ffa800" },
+    { "name": "yellow",     "hex": "#ffd635" },
+    { "name": "lime",       "hex": "#7eed56" },
+    { "name": "green",      "hex": "#00a368" },
+    { "name": "cyan",       "hex": "#51e9f4" },
+    { "name": "blue",       "hex": "#3690ea" },
+    { "name": "navy",       "hex": "#2450a4" },
+    { "name": "purple",     "hex": "#811e9f" },
+    { "name": "magenta",    "hex": "#b44ac0" },
+    { "name": "pink",       "hex": "#ff99aa" },
+    { "name": "brown",      "hex": "#9c6926" },
+    { "name": "ocean",      "hex": "#183443", "matchesTerrain": "ocean" },
+    { "name": "land",       "hex": "#a5ab91", "matchesTerrain": "land" }
+  ]
+}

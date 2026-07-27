@@ -1,0 +1,637 @@
+/*
+ * Pixel Battle — one persistent public canvas.
+ *
+ * Deadlock does not expose GameUI.GetCursorPosition, so the editor uses a fixed
+ * 32x16 hit grid. At overview zoom a click drills into that region; at 16x every
+ * hit cell is exactly one 512x256 canvas pixel. This keeps the panel count bounded
+ * while still allowing precise placement.
+ */
+(function () {
+    "use strict";
+
+    var MG = $.MG = $.MG || {};
+    if (MG.PixelBattle) return;
+    MG.PixelBattle = {};
+
+    var MAP_W = 512, MAP_H = 256;
+    var GRID_COLS = 32, GRID_ROWS = 16;
+    var MAX_ZOOM = 16;
+    var BANK_CAP = 100;
+    var REGEN_MS = 30000;
+    var MIN_BATCH = 10;
+    var MAX_BATCH = 128;
+    var POLL_ACTIVE_S = 8, POLL_WARM_S = 15, POLL_IDLE_S = 30;
+    var MAP_URL = "s2r://panorama/images/pixelbattle/world_map.vtex";
+    var PALETTE = MG.PixelBattlePalette || [];
+    var PALETTE_NAMES = MG.PixelBattlePaletteNames || [];
+
+    function validAccountId(value) {
+        var text = value === undefined || value === null ? "" : String(value).trim();
+        return /^\d{5,12}$/.test(text) && text !== "0";
+    }
+
+    function accountIdFromPanel(panel) {
+        if (!panel) return "";
+        var candidates = [];
+        try { candidates.push(panel.accountid); } catch (e0) {}
+        try { candidates.push(panel.account_id); } catch (e1) {}
+        try { candidates.push(panel.accountID); } catch (e2) {}
+        try {
+            if (panel.GetAttributeString) {
+                candidates.push(panel.GetAttributeString("accountid", ""));
+                candidates.push(panel.GetAttributeString("account_id", ""));
+                candidates.push(panel.GetAttributeString("accountID", ""));
+            }
+        } catch (e3) {}
+        for (var i = 0; i < candidates.length; i++) {
+            if (validAccountId(candidates[i])) return String(candidates[i]).trim();
+        }
+        return "";
+    }
+
+    function findAccountId() {
+        var root = $.GetContextPanel();
+        try {
+            while (root && root.GetParent && root.GetParent()) root = root.GetParent();
+        } catch (e) {}
+        if (!root || !root.FindChildTraverse) return "";
+        try {
+            var partyContainer = root.FindChildTraverse("CitadelPartyContainer");
+            var party = partyContainer && partyContainer.FindChildTraverse("CitadelParty");
+            var localPlayer = party && party.FindChildTraverse("LocalPlayer");
+            var avatar = localPlayer && localPlayer.FindChildTraverse("AvatarImage");
+            return accountIdFromPanel(avatar);
+        } catch (e2) {
+            return "";
+        }
+    }
+
+    function addLabel(parent, cssClass, text) {
+        var label = $.CreatePanel("Label", parent, "");
+        label.AddClass(cssClass);
+        label.text = text || "";
+        return label;
+    }
+
+    function addButton(parent, cssClass, text, handler) {
+        var button = $.CreatePanel("Button", parent, "");
+        var classes = cssClass.split(" ");
+        for (var i = 0; i < classes.length; i++) if (classes[i]) button.AddClass(classes[i]);
+        addLabel(button, "mg-px-button-label", text);
+        button.SetPanelEvent("onactivate", handler);
+        return button;
+    }
+
+    function createPixelBattle(container, session) {
+        session = session || {};
+        var destroyed = false;
+        var root = $.CreatePanel("Panel", container, "MG_PixelBattle");
+        root.AddClass("mg-px");
+
+        var zoom = 1;
+        // Integer logical-pixel origin of the visible rectangle. Keeping origin
+        // (instead of a half-pixel centre) is what makes 16x paint cells land exactly.
+        var viewX = 0, viewY = 0;
+        var selectedColor = 1;
+        var pending = {};
+        var pendingOrder = [];
+        var pendingPanels = {};
+        var accountId = "";
+        var balance = BANK_CAP;
+        var balanceAt = Date.now();
+        var sending = false;
+        var knownVersion = -1;
+        var versionMisses = 0;
+        var pollGeneration = 0;
+
+        function outerStatus(text) {
+            if (!destroyed && session.onStatus) session.onStatus(text);
+        }
+
+        var topbar = $.CreatePanel("Panel", root, "");
+        topbar.AddClass("mg-px-topbar");
+        var bankLabel = addLabel(topbar, "mg-px-stat", "");
+        bankLabel.AddClass("mg-px-stat-bank");
+        var regenLabel = addLabel(topbar, "mg-px-stat", "");
+        regenLabel.AddClass("mg-px-stat-regen");
+        var queueLabel = addLabel(topbar, "mg-px-stat", "");
+        queueLabel.AddClass("mg-px-stat-queue");
+        var coordLabel = addLabel(topbar, "mg-px-coord", "Click the map to zoom in");
+
+        var viewport = $.CreatePanel("Panel", root, "");
+        viewport.AddClass("mg-px-viewport");
+
+        var stage = $.CreatePanel("Panel", viewport, "");
+        stage.AddClass("mg-px-stage");
+
+        var baseImage = $.CreatePanel("Image", stage, "", { scaling: "stretch-to-fit-preserve-aspect" });
+        baseImage.AddClass("mg-px-map-image");
+        try { baseImage.SetAttributeString("hittest", "false"); } catch (e0) {}
+        baseImage.SetImage(MAP_URL);
+
+        var remoteImage = $.CreatePanel("Image", stage, "", { scaling: "stretch-to-fit-preserve-aspect" });
+        remoteImage.AddClass("mg-px-map-image");
+        try { remoteImage.SetAttributeString("hittest", "false"); } catch (e1) {}
+
+        // At 16x the Worker returns this viewport already expanded to 800x400.
+        // It is drawn 1:1, bypassing Panorama's blurry texture interpolation.
+        var crispImage = $.CreatePanel("Image", viewport, "", { scaling: "none" });
+        crispImage.AddClass("mg-px-crisp-view");
+        try { crispImage.SetAttributeString("hittest", "false"); } catch (e2) {}
+
+        // Pending pixels are initially hosted here, then re-parented into the exact
+        // 32x16 hit cell while editing. Keeping the fill inside its cell makes the
+        // grid, hover target and local paint share one layout box at every UI scale.
+        var pendingLayer = $.CreatePanel("Panel", viewport, "");
+        pendingLayer.AddClass("mg-px-pending-layer");
+        try { pendingLayer.SetAttributeString("hittest", "false"); } catch (e3) {}
+
+        var grid = $.CreatePanel("Panel", viewport, "");
+        grid.AddClass("mg-px-grid");
+        var gridCells = [];
+
+        var controls = $.CreatePanel("Panel", root, "");
+        controls.AddClass("mg-px-controls");
+
+        var navigation = $.CreatePanel("Panel", controls, "");
+        navigation.AddClass("mg-px-navigation");
+        var navigationZoom = $.CreatePanel("Panel", navigation, "");
+        navigationZoom.AddClass("mg-px-navigation-group");
+        var navigationTop = $.CreatePanel("Panel", navigationZoom, "");
+        navigationTop.AddClass("mg-px-navigation-row");
+        var navigationBottom = $.CreatePanel("Panel", navigationZoom, "");
+        navigationBottom.AddClass("mg-px-navigation-row");
+        addButton(navigationTop, "mg-px-tool", "−", function () { setZoom(zoom / 2); });
+        addButton(navigationTop, "mg-px-tool", "+", function () { setZoom(zoom * 2); });
+        addButton(navigationBottom, "mg-px-tool mg-px-tool-reset", "RESET", function () {
+            zoom = 1;
+            viewX = 0;
+            viewY = 0;
+            updateView();
+        });
+        var zoomLabel = addLabel(navigationBottom, "mg-px-zoom-label", "1×");
+
+        var dpad = $.CreatePanel("Panel", navigation, "");
+        dpad.AddClass("mg-px-dpad");
+        var dpadTop = $.CreatePanel("Panel", dpad, "");
+        dpadTop.AddClass("mg-px-dpad-row");
+        var dpadTopSpacer = $.CreatePanel("Panel", dpadTop, "");
+        dpadTopSpacer.AddClass("mg-px-dpad-spacer");
+        addButton(dpadTop, "mg-px-tool", "↑", function () { pan(0, -1); });
+        var dpadBottom = $.CreatePanel("Panel", dpad, "");
+        dpadBottom.AddClass("mg-px-dpad-row");
+        addButton(dpadBottom, "mg-px-tool", "←", function () { pan(-1, 0); });
+        addButton(dpadBottom, "mg-px-tool", "↓", function () { pan(0, 1); });
+        addButton(dpadBottom, "mg-px-tool", "→", function () { pan(1, 0); });
+
+        var palette = $.CreatePanel("Panel", controls, "");
+        palette.AddClass("mg-px-palette");
+        var paletteButtons = [];
+        for (var color = 1; color <= PALETTE.length; color++) {
+            (function (colorIndex) {
+                var swatch = $.CreatePanel("Button", palette, "");
+                swatch.AddClass("mg-px-swatch");
+                if (colorIndex > 16) swatch.AddClass("mg-px-swatch-terrain");
+                swatch.style.backgroundColor = PALETTE[colorIndex - 1] || "#ffffff";
+                swatch.SetPanelEvent("onmouseover", function () {
+                    coordLabel.text = "COLOR  " +
+                        String(PALETTE_NAMES[colorIndex - 1] || colorIndex).toUpperCase();
+                });
+                swatch.SetPanelEvent("onactivate", function () {
+                    selectedColor = colorIndex;
+                    updatePalette();
+                });
+                paletteButtons.push(swatch);
+            })(color);
+        }
+
+        var actions = $.CreatePanel("Panel", controls, "");
+        actions.AddClass("mg-px-editor-actions");
+        var eraserButton = addButton(actions, "mg-px-action mg-px-eraser", "ERASE", function () {
+            selectedColor = 0;
+            updatePalette();
+        });
+        var clearButton = addButton(actions, "mg-px-action", "CLEAR", clearPending);
+        var sendButton = addButton(actions, "mg-px-action mg-px-action-primary", "UPLOAD", uploadPending);
+        var helpLabel = addLabel(root, "mg-px-help", "");
+
+        function predictedBalance() {
+            var gained = Math.floor((Date.now() - balanceAt) / REGEN_MS);
+            return Math.min(BANK_CAP, balance + Math.max(0, gained));
+        }
+
+        function availableBalance() {
+            return Math.max(0, predictedBalance() - pendingOrder.length);
+        }
+
+        function updateStats() {
+            var current = predictedBalance();
+            var available = availableBalance();
+            var elapsed = Math.max(0, Date.now() - balanceAt);
+            var until = current >= BANK_CAP ? 0 : Math.max(1, Math.ceil((REGEN_MS - (elapsed % REGEN_MS)) / 1000));
+            bankLabel.text = "PIXELS  " + available + " / " + BANK_CAP;
+            regenLabel.text = until ? ("NEXT +1  " + until + "s") : "PIXELS FULL";
+            queueLabel.text = "QUEUE  " + pendingOrder.length + " / " + MIN_BATCH;
+            queueLabel.SetHasClass("mg-px-stat-ready", pendingOrder.length >= MIN_BATCH);
+            sendButton.SetHasClass("mg-px-action-disabled",
+                pendingOrder.length < MIN_BATCH || !accountId || sending);
+            clearButton.SetHasClass("mg-px-action-disabled", pendingOrder.length === 0 || sending);
+        }
+
+        function updatePalette() {
+            for (var i = 0; i < paletteButtons.length; i++) {
+                paletteButtons[i].SetHasClass("mg-px-swatch-selected", i + 1 === selectedColor);
+            }
+            eraserButton.SetHasClass("mg-px-eraser-selected", selectedColor === 0);
+        }
+
+        function clampOrigin() {
+            var visibleW = MAP_W / zoom;
+            var visibleH = MAP_H / zoom;
+            viewX = Math.max(0, Math.min(MAP_W - visibleW, Math.round(viewX)));
+            viewY = Math.max(0, Math.min(MAP_H - visibleH, Math.round(viewY)));
+        }
+
+        function updateView() {
+            clampOrigin();
+            var stageW = 800 * zoom;
+            var stageH = 400 * zoom;
+            var pixelW = stageW / MAP_W;
+            var pixelH = stageH / MAP_H;
+            var tx = -viewX * pixelW;
+            var ty = -viewY * pixelH;
+            stage.style.width = stageW + "px";
+            stage.style.height = stageH + "px";
+            stage.style.transform = "translate3d(" + tx + "px, " + ty + "px, 0px)";
+            // Every zoom uses a server-rasterised 800x400 frame. This avoids
+            // Panorama's bilinear filtering in previews as well as in the editor.
+            stage.style.visibility = "collapse";
+            crispImage.style.visibility = "visible";
+            grid.SetHasClass("mg-px-grid-edit", zoom === MAX_ZOOM);
+            zoomLabel.text = zoom + "×";
+            helpLabel.text = zoom === MAX_ZOOM
+                ? "Pick a colour, then paint. Changes stay local until at least 10 unique pixels are queued."
+                : "Click a region to zoom in. At 16× each square is one canvas pixel.";
+            refreshPendingGeometry();
+            refreshCrispView();
+        }
+
+        function setZoom(value) {
+            var next = Math.max(1, Math.min(MAX_ZOOM, value | 0));
+            if (next !== 1 && next !== 2 && next !== 4 && next !== 8 && next !== 16) return;
+            var centerX = viewX + MAP_W / zoom / 2;
+            var centerY = viewY + MAP_H / zoom / 2;
+            zoom = next;
+            viewX = Math.round(centerX - MAP_W / zoom / 2);
+            viewY = Math.round(centerY - MAP_H / zoom / 2);
+            updateView();
+        }
+
+        function pan(dx, dy) {
+            if (zoom <= 1) return;
+            viewX += dx * Math.max(1, Math.floor(MAP_W / zoom / 4));
+            viewY += dy * Math.max(1, Math.floor(MAP_H / zoom / 4));
+            updateView();
+        }
+
+        function mapPoint(col, row) {
+            var visibleW = MAP_W / zoom;
+            var visibleH = MAP_H / zoom;
+            return {
+                x: Math.max(0, Math.min(MAP_W - 1, Math.floor(viewX + (col + 0.5) * visibleW / GRID_COLS))),
+                y: Math.max(0, Math.min(MAP_H - 1, Math.floor(viewY + (row + 0.5) * visibleH / GRID_ROWS)))
+            };
+        }
+
+        function drillInto(col, row) {
+            var point = mapPoint(col, row);
+            var next = Math.min(MAX_ZOOM, zoom * 2);
+            zoom = next;
+            viewX = Math.round(point.x - MAP_W / zoom / 2);
+            viewY = Math.round(point.y - MAP_H / zoom / 2);
+            updateView();
+        }
+
+        function pendingKey(x, y) {
+            return x + "," + y;
+        }
+
+        function placePixel(x, y) {
+            if (sending) {
+                outerStatus("Wait for the current upload to finish.");
+                return;
+            }
+            var key = pendingKey(x, y);
+            var existing = pending[key];
+            if (selectedColor === 0 && existing) {
+                removePendingKeys([key]);
+                updateStats();
+                return;
+            }
+            if (!existing && availableBalance() <= 0) {
+                outerStatus("No pixels available yet.");
+                return;
+            }
+
+            if (!existing) {
+                existing = pending[key] = { x: x, y: y, color: selectedColor };
+                pendingOrder.push(key);
+                var panel = $.CreatePanel("Panel", pendingLayer, "");
+                panel.AddClass("mg-px-pending-pixel");
+                try { panel.SetAttributeString("hittest", "false"); } catch (e) {}
+                pendingPanels[key] = panel;
+            } else {
+                existing.color = selectedColor;
+            }
+            pendingPanels[key].SetHasClass("mg-px-pending-erase", selectedColor === 0);
+            pendingPanels[key].style.backgroundColor =
+                selectedColor === 0 ? "#00000000" : (PALETTE[selectedColor - 1] || "#ffffff");
+            positionPending(existing, pendingPanels[key]);
+            updateStats();
+        }
+
+        function positionPending(pixel, panel) {
+            // At 16x one logical canvas pixel is exactly one hit-grid cell. Do
+            // not compute a separate px transform: ui-scale can round that
+            // transform differently from the flowed grid (especially at 125%
+            // and 150%). Parenting the fill to the cell makes divergence
+            // impossible because both now use the same rounded rectangle.
+            if (zoom !== MAX_ZOOM) {
+                // Keep queued work visible in the overview. Precise editing is
+                // disabled there, so this lightweight preview may use viewport
+                // coordinates; the exact cell-parenting path below is reserved
+                // for the 16x editor where alignment matters.
+                try {
+                    if (panel.GetParent && panel.GetParent() !== pendingLayer) panel.SetParent(pendingLayer);
+                } catch (e0) {}
+                var visibleW = MAP_W / zoom;
+                var visibleH = MAP_H / zoom;
+                var left = Math.floor((pixel.x - viewX) * 800 / visibleW);
+                var right = Math.floor((pixel.x + 1 - viewX) * 800 / visibleW);
+                var top = Math.floor((pixel.y - viewY) * 400 / visibleH);
+                var bottom = Math.floor((pixel.y + 1 - viewY) * 400 / visibleH);
+                panel.style.visibility = "visible";
+                panel.style.width = Math.max(1, right - left) + "px";
+                panel.style.height = Math.max(1, bottom - top) + "px";
+                panel.style.transform = "translate3d(" + left + "px, " + top + "px, 0px)";
+                return;
+            }
+            var col = pixel.x - viewX;
+            var row = pixel.y - viewY;
+            var cell = row >= 0 && row < GRID_ROWS && col >= 0 && col < GRID_COLS
+                ? gridCells[row][col] : null;
+            if (!cell) {
+                panel.style.visibility = "collapse";
+                return;
+            }
+            try {
+                if (panel.GetParent && panel.GetParent() !== cell) panel.SetParent(cell);
+            } catch (e) {}
+            panel.style.visibility = "visible";
+            panel.style.width = "23px";
+            panel.style.height = "23px";
+            panel.style.transform = "translate3d(0px, 0px, 0px)";
+        }
+
+        function refreshPendingGeometry() {
+            for (var i = 0; i < pendingOrder.length; i++) {
+                var key = pendingOrder[i];
+                if (pending[key] && pendingPanels[key]) positionPending(pending[key], pendingPanels[key]);
+            }
+        }
+
+        function removePendingKeys(keys) {
+            var removed = {};
+            for (var i = 0; i < keys.length; i++) {
+                removed[keys[i]] = true;
+                if (pendingPanels[keys[i]]) {
+                    try { pendingPanels[keys[i]].DeleteAsync(0); } catch (e) {}
+                }
+                delete pendingPanels[keys[i]];
+                delete pending[keys[i]];
+            }
+            var kept = [];
+            for (var j = 0; j < pendingOrder.length; j++) {
+                if (!removed[pendingOrder[j]]) kept.push(pendingOrder[j]);
+            }
+            pendingOrder = kept;
+        }
+
+        function clearPending() {
+            if (sending || pendingOrder.length === 0) return;
+            removePendingKeys(pendingOrder.slice());
+            updateStats();
+            outerStatus("Local pixel queue cleared.");
+        }
+
+        function decodeBank(w, h) {
+            if (h === 63) return { ok: false, reason: w };
+            var value = h * 64 + w;
+            return value >= 0 && value <= BANK_CAP ? { ok: true, balance: value } : { ok: false, reason: 5 };
+        }
+
+        function setServerBalance(value) {
+            balance = Math.max(0, Math.min(BANK_CAP, value | 0));
+            balanceAt = Date.now();
+            updateStats();
+        }
+
+        function uploadPending() {
+            if (sending || pendingOrder.length < MIN_BATCH) return;
+            if (!accountId) {
+                outerStatus("Steam account id is not available yet.");
+                return;
+            }
+            sending = true;
+            updateStats();
+            sendNextBatch();
+        }
+
+        function sendNextBatch() {
+            if (destroyed) return;
+            var remaining = pendingOrder.length;
+            if (remaining === 0) {
+                sending = false;
+                if (knownVersion < 0) pollVersion();
+                else refreshRemote();
+                updateStats();
+                outerStatus("Pixel batch uploaded.");
+                return;
+            }
+            if (remaining < MIN_BATCH) {
+                sending = false;
+                updateStats();
+                outerStatus("Uploaded full batches; " + remaining + " pixels remain queued.");
+                return;
+            }
+
+            var count = Math.min(MAX_BATCH, remaining);
+            if (remaining - count > 0 && remaining - count < MIN_BATCH) count = remaining - MIN_BATCH;
+            var keys = pendingOrder.slice(0, count);
+            var encoded = [];
+            for (var i = 0; i < keys.length; i++) {
+                var pixel = pending[keys[i]];
+                encoded.push(pixel.x + "," + pixel.y + "," + pixel.color);
+            }
+
+            MG.Net.request("/api/pxput", { id: accountId, b: encoded.join(";") }, function (w, h) {
+                if (destroyed) return;
+                var result = decodeBank(w, h);
+                if (!result.ok) {
+                    sending = false;
+                    updateStats();
+                    var errors = {
+                        1: "Steam account id was rejected.",
+                        2: "The server rejected the pixel batch.",
+                        3: "The server says there are not enough pixels available.",
+                        4: "Too many uploads. Wait a moment."
+                    };
+                    outerStatus(errors[result.reason] || "Pixel upload failed.");
+                    requestBank();
+                    return;
+                }
+                removePendingKeys(keys);
+                setServerBalance(result.balance);
+                if (knownVersion >= 0) knownVersion = (knownVersion + 1) & 4095;
+                sendNextBatch();
+            }, function () {
+                if (destroyed) return;
+                sending = false;
+                updateStats();
+                outerStatus("Couldn't upload pixels. The local queue was kept.");
+            });
+        }
+
+        function requestBank() {
+            if (!accountId || destroyed) return;
+            MG.Net.request("/api/pxbank", { id: accountId }, function (w, h) {
+                if (destroyed) return;
+                var result = decodeBank(w, h);
+                if (result.ok) setServerBalance(result.balance);
+            }, function () {
+                if (!destroyed) outerStatus("Using the local pixel estimate until the server responds.");
+            });
+        }
+
+        function refreshRemote() {
+            if (destroyed) return;
+            refreshCrispView();
+        }
+
+        function refreshCrispView() {
+            if (destroyed) return;
+            var version = knownVersion < 0 ? 0 : knownVersion;
+            try {
+                crispImage.SetImage(MG.Net.getBaseUrl() + "/api/pxview.png?x=" + viewX +
+                    "&y=" + viewY + "&z=" + zoom + "&v=" + version + "&rnd=" + Math.random());
+            } catch (e) {
+                outerStatus("Couldn't load the pixel-perfect map viewport.");
+            }
+        }
+
+        function pollVersion() {
+            if (destroyed) return;
+            if (sending) {
+                scheduleVersionPoll(POLL_ACTIVE_S);
+                return;
+            }
+            MG.Net.request("/api/pxversion", null, function (w, h) {
+                if (destroyed) return;
+                var version = h * 64 + w;
+                var firstVersion = knownVersion < 0;
+                if (version !== knownVersion) {
+                    knownVersion = version;
+                    versionMisses = 0;
+                    // The initial /pxview is always rendered from the Worker's
+                    // current version, even though the client does not know its
+                    // number yet. Do not download that same frame twice on open.
+                    if (!firstVersion) $.Schedule(0.1, refreshRemote);
+                } else {
+                    versionMisses++;
+                }
+                var delay = versionMisses < 2 ? POLL_ACTIVE_S :
+                    (versionMisses < 6 ? POLL_WARM_S : POLL_IDLE_S);
+                scheduleVersionPoll(delay);
+            }, function () {
+                if (!destroyed) scheduleVersionPoll(POLL_IDLE_S);
+            });
+        }
+
+        function scheduleVersionPoll(delay) {
+            var generation = pollGeneration;
+            $.Schedule(delay, function () {
+                if (!destroyed && generation === pollGeneration) pollVersion();
+            });
+        }
+
+        for (var row = 0; row < GRID_ROWS; row++) {
+            var rowPanel = $.CreatePanel("Panel", grid, "");
+            rowPanel.AddClass("mg-px-grid-row");
+            gridCells[row] = [];
+            for (var col = 0; col < GRID_COLS; col++) {
+                (function (cellCol, cellRow) {
+                    var cell = $.CreatePanel("Panel", rowPanel, "");
+                    cell.AddClass("mg-px-grid-cell");
+                    gridCells[cellRow][cellCol] = cell;
+                    cell.SetPanelEvent("onmouseover", function () {
+                        var point = mapPoint(cellCol, cellRow);
+                        coordLabel.text = zoom === MAX_ZOOM
+                            ? ("PIXEL  " + point.x + ", " + point.y)
+                            : ("REGION  " + point.x + ", " + point.y + "   ·   CLICK TO ZOOM");
+                    });
+                    cell.SetPanelEvent("onactivate", function () {
+                        if (zoom < MAX_ZOOM) drillInto(cellCol, cellRow);
+                        else {
+                            var point = mapPoint(cellCol, cellRow);
+                            placePixel(point.x, point.y);
+                        }
+                    });
+                })(col, row);
+            }
+        }
+
+        function findIdentity(attempt) {
+            if (destroyed || accountId) return;
+            accountId = findAccountId();
+            if (accountId) {
+                requestBank();
+                updateStats();
+                return;
+            }
+            if (attempt < 10) {
+                $.Schedule(1, function () { findIdentity(attempt + 1); });
+            } else {
+                outerStatus("Map is viewable, but Steam account id was not found; uploading is disabled.");
+            }
+        }
+
+        function tickStats() {
+            if (destroyed) return;
+            updateStats();
+            $.Schedule(1, tickStats);
+        }
+
+        updatePalette();
+        updateView();
+        updateStats();
+        findIdentity(0);
+        pollVersion();
+        tickStats();
+        outerStatus("Shared world loaded. Click the map to zoom in.");
+
+        return {
+            destroy: function () {
+                destroyed = true;
+                pollGeneration++;
+                try { remoteImage.SetImage(""); } catch (e) {}
+                try { baseImage.SetImage(""); } catch (e2) {}
+                try { crispImage.SetImage(""); } catch (e3) {}
+                try { root.DeleteAsync(0); } catch (e4) {}
+            }
+        };
+    }
+
+    if (MG.Games && MG.Games.register) {
+        MG.Games.register({ id: 7, enabled: true, create: createPixelBattle });
+    }
+})();

@@ -1,3 +1,4 @@
+/* global CompressionStream, PX_ALPHA, PX_LAND_SPANS, PX_PALETTE, PX_VIEW_PALETTE */
 /**
  * Deadlock Minigames relay — Cloudflare Worker CORE (authored source).
  *
@@ -29,6 +30,11 @@
  * Routes (all GET, all return a PNG; pass &rnd=<random> to defeat engine caching):
  *   /api/probe                                    -> (600,1000) LITERAL px      swap + scale calibration
  *   /api/ping                                     -> (1,1)                       UI tester route
+ *   /api/pxcanvas                                 -> 512x256 transparent PNG     shared Pixel Battle layer
+ *   /api/pxview?x=X&y=Y&z=Z                       -> 800x400 opaque PNG           sharp 1/2/4/8/16x view
+ *   /api/pxversion                                -> (version&63, version>>6)     reload only after a change
+ *   /api/pxbank?id=STEAM32                        -> (balance&63, balance>>6)     100 cap, +1 / 30 seconds
+ *   /api/pxput?id=STEAM32&b=x,y,c;...             -> remaining balance           10..128 unique pixels
  *   /api/create?game=G&tok=T                      -> dCode(code, host=false)     new PRIVATE lobby, host = seat 0
  *   /api/quick?game=G&tok=T&tc=..&cv=..            -> dCode(code, JOINER|HOST)   role is the code BAND, not +100
  *   /api/mquick?games=..&tok=T&tc=..&cv=..         -> dCode(code, JOINER|HOST)   multi-select; game fixed on join
@@ -91,6 +97,9 @@ export class Hub {
     // would be misread by the poll decoder as a real move. Bounded to RL_MAX_IPS entries so
     // the map itself can't be used to exhaust memory.
     this.rl = new Map();          // ip -> array of recent request timestamps (ms)
+    this.pxrl = new Map();        // account+ip -> recent Pixel Battle uploads
+    this.pxTiles = null;          // lazily hydrated sparse 32x32 canvas tiles
+    this.pxViewCache = new Map(); // version+origin -> native-size edit viewport PNG
   }
 
   // Sliding-window rate check for one IP. Returns true if this request is ALLOWED. A null/
@@ -136,6 +145,31 @@ export class Hub {
     try {
       if (p === "/api/probe") return png(600, 1000);
       if (p === "/api/ping") return d(1, 1);
+      if (p === "/api/pxcanvas") return await pixelCanvasPng(this);
+      if (p === "/api/pxview") {
+        const zoom = pixelViewZoom(q.get("z"));
+        const viewCols = PX_W / zoom, viewRows = PX_H / zoom;
+        const viewX = clampInt(q.get("x"), 0, 0, PX_W - viewCols);
+        const viewY = clampInt(q.get("y"), 0, 0, PX_H - viewRows);
+        return await pixelViewPng(this, viewX, viewY, zoom);
+      }
+      if (p === "/api/pxversion") return pixelVersionPng(await pixelVersion(this));
+      if (p === "/api/pxbank") {
+        const account = validPixelAccount(q.get("id"));
+        if (!account) return d(1, 63);
+        const bank = await pixelBank(this, account, 0);
+        return pixelBankPng(bank.balance);
+      }
+      if (p === "/api/pxput") {
+        const account = validPixelAccount(q.get("id"));
+        if (!account) return d(1, 63);
+        if (!pixelUploadRateOk(this, account, request.headers.get("CF-Connecting-IP"))) return d(4, 63);
+        const batch = parsePixelBatch(q.get("b"));
+        if (!batch) return d(2, 63);
+        const result = await applyPixelBatch(this, account, batch);
+        if (!result.ok) return d(result.reason, 63);
+        return pixelBankPng(result.balance);
+      }
 
       if (p === "/api/create") {
         await this.maybeSweep();
@@ -1493,6 +1527,279 @@ function pokerNext(lobby, seat) {
  * through d(w,h). */
 const STEP = 9, BASE = 15;
 function d(w, h) { return png(w * STEP + BASE, h * STEP + BASE); }
+
+/* ───────────────────────── Pixel Battle ─────────────────────────
+ * The generated Natural Earth mask is the immutable base; paint is stored in
+ * sparse 32x32 chunks. /pxcanvas emits a transparent paint layer for compatibility,
+ * while /pxview composites a sharp native-size frame for every interactive zoom.
+ */
+const PX_W = 512, PX_H = 256, PX_TILE = 32, PX_TILE_COLS = PX_W / PX_TILE;
+const PX_VIEW_W = 800, PX_VIEW_H = 400;
+const PX_BANK_CAP = 100, PX_REGEN_MS = 30000;
+const PX_MIN_BATCH = 10, PX_MAX_BATCH = 128;
+const PX_UPLOAD_WINDOW_MS = 60000, PX_UPLOAD_MAX_HITS = 30, PX_UPLOAD_MAX_KEYS = 5000;
+
+function pixelViewZoom(raw) {
+  const zoom = Number(raw);
+  return zoom === 1 || zoom === 2 || zoom === 4 || zoom === 8 || zoom === 16 ? zoom : 16;
+}
+
+function validPixelAccount(raw) {
+  if (typeof raw !== "string" || !/^[0-9]{5,12}$/.test(raw) || raw === "0") return "";
+  return raw;
+}
+
+function pixelBankPng(balance) {
+  return d(balance & 63, (balance >> 6) & 63);
+}
+
+function pixelVersionPng(version) {
+  return d(version & 63, (version >> 6) & 63);
+}
+
+async function pixelVersion(hub) {
+  return ((await hub.storage.get("px:version")) || 0) & 4095;
+}
+
+async function pixelBank(hub, account, spend) {
+  const key = "px:u:" + account;
+  const now = Date.now();
+  let record = await hub.storage.get(key);
+  if (!record || !Number.isFinite(record.balance) || !Number.isFinite(record.at)) {
+    record = { balance: PX_BANK_CAP, at: now };
+  }
+
+  let current = Math.max(0, Math.min(PX_BANK_CAP, record.balance | 0));
+  let at = Math.min(now, Math.max(0, Number(record.at) || now));
+  if (current >= PX_BANK_CAP) {
+    at = now;
+  } else {
+    const gained = Math.floor((now - at) / PX_REGEN_MS);
+    if (gained > 0) {
+      current = Math.min(PX_BANK_CAP, current + gained);
+      at = current >= PX_BANK_CAP ? now : at + gained * PX_REGEN_MS;
+    }
+  }
+
+  if (spend > current) return { ok: false, balance: current };
+  current -= spend;
+  await hub.storage.put(key, { balance: current, at: at });
+  return { ok: true, balance: current };
+}
+
+function parsePixelBatch(raw) {
+  if (typeof raw !== "string" || raw.length > 4096) return null;
+  const parts = raw.split(";");
+  if (parts.length < PX_MIN_BATCH || parts.length > PX_MAX_BATCH) return null;
+  const unique = new Map();
+  for (let i = 0; i < parts.length; i++) {
+    const match = /^([0-9]{1,3}),([0-9]{1,3}),([0-9]{1,2})$/.exec(parts[i]);
+    if (!match) return null;
+    const x = parseInt(match[1], 10), y = parseInt(match[2], 10), color = parseInt(match[3], 10);
+    if (x < 0 || x >= PX_W || y < 0 || y >= PX_H || color < 0 || color >= PX_PALETTE.length) return null;
+    unique.set(x + "," + y, { x: x, y: y, color: color });
+  }
+  if (unique.size < PX_MIN_BATCH || unique.size > PX_MAX_BATCH) return null;
+  return Array.from(unique.values());
+}
+
+function pixelUploadRateOk(hub, account, ip) {
+  if (!ip) return true;
+  const key = account + "|" + ip;
+  const now = Date.now();
+  let hits = hub.pxrl.get(key);
+  if (!hits) {
+    if (hub.pxrl.size >= PX_UPLOAD_MAX_KEYS) {
+      const oldest = hub.pxrl.keys().next().value;
+      if (oldest !== undefined) hub.pxrl.delete(oldest);
+    }
+    hits = [];
+    hub.pxrl.set(key, hits);
+  }
+  let keep = 0;
+  for (let i = 0; i < hits.length; i++) if (now - hits[i] < PX_UPLOAD_WINDOW_MS) hits[keep++] = hits[i];
+  hits.length = keep;
+  if (hits.length >= PX_UPLOAD_MAX_HITS) return false;
+  hits.push(now);
+  return true;
+}
+
+async function pixelTiles(hub) {
+  if (hub.pxTiles) return hub.pxTiles;
+  const stored = await hub.storage.list({ prefix: "px:t:" });
+  const tiles = new Map();
+  for (const [key, value] of stored) {
+    const index = parseInt(String(key).substring(5), 10);
+    if (!Number.isFinite(index) || index < 0) continue;
+    if (value instanceof Uint8Array && value.length === PX_TILE * PX_TILE) tiles.set(index, value);
+    else if (Array.isArray(value) && value.length === PX_TILE * PX_TILE) tiles.set(index, Uint8Array.from(value));
+  }
+  hub.pxTiles = tiles;
+  return tiles;
+}
+
+function pixelAt(tiles, x, y) {
+  const tx = Math.floor(x / PX_TILE), ty = Math.floor(y / PX_TILE);
+  const tile = tiles.get(ty * PX_TILE_COLS + tx);
+  return tile ? tile[(y % PX_TILE) * PX_TILE + (x % PX_TILE)] : 0;
+}
+
+async function applyPixelBatch(hub, account, batch) {
+  const tiles = await pixelTiles(hub);
+  const changed = [];
+  for (let i = 0; i < batch.length; i++) {
+    const pixel = batch[i];
+    if (pixelAt(tiles, pixel.x, pixel.y) !== pixel.color) changed.push(pixel);
+  }
+
+  const bank = await pixelBank(hub, account, changed.length);
+  if (!bank.ok) return { ok: false, reason: 3, balance: bank.balance };
+  if (changed.length === 0) return { ok: true, balance: bank.balance };
+
+  const dirty = new Map();
+  for (let i = 0; i < changed.length; i++) {
+    const pixel = changed[i];
+    const tx = Math.floor(pixel.x / PX_TILE), ty = Math.floor(pixel.y / PX_TILE);
+    const index = ty * PX_TILE_COLS + tx;
+    let tile = tiles.get(index);
+    if (!tile) {
+      tile = new Uint8Array(PX_TILE * PX_TILE);
+      tiles.set(index, tile);
+    }
+    tile[(pixel.y % PX_TILE) * PX_TILE + (pixel.x % PX_TILE)] = pixel.color;
+    dirty.set(index, tile);
+  }
+  for (const [index, tile] of dirty) {
+    let hasPaint = false;
+    for (let i = 0; i < tile.length; i++) {
+      if (tile[i] !== 0) { hasPaint = true; break; }
+    }
+    if (hasPaint) {
+      await hub.storage.put("px:t:" + index, tile);
+    } else {
+      await hub.storage.delete("px:t:" + index);
+      tiles.delete(index);
+    }
+  }
+  const version = ((await pixelVersion(hub)) + 1) & 4095;
+  await hub.storage.put("px:version", version);
+  hub.pxViewCache.clear();
+  return { ok: true, balance: bank.balance };
+}
+
+async function pixelCanvasPng(hub) {
+  const tiles = await pixelTiles(hub);
+  return pngResponse(await indexedPngBytes(PX_W, PX_H, PX_PALETTE, function (x, y) {
+    return pixelAt(tiles, x, y);
+  }, PX_ALPHA));
+}
+
+function pixelLandAt(x, y) {
+  const spans = PX_LAND_SPANS[y] || [];
+  for (let i = 0; i + 1 < spans.length; i += 2) {
+    if (x < spans[i]) return false;
+    if (x <= spans[i + 1]) return true;
+  }
+  return false;
+}
+
+async function pixelViewPng(hub, originX, originY, zoom) {
+  const version = await pixelVersion(hub);
+  const cacheKey = version + ":" + zoom + ":" + originX + ":" + originY;
+  const cached = hub.pxViewCache.get(cacheKey);
+  if (cached) return pngResponse(cached);
+
+  const tiles = await pixelTiles(hub);
+  const viewCols = PX_W / zoom, viewRows = PX_H / zoom;
+  const logical = new Uint8Array(viewCols * viewRows);
+  for (let row = 0; row < viewRows; row++) {
+    for (let col = 0; col < viewCols; col++) {
+      const mapX = originX + col, mapY = originY + row;
+      const paint = pixelAt(tiles, mapX, mapY);
+      logical[row * viewCols + col] =
+        paint ? paint + 1 : (pixelLandAt(mapX, mapY) ? 1 : 0);
+    }
+  }
+  const bytes = await indexedPngBytes(PX_VIEW_W, PX_VIEW_H, PX_VIEW_PALETTE, function (x, y) {
+    const col = Math.min(viewCols - 1, Math.floor(x * viewCols / PX_VIEW_W));
+    const row = Math.min(viewRows - 1, Math.floor(y * viewRows / PX_VIEW_H));
+    return logical[row * viewCols + col];
+  });
+  if (hub.pxViewCache.size >= 24) {
+    const oldest = hub.pxViewCache.keys().next().value;
+    if (oldest !== undefined) hub.pxViewCache.delete(oldest);
+  }
+  hub.pxViewCache.set(cacheKey, bytes);
+  return pngResponse(bytes);
+}
+
+async function indexedPngBytes(w, h, palette, pixelAt, alpha) {
+  const sig = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+  const ihdr = u32(w).concat(u32(h), [8, 3, 0, 0, 0]); // 8-bit indexed colour
+  const plte = [];
+  for (let i = 0; i < palette.length; i++) {
+    plte.push(palette[i][0] & 255, palette[i][1] & 255, palette[i][2] & 255);
+  }
+
+  // PNG filter 0 per row followed by one palette index per physical pixel.
+  const raw = [];
+  for (let y = 0; y < h; y++) {
+    raw.push(0);
+    for (let x = 0; x < w; x++) raw.push(pixelAt(x, y) & 255);
+  }
+
+  let bytes = sig.concat(chunk("IHDR", ihdr)).concat(chunk("PLTE", plte));
+  if (alpha && alpha.length) bytes = bytes.concat(chunk("tRNS", alpha));
+  bytes = bytes.concat(chunk("IDAT", Array.from(await deflateBytes(raw)))).concat(chunk("IEND", []));
+  return new Uint8Array(bytes);
+}
+
+async function deflateBytes(raw) {
+  if (typeof CompressionStream !== "undefined") {
+    const source = new Response(new Uint8Array(raw)).body;
+    const compressed = source.pipeThrough(new CompressionStream("deflate"));
+    return new Uint8Array(await new Response(compressed).arrayBuffer());
+  }
+  return new Uint8Array(storedZlib(raw));
+}
+
+function storedZlib(raw) {
+  const zlib = [0x78, 0x01]; // zlib header: deflate, fastest/no compression
+  let off = 0;
+  do {
+    const blockLen = Math.min(65535, raw.length - off);
+    const final = off + blockLen >= raw.length ? 1 : 0;
+    zlib.push(final, blockLen & 255, (blockLen >> 8) & 255,
+      ~blockLen & 255, (~blockLen >> 8) & 255);
+    for (let i = 0; i < blockLen; i++) zlib.push(raw[off + i]);
+    off += blockLen;
+  } while (off < raw.length);
+  zlib.push(...u32(adler32Bytes(raw)));
+  return zlib;
+}
+
+function adler32Bytes(bytes) {
+  const MOD = 65521;
+  let a = 1, b = 0;
+  for (let i = 0; i < bytes.length; i++) {
+    a += bytes[i] & 255;
+    b += a;
+    // Keep the sums bounded without paying a modulo on every byte.
+    if ((i & 4095) === 4095) { a %= MOD; b %= MOD; }
+  }
+  a %= MOD; b %= MOD;
+  return ((b << 16) | a) >>> 0;
+}
+
+function pngResponse(bytes) {
+  return new Response(bytes, {
+    headers: {
+      "content-type": "image/png",
+      "cache-control": "no-store, no-cache, must-revalidate, max-age=0",
+      "access-control-allow-origin": "*",
+    },
+  });
+}
 
 /* ─────────────────────────── PNG encoder ───────────────────────────
  * Emits an 8-bit grayscale PNG of exactly W x H black pixels. Data is all

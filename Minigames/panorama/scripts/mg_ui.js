@@ -132,7 +132,9 @@
         durak:       "The beloved Eastern European card game. Be the first to shed all your cards.",
         chess:       "The timeless game of strategy. Full rules, against a friend or the bot.",
         connectfour: "Drop your discs down the grid and be the first to line up four in a row.",
-        poker:       "No-Limit Texas Hold'em. Read your table, bet your chips, and take the pot."
+        poker:       "No-Limit Texas Hold'em. Read your table, bet your chips, and take the pot.",
+        pixelbattle: "One persistent world map. Paint it together, ten or more pixels at a time.",
+        wordle:      "Find the hidden five-letter word in six guesses using colour-coded clues."
     };
 
     // Opens the maintainer's Boosty donate page in the external browser. Proven Panorama
@@ -664,6 +666,32 @@
             var lockedSub = $.CreatePanel("Label", detailPanel, "");
             lockedSub.AddClass("mg-detail-locked-sub");
             lockedSub.text = "This game isn't playable yet. Pick another to start.";
+            fadeInDetail();
+            return;
+        }
+
+        // Pixel Battle is one persistent public world, not a match. It bypasses
+        // Quick/Create/Join/Bot and mounts the shared canvas directly.
+        if (g.id === 7) {
+            var pixelNote = $.CreatePanel("Label", detailPanel, "");
+            pixelNote.AddClass("mg-caption");
+            pixelNote.text = "One shared canvas. Zoom in, queue your pixels, then upload them together.";
+
+            var pixelSpacer = $.CreatePanel("Panel", detailPanel, "");
+            pixelSpacer.AddClass("mg-pixel-detail-spacer");
+
+            var pixelRow = $.CreatePanel("Panel", detailPanel, "");
+            pixelRow.AddClass("mg-btn-row");
+            var pixelBtn = $.CreatePanel("Button", pixelRow, "");
+            pixelBtn.AddClass("mg-btn"); pixelBtn.AddClass("mg-btn-primary"); pixelBtn.AddClass("mg-btn-solo");
+            var pixelLbl = $.CreatePanel("Label", pixelBtn, ""); pixelLbl.text = "OPEN WORLD MAP";
+            pixelBtn.SetPanelEvent("onactivate", function () {
+                renderGame(7, 0, true, false, {});
+            });
+
+            var pixelCap = $.CreatePanel("Label", detailPanel, "");
+            pixelCap.AddClass("mg-caption");
+            pixelCap.text = "100 stored pixels · +1 every 30 seconds · minimum upload: 10";
             fadeInDetail();
             return;
         }

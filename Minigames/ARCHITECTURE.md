@@ -72,7 +72,7 @@ panorama/
                            include order): mg_net → mg_sound → rules/* (checkers, ttt, chess,
                            connectfour, durak, poker) → mg_games ($.MG.Games + $.MG.Widgets) →
                            mg_checkers → mg_ttt → mg_chess → mg_durak → mg_connectfour → mg_poker
-                           → mg_ui. Rule modules load before the controllers that alias them;
+                           → mg_pixelbattle → mg_ui. Rule modules load before the controllers that alias them;
                            mg_games loads before the per-game controllers (they need MG.Widgets +
                            MG.Games); mg_ui loads last (it drives all views).
   styles/mg.css            all styling. Note the Panorama-specific idioms (§6).
@@ -96,6 +96,10 @@ panorama/
     mg_connectfour.js      Connect Four CONTROLLER; self-registers game id 5 (§8.7).
     mg_durak.js            Durak CONTROLLER (render + click/drag + bot + online); self-registers game id 3.
     mg_poker.js            Poker CONTROLLER (render + betting UI + bot + online); self-registers game id 6 (§8.8).
+    mg_pixelbattle_palette.generated.js
+                            Generated paint + terrain swatches; built from the shared JSON source.
+    mg_pixelbattle.js       Persistent Pixel Battle controller (zoom/editor/batching/sync);
+                            self-registers game id 7 (§8.9).
     mg_ui.js               Esc-menu button injection + full-screen lobby overlay ($.MG.UI); header
                            UI-scale + volume dropdowns; seat/time-control/variant pickers.
 
@@ -853,6 +857,39 @@ Registers **game id 6** (`enabled:true`). Offline vs bot is proven in Node; onli
   (`mg_server_test`). Reasoned only (needs a VPK repack): the render/betting UI + online sync + the
   room-token binding above (the `(9,3)` was never reproduced server-side — the fix is a reasoned
   hardening of the most plausible client-side cause).
+
+---
+
+## 8.9 Pixel Battle (mg_pixelbattle.js)
+
+- Pixel Battle is one public 512×256 canvas on a real two-colour Natural Earth world-map PNG,
+  with no room creation, join code, or matchmaking.
+- The immutable `panorama/images/pixelbattle/world_map.png` base is generated from the public-domain
+  Natural Earth 1:110m land polygons directly at 512×256. One source texel is one placeable canvas
+  pixel, so coastlines cannot contain filtered subpixels inside an editable cell.
+- The 32×16 input grid is reused at every zoom. Overview clicks drill into a region; at 16× each
+  input cell maps to exactly one canvas pixel. At every zoom the Worker composites the base and
+  shared paint into a compressed native 800×400 viewport using nearest-neighbour boundaries,
+  bypassing Panorama texture filtering in previews as well as the editor. Navigation stores an
+  integer top-left pixel rather than a fractional centre, so server pixels and pending client
+  pixels share the exact same boundaries. Arrow/reset/zoom controls provide navigation without
+  relying on `GameUI.GetCursorPosition`, which Deadlock does not expose.
+- Terrain, the 16 regular paint colours, and the ocean/land swatches have one source of truth in
+  `tools/assets/pixelbattle_palette.json`. The map builder emits both client and Worker constants;
+  `mg_pixelbattle_palette_test.js` enforces uniqueness and minimum CIE L*a*b* distances between
+  paint/terrain colours so a swatch cannot silently become indistinguishable from ocean or land.
+- The server-authoritative bank is 100 pixels, regenerating 1 per 30 seconds and keyed by the
+  Steam32 account id discovered through the local party avatar panel.
+- Eraser batches use colour index 0: the Worker removes stored paint to reveal the immutable map,
+  deletes a sparse tile when it becomes empty, and charges only pixels that actually changed.
+  On the client, erasing a still-local paint cancels that queued change instead, immediately
+  returning its reserved pixel. Navigation uses a fixed two-row zoom group plus keyboard-style
+  arrow D-pad so adding controls cannot push a direction button onto a third row.
+- Uploads contain 10–128 unique pixels. The client checks and batches first; the Worker deduplicates,
+  validates the bank again, rate-limits uploads, and persists modified 32×32 tiles.
+- Clients poll only the 12-bit canvas version, backing off from 8 to 30 seconds while idle, and
+  download the 512×256 shared PNG only when that version changes.
+- Wordle remains registered as disabled / in development and uses the normal VTEX card path.
 
 ---
 
