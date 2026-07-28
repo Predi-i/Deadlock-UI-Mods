@@ -22,7 +22,10 @@
     // Aspect ratio is intentional: Panorama may UI-scale or swap the reported dimensions.
     var UPDATE_MARKER_BASE = "https://raw.githubusercontent.com/Predi-i/Deadlock-UI-Mods/main/Minigames/update-markers/";
     var UPDATE_CHECK_TIMEOUT_MS = 8000;
-    var UPDATE_CHECK_POLL_S = 0.05;
+    // Poll interval while waiting for the marker image's dimensions to resolve. 0.05s scheduled up
+    // to 160 callbacks per check for a network load that takes far longer than a frame; 0.15s reads
+    // the same to the user at a third of the churn.
+    var UPDATE_CHECK_POLL_S = 0.15;
 
     // Route through MG.debug so nothing hits the console unless debug mode is ON.
     function log(m) {
@@ -1556,7 +1559,7 @@
             if (token !== statusPollToken || view !== "room" || !actionAlive(ctx)) return;
             MG.Api.room(code, function (r) {
                 if (token !== statusPollToken || view !== "room" || !actionAlive(ctx)) return;
-                if (r.gone) { renderMenu(); setStatus("⚠ Lobby closed."); return; }
+                if (r.gone) { kickToMenu("Lobby closed."); return; }   // clears currentCode first, so cleanupCurrentView does not fire /api/leave at a dead lobby
                 if (seat1Label && seat1Label.IsValid && seat1Label.IsValid()) {
                     seat1Label.text = isHost ? (r.players >= 2 ? "Seat 2: Player joined" : "Seat 2: Waiting…") : "Seat 2: You";
                 }
@@ -1639,7 +1642,7 @@
             if (token !== statusPollToken || view !== "room" || (ctx && !actionAlive(ctx))) return;
             MG.Api.proom(code, function (r) {
                 if (token !== statusPollToken || view !== "room" || (ctx && !actionAlive(ctx))) return;
-                if (r.gone) { renderMenu(); setStatus("⚠ Table closed."); return; }
+                if (r.gone) { kickToMenu("Table closed."); return; }   // see above: no stray leave
                 for (var s = 0; s < cap; s++) {
                     if (s === seat) continue;   // never overwrite "You"
                     if (!seatLabels[s] || !seatLabels[s].IsValid || !seatLabels[s].IsValid()) continue;
@@ -1722,7 +1725,7 @@
             if (token !== statusPollToken || view !== "room" || (ctx && !actionAlive(ctx))) return;
             MG.Api.droom(code, function (r) {
                 if (token !== statusPollToken || view !== "room" || (ctx && !actionAlive(ctx))) return;
-                if (r.gone) { renderMenu(); setStatus("⚠ Table closed."); return; }
+                if (r.gone) { kickToMenu("Table closed."); return; }   // see above: no stray leave
                 for (var s = 0; s < cap; s++) {
                     if (s === seat) continue;   // never overwrite "You"
                     if (!seatLabels[s] || !seatLabels[s].IsValid || !seatLabels[s].IsValid()) continue;
@@ -1748,6 +1751,10 @@
             MG.Api.status(code, function (st) {
                 if (token !== statusPollToken || (ctx && !actionAlive(ctx))) return;
                 if (st.players === 2) { mountOnlineGame(selectedGameId, code, true, { timeControl: tc | 0 }, ctx); return; }
+                // A swept or cancelled lobby answers `gone`. Without this the host sat on
+                // "Searching for an opponent…" forever, polling a dead code at the slowest
+                // cadence — waitForMultiMatch has always handled it; this copy had not.
+                if (st.gone) { kickToMenu("Lobby closed."); return; }
                 $.Schedule(MG.Net.waitDelay(misses++), tick);
             }, function () { $.Schedule(MG.Net.waitDelay(misses++), tick); });
         }
@@ -2012,7 +2019,7 @@
     }
 
     function kickToMenu(reason) {
-        if (view !== "game" && view !== "waiting") return;
+        if (view !== "game" && view !== "waiting" && view !== "room") return;
         log("kicked to menu: " + reason);
         // 0 is now a VALID lobby code (0..1023 space), so null — not 0 — is the "no lobby" sentinel
         // that stops cleanupCurrentView from firing a stray cancel/leave at a real lobby.
