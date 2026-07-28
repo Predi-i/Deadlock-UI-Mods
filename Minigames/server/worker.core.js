@@ -1351,6 +1351,14 @@ function validateCheckers(RC, lobby, seat, from, to) {
   const st = lobby.state, b = st.board;
   const side = seat === 0 ? RC.WHITE : RC.BLACK;
   const chaining = st.chainSq >= 0;
+  // Reject any move once the game is decided, the way validateTtt/validateConnectFour do — a
+  // loser could otherwise keep hopping after the end and bloat the finished log. Draughts is
+  // decided when the side ON THE CLOCK has no move (or has no pieces at all); a mid-chain seat
+  // is by definition still moving, so only test at a turn boundary.
+  if (!chaining) {
+    const mover = lobby.turn === 0 ? RC.WHITE : RC.BLACK;
+    if (!RC.hasAnyMove(b, mover)) return { ok: false, code: 2 };
+  }
   // Turn: mid-chain only the chaining seat may move, and only its chain piece.
   if (chaining) { if (seat !== lobby.turn || from !== st.chainSq) return { ok: false, code: 1 }; }
   else if (seat !== lobby.turn) return { ok: false, code: 1 };
@@ -1391,6 +1399,11 @@ function validateChess(RX, lobby, seat, from, to) {
   const st = lobby.state;
   const side = seat === 0 ? 1 : -1;          // white / black
   if (seat !== lobby.turn) return { ok: false, code: 1 };
+  // Reject moves once the game is decided (mirrors validateTtt/validateConnectFour). The mover's
+  // own terminal state is what matters, and `side` IS the mover here since the turn check passed.
+  // Repetition is intentionally NOT counted server-side: it needs the whole position list, and
+  // both clients already agree on it from the same move log, so the extra state buys nothing.
+  if (RX.chessResult(st.board, st.cst, side) !== "ongoing") return { ok: false, code: 2 };
   if (RX.cSign(st.board[from]) !== side) return { ok: false, code: 2 };
   const legal = RX.legalMoves(st.board, st.cst, side); // includes self-check filter, castling, ep
   let ok = false;

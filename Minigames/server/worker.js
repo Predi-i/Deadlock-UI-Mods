@@ -201,6 +201,31 @@
             return false;
         }
 
+        // Draw detection. Without it a king-vs-king endgame shuffles forever: the engine had NO
+        // draw rule at all, so an untimed game (the default) could never end and bot-vs-bot
+        // self-play hit its move cap ~15% of the time.
+        //
+        // `idle` is the caller's count of consecutive TURNS with no capture and no man move —
+        // exactly the quantity the Russian-draughts 15-move rule bounds. Tracking it needs the
+        // game's move history, which these pure per-position functions don't have, so the caller
+        // owns the counter (mg_checkers.js pushHistory, which already knows whether the completed
+        // turn captured). Omit it and only the position-local draw is reported.
+        //
+        // Returns "" when the position is not drawn, else a short reason id.
+        function drawReason(b, idle) {
+            if (idle >= 30) return "idle";               // 30 plies = 15 moves per side
+            // Bare kings on both sides with nothing to attack: one king each can never force a win.
+            var wk = 0, bk = 0, wm = 0, bm = 0;
+            for (var i = 0; i < 64; i++) {
+                var v = b[i];
+                if (v === 0) continue;
+                if (v === 1) wm++; else if (v === 2) wk++;
+                else if (v === 3) bm++; else if (v === 4) bk++;
+            }
+            if (wm === 0 && bm === 0 && wk === 1 && bk === 1) return "kings";
+            return "";
+        }
+
         // A sequence is one complete turn. For English (promotionEndsTurn=true) a promotion
         // during a capture ends the turn immediately. For Russian (promotionEndsTurn=false) the
         // newly crowned king must keep capturing as a flying king if it can (canon).
@@ -327,6 +352,7 @@
             initialBoard: initialBoard,
             simpleMoves: simpleMovesFor, captureMoves: captureMovesFor,
             anyCaptureFor: anyCaptureFor, applyHop: applyHop, hasAnyMove: hasAnyMove,
+            drawReason: drawReason,
             legalSequences: legalSequences, chooseBotMove: chooseBotMove, chooseBotMovePrep: chooseBotMovePrep
         };
     }
@@ -462,9 +488,14 @@
         return b;
     }
 
-    // Game state that from/to alone can't carry: castling rights + en-passant target square.
-    function initialChessState() { return { ep: -1, wK: true, wQ: true, bK: true, bQ: true }; }
-    function cloneChessState(st) { return { ep: st.ep, wK: st.wK, wQ: st.wQ, bK: st.bK, bQ: st.bQ }; }
+    // Game state that from/to alone can't carry: castling rights + en-passant target square +
+    // the halfmove clock for the fifty-move rule (`half`: plies since the last capture or pawn
+    // move). `half` is a plain int so cloneChessState stays allocation-cheap inside the search.
+    // Threefold repetition is NOT tracked here — it needs the whole game's position list, which
+    // would make every search node copy an array. The caller keeps a positionKey() count instead
+    // and passes it to chessResult().
+    function initialChessState() { return { ep: -1, wK: true, wQ: true, bK: true, bQ: true, half: 0 }; }
+    function cloneChessState(st) { return { ep: st.ep, wK: st.wK, wQ: st.wQ, bK: st.bK, bQ: st.bQ, half: st.half || 0 }; }
 
     function findKing(b, color) {
         var k = color > 0 ? C_KING : -C_KING;
@@ -520,6 +551,9 @@
         var nb = b.slice(), nst = cloneChessState(st);
         var piece = b[from], color = cSign(piece), t = cType(piece);
         var fr = cRow(from), fc = cCol(from), tr = cRow(to), tc = cCol(to);
+        // Fifty-move rule: the halfmove clock resets on a capture or ANY pawn move, else ticks.
+        // Read b[to] BEFORE the board is mutated below.
+        nst.half = (t === C_PAWN || b[to] !== 0) ? 0 : (st.half || 0) + 1;
         nst.ep = -1;
         nb[to] = piece; nb[from] = 0;
         if (t === C_PAWN) {
@@ -615,9 +649,54 @@
         return out;
     }
 
-    // "ongoing" | "checkmate" | "stalemate" for `color` to move.
-    function chessResult(b, st, color) {
-        if (legalMoves(b, st, color).length > 0) return "ongoing";
+    // Can EITHER side still force a mate with the material on the board? Draws the classic
+    // insufficient-material cases: K vs K, K+minor vs K, and K+B vs K+B on the same colour.
+    // Any pawn, rook or queen (or two minors on one side) can still mate, so those are "ongoing".
+    function insufficientMaterial(b) {
+        var minors = { 1: [], "-1": [] };      // bishop/knight squares per colour
+        for (var i = 0; i < 64; i++) {
+            var v = b[i];
+            if (v === 0) continue;
+            var t = cType(v);
+            if (t === C_KING) continue;
+            if (t === C_PAWN || t === C_ROOK || t === C_QUEEN) return false;   // mating material
+            minors[cSign(v)].push({ t: t, sq: i });
+        }
+        var w = minors[1], bl = minors["-1"];
+        if (w.length > 1 || bl.length > 1) return false;   // two minors can mate (BB, and BN)
+        if (w.length === 0 && bl.length === 0) return true;                    // K vs K
+        if (w.length + bl.length === 1) return true;                           // K+minor vs K
+        // one minor each: only a draw when both are bishops on the SAME colour complex
+        if (w[0].t === C_BISHOP && bl[0].t === C_BISHOP) {
+            var wc = (cRow(w[0].sq) + cCol(w[0].sq)) & 1;
+            var bc = (cRow(bl[0].sq) + cCol(bl[0].sq)) & 1;
+            return wc === bc;
+        }
+        return false;
+    }
+
+    // Compact position identity for threefold repetition: piece placement + side to move +
+    // castling rights + en-passant target. Two positions repeat only when ALL of those match
+    // (FIDE), so the key must include everything that changes the set of legal continuations.
+    function positionKey(b, st, color) {
+        var s = b.join(",");
+        return s + "|" + color + "|" + (st.wK ? 1 : 0) + (st.wQ ? 1 : 0) + (st.bK ? 1 : 0) + (st.bQ ? 1 : 0) + "|" + st.ep;
+    }
+
+    // "ongoing" | "checkmate" | "stalemate" | "draw50" | "repetition" | "insufficient"
+    // for `color` to move. `repeats` is OPTIONAL: how many times the CURRENT position has now
+    // occurred in this game (the caller counts positionKey() hits — the rules module can't, since
+    // it would have to carry the whole game history into every search node). Pass nothing and only
+    // the position-local draws are reported, which is what the bot search wants.
+    function chessResult(b, st, color, repeats) {
+        if (legalMoves(b, st, color).length > 0) {
+            // A checkmate/stalemate ALWAYS outranks a draw claim: you can be mated on move 100
+            // of a fifty-move count, and that is a loss, not a draw.
+            if (repeats >= 3) return "repetition";
+            if ((st.half || 0) >= 100) return "draw50";        // 100 plies = 50 full moves
+            if (insufficientMaterial(b)) return "insufficient";
+            return "ongoing";
+        }
         return inCheck(b, color) ? "checkmate" : "stalemate";
     }
 
@@ -707,6 +786,7 @@
         initialChessBoard: initialChessBoard, initialChessState: initialChessState, cloneChessState: cloneChessState,
         findKing: findKing, attacksSquare: attacksSquare, inCheck: inCheck,
         makeMove: makeMove, pseudoMoves: pseudoMoves, legalMoves: legalMoves, chessResult: chessResult,
+        insufficientMaterial: insufficientMaterial, positionKey: positionKey,
         chessBotMove: chessBotMove, chessBotMovePrep: chessBotMovePrep
     };
 })();
@@ -870,10 +950,17 @@
     // Negamax on ONE working board via make/undo (no per-node allocation — see the PERF note).
     // `lastWin` = the mover of the PARENT node just won by landing at (lastR,lastC); we detect the
     // terminal at the child so we never need a full-board winner() scan inside the loop.
-    function negamax(b, player, me, depth, alpha, beta, lastR, lastC, lastV) {
-        if (lastR >= 0 && winsAt(b, lastR, lastC, lastV))  // parent's move already won
-            return lastV === me ? -(100000 + depth) : (100000 + depth);
-        if (depth === 0) return evalBoard(b, me);
+    //
+    // NEGAMAX INVARIANT: every value this returns is from the point of view of `player` (the side
+    // to move AT THIS NODE), because the caller negates it. Scoring relative to a fixed root
+    // colour instead made the sign flip with parity — the bot maximised the OPPONENT on even
+    // plies and lost 0:40 head-to-head against this corrected version.
+    function negamax(b, player, depth, alpha, beta, lastR, lastC, lastV) {
+        // The parent's move ended the game. lastV is the parent's mover, never `player`, so this
+        // node's side to move has already lost. Deeper wins score lower (prefer the fast mate).
+        if (lastR >= 0 && winsAt(b, lastR, lastC, lastV))
+            return -(100000 + depth);
+        if (depth === 0) return evalBoard(b, player);
         var best = -1e9, moved = false;
         for (var i = 0; i < CENTER_ORDER.length; i++) {
             var col = CENTER_ORDER[i];
@@ -882,7 +969,7 @@
             moved = true;
             var cell = idx(r, col);
             b[cell] = player;                              // make
-            var val = -negamax(b, player === 1 ? 2 : 1, me, depth - 1, -beta, -alpha, r, col, player);
+            var val = -negamax(b, player === 1 ? 2 : 1, depth - 1, -beta, -alpha, r, col, player);
             b[cell] = 0;                                   // undo
             if (val > best) best = val;
             if (val > alpha) alpha = val;
@@ -912,7 +999,7 @@
             if (r < 0) continue;
             var cell = idx(r, col);
             w[cell] = player;                              // make
-            var val = -negamax(w, opp, player, DEPTH - 1, -1e9, 1e9, r, col, player);
+            var val = -negamax(w, opp, DEPTH - 1, -1e9, 1e9, r, col, player);
             w[cell] = 0;                                   // undo
             if (val > bestVal) { bestVal = val; bestCol = col; }
         }
@@ -1413,21 +1500,32 @@
         for (i = 0; i < groups.length; i++) vals.push(groups[i][1]);
 
         var c0 = groups[0], c1 = groups[1];
-        if (c0[0] === 4) return [7, c0[1], firstOther(vals, c0[1])];
+        if (c0[0] === 4) return [7, c0[1], bestExcluding(cards, [c0[1]])];
         if (c0[0] === 3 && c1 && c1[0] >= 2) return [6, c0[1], c1[1]];
         if (flushVals) { flushVals = flushVals.slice().sort(desc); return [5, flushVals[0], flushVals[1], flushVals[2], flushVals[3], flushVals[4]]; }
         var st = straightHigh(allVals(cards));
         if (st) return [4, st];
         if (c0[0] === 3) return [3, c0[1], vals[1], vals[2]];
-        if (c0[0] === 2 && c1 && c1[0] === 2) return [2, c0[1], c1[1], firstOtherPair(vals, c0[1], c1[1])];
+        if (c0[0] === 2 && c1 && c1[0] === 2) return [2, c0[1], c1[1], bestExcluding(cards, [c0[1], c1[1]])];
         if (c0[0] === 2) return [1, c0[1], vals[1], vals[2], vals[3]];
         var hv = allVals(cards).sort(desc);
         return [0, hv[0], hv[1], hv[2], hv[3], hv[4]];
     }
     function desc(a, b) { return b - a; }
     function allVals(cards) { var o = []; for (var i = 0; i < cards.length; i++) o.push(cardVal(cards[i])); return o; }
-    function firstOther(vals, exclude) { for (var i = 0; i < vals.length; i++) if (vals[i] !== exclude) return vals[i]; return 0; }
-    function firstOtherPair(vals, a, b) { for (var i = 0; i < vals.length; i++) if (vals[i] !== a && vals[i] !== b) return vals[i]; return 0; }
+    // Highest card value in `cards` whose value is not in `exclude`. MUST NOT be derived from
+    // the `vals` (group) order: groups sort by COUNT first, so a third pair / second pair sits
+    // ahead of the genuine high kicker there and picking from it awarded the wrong pot
+    // (e.g. AAKK2 2 Q scored its kicker as the 2, not the Q).
+    function bestExcluding(cards, exclude) {
+        var best = 0;
+        for (var i = 0; i < cards.length; i++) {
+            var v = cardVal(cards[i]);
+            if (exclude.indexOf(v) !== -1) continue;
+            if (v > best) best = v;
+        }
+        return best;
+    }
 
     function compareScores(a, b) {
         var n = Math.max(a.length, b.length);
@@ -1488,14 +1586,14 @@
             numPlayers: numPlayers, button: button, sb: sb, bb: bb, online: online,
             deck: deck, hole: [], board: [],
             stacks: stacks.slice(),
-            bet: [], committed: [], folded: [], allIn: [], inHand: [], acted: [],
+            bet: [], committed: [], folded: [], allIn: [], inHand: [], acted: [], noReopen: [],
             street: "preflop", currentBet: 0, minRaise: bb,
             toAct: -1, lastAggressor: -1,
             pots: [], result: null
         };
         for (var s = 0; s < numPlayers; s++) {
             st.bet.push(0); st.committed.push(0); st.folded.push(false);
-            st.allIn.push(false); st.acted.push(false);
+            st.allIn.push(false); st.acted.push(false); st.noReopen.push(false);
             st.inHand.push(stacks[s] > 0);
             st.hole.push([]);
         }
@@ -1526,6 +1624,19 @@
         st.bbSeat = bbSeat;
         // preflop opener = seat left of the big blind (UTG); heads-up = the SB/button.
         st.toAct = (activeSeatCount(st) === 2) ? sbSeat : nextToAct(st, bbSeat);
+        // A blind can put its own seat ALL-IN (stack <= sb/bb). The heads-up branch above
+        // assigns toAct = sbSeat unconditionally, and legalActions() returns nothing for an
+        // all-in seat, so every action was rejected and the hand froze in "preflop" forever
+        // (offline the bot re-folded into a dead table; online /api/pact answered code 2 to
+        // everyone). Route the opener through nextToAct, and if NOBODY can voluntarily act,
+        // run the board out — the same terminal handling nextStreet already does. Uncalled
+        // chips come back through the single-contributor side pot in showdown().
+        if (st.toAct < 0 || st.allIn[st.toAct] || st.stacks[st.toAct] === 0)
+            st.toAct = nextToAct(st, st.toAct >= 0 ? st.toAct : bbSeat);
+        if (st.toAct < 0) {
+            if (activeCount(st) <= 1) finish(st);
+            else runout(st);
+        }
         return st;
     }
     function activeSeatCount(st) { var n = 0; for (var s = 0; s < st.numPlayers; s++) if (st.inHand[s]) n++; return n; }
@@ -1545,9 +1656,11 @@
         if (toCall <= 0) out.canCheck = true;
         else { out.canCall = true; out.callAmount = Math.min(toCall, st.stacks[seat]); }
         // A raise needs chips beyond the call. Min raise-to = currentBet + last raise size,
-        // capped by the stack (a short stack can shove for less as an all-in).
+        // capped by the stack (a short stack can shove for less as an all-in). `noReopen`
+        // marks seats that had already matched the bet when a SHORT all-in came in: they owe
+        // the shove's remainder but standard NLHE does not let them re-raise it.
         var maxTo = st.bet[seat] + st.stacks[seat];
-        if (maxTo > st.currentBet) {
+        if (maxTo > st.currentBet && !(st.noReopen && st.noReopen[seat])) {
             out.canRaise = true;
             out.minRaiseTo = Math.min(maxTo, st.currentBet + st.minRaise);
             out.maxRaiseTo = maxTo;
@@ -1579,10 +1692,22 @@
             putIn(st, seat, to - st.bet[seat]);
             // A full-size raise reopens the action; a short all-in that doesn't reach the
             // min-raise does NOT (matched players don't get to re-raise). Standard NLHE.
-            if (raiseSize >= st.minRaise) st.minRaise = raiseSize;
+            // resetActedExcept used to run UNCONDITIONALLY, which contradicted this comment and
+            // handed a free re-raise to seats that had already called.
             st.currentBet = Math.max(st.currentBet, st.bet[seat]);
             st.lastAggressor = seat;
-            resetActedExcept(st, seat);
+            if (raiseSize >= st.minRaise) {
+                st.minRaise = raiseSize;
+                resetActedExcept(st, seat);
+                clearNoReopen(st);                  // a full raise reopens the action for everyone
+            } else {
+                // Short all-in: only seats that still owe chips must act again, and they may only
+                // call or fold. Seats that already matched the previous currentBet are done.
+                for (var s2 = 0; s2 < st.numPlayers; s2++) {
+                    if (s2 === seat) continue;
+                    if (st.bet[s2] < st.currentBet) { st.acted[s2] = false; st.noReopen[s2] = true; }
+                }
+            }
         } else {
             return false;
         }
@@ -1592,6 +1717,11 @@
     }
     function resetActedExcept(st, seat) {
         for (var s = 0; s < st.numPlayers; s++) if (s !== seat) st.acted[s] = false;
+    }
+    // Clear the "you may call but not re-raise" marks (set by a short all-in). Called whenever a
+    // full-size raise reopens the action and at the start of every new street.
+    function clearNoReopen(st) {
+        for (var s = 0; s < st.numPlayers; s++) st.noReopen[s] = false;
     }
 
     // Is the current betting round complete?
@@ -1623,6 +1753,7 @@
         // clear the street's bets (committed already holds them for side pots)
         for (var s = 0; s < st.numPlayers; s++) { st.bet[s] = 0; st.acted[s] = false; }
         st.currentBet = 0; st.minRaise = st.bb; st.lastAggressor = -1;
+        clearNoReopen(st);                  // last street's short-shove restrictions expire
         var nx = STREETS[st.street];
         if (nx === "flop") dealBoard(st, 3);
         else if (nx === "turn" || nx === "river") dealBoard(st, 1);
@@ -3575,6 +3706,14 @@ function validateCheckers(RC, lobby, seat, from, to) {
   const st = lobby.state, b = st.board;
   const side = seat === 0 ? RC.WHITE : RC.BLACK;
   const chaining = st.chainSq >= 0;
+  // Reject any move once the game is decided, the way validateTtt/validateConnectFour do — a
+  // loser could otherwise keep hopping after the end and bloat the finished log. Draughts is
+  // decided when the side ON THE CLOCK has no move (or has no pieces at all); a mid-chain seat
+  // is by definition still moving, so only test at a turn boundary.
+  if (!chaining) {
+    const mover = lobby.turn === 0 ? RC.WHITE : RC.BLACK;
+    if (!RC.hasAnyMove(b, mover)) return { ok: false, code: 2 };
+  }
   // Turn: mid-chain only the chaining seat may move, and only its chain piece.
   if (chaining) { if (seat !== lobby.turn || from !== st.chainSq) return { ok: false, code: 1 }; }
   else if (seat !== lobby.turn) return { ok: false, code: 1 };
@@ -3615,6 +3754,11 @@ function validateChess(RX, lobby, seat, from, to) {
   const st = lobby.state;
   const side = seat === 0 ? 1 : -1;          // white / black
   if (seat !== lobby.turn) return { ok: false, code: 1 };
+  // Reject moves once the game is decided (mirrors validateTtt/validateConnectFour). The mover's
+  // own terminal state is what matters, and `side` IS the mover here since the turn check passed.
+  // Repetition is intentionally NOT counted server-side: it needs the whole position list, and
+  // both clients already agree on it from the same move log, so the extra state buys nothing.
+  if (RX.chessResult(st.board, st.cst, side) !== "ongoing") return { ok: false, code: 2 };
   if (RX.cSign(st.board[from]) !== side) return { ok: false, code: 2 };
   const legal = RX.legalMoves(st.board, st.cst, side); // includes self-check filter, castling, ep
   let ok = false;

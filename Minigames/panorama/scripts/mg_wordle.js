@@ -67,7 +67,6 @@
         EXTRA_GUESSES = MG.WordleWords.guesses;
     }
     var VALID = {};
-    var gamesStarted = 0;
     for (var wi = 0; wi < ANSWERS.length; wi++) VALID[ANSWERS[wi]] = true;
     for (wi = 0; wi < EXTRA_GUESSES.length; wi++) VALID[EXTRA_GUESSES[wi]] = true;
 
@@ -97,9 +96,12 @@
         session = session || {};
         var destroyed = false, row = 0, current = "", over = false;
         var keyState = {}, keyButtons = {};
-        var day = Math.floor(Date.now() / 86400000);
-        var answer = ANSWERS[(day + gamesStarted * 37) % ANSWERS.length];
-        gamesStarted++;
+        // Fresh random answer per game. The old formula was (day + gamesStarted*37), which tied the
+        // word to the UTC day and only stepped it by a fixed 37 indices per Play Again — so two
+        // sessions on the same day always opened with the SAME word and the sequence after it was
+        // fully predictable. This is an offline puzzle with nothing at stake, so plain Math.random
+        // is the right tool (no CSPRNG needed).
+        var answer = ANSWERS[Math.floor(Math.random() * ANSWERS.length) % ANSWERS.length];
 
         function status(text) { if (!destroyed && session.onStatus) session.onStatus(text); }
         function sfx(name) { if (MG.Sound) MG.Sound.play(name); }

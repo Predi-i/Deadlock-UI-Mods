@@ -52,10 +52,15 @@
         var initialBoard = RCv.initialBoard;
         var simpleMoves = RCv.simpleMoves, captureMoves = RCv.captureMoves;
         var anyCaptureFor = RCv.anyCaptureFor, applyHop = RCv.applyHop, hasAnyMove = RCv.hasAnyMove;
+        var drawReason = RCv.drawReason;
         var legalSequences = RCv.legalSequences, chooseBotMove = RCv.chooseBotMove, chooseBotMovePrep = RCv.chooseBotMovePrep;
         var myColor = session.isHost ? WHITE : BLACK;
         var board = initialBoard();
         var turn = WHITE;              // white (host) moves first
+        // Consecutive turns with no capture and no man move — the Russian 15-move draw rule's
+        // counter. rules/checkers.js can't track it (it is per-position, not per-game), so the
+        // controller owns it and feeds it to drawReason(). Reset by turnResetsIdle().
+        var idleTurns = 0;
         var appliedSeq = 0;            // total hops consumed from the shared server list
         var selected = -1;             // selected square during my turn
         var legalTargets = [];         // [{to, cap}]
@@ -649,6 +654,13 @@
         // first-from → last-to). Snapshots the resulting board so the position can be replayed
         // read-only later. Called from every turn-completion path (own move, opponent, bot).
         function pushHistory(from, to, cap) {
+            // Idle counter for the 15-move draw rule, updated BEFORE the new entry is pushed so
+            // the previous entry still holds the pre-move board (the first turn's pre-move board is
+            // the initial one). pushHistory runs exactly once per COMPLETED turn in all three paths
+            // (local, bot, polled), which is precisely the granularity the rule counts.
+            var pre = history.length ? history[history.length - 1].boardAfter : initialBoard();
+            var mover = pre[from];
+            idleTurns = (cap || mover === 1 || mover === 3) ? 0 : idleTurns + 1;
             history.push({ from: from, to: to, boardAfter: board.slice(), label: moveLabel(from, to, cap) });
             renderMoveList();
         }
@@ -1055,6 +1067,7 @@
             // matches it. Rather than reconstruct multi-hop labels from raw hops (this path is a
             // rare cheat/desync recovery), drop the list and let it repopulate from live turns.
             history = []; reviewIndex = null;
+            idleTurns = 0;             // rebuilt from move 1; pushHistory recounts as it replays
             replayAccepted(0);
         }
 
@@ -1144,14 +1157,21 @@
         }
 
         function checkEnd() {
-            var opp = (myColor === WHITE ? BLACK : WHITE);
-            if (!hasAnyMove(board, WHITE)) { finish(BLACK); return; }
-            if (!hasAnyMove(board, BLACK)) { finish(WHITE); return; }
-            // count pieces
+            // count pieces first: no pieces left is terminal for either side regardless of turn
             var wc = 0, bc = 0;
             for (var i = 0; i < 64; i++) { if (colorOf(board[i]) === WHITE) wc++; else if (colorOf(board[i]) === BLACK) bc++; }
-            if (wc === 0) finish(BLACK);
-            else if (bc === 0) finish(WHITE);
+            if (wc === 0) { finish(BLACK); return; }
+            if (bc === 0) { finish(WHITE); return; }
+            // Draughts: you lose when YOU have no move ON YOUR TURN. Testing both colours
+            // unconditionally declared a side lost while it wasn't even on the clock — the
+            // opponent still has to move and may well unblock the position first (self-play
+            // showed 48 premature game-overs in 4000 games).
+            if (!hasAnyMove(board, turn)) { finish(turn === WHITE ? BLACK : WHITE); return; }
+            // Draws. Without these a king-vs-king endgame shuffles forever and an untimed game
+            // (the default) never ends at all.
+            var dr = drawReason ? drawReason(board, idleTurns) : "";
+            if (dr === "idle") finishDraw("Draw: 15 moves with no capture.");
+            else if (dr === "kings") finishDraw("Draw: king against king.");
         }
 
         // `reason` is optional: "time" when the game ended on a flag-fall (shown in the status).
@@ -1165,6 +1185,17 @@
             status(winner === myColor ? ("🏆 You win!" + lost) : ("You lose." + lost));
             sfx("GameEnd");
             if (session.onGameOver) session.onGameOver(winner === myColor ? "win" : "lose");
+        }
+
+        function finishDraw(text) {
+            if (gameOver) return;
+            gameOver = true;
+            clearSelection();
+            refreshHighlights();
+            if (clock) clock.stop();
+            status(text || "It's a draw.");
+            sfx("GameEnd");
+            if (session.onGameOver) session.onGameOver("draw");
         }
 
         // ── boot ────────────────────────────────────────────────────────────

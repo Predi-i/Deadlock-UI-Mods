@@ -189,6 +189,31 @@
             return false;
         }
 
+        // Draw detection. Without it a king-vs-king endgame shuffles forever: the engine had NO
+        // draw rule at all, so an untimed game (the default) could never end and bot-vs-bot
+        // self-play hit its move cap ~15% of the time.
+        //
+        // `idle` is the caller's count of consecutive TURNS with no capture and no man move —
+        // exactly the quantity the Russian-draughts 15-move rule bounds. Tracking it needs the
+        // game's move history, which these pure per-position functions don't have, so the caller
+        // owns the counter (mg_checkers.js pushHistory, which already knows whether the completed
+        // turn captured). Omit it and only the position-local draw is reported.
+        //
+        // Returns "" when the position is not drawn, else a short reason id.
+        function drawReason(b, idle) {
+            if (idle >= 30) return "idle";               // 30 plies = 15 moves per side
+            // Bare kings on both sides with nothing to attack: one king each can never force a win.
+            var wk = 0, bk = 0, wm = 0, bm = 0;
+            for (var i = 0; i < 64; i++) {
+                var v = b[i];
+                if (v === 0) continue;
+                if (v === 1) wm++; else if (v === 2) wk++;
+                else if (v === 3) bm++; else if (v === 4) bk++;
+            }
+            if (wm === 0 && bm === 0 && wk === 1 && bk === 1) return "kings";
+            return "";
+        }
+
         // A sequence is one complete turn. For English (promotionEndsTurn=true) a promotion
         // during a capture ends the turn immediately. For Russian (promotionEndsTurn=false) the
         // newly crowned king must keep capturing as a flying king if it can (canon).
@@ -315,6 +340,7 @@
             initialBoard: initialBoard,
             simpleMoves: simpleMovesFor, captureMoves: captureMovesFor,
             anyCaptureFor: anyCaptureFor, applyHop: applyHop, hasAnyMove: hasAnyMove,
+            drawReason: drawReason,
             legalSequences: legalSequences, chooseBotMove: chooseBotMove, chooseBotMovePrep: chooseBotMovePrep
         };
     }

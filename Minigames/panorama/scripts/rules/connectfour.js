@@ -156,10 +156,17 @@
     // Negamax on ONE working board via make/undo (no per-node allocation — see the PERF note).
     // `lastWin` = the mover of the PARENT node just won by landing at (lastR,lastC); we detect the
     // terminal at the child so we never need a full-board winner() scan inside the loop.
-    function negamax(b, player, me, depth, alpha, beta, lastR, lastC, lastV) {
-        if (lastR >= 0 && winsAt(b, lastR, lastC, lastV))  // parent's move already won
-            return lastV === me ? -(100000 + depth) : (100000 + depth);
-        if (depth === 0) return evalBoard(b, me);
+    //
+    // NEGAMAX INVARIANT: every value this returns is from the point of view of `player` (the side
+    // to move AT THIS NODE), because the caller negates it. Scoring relative to a fixed root
+    // colour instead made the sign flip with parity — the bot maximised the OPPONENT on even
+    // plies and lost 0:40 head-to-head against this corrected version.
+    function negamax(b, player, depth, alpha, beta, lastR, lastC, lastV) {
+        // The parent's move ended the game. lastV is the parent's mover, never `player`, so this
+        // node's side to move has already lost. Deeper wins score lower (prefer the fast mate).
+        if (lastR >= 0 && winsAt(b, lastR, lastC, lastV))
+            return -(100000 + depth);
+        if (depth === 0) return evalBoard(b, player);
         var best = -1e9, moved = false;
         for (var i = 0; i < CENTER_ORDER.length; i++) {
             var col = CENTER_ORDER[i];
@@ -168,7 +175,7 @@
             moved = true;
             var cell = idx(r, col);
             b[cell] = player;                              // make
-            var val = -negamax(b, player === 1 ? 2 : 1, me, depth - 1, -beta, -alpha, r, col, player);
+            var val = -negamax(b, player === 1 ? 2 : 1, depth - 1, -beta, -alpha, r, col, player);
             b[cell] = 0;                                   // undo
             if (val > best) best = val;
             if (val > alpha) alpha = val;
@@ -198,7 +205,7 @@
             if (r < 0) continue;
             var cell = idx(r, col);
             w[cell] = player;                              // make
-            var val = -negamax(w, opp, player, DEPTH - 1, -1e9, 1e9, r, col, player);
+            var val = -negamax(w, opp, DEPTH - 1, -1e9, 1e9, r, col, player);
             w[cell] = 0;                                   // undo
             if (val > bestVal) { bestVal = val; bestCol = col; }
         }

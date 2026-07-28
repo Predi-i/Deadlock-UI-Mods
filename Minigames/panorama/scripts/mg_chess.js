@@ -38,6 +38,7 @@
     var initialChessBoard = RX.initialChessBoard, initialChessState = RX.initialChessState;
     var makeMove = RX.makeMove, legalMoves = RX.legalMoves, inCheck = RX.inCheck;
     var findKing = RX.findKing, chessResult = RX.chessResult, chessBotMove = RX.chessBotMove;
+    var positionKey = RX.positionKey;
     var chessBotMovePrep = RX.chessBotMovePrep;
 
     // ── chess controller ─────────────────────────────────────────────────────────
@@ -503,8 +504,20 @@
             if (cType(board[from]) === C_PAWN && cCol(from) !== cCol(to) && board[to] === 0) return true;
             return false;
         }
+        // Threefold repetition needs the whole game's position list, which rules/chess.js
+        // deliberately does NOT carry (it would copy an array into every search node). Count the
+        // keys here instead: pushHistory runs in all three live move paths (local, bot, polled)
+        // AFTER board/cst/turn are updated, so the key always describes the position that the side
+        // to move now faces. rejectAndResync drops the counts along with history.
+        var posCounts = {};
+        function notePosition() {
+            var k = positionKey(board, cst, turn);
+            posCounts[k] = (posCounts[k] || 0) + 1;
+        }
+        function countRepeat() { return posCounts[positionKey(board, cst, turn)] || 0; }
         function pushHistory(from, to, cap) {
             history.push({ from: from, to: to, boardAfter: board.slice(), label: moveLabel(from, to, cap) });
+            notePosition();
             renderMoveList();
         }
         function renderMoveList() {
@@ -807,6 +820,13 @@
             board = initialChessBoard();
             cst = initialChessState();
             turn = 1;
+            // The rejected move was optimistically pushed to history (doLocalMove pushes BEFORE
+            // sendChessMove), so the rebuilt board no longer matches those entries — reviewing one
+            // would render an impossible position. createCheckers already drops the list here;
+            // this copy had drifted and kept the stale rows.
+            history = []; reviewIndex = null;
+            posCounts = {};
+            notePosition();          // rebuilt from the initial position → that is occurrence #1 again
             replayAccepted(0);
         }
         function replayAccepted(seq) {
@@ -825,6 +845,7 @@
                     var r = makeMove(board, cst, mv.from, mv.to);
                     board = r[0]; cst = r[1];
                     turn = -turn;
+                    notePosition();          // resync path bypasses pushHistory; keep the repeat count honest
                     replayAccepted(seq + 1);
                 } else { appliedSeq = seq; replayAccepted(seq); }
             }, function () { $.Schedule(0.4, function () { replayAccepted(seq); }); },
@@ -869,9 +890,12 @@
         // ── end of game ─────────────────────────────────────────────────────────────────
         // Evaluates the side whose turn it now is. Returns true if the game ended.
         function checkEnd() {
-            var res = chessResult(board, cst, turn);
+            var res = chessResult(board, cst, turn, countRepeat());
             if (res === "checkmate") { finish(-turn); return true; }
-            if (res === "stalemate") { finishDraw(); return true; }
+            if (res === "stalemate") { finishDraw("Stalemate. It's a draw."); return true; }
+            if (res === "draw50") { finishDraw("Draw by the fifty-move rule."); return true; }
+            if (res === "repetition") { finishDraw("Draw by threefold repetition."); return true; }
+            if (res === "insufficient") { finishDraw("Draw: insufficient material."); return true; }
             return false;
         }
         // `reason` is optional: "time" when the game ended on a flag-fall (shown in the status).
@@ -888,13 +912,13 @@
             sfx("GameEnd");
             if (session.onGameOver) session.onGameOver(win ? "win" : "lose");
         }
-        function finishDraw() {
+        function finishDraw(text) {
             if (gameOver) return;
             gameOver = true;
             clearSelection();
             refreshHighlights();
             if (clock) clock.stop();
-            status("Stalemate. It's a draw.");
+            status(text || "It's a draw.");
             sfx("GameEnd");
             if (session.onGameOver) session.onGameOver("draw");
         }
@@ -903,6 +927,7 @@
         buildCells();
         layoutPieces();
         refreshHighlights();
+        notePosition();           // the starting position is occurrence #1 for repetition counting
         syncClockTurn();          // white (seat 0) is on the move at the start
         sfx("GameStart");
         if (myTurn()) {
