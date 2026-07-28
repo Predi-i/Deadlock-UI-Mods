@@ -19,7 +19,7 @@ const root = path.join(__dirname, "..");
 function loadClientRules() {
     var sandbox = {};                 // isolated MGRules so it can't collide with the server copy
     var g = { globalThis: sandbox };
-    ["checkers.js", "ttt.js", "chess.js", "connectfour.js", "durak.js"].forEach(function (name) {
+    ["checkers.js", "ttt.js", "chess.js", "connectfour.js", "durak.js", "poker.js"].forEach(function (name) {
         var src = fs.readFileSync(path.join(root, "panorama", "scripts", "rules", name), "utf8");
         // The IIFE resolves its namespace off `globalThis`; give it our sandbox as that.
         new Function("globalThis", src)(sandbox);
@@ -169,6 +169,51 @@ function makeRng(seed) { var s = seed >>> 0; return function () { s = (s * 16645
         }
     }
     ok(mismatches === 0, "durak: client & server legalAttacks/legalDefends identical over " + plies + " plies");
+})();
+
+// ── poker: the ONLY game with a server-side dealer and a pot, so a client/server rules drift
+// here misawards chips. Both sides share newHand(seed), so drive one deterministic self-play per
+// seed with the CLIENT engine and at every action assert the SERVER engine reports the identical
+// legalActions for the seat on the clock, plus the identical showdown scores/pots at the end. ──
+(function () {
+    var C = CL.poker, S = SV.poker;
+    function laKey(R, st, seat) {
+        var la = R.legalActions(st, seat);
+        return [la.canFold, la.canCheck, la.canCall, la.callAmount, la.canRaise, la.minRaiseTo, la.maxRaiseTo].join(",");
+    }
+    function scoreKey(R, cards) { return R.score(cards).join(","); }
+    var rng = makeRng(2718281), mismatches = 0, plies = 0, hands = 0, evals = 0;
+    for (var game = 0; game < 40; game++) {
+        var n = 2 + ((rng() * 3) | 0);                 // 2..4 seats
+        var stacks = []; for (var s = 0; s < n; s++) stacks.push(200);
+        var button = 0;
+        for (var hand = 0; hand < 12; hand++) {
+            var alive = 0; for (s = 0; s < n; s++) if (stacks[s] > 0) alive++;
+            if (alive < 2) break;
+            var seed = (rng() * 0x7fffffff) | 0;
+            var st = C.newHand(n, button, stacks, 5, 10, seed);
+            hands++;
+            var guard = 0;
+            while (st.street !== "over" && guard++ < 500) {
+                plies++;
+                var seat = st.toAct;
+                if (seat < 0) break;
+                // Stateless over the SAME object: a divergence means the bundled rules drifted.
+                if (laKey(C, st, seat) !== laKey(S, st, seat)) { mismatches++; break; }
+                var act = C.botAction(st, seat, rng);
+                if (!C.applyAction(st, seat, act) && !C.applyAction(st, seat, { type: "fold" })) break;
+            }
+            // Hand evaluation is what actually decides the pot — compare it on the real cards.
+            for (s = 0; s < n; s++) {
+                if (!st.hole[s] || st.hole[s].length !== 2 || st.board.length < 3) continue;
+                evals++;
+                if (scoreKey(C, st.hole[s].concat(st.board)) !== scoreKey(S, st.hole[s].concat(st.board))) { mismatches++; break; }
+            }
+            stacks = st.stacks.slice();
+            button = (button + 1) % n;
+        }
+    }
+    ok(mismatches === 0, "poker: client & server legalActions/score identical over " + plies + " actions in " + hands + " hands (" + evals + " showdown evals)");
 })();
 
 console.log((failures === 0 ? "  ✓ " : "") + "");

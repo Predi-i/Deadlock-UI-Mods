@@ -637,10 +637,10 @@
             var layerW = (cardLayer && isFinite(cardLayer.actuallayoutwidth) && cardLayer.actuallayoutwidth > 0)
                 ? cardLayer.actuallayoutwidth : STAGE_W;
             var scale = layerW / STAGE_W;
-            var gw = (ghost && isFinite(ghost.actuallayoutwidth) && ghost.actuallayoutwidth > 0
-                      && ghost.actuallayoutwidth < 100000) ? ghost.actuallayoutwidth : CARD_W * scale;
-            var gh = (ghost && isFinite(ghost.actuallayoutheight) && ghost.actuallayoutheight > 0
-                      && ghost.actuallayoutheight < 100000) ? ghost.actuallayoutheight : CARD_H * scale;
+            var gw = (ghost && isFinite(ghost.actuallayoutwidth) && ghost.actuallayoutwidth > 0 &&
+                      ghost.actuallayoutwidth < 100000) ? ghost.actuallayoutwidth : CARD_W * scale;
+            var gh = (ghost && isFinite(ghost.actuallayoutheight) && ghost.actuallayoutheight > 0 &&
+                      ghost.actuallayoutheight < 100000) ? ghost.actuallayoutheight : CARD_H * scale;
             var cx = gp.x + gw / 2, cy = gp.y + gh / 2;
             return { x: (cx - lp.x) / scale, y: (cy - lp.y) / scale };
         }

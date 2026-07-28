@@ -9,6 +9,10 @@
  * byte-for-byte identical rules — no hand-copied second source of truth.
  *
  * Run: node tools/build_worker.js   (then `npx wrangler deploy` from server/).
+ * Run: node tools/build_worker.js --check   to VERIFY the committed worker.js matches its
+ * sources without writing anything (exit 1 on drift). `npm test` does this first, because a
+ * stale worker.js is otherwise invisible: the rule tests read the sources directly and the
+ * server test reads only the generated file, so neither notices a missed rebuild.
  * The generated worker.js carries a "DO NOT EDIT" banner and is committed so a clone
  * can deploy without the build step, but the SOURCE of truth is worker.core.js + rules.
  */
@@ -48,6 +52,17 @@ out += "/* ── authored Pixel Battle browser admin assets ── */\n";
 out += read(adminPanelPath).replace(/\s*$/, "") + "\n\n";
 out += "/* ── authored core (from server/worker.core.js) ── */\n";
 out += read(corePath).replace(/^\s*\/\*\*[\s\S]*?\*\/\s*/, ""); // drop the core's leading banner comment; keep the code
+
+if (process.argv.indexOf("--check") !== -1) {
+    const current = fs.existsSync(outPath) ? read(outPath) : null;
+    if (current === out) {
+        console.log("worker.js is in sync with its sources");
+        process.exit(0);
+    }
+    console.log("STALE worker.js — it does not match its sources. Run: node tools/build_worker.js");
+    if (current !== null) console.log("  (committed " + current.length + " bytes, sources produce " + out.length + ")");
+    process.exit(1);
+}
 
 fs.writeFileSync(outPath, out, "utf8");
 console.log("wrote " + path.relative(root, outPath) + " (" + out.length + " bytes) from " +

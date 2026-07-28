@@ -93,6 +93,23 @@ const BUG_RULES = {
     "no-self-assign": "error",
     "use-isnan": "error",
     "valid-typeof": "error",
+    "no-sparse-arrays": "error",
+    "no-fallthrough": "error",
+    "no-empty": ["error", { allowEmptyCatch: true }],
+    "no-shadow-restricted-names": "error",
+    "no-unsafe-negation": "error",
+    "no-compare-neg-zero": "error",
+    "no-irregular-whitespace": "error",
+    "no-template-curly-in-string": "error",
+    "getter-return": "error",
+    "no-obj-calls": "error",
+    "no-unmodified-loop-condition": "error",
+    "no-unsafe-finally": "error",
+    "no-const-assign": "error",
+    "no-dupe-class-members": "error",
+    // WARN, not error: admin_panel.js defines helpers that worker.core.js calls only AFTER
+    // build_worker.js concatenates them, so ESLint sees them as unused in isolation.
+    "no-unused-vars": ["warn", { args: "none", caughtErrors: "none", varsIgnorePattern: "^_" }],
 };
 
 module.exports = [
@@ -131,5 +148,20 @@ module.exports = [
             globals: Object.assign({}, SHARED_GLOBALS, NODE_GLOBALS),
         },
         rules: BUG_RULES,
+    },
+
+    // SHIPPED scripts only: never start a continuation line with a binary operator. Valve's
+    // Panorama minifier does a naive ASI pass and inserts a ';' before a line beginning with
+    // ( [ + - / — which already broke a public build once (mg_games.js:665-667). Keeping
+    // operators at the END of the line makes the whole class impossible.
+    // `?` and `:` are EXEMPT: they are not in the minifier's trigger set, and the codebase
+    // consistently writes multi-line ternaries with the operator leading. Generated files are
+    // exempt too (machine-written, and the word list redeclares `$`).
+    {
+        files: ["panorama/scripts/**/*.js"],
+        ignores: ["panorama/scripts/**/*.generated.js"],
+        rules: {
+            "operator-linebreak": ["error", "after", { overrides: { "?": "ignore", ":": "ignore" } }],
+        },
     },
 ];
