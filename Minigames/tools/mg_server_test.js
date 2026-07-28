@@ -19,8 +19,8 @@ const zlib = require("zlib");
 
 let src = fs.readFileSync(path.join(__dirname, "..", "server", "worker.js"), "utf8");
 src = src.replace("export default", "const __workerDefault =").replace("export class Hub", "class Hub");
-src += "\n;return { Hub };";
-const { Hub } = new Function(src)();
+src += "\n;return { Hub, Worker: __workerDefault };";
+const { Hub, Worker } = new Function(src)();
 
 // Minimal Durable-Object storage stand-in.
 class FakeStorage {
@@ -30,8 +30,20 @@ class FakeStorage {
     async delete(k) { this.m.delete(k); }
     async list(opts) {
         var prefix = (opts && opts.prefix) || "";
+        var entries = [];
+        for (var e of this.m) {
+            var key = String(e[0]);
+            if (!key.startsWith(prefix)) continue;
+            if (opts && opts.start && key < opts.start) continue;
+            if (opts && opts.startAfter && key <= opts.startAfter) continue;
+            if (opts && opts.end && key >= opts.end) continue;
+            entries.push(e);
+        }
+        entries.sort(function (a, b) { return String(a[0]).localeCompare(String(b[0])); });
+        if (opts && opts.reverse) entries.reverse();
+        if (opts && opts.limit) entries.length = Math.min(entries.length, opts.limit);
         var out = new Map();
-        for (var e of this.m) if (String(e[0]).startsWith(prefix)) out.set(e[0], e[1]);
+        for (e of entries) out.set(e[0], e[1]);
         return out;
     }
 }
@@ -54,6 +66,19 @@ async function reqRaw(hub, pathAndQuery) {
 }
 async function req(hub, pathAndQuery) {
     return delevel(await reqRaw(hub, pathAndQuery));
+}
+async function adminReq(hub, pathAndQuery, method, body, extraHeaders) {
+    var headers = Object.assign({
+        "X-MG-Admin-Login": "pixel-owner",
+        "X-MG-Admin": "1",
+        "Origin": "https://mg.test"
+    }, extraHeaders || {});
+    var response = await hub.fetch(new Request("https://mg.test" + pathAndQuery, {
+        method: method || "GET",
+        headers: headers,
+        body: body === undefined ? undefined : JSON.stringify(body)
+    }));
+    return { status: response.status, body: await response.json() };
 }
 // Decode a lobby code from a create/quick/host reply. Mirrors worker dCode(): the width
 // is a band (24..39 joiner/create, 40..55 host) + (code>>6); the height is code&63. Host
@@ -215,6 +240,239 @@ async function main() {
         "fully erased sparse tile is removed from storage");
 
     // ── token & game-id validation on create ──
+    // Pixel Battle browser admin: audit, unlimited paint, safe undo, and CSRF.
+    var adminHub = new Hub({ storage: new FakeStorage() });
+    var deniedAdmin = await adminHub.fetch(new Request("https://mg.test/admin/api/state"));
+    ok(deniedAdmin.status === 403, "admin API rejects a request without verified identity");
+
+    var missingAuthConfig = await Worker.fetch(new Request("https://mg.test/admin"), {});
+    ok(missingAuthConfig.status === 503, "outer Worker fails closed when GitHub OAuth config is missing");
+
+    var oauthEnv = {
+        GITHUB_CLIENT_ID: "unit-client",
+        GITHUB_CLIENT_SECRET: "unit-client-secret",
+        ADMIN_GITHUB_ID: "424242",
+        ADMIN_SESSION_SECRET: "unit-session-secret-that-is-definitely-long-enough"
+    };
+    var loginResponse = await Worker.fetch(new Request("https://mg.test/admin/login"), oauthEnv);
+    var loginLocation = loginResponse.headers.get("Location") || "";
+    var loginCookies = loginResponse.headers.get("Set-Cookie") || "";
+    var stateMatch = loginCookies.match(/mg_oauth_state=([^;,]+)/);
+    var verifierMatch = loginCookies.match(/mg_oauth_verifier=([^;,]+)/);
+    ok(loginResponse.status === 302 && loginLocation.startsWith("https://github.com/login/oauth/authorize?") &&
+        loginLocation.indexOf("code_challenge_method=S256") >= 0 && stateMatch && verifierMatch,
+        "GitHub login uses state, PKCE, secure cookies, and the official authorize endpoint");
+
+    var realFetch = globalThis.fetch;
+    var oauthCalls = [];
+    globalThis.fetch = async function (url, options) {
+        oauthCalls.push({ url: String(url), options: options || {} });
+        if (String(url).indexOf("/login/oauth/access_token") >= 0) {
+            return new Response(JSON.stringify({ access_token: "unit-access-token", token_type: "bearer" }), {
+                headers: { "Content-Type": "application/json" }
+            });
+        }
+        return new Response(JSON.stringify({ id: 424242, login: "pixel-owner" }), {
+            headers: { "Content-Type": "application/json" }
+        });
+    };
+    var callbackResponse;
+    try {
+        callbackResponse = await Worker.fetch(new Request(
+            "https://mg.test/admin/auth/callback?code=unit-code&state=" + stateMatch[1], {
+                headers: {
+                    "Cookie": "mg_oauth_state=" + stateMatch[1] +
+                        "; mg_oauth_verifier=" + verifierMatch[1]
+                }
+            }), oauthEnv);
+    } finally {
+        globalThis.fetch = realFetch;
+    }
+    var callbackCookies = callbackResponse.headers.get("Set-Cookie") || "";
+    var sessionMatch = callbackCookies.match(/mg_admin_session=([^;,]+)/);
+    ok(callbackResponse.status === 302 && sessionMatch && oauthCalls.length === 2 &&
+        oauthCalls[1].url === "https://api.github.com/user",
+        "OAuth callback exchanges the code and verifies the authenticated GitHub user");
+    var adminPage = await Worker.fetch(new Request("https://mg.test/admin", {
+        headers: { "Cookie": "mg_admin_session=" + sessionMatch[1] }
+    }), oauthEnv);
+    var adminPageHtml = await adminPage.text();
+    ok(adminPage.status === 200 &&
+        adminPageHtml.indexOf("Pixel Battle Admin") >= 0,
+        "only a valid signed session for the configured numeric GitHub ID opens the admin");
+    ok(adminPageHtml.indexOf('id="zoomIn"') >= 0 &&
+        adminPageHtml.indexOf('id="zoomOut"') >= 0 &&
+        adminPageHtml.indexOf('id="zoomFit"') >= 0 &&
+        adminPageHtml.indexOf('id="panMode"') >= 0 &&
+        adminPageHtml.indexOf('id="inspectMode"') >= 0 &&
+        adminPageHtml.indexOf('id="debugPanel"') >= 0,
+        "browser admin ships zoom, pan, pixel inspector, and preview controls");
+    var tamperedSession = sessionMatch[1].substring(0, sessionMatch[1].length - 1) +
+        (sessionMatch[1].endsWith("A") ? "B" : "A");
+    var tamperedPage = await Worker.fetch(new Request("https://mg.test/admin", {
+        headers: { "Cookie": "mg_admin_session=" + tamperedSession }
+    }), oauthEnv);
+    ok(tamperedPage.status === 302 && tamperedPage.headers.get("Location") === "/admin/login",
+        "tampering with the HMAC-signed admin cookie forces a fresh login");
+    var unsignedApi = await Worker.fetch(new Request("https://mg.test/admin/api/state"), oauthEnv);
+    ok(unsignedApi.status === 401, "admin JSON API never redirects or runs without a signed session");
+
+    globalThis.fetch = async function (url) {
+        if (String(url).indexOf("/login/oauth/access_token") >= 0) {
+            return new Response(JSON.stringify({ access_token: "wrong-user-token" }), {
+                headers: { "Content-Type": "application/json" }
+            });
+        }
+        return new Response(JSON.stringify({ id: 999999, login: "someone-else" }), {
+            headers: { "Content-Type": "application/json" }
+        });
+    };
+    var wrongUserResponse;
+    try {
+        wrongUserResponse = await Worker.fetch(new Request(
+            "https://mg.test/admin/auth/callback?code=wrong-user-code&state=" + stateMatch[1], {
+                headers: {
+                    "Cookie": "mg_oauth_state=" + stateMatch[1] +
+                        "; mg_oauth_verifier=" + verifierMatch[1]
+                }
+            }), oauthEnv);
+    } finally {
+        globalThis.fetch = realFetch;
+    }
+    ok(wrongUserResponse.status === 403,
+        "a valid GitHub login with any other numeric account ID is denied");
+
+    batch = [];
+    for (pi = 0; pi < 10; pi++) batch.push(pi + ",0,5");
+    d = await req(adminHub, "/api/pxput.png?id=123456789&b=" + batch.join(";"));
+    ok(d.h * 64 + d.w === 90, "audited player upload still spends the normal bank");
+    var inspectedPixel = await adminReq(adminHub, "/admin/api/pixel?x=0&y=0", "GET");
+    ok(inspectedPixel.status === 200 && inspectedPixel.body.action &&
+        inspectedPixel.body.action.steamid === "123456789",
+        "pixel inspector attributes a painted coordinate to its Steam32 account");
+    var inspectedActionId = inspectedPixel.body.action.id;
+    var actionDetail = await adminReq(adminHub,
+        "/admin/api/action?id=" + encodeURIComponent(inspectedActionId), "GET");
+    ok(actionDetail.body.pixels.length === 10 && actionDetail.body.revertible === 10 &&
+        actionDetail.body.conflicts === 0,
+        "action preview returns exact current/before/after pixels and safe-undo status");
+    await adminHub.storage.delete("px:o:0");
+    inspectedPixel = await adminReq(adminHub, "/admin/api/pixel?x=0&y=0", "GET");
+    ok(inspectedPixel.body.action && inspectedPixel.body.action.id === inspectedActionId &&
+        (await adminHub.storage.get("px:o:0")) !== undefined,
+        "inspector backfills attribution for pre-index audit actions and caches it");
+
+    var adminCanvasRes = await adminHub.fetch(new Request("https://mg.test/admin/api/canvas", {
+        headers: { "X-MG-Admin-Login": "pixel-owner" }
+    }));
+    var adminCanvasBytes = new Uint8Array(await adminCanvasRes.arrayBuffer());
+    ok(adminCanvasRes.status === 200 &&
+        readU32(adminCanvasBytes, 16) === 512 && readU32(adminCanvasBytes, 20) === 256,
+        "admin canvas is the native 512x256 logical grid, never an 800x400 viewport");
+    var adminCanvasIdat = [];
+    for (po = 8; po + 12 <= adminCanvasBytes.length;) {
+        plen = readU32(adminCanvasBytes, po);
+        ptype = String.fromCharCode(adminCanvasBytes[po + 4], adminCanvasBytes[po + 5],
+            adminCanvasBytes[po + 6], adminCanvasBytes[po + 7]);
+        if (ptype === "IDAT") {
+            adminCanvasIdat.push(Buffer.from(adminCanvasBytes.slice(po + 8, po + 8 + plen)));
+        }
+        po += 12 + plen;
+    }
+    var adminCanvasRaw = zlib.inflateSync(Buffer.concat(adminCanvasIdat));
+    ok(adminCanvasRaw[1] === 6 && adminCanvasRaw[10] === 6 && adminCanvasRaw[11] <= 1,
+        "native admin canvas preserves exact logical pixel boundaries without resampling ghosts");
+
+    var csrfDenied = await adminHub.fetch(new Request("https://mg.test/admin/api/paint", {
+        method: "POST",
+        headers: { "X-MG-Admin-Login": "pixel-owner", "Origin": "https://mg.test" },
+        body: JSON.stringify({ pixels: [{ x: 0, y: 0, color: 6 }] })
+    }));
+    ok(csrfDenied.status === 403, "admin mutation requires the same-origin CSRF header");
+
+    var adminPixels = [{ x: 0, y: 0, color: 6 }];
+    for (pi = 0; pi < 149; pi++) adminPixels.push({ x: pi, y: 1, color: 7 });
+    var adminResult = await adminReq(adminHub, "/admin/api/paint", "POST", { pixels: adminPixels });
+    ok(adminResult.status === 200 && adminResult.body.changed === 150,
+        "admin paints more than the 100-pixel player cap in one unrestricted batch");
+    var playerBankAfterAdmin = await adminHub.storage.get("px:u:123456789");
+    ok(playerBankAfterAdmin.balance === 90, "admin paint does not charge the player's bank");
+
+    var actionList = await adminReq(adminHub,
+        "/admin/api/actions?steamid=123456789&limit=50", "GET");
+    ok(actionList.status === 200 && actionList.body.actions.length === 1 &&
+        actionList.body.actions[0].steamid === "123456789",
+        "admin filters accepted actions by Steam32 ID");
+    var playerActionId = actionList.body.actions[0].id;
+    actionDetail = await adminReq(adminHub,
+        "/admin/api/action?id=" + encodeURIComponent(playerActionId), "GET");
+    ok(actionDetail.body.revertible === 9 && actionDetail.body.conflicts === 1,
+        "safe-undo preview marks a newer overlapping pixel as a conflict");
+    var undoResult = await adminReq(adminHub, "/admin/api/undo", "POST", {
+        actionId: playerActionId, force: false
+    });
+    ok(undoResult.status === 200 && undoResult.body.changed === 9 && undoResult.body.skipped === 1,
+        "safe undo reverts untouched pixels and skips a newer overlapping edit");
+    var adminTile = await adminHub.storage.get("px:t:0");
+    ok(adminTile[0] === 6 && adminTile[1] === 0 && adminTile[32] === 7,
+        "safe undo preserves the newer overlap and restores the other player pixels");
+    inspectedPixel = await adminReq(adminHub, "/admin/api/pixel?x=0&y=0", "GET");
+    ok(inspectedPixel.body.action && inspectedPixel.body.action.actor === "admin",
+        "pixel inspector follows current attribution after an overlapping admin edit");
+    var adminState = await adminReq(adminHub, "/admin/api/state", "GET");
+    ok(adminState.body.painted === 150 && adminState.body.palette.length === 19,
+        "admin state reports the live painted count and shared palette");
+    actionList = await adminReq(adminHub, "/admin/api/actions?limit=50", "GET");
+    var loggedPlayerAction = actionList.body.actions.find(function (a) { return a.actor === "player"; });
+    ok(actionList.body.actions.length === 3 && loggedPlayerAction && loggedPlayerAction.undoneAt > 0,
+        "audit log records player paint, admin paint, and the undo action");
+
+    var banResult = await adminReq(adminHub, "/admin/api/ban", "POST", {
+        steamid: "123456789", reason: "unit test"
+    });
+    ok(banResult.status === 200 && banResult.body.banned === true,
+        "admin can ban a Steam32 account with an audited reason");
+    var banStatus = await adminReq(adminHub, "/admin/api/ban-status?steamid=123456789", "GET");
+    ok(banStatus.body.banned === true && banStatus.body.ban.by === "pixel-owner",
+        "admin ban status returns the stored actor and state");
+    d = await req(adminHub, "/api/pxbank.png?id=123456789");
+    ok(d.w === 5 && d.h === 63, "banned account preflight returns the dedicated ban marker");
+    d = await req(adminHub, "/api/pxversion.png?id=123456789");
+    ok(d.w === 5 && d.h === 63, "banned account cannot continue Pixel Battle polling");
+    d = await req(adminHub, "/api/pxview.png?id=123456789&x=0&y=0&z=16");
+    ok(d.w === 5 && d.h === 63, "banned account cannot fetch Pixel Battle map views");
+    var beforeBlockedUpload = (await adminHub.storage.get("px:t:0"))[2];
+    d = await req(adminHub, "/api/pxput.png?id=123456789&b=" + batch.join(";"));
+    ok(d.w === 5 && d.h === 63 &&
+        (await adminHub.storage.get("px:t:0"))[2] === beforeBlockedUpload,
+        "server rejects banned uploads before changing any canvas state");
+    adminState = await adminReq(adminHub, "/admin/api/state", "GET");
+    ok(adminState.body.bans === 1, "admin state reports the live ban count");
+    var unbanResult = await adminReq(adminHub, "/admin/api/unban", "POST", {
+        steamid: "123456789"
+    });
+    d = await req(adminHub, "/api/pxbank.png?id=123456789");
+    ok(unbanResult.body.banned === false && d.h !== 63,
+        "admin can unban the account and restore server access");
+
+    var ownerHub = new Hub({ storage: new FakeStorage() });
+    var ownerBatchA = [], ownerBatchB = [];
+    for (pi = 0; pi < 10; pi++) {
+        ownerBatchA.push(pi + ",0,5");
+        ownerBatchB.push(pi + ",0,6");
+    }
+    await req(ownerHub, "/api/pxput.png?id=11111111&b=" + ownerBatchA.join(";"));
+    await req(ownerHub, "/api/pxput.png?id=22222222&b=" + ownerBatchB.join(";"));
+    var ownerActions = await adminReq(ownerHub,
+        "/admin/api/actions?steamid=22222222&limit=10", "GET");
+    await adminReq(ownerHub, "/admin/api/undo", "POST", {
+        actionId: ownerActions.body.actions[0].id, force: false
+    });
+    var restoredOwner = await adminReq(ownerHub, "/admin/api/pixel?x=0&y=0", "GET");
+    ok(restoredOwner.body.color === 5 && restoredOwner.body.action &&
+        restoredOwner.body.action.steamid === "11111111",
+        "undo restores both the previous colour and the previous pixel owner");
+
     d = await req(hub, "/api/create.png?game=1");                  // no token
     ok(d.w === 9 && d.h === 3, "create with NO token → (9,3) bad-token");
     d = await req(hub, "/api/create.png?game=1&tok=short");        // 5 chars < 8

@@ -683,15 +683,66 @@
             var pixelRow = $.CreatePanel("Panel", detailPanel, "");
             pixelRow.AddClass("mg-btn-row");
             var pixelBtn = $.CreatePanel("Button", pixelRow, "");
-            pixelBtn.AddClass("mg-btn"); pixelBtn.AddClass("mg-btn-primary"); pixelBtn.AddClass("mg-btn-solo");
-            var pixelLbl = $.CreatePanel("Label", pixelBtn, ""); pixelLbl.text = "OPEN WORLD MAP";
-            pixelBtn.SetPanelEvent("onactivate", function () {
-                renderGame(7, 0, true, false, {});
-            });
+            pixelBtn.AddClass("mg-btn"); pixelBtn.AddClass("mg-btn-inert"); pixelBtn.AddClass("mg-btn-solo");
+            var pixelLbl = $.CreatePanel("Label", pixelBtn, ""); pixelLbl.text = "CHECKING ACCESS…";
 
             var pixelCap = $.CreatePanel("Label", detailPanel, "");
             pixelCap.AddClass("mg-caption");
-            pixelCap.text = "100 stored pixels · +1 every 30 seconds · minimum upload: 10";
+            pixelCap.text = "Checking this Steam account before loading the shared canvas.";
+            if ($.MG.PixelBattle && $.MG.PixelBattle.checkAccess) {
+                $.MG.PixelBattle.checkAccess(function (result) {
+                    if (!pixelBtn || !pixelBtn.IsValid || !pixelBtn.IsValid()) return;
+                    if (result.status === "banned") {
+                        pixelBtn.RemoveClass("mg-btn-inert");
+                        pixelBtn.AddClass("mg-btn-banned");
+                        pixelLbl.text = "YOU ARE BANNED";
+                        pixelCap.text = "Pixel Battle is blocked for this Steam account.";
+                        return;
+                    }
+                    if (result.status !== "allowed") {
+                        pixelLbl.text = "ACCESS UNAVAILABLE";
+                        pixelCap.text = "Could not verify your Steam account. Reopen this game card to retry.";
+                        return;
+                    }
+                    pixelBtn.RemoveClass("mg-btn-inert");
+                    pixelBtn.AddClass("mg-btn-primary");
+                    pixelLbl.text = "OPEN WORLD MAP";
+                    pixelCap.text = "100 stored pixels · +1 every 30 seconds · minimum upload: 10";
+                    pixelBtn.SetPanelEvent("onactivate", function () {
+                        renderGame(7, 0, true, false, {});
+                    });
+                });
+            } else {
+                pixelLbl.text = "ACCESS UNAVAILABLE";
+                pixelCap.text = "Pixel Battle access check is not loaded.";
+            }
+            fadeInDetail();
+            return;
+        }
+
+        // Wordle is intentionally offline and self-contained. It has no room, bot,
+        // matchmaking, or Worker traffic, so mount it directly like Pixel Battle.
+        if (g.id === 8) {
+            var wordleNote = $.CreatePanel("Label", detailPanel, "");
+            wordleNote.AddClass("mg-caption");
+            wordleNote.text = "Six tries. Green is exact, gold is elsewhere, dark is absent.";
+
+            var wordleSpacer = $.CreatePanel("Panel", detailPanel, "");
+            wordleSpacer.AddClass("mg-pixel-detail-spacer");
+
+            var wordleRow = $.CreatePanel("Panel", detailPanel, "");
+            wordleRow.AddClass("mg-btn-row");
+            var wordleBtn = $.CreatePanel("Button", wordleRow, "");
+            wordleBtn.AddClass("mg-btn"); wordleBtn.AddClass("mg-btn-primary"); wordleBtn.AddClass("mg-btn-solo");
+            var wordleLbl = $.CreatePanel("Label", wordleBtn, ""); wordleLbl.text = "PLAY WORDLE";
+            wordleBtn.SetPanelEvent("onactivate", function () {
+                // `bot=true` selects the existing local Play Again flow; Wordle has no bot.
+                renderGame(8, 0, true, true, {});
+            });
+
+            var wordleCap = $.CreatePanel("Label", detailPanel, "");
+            wordleCap.AddClass("mg-caption");
+            wordleCap.text = "Offline · no account or server required";
             fadeInDetail();
             return;
         }
@@ -1241,7 +1292,7 @@
         cleanupCurrentView(false);
         view = "game";
         var g = MG.Games.byId(gameId);
-        setTitle((g ? (g.short || g.name) : "Game") + (bot ? " (bot)" : ""));
+        setTitle((g ? (g.short || g.name) : "Game") + (bot && gameId !== 8 ? " (bot)" : ""));
         clearBody();
         rematchPollToken++;   // invalidate any handshake from the previous game
 

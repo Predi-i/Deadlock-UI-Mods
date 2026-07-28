@@ -473,6 +473,14 @@
 .mg-btn-primary Label { color: #f4f8ff !important; }
 .mg-btn-primary:hover { background-color: #5e93de; border-color: #7aa8e8; brightness: 1.05; }
 .mg-btn-primary:active { background-color: #3f6fb8; brightness: 1.0; }
+.mg-btn-banned,
+.mg-btn-banned:hover,
+.mg-btn-banned:active {
+    background-color: #671f29;
+    border: 1px solid #d94b5b;
+    brightness: 1.0;
+}
+.mg-btn-banned Label { color: #ffd9dc !important; }
 .mg-btn-quick { height: 58px; }
 .mg-btn-quick Label { font-size: 19px !important; letter-spacing: 2px; }
 /* Inert CTA — shown for poker's QUICK MATCH (poker has no public matchmaking, but a game with no
@@ -1003,14 +1011,14 @@
     height: 280px;                       /* fills the track; slides DOWN by its own height to empty */
     border-radius: 5px;
     background-color: #4b8f5a;           /* healthy green, matches the win tint */
-    transition-property: opacity, background-color;
-    transition-duration: 0.15s, 0.3s;
-    transition-timing-function: ease-out, ease-out;
+    transition-property: background-color;
+    transition-duration: 0.3s;
+    transition-timing-function: ease-out;
 }
 .mg-tt-fill.mg-tt-anim {                 /* armed: the 25s linear drain lives here, not on the base */
-    transition-property: transform, opacity, background-color;
-    transition-duration: 25s, 0.15s, 0.3s;   /* 25s MUST match TURN_SECS */
-    transition-timing-function: linear, ease-out, ease-out;
+    transition-property: transform, background-color;
+    transition-duration: 25s, 0.3s;      /* 25s MUST match TURN_SECS */
+    transition-timing-function: linear, ease-out;
 }
 .mg-tt-fill.mg-tt-low { background-color: #e8b64c; }   /* ≤10s — amber, mirrors the clock-low tint */
 .mg-tt-fill.mg-tt-crit { background-color: #d15b5b; }  /* ≤5s — red, mirrors the clock-flagged tint */
@@ -1749,6 +1757,29 @@
     horizontal-align: center;
     flow-children: down;
 }
+.mg-px-banned {
+    width: 800px;
+    height: 400px;
+    background-color: #250e13;
+    border: 2px solid #b83d4b;
+    flow-children: down;
+    padding-top: 128px;
+}
+.mg-px-ban-title {
+    horizontal-align: center;
+    font-family: radiance;
+    font-size: 42px;
+    font-weight: bold;
+    letter-spacing: 5px;
+    color: #ff6673;
+}
+.mg-px-ban-copy {
+    horizontal-align: center;
+    margin-top: 18px;
+    font-family: radiance;
+    font-size: 19px;
+    color: #e7b4b9;
+}
 .mg-px-topbar {
     width: 800px;
     height: 28px;
@@ -1989,6 +2020,75 @@
     font-size: 13px;
     color: #71869a;
     margin-top: 2px;
+}
+
+/* ── Wordle (offline, controller in mg_wordle.js) ─────────────────────────── */
+.mg-wordle {
+    width: 330px;
+    horizontal-align: center;
+    flow-children: down;
+}
+/* flow:none wrap so the board and the hidden TextEntry overlap (Panorama has no
+   position:absolute). The entry sits on top and catches clicks → keyboard focus. */
+.mg-wordle-boardwrap {
+    width: 330px;
+    height: 348px;
+    flow-children: none;
+}
+.mg-wordle-board {
+    width: 330px;
+    height: 348px;
+    flow-children: down;
+}
+/* Invisible TextEntry that captures physical keyboard input. Covers the whole board so
+   any click gives it focus. opacity:0 hides the caret/text; the tiles show the letters. */
+.mg-wordle-input {
+    width: 330px;
+    height: 348px;
+    opacity: 0;
+    background-color: #00000000;
+    border: 0px solid #00000000;
+}
+.mg-wordle-row {
+    width: 330px;
+    height: 58px;
+    flow-children: right;
+}
+.mg-wordle-tile {
+    width: 54px;
+    height: 54px;
+    margin: 2px 6px 2px 6px;
+    background-color: #10161f;
+    border: 2px solid #334155;
+    flow-children: none;
+    transition-property: background-color, border-color, brightness;
+    transition-duration: 0.15s;
+    transition-timing-function: ease-out;
+}
+.mg-wordle-filled {
+    border-color: #718096;
+    brightness: 1.16;
+}
+.mg-wordle-letter {
+    horizontal-align: center;
+    vertical-align: center;
+    text-align: center;
+    font-family: radiance;
+    font-weight: bold;
+    font-size: 30px;
+    color: #edf2f7;
+}
+.mg-wordle-absent {
+    background-color: #29313c;
+    border-color: #29313c;
+}
+.mg-wordle-present {
+    background-color: #b59f3b;
+    border-color: #d0ba50;
+}
+.mg-wordle-correct {
+    background-color: #538d4e;
+    border-color: #6ba965;
 }
 
 

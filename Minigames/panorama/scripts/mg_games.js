@@ -245,9 +245,9 @@
             fill.AddClass("mg-tt-anim");
             // The drain duration lives in CSS (.mg-tt-fill.mg-tt-anim = 25s) but callers may pass a
             // shorter budget (durak's 10s Bito window). Override the transform leg inline so the slide
-            // matches curSecs; opacity/colour legs keep their CSS timings. Order MUST match the CSS
-            // transition-property list (transform, opacity, background-color).
-            fill.style.transitionDuration = curSecs + "s, 0.15s, 0.3s";
+            // matches curSecs; the colour leg keeps its CSS timing. Order MUST match the CSS
+            // transition-property list (transform, background-color).
+            fill.style.transitionDuration = curSecs + "s, 0.3s";
             fill.style.transform = "translate3d(0px, " + TRACK_H + "px, 0px)";   // drain top→bottom over curSecs
         }
 

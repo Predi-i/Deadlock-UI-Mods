@@ -24,6 +24,7 @@
     var MAP_URL = "s2r://panorama/images/pixelbattle/world_map.vtex";
     var PALETTE = MG.PixelBattlePalette || [];
     var PALETTE_NAMES = MG.PixelBattlePaletteNames || [];
+    var accessCache = { accountId: "", status: "unknown", balance: BANK_CAP, callbacks: [] };
 
     function validAccountId(value) {
         var text = value === undefined || value === null ? "" : String(value).trim();
@@ -66,6 +67,70 @@
         }
     }
 
+    function finishAccess(status, accountId, balance) {
+        accessCache.accountId = accountId || accessCache.accountId;
+        accessCache.status = status;
+        if (balance !== undefined) accessCache.balance = balance;
+        var callbacks = accessCache.callbacks.slice();
+        accessCache.callbacks = [];
+        for (var i = 0; i < callbacks.length; i++) {
+            callbacks[i]({
+                status: accessCache.status,
+                accountId: accessCache.accountId,
+                balance: accessCache.balance
+            });
+        }
+    }
+
+    function checkAccess(callback, attempt) {
+        attempt = attempt || 0;
+        var accountId = findAccountId();
+        if (!accountId) {
+            if (attempt < 10) {
+                $.Schedule(1, function () { checkAccess(callback, attempt + 1); });
+            } else {
+                callback({ status: "error", accountId: "", balance: BANK_CAP });
+            }
+            return;
+        }
+        if (accessCache.accountId && accessCache.accountId !== accountId) {
+            accessCache = { accountId: accountId, status: "unknown", balance: BANK_CAP, callbacks: [] };
+        }
+        if (accessCache.status === "allowed" || accessCache.status === "banned") {
+            callback({
+                status: accessCache.status,
+                accountId: accountId,
+                balance: accessCache.balance
+            });
+            return;
+        }
+        accessCache.accountId = accountId;
+        accessCache.callbacks.push(callback);
+        if (accessCache.status === "checking") return;
+        accessCache.status = "checking";
+        MG.Net.request("/api/pxbank", { id: accountId }, function (w, h) {
+            if (h === 63 && w === 5) {
+                finishAccess("banned", accountId, 0);
+                return;
+            }
+            var value = h * 64 + w;
+            if (h !== 63 && value >= 0 && value <= BANK_CAP) {
+                finishAccess("allowed", accountId, value);
+                return;
+            }
+            finishAccess("error", accountId, BANK_CAP);
+        }, function () {
+            finishAccess("error", accountId, BANK_CAP);
+        });
+    }
+
+    function markBanned(accountId) {
+        if (!accountId || accessCache.accountId === accountId) finishAccess("banned", accountId, 0);
+    }
+
+    MG.PixelBattle.checkAccess = checkAccess;
+    MG.PixelBattle.markBanned = markBanned;
+
     function addLabel(parent, cssClass, text) {
         var label = $.CreatePanel("Label", parent, "");
         label.AddClass(cssClass);
@@ -97,6 +162,8 @@
         var pendingOrder = [];
         var pendingPanels = {};
         var accountId = "";
+        var accessReady = false;
+        var banned = false;
         var balance = BANK_CAP;
         var balanceAt = Date.now();
         var sending = false;
@@ -253,6 +320,7 @@
         }
 
         function updateView() {
+            if (!accessReady || banned) return;
             clampOrigin();
             var stageW = 800 * zoom;
             var stageH = 400 * zoom;
@@ -437,7 +505,7 @@
         }
 
         function uploadPending() {
-            if (sending || pendingOrder.length < MIN_BATCH) return;
+            if (banned || sending || pendingOrder.length < MIN_BATCH) return;
             if (!accountId) {
                 outerStatus("Steam account id is not available yet.");
                 return;
@@ -448,7 +516,7 @@
         }
 
         function sendNextBatch() {
-            if (destroyed) return;
+            if (destroyed || banned) return;
             var remaining = pendingOrder.length;
             if (remaining === 0) {
                 sending = false;
@@ -478,13 +546,18 @@
                 if (destroyed) return;
                 var result = decodeBank(w, h);
                 if (!result.ok) {
+                    if (result.reason === 5) {
+                        showBanned();
+                        return;
+                    }
                     sending = false;
                     updateStats();
                     var errors = {
                         1: "Steam account id was rejected.",
                         2: "The server rejected the pixel batch.",
                         3: "The server says there are not enough pixels available.",
-                        4: "Too many uploads. Wait a moment."
+                        4: "Too many uploads. Wait a moment.",
+                        5: "You are banned from Pixel Battle."
                     };
                     outerStatus(errors[result.reason] || "Pixel upload failed.");
                     requestBank();
@@ -503,11 +576,12 @@
         }
 
         function requestBank() {
-            if (!accountId || destroyed) return;
+            if (!accountId || destroyed || banned) return;
             MG.Net.request("/api/pxbank", { id: accountId }, function (w, h) {
                 if (destroyed) return;
                 var result = decodeBank(w, h);
                 if (result.ok) setServerBalance(result.balance);
+                else if (result.reason === 5) showBanned();
             }, function () {
                 if (!destroyed) outerStatus("Using the local pixel estimate until the server responds.");
             });
@@ -519,24 +593,29 @@
         }
 
         function refreshCrispView() {
-            if (destroyed) return;
+            if (destroyed || banned || !accountId) return;
             var version = knownVersion < 0 ? 0 : knownVersion;
             try {
                 crispImage.SetImage(MG.Net.getBaseUrl() + "/api/pxview.png?x=" + viewX +
-                    "&y=" + viewY + "&z=" + zoom + "&v=" + version + "&rnd=" + Math.random());
+                    "&y=" + viewY + "&z=" + zoom + "&id=" + accountId +
+                    "&v=" + version + "&rnd=" + Math.random());
             } catch (e) {
                 outerStatus("Couldn't load the pixel-perfect map viewport.");
             }
         }
 
         function pollVersion() {
-            if (destroyed) return;
+            if (destroyed || banned || !accountId) return;
             if (sending) {
                 scheduleVersionPoll(POLL_ACTIVE_S);
                 return;
             }
-            MG.Net.request("/api/pxversion", null, function (w, h) {
+            MG.Net.request("/api/pxversion", { id: accountId }, function (w, h) {
                 if (destroyed) return;
+                if (h === 63 && w === 5) {
+                    showBanned();
+                    return;
+                }
                 var version = h * 64 + w;
                 var firstVersion = knownVersion < 0;
                 if (version !== knownVersion) {
@@ -560,7 +639,7 @@
         function scheduleVersionPoll(delay) {
             var generation = pollGeneration;
             $.Schedule(delay, function () {
-                if (!destroyed && generation === pollGeneration) pollVersion();
+                if (!destroyed && !banned && generation === pollGeneration) pollVersion();
             });
         }
 
@@ -590,34 +669,49 @@
             }
         }
 
-        function findIdentity(attempt) {
-            if (destroyed || accountId) return;
-            accountId = findAccountId();
-            if (accountId) {
-                requestBank();
-                updateStats();
-                return;
-            }
-            if (attempt < 10) {
-                $.Schedule(1, function () { findIdentity(attempt + 1); });
-            } else {
-                outerStatus("Map is viewable, but Steam account id was not found; uploading is disabled.");
-            }
+        function showBanned() {
+            if (destroyed || banned) return;
+            banned = true;
+            accessReady = false;
+            sending = false;
+            pollGeneration++;
+            markBanned(accountId);
+            try { remoteImage.SetImage(""); } catch (e0) {}
+            try { crispImage.SetImage(""); } catch (e1) {}
+            try { root.RemoveAndDeleteChildren(); } catch (e2) {}
+            root.AddClass("mg-px-banned");
+            addLabel(root, "mg-px-ban-title", "YOU ARE BANNED");
+            addLabel(root, "mg-px-ban-copy", "Pixel Battle is unavailable for this Steam account.");
+            outerStatus("You are banned from Pixel Battle.");
         }
 
         function tickStats() {
-            if (destroyed) return;
+            if (destroyed || banned) return;
             updateStats();
             $.Schedule(1, tickStats);
         }
 
         updatePalette();
-        updateView();
         updateStats();
-        findIdentity(0);
-        pollVersion();
         tickStats();
-        outerStatus("Shared world loaded. Click the map to zoom in.");
+        outerStatus("Checking Pixel Battle access…");
+        checkAccess(function (result) {
+            if (destroyed) return;
+            accountId = result.accountId || "";
+            if (result.status === "banned") {
+                showBanned();
+                return;
+            }
+            if (result.status !== "allowed") {
+                outerStatus("Steam account id or Pixel Battle access could not be verified.");
+                return;
+            }
+            accessReady = true;
+            setServerBalance(result.balance);
+            updateView();
+            pollVersion();
+            outerStatus("Shared world loaded. Click the map to zoom in.");
+        });
 
         return {
             destroy: function () {

@@ -43,6 +43,8 @@ const NODE_GLOBALS = {
     URLSearchParams: "readonly",
     TextEncoder: "readonly",
     TextDecoder: "readonly",
+    fetch: "readonly",
+    atob: "readonly",
 };
 
 // ES built-ins used across BOTH environments. Listed explicitly so the config doesn't depend
@@ -65,6 +67,7 @@ const SHARED_GLOBALS = {
     Set: "readonly",
     Function: "readonly",
     Uint8Array: "readonly",
+    Uint32Array: "readonly",
     parseInt: "readonly",
     parseFloat: "readonly",
     isFinite: "readonly",
@@ -121,7 +124,7 @@ module.exports = [
     // worker.js is the generated artifact → ignored above. Same Node/Worker globals, but
     // sourceType:module so the top-level `export` parses.
     {
-        files: ["server/worker.core.js"],
+        files: ["server/worker.core.js", "server/admin_panel.js"],
         languageOptions: {
             ecmaVersion: 2021,
             sourceType: "module",

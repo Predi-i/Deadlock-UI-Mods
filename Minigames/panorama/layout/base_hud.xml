@@ -1,7 +1,7 @@
 <!-- Deadlock Minigames — base_hud override. Injects the mod's scripts + styles.
      Load order matters: net → rules/* → mg_games (registry + shared widgets) →
      mg_checkers → mg_ttt → mg_chess → mg_durak → mg_connectfour → mg_poker →
-     mg_pixelbattle → ui. -->
+     mg_pixelbattle → mg_wordle → ui. -->
 <root>
 	<styles>
 		<include src="s2r://panorama/styles/base.vcss_c" />
@@ -25,7 +25,10 @@
 		<include src="s2r://panorama/scripts/mg_poker.vjs_c" />
 		<include src="s2r://panorama/scripts/mg_pixelbattle_palette.generated.vjs_c" />
 		<include src="s2r://panorama/scripts/mg_pixelbattle.vjs_c" />
+		<include src="s2r://panorama/scripts/mg_wordle_words.generated.vjs_c" />
+		<include src="s2r://panorama/scripts/mg_wordle.vjs_c" />
 		<include src="s2r://panorama/scripts/mg_ui.vjs_c" />
+		<include src="s2r://panorama/scripts/buff_reminder.vjs_c" />
 	</scripts>
 	<Panel class="WindowRoot" hittest="false" disallowedstyleflags="hover,descendantfocus">
 		<CitadelHud id="Hud" hittest="false" />

@@ -53,6 +53,69 @@ That's it. Redeploys later are just `npx wrangler deploy` again.
 
 ---
 
+## Private Pixel Battle admin panel
+
+The Worker serves a browser UI at `<URL>/admin`, but it deliberately fails closed until
+GitHub OAuth and four deployment secrets are configured. There is no password, GitHub
+token, allowed login, or secret URL in this repository.
+
+1. Open **GitHub → Settings → Developer settings → OAuth Apps → New OAuth App**. Set:
+
+   - Homepage URL: your Worker URL, for example
+     `https://deadlock-minigames.<your-subdomain>.workers.dev`
+   - Authorization callback URL: `<URL>/admin/auth/callback`
+
+   The callback must match exactly. The app needs no extra OAuth scopes.
+
+2. Find your stable numeric GitHub user ID. One simple way is to open
+   `https://api.github.com/users/<your-login>` and copy the numeric `id` field. The Worker
+   authorizes this ID, not a mutable login or email.
+
+3. Store the OAuth App client ID, client secret, numeric ID, and a new random session-signing
+   secret of at least 32 characters as Worker secrets:
+
+   ```bash
+   cd Minigames/server
+   npx wrangler secret put GITHUB_CLIENT_ID
+   npx wrangler secret put GITHUB_CLIENT_SECRET
+   npx wrangler secret put ADMIN_GITHUB_ID
+   npx wrangler secret put ADMIN_SESSION_SECRET
+   npx wrangler deploy
+   ```
+
+4. Open `<URL>/admin`. The Worker redirects to GitHub, uses OAuth `state` plus PKCE, fetches
+   the authenticated GitHub account, compares its exact numeric ID, discards the short-lived
+   OAuth token, and issues its own eight-hour HttpOnly/Secure HMAC-signed session cookie.
+
+The panel can paint unrestricted batches, inspect accepted actions by Steam32, and undo
+them. A normal undo skips pixels overwritten by newer actions; **Force** is available when
+overwriting those newer pixels is intentional. Admin mutations are also same-origin/CSRF
+checked, and every admin paint/undo is itself audited. **Ban** blocks a Steam32 account at
+the Worker and changes the in-game Pixel Battle button to a red `YOU ARE BANNED` state.
+An already-open client sees the ban on its next version poll and stops all Pixel Battle
+requests. Unbanning takes effect after that player reloads the mod.
+
+Every paint row has an on-demand **Preview**: the editor zooms to its bounds and renders the
+exact safe-undo result, marking newer conflicting pixels red before anything is changed.
+**Inspect pixel** turns the canvas into an attribution tool; clicking a coordinate shows the
+last action, Steam32/admin identity, timestamp, colour, and direct Preview/User actions/Ban
+controls. New uploads update a compact attribution index per touched 32×32 tile. Old audited
+pixels are resolved from the action log on their first inspection and cached.
+
+This metadata does not add Panorama requests or change Pixel Battle polling. It adds at most
+one internal Durable Object attribution read and write per 32×32 tile already touched by an
+accepted upload. Preview and Inspect each make one admin request only when the owner clicks
+them; action-list responses stay small because full pixel details are loaded on demand.
+
+Steam32 is discovered and sent by the Panorama client; it is not a cryptographically
+authenticated Steam identity. A modified client can therefore spoof another Steam32, and
+any request still reaches Cloudflare before the Worker can reject it. Strong protection
+against that requires an external edge gate or a verifiable Steam authentication ticket,
+neither of which Panorama currently provides. The implementation still rejects every banned
+write server-side and makes the normal client stop after its single access preflight.
+
+---
+
 ## Verify it works (in a normal browser)
 
 - `<URL>/api/probe` → a **600×1000** pixel PNG (the client uses it to calibrate swap+scale).

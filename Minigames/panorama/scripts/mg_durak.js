@@ -995,11 +995,32 @@
             }, function () { pendingAct = false; status("Server unavailable."); });
         }
 
+        // ── deal watchdog ─────────────────────────────────────────────────────────────
+        // "Dealing…" with an empty felt that never resolves is an intermittent report. The
+        // dealer emits TRUMP/OPEN/DRAW the instant the host starts, so if we've applied ZERO
+        // events (logSeq === 0) several seconds in, our poll chain has almost certainly stalled
+        // (mg_net's one-at-a-time image queue can wedge a pending load at dims 0 — see
+        // ARCHITECTURE §5 "Request discipline"). Re-kick startPolling(): bumping pollGen abandons
+        // the stuck chain and starts a fresh request from logSeq, which recovers the deal. Give
+        // up gracefully after a few tries rather than spinning forever. Cheap: only runs until
+        // the first event lands (logSeq > 0), then never re-arms.
+        function dealWatchdog(tries) {
+            if (destroyed || gameOver || !online) return;
+            if (logSeq > 0) return;                     // deal (or any event) arrived — nothing to heal
+            if (tries >= 6) { status("Still dealing… check your connection or try again."); return; }
+            $.Schedule(3.0, function () {
+                if (destroyed || gameOver || logSeq > 0) return;
+                startPolling();                         // abandon any wedged chain, retry from logSeq
+                dealWatchdog(tries + 1);
+            });
+        }
+
         // boot
         render();
         if (online) {
             status("Dealing…");
             startPolling();
+            dealWatchdog(0);
         } else if (myTurn()) status(promptFor());
         else if (isBot) { status(nameOf(actionActor()) + " is thinking..."); $.Schedule(0.55, botTurn); }
         else status(nameOf(actionActor()) + "'s turn...");
