@@ -117,10 +117,12 @@ server/                    Cloudflare Worker (dev-only, NOT packed into the VPK)
   wrangler.jsonc, README.md
 tools/                     dev-only Node test harnesses + build helpers (NOT packed)
   build_worker.js          concatenate the 6 rules/*.js + worker.core.js → server/worker.js
+                           (`--check` verifies the committed worker.js is in sync; first step of `npm test`)
+  build_pixelbattle_map.js generate the Pixel Battle land mask from the source map image
+  build_wordle_words.js    generate the Wordle answer + guess word lists
   gen_soundevents.js       generate the soundevents manifest consumed by mg_sound.js
-  strip_comments.js        strip comments from scripts for a Public (non-dev) build
   svg_to_deck.py           compile card SVGs → the deck/<S><R> art
-  mg_rules_test.js         checkers rules: captures, flying kings, full bot game
+  mg_rules_test.js         checkers rules: captures, flying kings, draws, full bot game
   mg_wordle_test.js        Wordle duplicate-letter scoring.
   mg_chess_test.js         chess rules: perft, castling, en passant, promotion, mate/stalemate
   mg_connectfour_test.js   connect-four rules + bot
@@ -128,7 +130,17 @@ tools/                     dev-only Node test harnesses + build helpers (NOT pac
   mg_poker_test.js         poker rules: hand ranking, betting rounds, showdown, bot
   mg_server_test.js        worker: matchmaking, seat tokens, per-move validation, concurrent lobbies
   mg_parity_test.js        client predictor vs server authority give identical legal moves
+  mg_pixelbattle_palette_test.js  palette distance sanity
+  mg_update_marker_test.js        update-marker image decoding
+  mg_simulate_resolutions.js      side-channel decode across 720p–8K
 ```
+
+A Public (non-dev) build ships without comments. That is NOT a step in this repo: run
+`tools/build_mod_strip_comments.ps1` (or the .bat) from the **Deadlock-UI-Mods** root — it copies
+the mod to a `<Mod>-stripped` staging folder, strips comments from the copy, re-parses every
+stripped .js and aborts if any of them broke, then hands the copy to `build_mod.ps1`. The working
+tree is never modified. It replaced `Minigames/tools/strip_comments.js`, which had to be pointed
+at an already-built tree by hand and silently corrupted a regex literal following a keyword.
 
 The `<include>` order in `base_hud.xml` is net → **rules/checkers, rules/ttt, rules/chess**
 → games → durak → ui: the shared engines must populate `$.MG.Rules` before the controllers
