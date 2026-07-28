@@ -123,6 +123,27 @@ async function main() {
     d = await reqRaw(hub, "/api/probe.png");   // probe is sent LITERALLY (calibration reference)
     ok(d.w === 600 && d.h === 1000, "probe = (600,1000)");
 
+    // The probe is state-independent and identical for every caller, so the top-level Worker now
+    // answers it from a cached buffer WITHOUT touching the Durable Object — it used to bill a DO
+    // request and re-encode 601 KB per call, on the same free-tier bucket the games spend.
+    (async function () {
+        var reachedDO = 0;
+        var fakeEnv = { HUB: { idFromName: function () { return 1; },
+            get: function () { return { fetch: function () { reachedDO++; return new Response("", { status: 200 }); } }; } } };
+        var pr = await Worker.fetch(new Request("https://mg.test/api/probe.png"), fakeEnv);
+        var pb = new Uint8Array(await pr.arrayBuffer());
+        ok(readU32(pb, 16) === 600 && readU32(pb, 20) === 1000, "probe via the Worker is still (600,1000)");
+        ok(reachedDO === 0, "probe never reaches the Durable Object");
+        var pr2 = await Worker.fetch(new Request("https://mg.test/api/probe.png"), fakeEnv);
+        var pb2 = new Uint8Array(await pr2.arrayBuffer());
+        ok(pb2.length === pb.length, "the cached probe buffer is reused byte-for-byte");
+        await Worker.fetch(new Request("https://mg.test/api/ping.png"), fakeEnv);
+        ok(reachedDO === 0, "ping never reaches the Durable Object either");
+        // Anything stateful must still go through.
+        await Worker.fetch(new Request("https://mg.test/api/status.png?code=1"), fakeEnv);
+        ok(reachedDO === 1, "a stateful route still routes to the Durable Object");
+    })();
+
     // ── Pixel Battle: transparent shared layer + authoritative bank/batching ──
     var pxRes = await hub.fetch(new Request("https://mg.test/api/pxcanvas.png"));
     var pxBytes = new Uint8Array(await pxRes.arrayBuffer());
@@ -167,6 +188,34 @@ async function main() {
     ok(d.h * 64 + d.w === 90, "10-pixel upload spends 10 from the server bank");
     d = await req(hub, "/api/pxversion.png");
     ok(d.w === 1 && d.h === 0, "accepted upload advances the shared canvas version");
+
+    // The version rides one 2-int reply as (lo6, hi6), and the client reads h === 63 as an error —
+    // (5,63) specifically as "you are banned". A 12-bit version put 4032..4095 into that band, so a
+    // canvas painted 4037 times encoded bit-for-bit like the ban sentinel and showed EVERY client a
+    // false ban. Walk the wrap point and assert no version can ever land in the reserved band.
+    (function () {
+        var collide = 0, banLike = 0;
+        for (var v = 0; v < 4032; v++) {
+            var w = v & 63, h = (v >> 6) & 63;
+            if (h === 63) collide++;
+            if (w === 5 && h === 63) banLike++;
+        }
+        ok(collide === 0, "pixel version never encodes into the reserved h=63 error band");
+        ok(banLike === 0, "pixel version can never encode as the (5,63) ban sentinel");
+    })();
+    // Walk the wrap point on a THROWAWAY hub so the shared canvas/bank state the later asserts
+    // depend on is untouched.
+    (async function () {
+        var vhub = new Hub({ storage: new FakeStorage() });
+        await vhub.storage.put("px:version", 4031);       // one step before the wrap
+        var vd = await req(vhub, "/api/pxversion.png");
+        ok(vd.h !== 63, "pixel version at the top of its range is not in the error band");
+        var wrapBatch = [];
+        for (var wi = 0; wi < 10; wi++) wrapBatch.push(wi + ",0,5");
+        await req(vhub, "/api/pxput.png?id=123456789&b=" + wrapBatch.join(";"));
+        vd = await req(vhub, "/api/pxversion.png");
+        ok(vd.w === 0 && vd.h === 0, "pixel version wraps to 0 instead of entering the error band");
+    })();
 
     pxRes = await hub.fetch(new Request("https://mg.test/api/pxcanvas.png?v=1"));
     pxBytes = new Uint8Array(await pxRes.arrayBuffer());
@@ -1419,6 +1468,28 @@ async function main() {
         // …and the intended path still works: a seeker matches through mquick itself.
         var ms = await req(mhub, "/api/mquick.png?games=2,4&tok=MQSEEK001");
         ok(ms.w > 0 && ms.w !== 9, "mquick: a real seeker still matches into the lobby");
+
+        // J) A token can never occupy both seats of one lobby. seatOf returns the FIRST match, so
+        // self-matching made seat 1 unreachable: every move resolved to seat 0 and the game wedged
+        // after the first one. Reachable honestly by double-clicking Quick Match (cancel then
+        // refuses to free the abandoned lobby because players is already 2).
+        var xhub = new Hub({ storage: new FakeStorage() });
+        var q1 = await req(xhub, "/api/quick.png?game=2&tok=SELFMTCH");
+        var q2 = await req(xhub, "/api/quick.png?game=2&tok=SELFMTCH");
+        ok(decCode(q1) !== decCode(q2), "self-match: a second quick with the same token does NOT join its own lobby");
+        ok((await req(xhub, "/api/status.png?code=" + decCode(q1))).w === 1, "self-match: the first lobby is still waiting for a real opponent");
+        // A different token matches into whichever lobby currently owns the queue slot (the second
+        // host overwrote it), but it must be a REAL match: two players in one lobby.
+        var q3 = await req(xhub, "/api/quick.png?game=2&tok=OTHERPLR");
+        ok((await req(xhub, "/api/status.png?code=" + decCode(q3))).w === 2, "self-match: a DIFFERENT token still matches into a waiting lobby");
+        // Typing your own private code is idempotent, not a second seat.
+        var chub = new Hub({ storage: new FakeStorage() });
+        var cc = await req(chub, "/api/create.png?game=2&tok=SELFJOIN");
+        var ccode = decCode(cc);
+        var selfJoin = await req(chub, "/api/join.png?code=" + ccode + "&tok=SELFJOIN");
+        ok(selfJoin.w === 2, "self-join: the host typing its own code gets an idempotent reply");
+        ok((await req(chub, "/api/status.png?code=" + ccode)).w === 1, "self-join: the lobby still has ONE player");
+        ok((await req(chub, "/api/join.png?code=" + ccode + "&tok=REALJOIN")).w === 2, "self-join: a real joiner can still take seat 1");
 
         // H) Rematch on a 3-seat table needs EVERY seat, not just seats 0 and 1. Two players used
         // to be able to reset the game from under the third: state was re-initialised and the

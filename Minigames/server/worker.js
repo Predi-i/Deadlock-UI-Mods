@@ -2453,12 +2453,27 @@ export default {
     } else if (!url.pathname.startsWith("/api/")) {
       return new Response("Deadlock Minigames relay OK", { status: 200 });
     }
+    // /api/probe is the calibration reference: a literal 600x1000 all-zero PNG, identical for every
+    // caller and independent of ALL state. It was going through the Durable Object like every other
+    // route, which billed a DO request on top of the Worker request and re-encoded 601 KB from
+    // scratch each time (the shared free-tier bucket covers both). Serve it here from a cached
+    // buffer instead. /api/ping is a fixed (1,1) for the same reason.
+    if (url.pathname === "/api/probe" || url.pathname === "/api/probe.png") return probeResponse();
+    if (url.pathname === "/api/ping" || url.pathname === "/api/ping.png") return d(1, 1);
     // All game state lives in a single strongly-consistent Durable Object.
     const id = env.HUB.idFromName("hub");
     const stub = env.HUB.get(id);
     return stub.fetch(request);
   },
 };
+
+// The probe PNG never changes, so encode it once per isolate. It is the single largest response
+// the relay emits (601113 bytes), and it used to be rebuilt byte by byte on every call.
+let PROBE_BYTES = null;
+function probeResponse() {
+  if (!PROBE_BYTES) PROBE_BYTES = pngBytes(600, 1000);
+  return pngResponse(PROBE_BYTES);
+}
 
 const ADMIN_SESSION_COOKIE = "mg_admin_session";
 const ADMIN_OAUTH_STATE_COOKIE = "mg_oauth_state";
@@ -2838,6 +2853,12 @@ export class Hub {
           const waitCode = await this.storage.get(queues[i]);
           if (!waitCode) continue;
           const w = await this.storage.get("l:" + waitCode);
+          // Never seat a token into a lobby it already holds a seat in. Two /api/quick calls with
+          // the same token used to seat the caller as its own opponent: seatOf returns the FIRST
+          // match, so seat 1 became unreachable, every move was attributed to seat 0, and the game
+          // wedged after the first move. Reachable honestly by double-clicking Quick Match, since
+          // cancel then refuses to free the abandoned lobby (players is already 2).
+          if (w && seatOf(w, q.get("tok")) >= 0) continue;
           const isMulti = w && w.game === 0 && w.games && w.games.indexOf(game) >= 0;
           if (w && w.pub && w.players < 2 && (w.game === game || isMulti) && preferencesMatch(w, game, rawTc, rawCv)) {
             await this.finalizeJoin(waitCode, w, q.get("tok"), game, resolveMatchOptions(w, game, rawTc, rawCv));
@@ -2892,6 +2913,7 @@ export class Hub {
                 const waitCode = await this.storage.get(key);
                 if (!waitCode) continue;
                 const w = await this.storage.get("l:" + waitCode);
+                if (w && seatOf(w, q.get("tok")) >= 0) continue;   // never match a token to itself (see /api/quick)
                 const isMulti = w && w.game === 0 && w.games && w.games.indexOf(g) >= 0;
                 if (w && w.pub && w.players < 2 && (w.game === g || isMulti) && preferencesMatch(w, g, rawTc, rawCv)) {
                   await this.finalizeJoin(waitCode, w, q.get("tok"), g, resolveMatchOptions(w, g, rawTc, rawCv));
@@ -3001,6 +3023,10 @@ export class Hub {
         // waitForMultiMatch requires game > 0 so it span forever, /api/match answered (9,1), every
         // move answered (9,2), and the pubq:m:* queue keys stayed pinned to a dead code.
         if (lobby.cap || lobby.game === 6 || !lobby.game) return d(20, 1); // not a generic 2-seat lobby → "missing"
+        // Already seated here? Answer idempotently instead of taking the second seat as well —
+        // pjoin/djoin have always done this. Without it a host could type its OWN code and become
+        // its own opponent, after which seatOf resolved every move to seat 0 and the game wedged.
+        if (seatOf(lobby, q.get("tok")) >= 0) return d(lobby.game, tcIndex(lobby.tc || 0) + 1);
         if (lobby.players >= 2) return d(21, 1); // full
 
         lobby.players = 2;
@@ -3473,6 +3499,10 @@ export class Hub {
     const all = await this.storage.list({ prefix: "l:" });
     for (const [key, lobby] of all) {
       if (lobby && lobby.t && now - lobby.t > 30 * 60000) {
+        // Drop the public-queue slots BEFORE the lobby itself. Sweeping the lobby alone left the
+        // pubq:q/pubq:m keys pointing at a dead code, and every later seeker paid a storage.get
+        // per stranded key before falling through to hosting its own lobby.
+        await this.clearQueuesFor(lobby, key.slice(2));
         await this.storage.delete(key);
       }
     }
@@ -3540,20 +3570,30 @@ const RL_WINDOW_MS = 10000;   // sliding window length
 const RL_MAX_HITS = 60;       // max FORMATION/probe hits per IP per window
 const RL_MAX_IPS = 5000;      // cap on tracked IPs (memory bound)
 // Hard ceiling on a lobby's monotonic event array (moves[] for the 2-int games, log[] for
-// poker). poll/plog `since` indexes these directly, so they can NEVER be truncated — instead
-// we refuse to grow them past a size no honest game reaches (a full chess/checkers game is
-// well under 600 plies; a 200-chip poker table ends in far fewer events). Only two colluding
-// seats deliberately bloating the single DO's storage ever hit it. Reject as illegal past it.
-const MOVE_CAP = 4000;
+// poker, pub[] for durak). poll/plog/dlog `since` indexes these directly, so they can NEVER be
+// truncated — instead we refuse to grow them past a size no honest game reaches (a full
+// chess/checkers game is well under 600 plies; a 200-chip poker table ends in far fewer events).
+// Only two colluding seats deliberately bloating the single DO's storage ever hit it.
+// Sized against the Durable Object's 128 KiB PER-VALUE limit, not just against honest play: at
+// 4000 entries moves[] alone serialises to ~88 KB, and the board, seats, clocks and (for poker)
+// the deck state share that same value — close enough to the real limit that an abuser could
+// still push a lobby into the storage.put exception that makes it answer (9,7) forever. 1200
+// leaves ~26 KB for the log and a 4x margin for everything else.
+const MOVE_CAP = 1200;
 // Routes the limiter guards. Formation (create + every join variant) is the DoS +
-// brute-force-join vector; the existence probes (status/room/proom/droom) are how a
+// brute-force-join vector; the existence probes (status/room/proom/droom/match) are how a
 // sweeper discovers which of the 9000 codes are live. Everything else — probe/ping
 // (calibration must always work), cancel (frees lobbies), and the whole in-game loop —
 // is intentionally exempt.
+// /api/match belongs here despite answering per-lobby data: it is called ONCE per mount, not in
+// the hot loop, and it answers (9,1) for a dead code and real data for a live one — the same
+// existence oracle /api/status is, only it used to be free. Its client decoder already treats
+// (9,4) as "busy, retry" (mg_net.js match), so the throttle sentinel is safe there.
 const THROTTLED_ROUTES = {
   "/api/create": 1, "/api/quick": 1, "/api/mquick": 1, "/api/join": 1,
   "/api/pcreate": 1, "/api/pjoin": 1, "/api/dcreate": 1, "/api/djoin": 1,
-  "/api/status": 1, "/api/room": 1, "/api/proom": 1, "/api/droom": 1
+  "/api/status": 1, "/api/room": 1, "/api/proom": 1, "/api/droom": 1,
+  "/api/match": 1
 };
 
 // Game ids the generic /api/create lobby accepts. 3 = durak creates its lobby here too, then
@@ -4298,12 +4338,21 @@ function pixelBankPng(balance) {
   return d(balance & 63, (balance >> 6) & 63);
 }
 
+// The canvas version rides ONE 2-int reply as (lo6, hi6), so it must stay clear of the reserved
+// error band: the client reads h === 63 as an error and (5,63) specifically as "you are banned".
+// A 12-bit version (& 4095) put every value from 4032 up into that band — version 4037 encoded
+// bit-for-bit identically to the ban sentinel, so a canvas that had simply been painted 4037 times
+// showed every client a false ban, and the other 63 values in the band broke the poll outright.
+// PX_VERSION_MOD keeps h <= 62. The version is only ever compared for equality ("did the canvas
+// change?"), so wrapping one step earlier costs nothing.
+const PX_VERSION_MOD = 63 * 64;         // 4032 → version 0..4031 → h 0..62
+
 function pixelVersionPng(version) {
   return d(version & 63, (version >> 6) & 63);
 }
 
 async function pixelVersion(hub) {
-  return ((await hub.storage.get("px:version")) || 0) & 4095;
+  return ((await hub.storage.get("px:version")) || 0) % PX_VERSION_MOD;
 }
 
 async function pixelBank(hub, account, spend) {
@@ -4443,7 +4492,7 @@ async function persistPixelDeltas(hub, changed) {
       tiles.delete(index);
     }
   }
-  const version = ((await pixelVersion(hub)) + 1) & 4095;
+  const version = ((await pixelVersion(hub)) + 1) % PX_VERSION_MOD;   // stays clear of the h=63 error band
   await hub.storage.put("px:version", version);
   hub.pxViewCache.clear();
   return version;
@@ -5045,6 +5094,12 @@ function pngResponse(bytes) {
  * compression needed. The client only cares about the dimensions.
  */
 function png(w, h) {
+  return pngResponse(pngBytes(w, h));
+}
+
+// The raw PNG bytes, split out from png() so a caller that reuses one image (probe) can cache
+// them instead of re-encoding. Returns a Uint8Array.
+function pngBytes(w, h) {
   w = Math.max(1, Math.min(w | 0, 8000));
   h = Math.max(1, Math.min(h | 0, 8000));
 
@@ -5072,13 +5127,7 @@ function png(w, h) {
     .concat(chunk("IDAT", zlib))
     .concat(chunk("IEND", []));
 
-  return new Response(new Uint8Array(bytes), {
-    headers: {
-      "content-type": "image/png",
-      "cache-control": "no-store, no-cache, must-revalidate, max-age=0",
-      "access-control-allow-origin": "*",
-    },
-  });
+  return new Uint8Array(bytes);
 }
 
 function u32(n) {
