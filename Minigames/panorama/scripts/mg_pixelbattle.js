@@ -21,7 +21,9 @@
     var MIN_BATCH = 10;
     var MAX_BATCH = 128;
     var POLL_ACTIVE_S = 8, POLL_WARM_S = 15, POLL_IDLE_S = 30;
-    var MAP_URL = "s2r://panorama/images/pixelbattle/world_map.vtex";
+    // (world_map.vtex is no longer referenced from the client: the map is baked into the
+    // server-rendered /api/pxview frame. tools/build_pixelbattle_map.js still reads the source
+    // image to generate the land mask.)
     var PALETTE = MG.PixelBattlePalette || [];
     var PALETTE_NAMES = MG.PixelBattlePaletteNames || [];
     var accessCache = { accountId: "", status: "unknown", balance: BANK_CAP, callbacks: [] };
@@ -196,17 +198,12 @@
         var viewport = $.CreatePanel("Panel", root, "");
         viewport.AddClass("mg-px-viewport");
 
-        var stage = $.CreatePanel("Panel", viewport, "");
-        stage.AddClass("mg-px-stage");
-
-        var baseImage = $.CreatePanel("Image", stage, "", { scaling: "stretch-to-fit-preserve-aspect" });
-        baseImage.AddClass("mg-px-map-image");
-        try { baseImage.SetAttributeString("hittest", "false"); } catch (e0) {}
-        baseImage.SetImage(MAP_URL);
-
-        var remoteImage = $.CreatePanel("Image", stage, "", { scaling: "stretch-to-fit-preserve-aspect" });
-        remoteImage.AddClass("mg-px-map-image");
-        try { remoteImage.SetAttributeString("hittest", "false"); } catch (e1) {}
+        // NOTE: there used to be a `stage` subtree here (a scaled/translated Panel holding a
+        // base-map <Image> and a remote-overlay <Image>) for compositing the map locally. Rendering
+        // moved entirely server-side — updateView set stage.visibility = "collapse" on every call
+        // and nothing ever set it back, so the subtree was permanently invisible, remoteImage never
+        // received a non-empty url, and baseImage still decoded world_map.vtex into memory for a
+        // panel nobody could see. Removed with its CSS (.mg-px-stage/.mg-px-map-image).
 
         // At 16x the Worker returns this viewport already expanded to 800x400.
         // It is drawn 1:1, bypassing Panorama's blurry texture interpolation.
@@ -330,18 +327,8 @@
         function updateView() {
             if (!accessReady || banned) return;
             clampOrigin();
-            var stageW = 800 * zoom;
-            var stageH = 400 * zoom;
-            var pixelW = stageW / MAP_W;
-            var pixelH = stageH / MAP_H;
-            var tx = -viewX * pixelW;
-            var ty = -viewY * pixelH;
-            stage.style.width = stageW + "px";
-            stage.style.height = stageH + "px";
-            stage.style.transform = "translate3d(" + tx + "px, " + ty + "px, 0px)";
             // Every zoom uses a server-rasterised 800x400 frame. This avoids
             // Panorama's bilinear filtering in previews as well as in the editor.
-            stage.style.visibility = "collapse";
             crispImage.style.visibility = "visible";
             grid.SetHasClass("mg-px-grid-edit", zoom === MAX_ZOOM);
             zoomLabel.text = zoom + "×";
@@ -701,7 +688,6 @@
             sending = false;
             pollGeneration++;
             markBanned(accountId);
-            try { remoteImage.SetImage(""); } catch (e0) {}
             try { crispImage.SetImage(""); } catch (e1) {}
             try { root.RemoveAndDeleteChildren(); } catch (e2) {}
             root.AddClass("mg-px-banned");
@@ -742,8 +728,6 @@
             destroy: function () {
                 destroyed = true;
                 pollGeneration++;
-                try { remoteImage.SetImage(""); } catch (e) {}
-                try { baseImage.SetImage(""); } catch (e2) {}
                 try { crispImage.SetImage(""); } catch (e3) {}
                 try { root.DeleteAsync(0); } catch (e4) {}
             }

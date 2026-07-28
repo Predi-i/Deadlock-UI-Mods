@@ -189,6 +189,14 @@
         if (bg) { try { bg.SetAttributeString("hittest", active ? "true" : "false"); } catch (e) {} }
     }
 
+    // Cached handle to the injected button. The loop below runs for the WHOLE match, and
+    // ensureEscapeButton's early-out only fires after findAnchor has already walked up to 40
+    // parents and run two FindChildTraverse sweeps of the entire HUD tree — every 1.5 s, for
+    // every player, including those who never open the mod. One IsValid check skips all of it.
+    // The engine rebuilds the escape menu on some transitions, which invalidates the panel; that
+    // is exactly when the handle goes stale and the full search runs again.
+    var escBtn = null;
+
     function ensureEscapeButton() {
         var anchor = findAnchor();
         if (!anchor) return;
@@ -204,13 +212,20 @@
         lbl.AddClass("menuButtonLabel");
         lbl.text = "DL Arcade";
         btn.SetPanelEvent("onactivate", function () { showOverlay(); });
+        escBtn = btn;
         // Leave it appended (bottom of the list); CSS lifts it up and out of the way of
         // the native items — forcing it to the top made it overlap "Swap Hero".
         log("escape button injected");
     }
 
+    // Cached handle to the injected button. The loop below runs for the WHOLE match, and
+    // ensureEscapeButton's early-out only fires after findAnchor has already walked up to 40
+    // parents and run two FindChildTraverse sweeps of the entire HUD tree — every 1.5 s, for
+    // every player, including those who never open the mod. One IsValid check skips all of it.
+    // The engine rebuilds the escape menu on some transitions, which invalidates the panel; that
+    // is exactly when the handle goes stale and the full search runs again.
     function startInjectionLoop() {
-        ensureEscapeButton();
+        if (!(escBtn && escBtn.IsValid && escBtn.IsValid())) ensureEscapeButton();
         $.Schedule(1.5, startInjectionLoop);
     }
 
@@ -401,6 +416,7 @@
             if (pct === curVol) selectedId = optId;
         }
         try { dd.SetSelected(selectedId || ("MG_Vol_" + VOL_STEPS[0])); } catch (e) {}
+        wrap.SetHasClass("mg-vol-muted", curVol === 0);   // match the state we opened with
         dd.SetPanelEvent("oninputsubmit", function () {
             var sel = null;
             try { sel = dd.GetSelected ? dd.GetSelected() : null; } catch (e) {}
@@ -410,6 +426,11 @@
                 // 0% = mute; any positive level sets the volume and unmutes.
                 if (pctNum === 0) { MG.Sound.setMuted(true); }
                 else { MG.Sound.setVol(pctNum); MG.Sound.setMuted(false); }
+                // Dim the label while muted. mg.css has always carried
+                // `.mg-vol-muted .mg-vol-dd Label` for this, but nothing ever set the class, so
+                // picking "Off" looked identical to a live volume.
+                if (soundWrapEl && soundWrapEl.IsValid && soundWrapEl.IsValid())
+                    soundWrapEl.SetHasClass("mg-vol-muted", pctNum === 0);
             }
         });
     }
@@ -1845,7 +1866,6 @@
         }
         return ids;
     }
-    function multiCheckedCount() { return multiCheckedIds().length; }
 
     function startMultiQuick() {
         if (!MG.Net.isConfigured()) { setStatus("⚠ Configure the server first (BASE_URL in mg_net.js)."); return; }

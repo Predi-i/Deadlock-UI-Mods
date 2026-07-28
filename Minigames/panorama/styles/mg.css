@@ -560,22 +560,10 @@
     vertical-align: center; margin-left: 8px;
 }
 
-/* the vertical list of game checkboxes shown when the toggle is ON */
-.mg-multi-list { width: 100%; flow-children: down; margin-bottom: 6px; }
-.mg-multi-item {
-    width: 100%; height: 34px;
-    flow-children: right;
-    background-color: #131a24;
-    border: 1px solid #232f3e;
-    vertical-align: center;
-    margin-bottom: 4px;
-}
-.mg-multi-item:hover { background-color: #1c2836; border-color: #3a5170; }
-.mg-multi-item.mg-on { border-color: #4f86d4; background-color: #16233a; }
-.mg-multi-item-label {
-    font-family: radiance !important; color: #dbe6f2 !important; font-size: 16px !important;
-    vertical-align: center; margin-left: 8px;
-}
+/* NOTE: .mg-multi-list / .mg-multi-item / .mg-multi-item-label used to style a vertical list of
+   game checkboxes in the right column. That UI was replaced by a tick drawn directly on the
+   left-hand picker cards (see updateCardSkins), and no script has referenced these classes
+   since — removed rather than left to rot. */
 
 /* shared checkbox square (used by the toggle + each list item) */
 .mg-check-box {
@@ -1406,7 +1394,8 @@
    Same one-felt-STAGE idiom as durak: opponents' tiles, the community board, the pot
    and every card live on ONE flow-children:none stage, positioned by transform in JS.
    Card faces are compiled .vtex sprites (deck/<S><R>.vtex) drawn by a child <Image>
-   (.mg-face-img); the shared back is .mg-pk-cardback via setBack. I sit at the bottom;
+   (.mg-face-img); the shared back is the same <Image> pointed at the back sprite (setBack →
+   setFace), not a panel background. I sit at the bottom;
    opponents are placed by relative seat (seatZone). The felt is LARGER than durak's
    (the 4-seat durak table felt cramped): STAGE 760×520, CARD 76×106 — geometry MUST
    match mg_poker.js. NONE of this is verified in-engine yet. */
@@ -1439,7 +1428,6 @@
     border-radius: 6px;
     box-shadow: 0px 3px 6px 0px #00000099;
 }
-.mg-pk-cardback { background-color: #16233a; }
 .mg-pk-hole-me { box-shadow: 0px 4px 9px 0px #000000cc; }
 .mg-pk-folded { opacity: 0.35; }
 /* faint plate marking an as-yet-undealt community card slot */
@@ -1830,15 +1818,6 @@
     background-color: #183443;
     border: 1px solid #385064;
     box-shadow: 0px 7px 20px 0px #000000aa;
-}
-.mg-px-stage {
-    width: 800px;
-    height: 400px;
-    flow-children: none;
-}
-.mg-px-map-image {
-    width: 100%;
-    height: 100%;
 }
 .mg-px-crisp-view,
 .mg-px-pending-layer {

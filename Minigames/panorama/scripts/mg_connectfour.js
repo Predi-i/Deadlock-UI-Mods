@@ -164,13 +164,16 @@
             for (var i = 0; i < board.length; i++) if (board[i]) placeDisc(i, board[i], false);
         }
 
+        // Clear the win styling. It has to clear the DISC class: that is the one with a rule
+        // (.mg-cf-disc.mg-cf-win-disc — white ring + brightness). The old version only removed a
+        // `mg-cf-win` class from the cells, which no stylesheet has ever defined, so after a
+        // server rejection the previous winning line stayed lit on the rebuilt board.
         function clearWinHighlight() {
-            for (var i = 0; i < cells.length; i++) cells[i].RemoveClass("mg-cf-win");
+            for (var k in discEls) if (discEls.hasOwnProperty(k) && discEls[k]) discEls[k].RemoveClass("mg-cf-win-disc");
         }
         function highlightWin(mark) {
             var line = C.winningLine(board, mark);
             if (line) for (var k = 0; k < line.length; k++) {
-                cells[line[k]].AddClass("mg-cf-win");
                 if (discEls[line[k]]) discEls[line[k]].AddClass("mg-cf-win-disc");
             }
         }
