@@ -2024,16 +2024,98 @@
 
 /* ── Wordle (offline, controller in mg_wordle.js) ─────────────────────────── */
 .mg-wordle {
-    width: 330px;
+    width: 100%;
     horizontal-align: center;
     flow-children: down;
+}
+/* flow:none so the board stays CENTRED in the modal and the keyboard floats in the empty
+   right gap (a flow:right row would centre the board+keyboard GROUP, pushing the board left).
+   Same idiom as .mg-game-host (board centred, list right-pinned). */
+.mg-wordle-layout {
+    width: 100%;
+    height: 348px;
+    horizontal-align: center;
+    flow-children: none;
 }
 /* flow:none wrap so the board and the hidden TextEntry overlap (Panorama has no
    position:absolute). The entry sits on top and catches clicks → keyboard focus. */
 .mg-wordle-boardwrap {
     width: 330px;
     height: 348px;
+    horizontal-align: center;
     flow-children: none;
+}
+/* On-screen keyboard: colour-coded letter hints, clickable. Right-pinned in the gap beside
+   the centred board, vertically centred against it. */
+.mg-wordle-kbd {
+    width: 244px;
+    horizontal-align: right;
+    vertical-align: center;
+    margin-right: 6px;
+    flow-children: down;
+}
+.mg-wordle-kbd-row {
+    width: fit-children;
+    horizontal-align: center;
+    flow-children: right;
+}
+/* QWERTY stagger: a key slot is ~24px, so a third ≈ 8px and a half ≈ 12px. The top row
+   nudges right a third of a key, the bottom row left half a key. translateX is used (not
+   margin) so it offsets cleanly against the centred row. */
+.mg-wordle-kbd-row1 {
+    transform: translate3d(8px, 0px, 0px);
+}
+.mg-wordle-kbd-row3 {
+    transform: translate3d(-12px, 0px, 0px);
+}
+.mg-wordle-kbd-key {
+    width: 20px;
+    height: 30px;
+    margin: 2px;
+    background-color: #46536580;
+    border: 1px solid #5a6a80;
+    flow-children: none;
+    transition-property: background-color, border-color;
+    transition-duration: 0.15s;
+    transition-timing-function: ease-out;
+}
+.mg-wordle-kbd-key:hover {
+    background-color: #5a6a80;
+}
+.mg-wordle-kbd-wide {
+    width: 46px;
+}
+.mg-wordle-kbd-label {
+    horizontal-align: center;
+    vertical-align: center;
+    text-align: center;
+    font-family: radiance;
+    font-weight: bold;
+    font-size: 13px;
+    color: #dfe6ee;
+}
+/* Untried keys are light (#dfe6ee on a mid-grey key). Absent letters go DARK and dim, so a
+   guessed-but-wrong letter is unmistakably different from one you haven't tried yet. */
+.mg-wordle-kbd-absent {
+    background-color: #171b22;
+    border-color: #171b22;
+}
+.mg-wordle-kbd-absent .mg-wordle-kbd-label {
+    color: #4b535f;
+}
+.mg-wordle-kbd-present {
+    background-color: #b59f3b;
+    border-color: #d0ba50;
+}
+.mg-wordle-kbd-present .mg-wordle-kbd-label {
+    color: #ffffff;
+}
+.mg-wordle-kbd-correct {
+    background-color: #538d4e;
+    border-color: #6ba965;
+}
+.mg-wordle-kbd-correct .mg-wordle-kbd-label {
+    color: #ffffff;
 }
 .mg-wordle-board {
     width: 330px;

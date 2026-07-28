@@ -127,10 +127,10 @@
     // Keep each ≤ ~80 chars: .mg-detail-desc is a fixed 2-line (52px) box, so a longer blurb
     // spills onto a clipped 3rd line. The original 80-char lines are the proven envelope.
     var GAME_DESC = {
-        checkers:    "Draughts with flying kings and forced jumps. Capture every enemy piece to win.",
+        checkers:    "Russian or English draughts. Jump and chain-capture every enemy piece to win.",
         tictactoe:   "The classic 3×3 duel. Line up three of your marks in a row to win.",
         durak:       "The beloved Eastern European card game. Be the first to shed all your cards.",
-        chess:       "The timeless game of strategy. Full rules, against a friend or the bot.",
+        chess:       "The classic game of kings. Trap the enemy king with the full rules in play.",
         connectfour: "Drop your discs down the grid and be the first to line up four in a row.",
         poker:       "No-Limit Texas Hold'em. Read your table, bet your chips, and take the pot.",
         pixelbattle: "One persistent world map. Paint it together, ten or more pixels at a time.",

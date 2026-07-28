@@ -96,6 +96,7 @@
     function createWordle(container, session) {
         session = session || {};
         var destroyed = false, row = 0, current = "", over = false;
+        var keyState = {}, keyButtons = {};
         var day = Math.floor(Date.now() / 86400000);
         var answer = ANSWERS[(day + gamesStarted * 37) % ANSWERS.length];
         gamesStarted++;
@@ -111,11 +112,11 @@
 
         var root = $.CreatePanel("Panel", container, "MG_Wordle");
         root.AddClass("mg-wordle");
-        // The board and the hidden input overlap in a flow:none wrap (Panorama has no
-        // position:absolute — trap §6.1): both children park at the wrap's top-left and stack.
-        // The transparent TextEntry sits ON TOP so any click on the board lands on it and gives
-        // it keyboard focus; the letters typed there are mirrored into the tiles below.
-        var boardWrap = $.CreatePanel("Panel", root, "");
+        var layout = $.CreatePanel("Panel", root, "");
+        layout.AddClass("mg-wordle-layout");
+
+        // Left: board + hidden input
+        var boardWrap = $.CreatePanel("Panel", layout, "");
         boardWrap.AddClass("mg-wordle-boardwrap");
         var board = $.CreatePanel("Panel", boardWrap, "");
         board.AddClass("mg-wordle-board");
@@ -181,6 +182,7 @@
                 panel.RemoveClass("mg-wordle-filled");
                 panel.AddClass(result[i] === 2 ? "mg-wordle-correct" :
                     result[i] === 1 ? "mg-wordle-present" : "mg-wordle-absent");
+                setKeyState(guess.charAt(i), result[i]);
             }
             row++;
             current = "";
@@ -216,6 +218,72 @@
 
         entry.SetPanelEvent("ontextentrychange", onEntryChange);
         entry.SetPanelEvent("oninputsubmit", submit);
+
+        // Right: keyboard hint panel
+        var kbd = $.CreatePanel("Panel", layout, "");
+        kbd.AddClass("mg-wordle-kbd");
+        var KBD_ROWS = ["QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM"];
+        for (var kr = 0; kr < KBD_ROWS.length; kr++) {
+            var krow = $.CreatePanel("Panel", kbd, "");
+            krow.AddClass("mg-wordle-kbd-row");
+            krow.AddClass("mg-wordle-kbd-row" + (kr + 1));
+            for (var kc = 0; kc < KBD_ROWS[kr].length; kc++) {
+                (function (letter) {
+                    var btn = $.CreatePanel("Button", krow, "");
+                    btn.AddClass("mg-wordle-kbd-key");
+                    addLabel(btn, "mg-wordle-kbd-label", letter);
+                    keyButtons[letter] = btn;
+                    btn.SetPanelEvent("onactivate", function () {
+                        if (destroyed || over) return;
+                        if (current.length < 5) {
+                            current += letter;
+                            syncing = true;
+                            try { entry.text = current; } catch (e) {}
+                            syncing = false;
+                            paintCurrent();
+                        }
+                        refocus();
+                    });
+                })(KBD_ROWS[kr].charAt(kc));
+            }
+        }
+        // BACK and ENTER buttons
+        var krowExtra = $.CreatePanel("Panel", kbd, "");
+        krowExtra.AddClass("mg-wordle-kbd-row");
+        var backBtn = $.CreatePanel("Button", krowExtra, "");
+        backBtn.AddClass("mg-wordle-kbd-key");
+        backBtn.AddClass("mg-wordle-kbd-wide");
+        addLabel(backBtn, "mg-wordle-kbd-label", "BACK");
+        backBtn.SetPanelEvent("onactivate", function () {
+            if (destroyed || over || !current.length) return;
+            current = current.substring(0, current.length - 1);
+            syncing = true;
+            try { entry.text = current; } catch (e) {}
+            syncing = false;
+            paintCurrent();
+            refocus();
+        });
+        var enterBtn = $.CreatePanel("Button", krowExtra, "");
+        enterBtn.AddClass("mg-wordle-kbd-key");
+        enterBtn.AddClass("mg-wordle-kbd-wide");
+        addLabel(enterBtn, "mg-wordle-kbd-label", "ENTER");
+        enterBtn.SetPanelEvent("onactivate", function () { submit(); refocus(); });
+
+        function setKeyState(letter, value) {
+            // First assignment always applies (even absent=0); afterwards only UPGRADE
+            // (absent → present → correct), never downgrade. Using an explicit undefined
+            // check, not `(keyState||0) >= value`, so the first absent (0 >= 0) isn't skipped.
+            if (keyState[letter] !== undefined && keyState[letter] >= value) return;
+            keyState[letter] = value;
+            var btn = keyButtons[letter];
+            if (!btn) return;
+            btn.RemoveClass("mg-wordle-kbd-absent");
+            btn.RemoveClass("mg-wordle-kbd-present");
+            btn.RemoveClass("mg-wordle-kbd-correct");
+            if (value === 2) btn.AddClass("mg-wordle-kbd-correct");
+            else if (value === 1) btn.AddClass("mg-wordle-kbd-present");
+            else btn.AddClass("mg-wordle-kbd-absent");
+        }
 
         status("Type your guess, then press Enter.");
         return {
