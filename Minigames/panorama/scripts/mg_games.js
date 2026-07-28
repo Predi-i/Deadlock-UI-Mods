@@ -238,6 +238,12 @@
             fill.RemoveClass("mg-tt-anim");
             fill.RemoveClass("mg-tt-low");
             fill.RemoveClass("mg-tt-crit");
+            // Drop arm()'s inline override back to the base timing. Removing .mg-tt-anim takes the
+            // 25s value out of the CSS cascade but NOT out of the inline style, and the base rule
+            // lists a single property (background-color) — so the leftover "25s, 0.3s" list applied
+            // its FIRST entry to the colour, and a fresh turn crawled from red back to green over
+            // 25 seconds instead of snapping.
+            fill.style.transitionDuration = "0.3s";
             fill.style.transform = "translate3d(0px, 0px, 0px)";
             fill.style.opacity = "1.0";       // reveal the drain for my turn
         }
@@ -305,6 +311,7 @@
                 fill.RemoveClass("mg-tt-anim");
                 fill.RemoveClass("mg-tt-low");
                 fill.RemoveClass("mg-tt-crit");
+                fill.style.transitionDuration = "0.3s";   // clear arm()'s override (see snapFull)
                 fill.style.transform = "translate3d(0px, 0px, 0px)";
                 fill.style.opacity = "0.0";   // idle: only the empty channel shows
                 if (num.IsValid()) num.text = "";

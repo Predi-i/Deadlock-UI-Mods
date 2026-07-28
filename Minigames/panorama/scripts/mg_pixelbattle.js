@@ -86,11 +86,19 @@
         attempt = attempt || 0;
         var accountId = findAccountId();
         if (!accountId) {
-            if (attempt < 10) {
-                $.Schedule(1, function () { checkAccess(callback, attempt + 1); });
-            } else {
-                callback({ status: "error", accountId: "", balance: BANK_CAP });
-            }
+            // The party avatar (where the Steam32 id is read from) may not be mounted yet, so we
+            // retry for ~10s. Queue the callers on the SHARED cache instead of giving each its own
+            // retry loop: renderDetail re-runs on every card pick and every multi-select toggle, so
+            // N picks during that window used to spawn N independent 10-second chains, each with
+            // its own $.Schedule per second. The dedupe below only covered the has-id path.
+            accessCache.callbacks.push(callback);
+            if (accessCache.status === "waiting-id") return;   // a retry chain is already running
+            accessCache.status = "waiting-id";
+            (function retry(n) {
+                if (findAccountId()) { accessCache.status = "unknown"; checkAccess(function () {}); return; }
+                if (n >= 10) { accessCache.status = "unknown"; finishAccess("error", "", BANK_CAP); return; }
+                $.Schedule(1, function () { retry(n + 1); });
+            })(attempt);
             return;
         }
         if (accessCache.accountId && accessCache.accountId !== accountId) {
@@ -341,7 +349,7 @@
                 ? "Pick a colour, then paint. Changes stay local until at least 10 unique pixels are queued."
                 : "Click a region to zoom in. At 16× each square is one canvas pixel.";
             refreshPendingGeometry();
-            refreshCrispView();
+            scheduleCrispView();      // coalesced: a burst of pan/zoom presses costs ONE fetch
         }
 
         function setZoom(value) {
@@ -587,6 +595,20 @@
             });
         }
 
+        // Coalesce viewport fetches. Every D-pad press, zoom step and RESET calls updateView, and
+        // each one used to fire its own /api/pxview.png — a full 800x400 render, straight through
+        // SetImage so it bypasses mg_net's request queue entirely. At 16x a pan step is 8 canvas
+        // pixels, so crossing the map is dozens of presses and dozens of full frames. Waiting a
+        // frame-and-a-bit collapses a burst of presses into ONE fetch of the final position; a
+        // single press still lands well inside the eye's tolerance.
+        var crispGen = 0;
+        function scheduleCrispView() {
+            if (destroyed) return;
+            crispGen++;
+            var myGen = crispGen;
+            $.Schedule(0.12, function () { if (!destroyed && myGen === crispGen) refreshCrispView(); });
+        }
+
         function refreshRemote() {
             if (destroyed) return;
             refreshCrispView();
@@ -594,11 +616,14 @@
 
         function refreshCrispView() {
             if (destroyed || banned || !accountId) return;
+            crispGen++;                 // a direct call supersedes any pending scheduled one
             var version = knownVersion < 0 ? 0 : knownVersion;
             try {
+                // No cache-buster: `v` IS the cache key (the server bumps the canvas version on
+                // every accepted batch), so a random suffix only guaranteed a miss on every request.
                 crispImage.SetImage(MG.Net.getBaseUrl() + "/api/pxview.png?x=" + viewX +
                     "&y=" + viewY + "&z=" + zoom + "&id=" + accountId +
-                    "&v=" + version + "&rnd=" + Math.random());
+                    "&v=" + version);
             } catch (e) {
                 outerStatus("Couldn't load the pixel-perfect map viewport.");
             }

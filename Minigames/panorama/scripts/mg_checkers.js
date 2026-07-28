@@ -409,7 +409,7 @@
                     // Dragged during the opponent's turn → queue a PREMOVE to the dropped square.
                     var pmTo = dropSquare(droppedPanel);
                     if (pmTo >= 0 && pmTo !== dragFromSq) {
-                        if (premoveGeometryOk(dragFromSq, pmTo)) { premove = { from: dragFromSq, to: pmTo }; preSelected = -1; }
+                        if (premoveGeometryOk(dragFromSq, pmTo)) { premove = { from: dragFromSq, to: pmTo }; preSelected = -1; sfx("Premove"); }
                         else sfx("Illegal");   // impossible shape for this piece — don't queue it
                     }
                     clearDrag();
@@ -881,7 +881,7 @@
             if (colorOf(board[i]) === myColor) { preSelected = i; premove = null; refreshHighlights(); return; }
             if (preSelected >= 0 && i !== preSelected) {
                 if (!premoveGeometryOk(preSelected, i)) { sfx("Illegal"); return; }   // keep the piece picked; let them retry
-                premove = { from: preSelected, to: i }; preSelected = -1; refreshHighlights(); return;
+                premove = { from: preSelected, to: i }; preSelected = -1; sfx("Premove"); refreshHighlights(); return;
             }
             clearPremove();
         }

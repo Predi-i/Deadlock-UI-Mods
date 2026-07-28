@@ -458,11 +458,19 @@
     }
     // Read the natural height ONCE, only while the modal is genuinely at 100% (so actuallayoutheight —
     // in layout px — is unscaled and unambiguous), then re-apply so a >100% default scale takes effect.
+    // RETRIES until the engine has actually laid the modal out. The single scheduled attempt this
+    // replaces could read 0: the overlay is built `visibility: collapse` and showOverlay makes it
+    // visible and fills the body in the SAME frame, so actuallayoutheight is not guaranteed yet. On a
+    // 0 read nothing was rescheduled and buildOverlay never runs twice, so naturalModalH stayed 0 for
+    // the whole session and fittedScalePct silently stopped clamping — which is exactly the clipped
+    // 175/200% modal the clamp exists to prevent, failing with no symptom to notice.
+    var naturalTries = 0;
     function measureNaturalH() {
         if (!(modalPanel && modalPanel.IsValid && modalPanel.IsValid())) return;
         if (naturalModalH || uiScalePct > 100) return;            // already cached, or not at 100% to read cleanly
         var h = Number(modalPanel.actuallayoutheight);
-        if (isFinite(h) && h > 0) { naturalModalH = h; applyUiScale(); }
+        if (isFinite(h) && h > 0) { naturalModalH = h; applyUiScale(); return; }
+        if (naturalTries++ < 40) $.Schedule(0.05, measureNaturalH);   // ~2s of frames, then give up quietly
     }
     function applyUiScale() {
         if (modalPanel && modalPanel.IsValid && modalPanel.IsValid()) {
@@ -505,6 +513,13 @@
         // footerStatus is a child of modalBody's footer, so it's about to be deleted — drop the
         // reference so setStatus falls back to the centred bottom line until the menu rebuilds it.
         footerStatus = null;
+        // Same reason: detailPanel and every entry in cardEls are children of modalBody. Leaving
+        // the references behind meant renderDetail/updateCardSkins held handles to deleted panels,
+        // and neither checks IsValid — the exact shape of the two ReferenceErrors this codebase has
+        // already shipped once. Nothing calls them from outside the menu today; this keeps it that
+        // way by construction rather than by luck.
+        detailPanel = null;
+        cardEls = [];
         if (modalBody) modalBody.RemoveAndDeleteChildren();
         // NO per-view re-fit: the modal's natural height is constant (fixed-height columns), and the
         // ui-scale lives on modalPanel (NOT modalBody, which is what we just cleared), so it persists
@@ -631,7 +646,7 @@
     // Right column: game title + blurb, then either the action buttons (enabled
     // game) or a "locked" notice (disabled placeholder). Fades in on each switch.
     function renderDetail() {
-        if (!detailPanel) return;
+        if (!(detailPanel && detailPanel.IsValid && detailPanel.IsValid())) return;
         detailPanel.RemoveAndDeleteChildren();
         var g = MG.Games.byId(selectedGameId);
         if (!g) return;
