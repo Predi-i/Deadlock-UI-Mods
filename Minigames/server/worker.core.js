@@ -608,7 +608,23 @@ export class Hub {
           await this.storage.put("l:" + code, lobby);
           return d(1, 1);
         }
-        // Pair game, pre-start lobby, or the table just dropped to one player → tear it down.
+        // PRE-START multi-seat table: the leaver is not in a hand yet, so there is nothing to fold
+        // out — but tearing the lobby down took everyone else with it. Any joiner who simply closed
+        // the Esc menu in the room view (cleanupCurrentView calls /api/leave) killed the host's
+        // table. Keep the lobby and leave a HOLE at that index instead.
+        // The hole is deliberate: every seated client cached its own seat index when it joined and
+        // is never told otherwise (droom/proom report only counts), so compacting `seats` would
+        // silently hand a player someone else's seat. durakStart/pokerStart deal for
+        // seats.length and then fold the holes out through the same durakLeave/pokerLeave path a
+        // mid-game leave uses, so the holes cost nothing but a LEFT event.
+        // The HOST leaving still ends it — nobody else can press Start.
+        if (!started && isMultiSeat && present >= 2 && seat !== 0) {
+          lobby.seats[seat] = null;
+          lobby.t = nowSeq();
+          await this.storage.put("l:" + code, lobby);
+          return d(1, 1);
+        }
+        // Pair game, pre-start pair/host lobby, or the table just dropped to one player → tear it down.
         await this.storage.delete("l:" + code);
         await this.clearQueuesFor(lobby, code);
         return d(1, 1);
@@ -624,7 +640,12 @@ export class Hub {
         // pjoin/djoin). A poker lobby (game 6) is never joinable here either. Refuse both so a
         // guessed code can't clobber a multi-seat table — the client already routes them to
         // pjoin/djoin, so a legitimate joiner never hits this path.
-        if (lobby.cap || lobby.game === 6) return d(20, 1); // not a generic 2-seat lobby → "missing"
+        // `!lobby.game` covers an mquick lobby, which sits at game 0 until a SEEKER picks one of
+        // lobby.games via finalizeJoin. Joining it here set players=2 with game still 0 and state
+        // still null, which BRICKED the lobby for its full 30-minute life: the host's
+        // waitForMultiMatch requires game > 0 so it span forever, /api/match answered (9,1), every
+        // move answered (9,2), and the pubq:m:* queue keys stayed pinned to a dead code.
+        if (lobby.cap || lobby.game === 6 || !lobby.game) return d(20, 1); // not a generic 2-seat lobby → "missing"
         if (lobby.players >= 2) return d(21, 1); // full
 
         lobby.players = 2;
@@ -759,22 +780,43 @@ export class Hub {
         if (seat < 0) return d(9, 3);
         lobby.gen = (lobby.gen || 0) % 63;         // normalise a legacy/persisted gen into 6 bits
         if (lobby.players < 2) return d(1, lobby.gen + 1); // opponent already left/never joined
-        lobby.rm = lobby.rm || [false, false];
+        // Consent is per SEAT, across every seat that still holds one. `rm` used to be hard-wired
+        // to two entries and the reset fired on rm[0] && rm[1] alone, so on a 3-4 seat durak/poker
+        // table two players could wipe the game out from under the rest: state was re-initialised,
+        // the public log truncated to empty, and every other seat's `since` cursor was left past
+        // the end of it — a permanently frozen screen with no way back.
+        const rmSeats = lobby.seats ? lobby.seats.length : 2;
+        if (!lobby.rm || lobby.rm.length !== rmSeats) {
+          const fresh = [];
+          for (let i = 0; i < rmSeats; i++) fresh.push(false);
+          lobby.rm = fresh;
+        }
         const callerGen = clampInt(q.get("gen"), 0, 0, 100000);
         if (callerGen === lobby.gen) lobby.rm[seat] = true; // only arm against the live generation
         lobby.t = nowSeq();                                 // keep-alive
-        if (lobby.rm[0] && lobby.rm[1]) {
+        // An empty seat can never answer, so it must not hold the rematch hostage. A seat is empty
+        // either because a pre-start leave nulled it, or because a mid-game leave recorded it in
+        // `left` (that path keeps the seat object so the public log's LEFT event still resolves).
+        let allReady = true;
+        for (let i = 0; i < rmSeats; i++) {
+          if (lobby.seats && !lobby.seats[i]) continue;
+          if (lobby.left && lobby.left.indexOf(i) >= 0) continue;
+          if (!lobby.rm[i]) { allReady = false; break; }
+        }
+        if (allReady) {
           lobby.moves = [];
           lobby.turn = 0;
-          lobby.state = initState(lobby.game, lobby.cv);
+          lobby.state = initState(lobby.game, lobby.cv, lobby.seats ? lobby.seats.length : 2);
           initClock(lobby);                        // fresh banks for the rematch
           // Wrap the generation into 6 bits so gen+1 stays a valid level (<=63) on the
           // downlink. gen is only used for equality / "did a restart happen" detection, and
           // 63 rematches can't elapse between two of a client's polls, so wrapping is safe.
           lobby.gen = (lobby.gen + 1) % 63;
-          lobby.rm = [false, false];
+          const cleared = [];
+          for (let i = 0; i < rmSeats; i++) cleared.push(false);
+          lobby.rm = cleared;
           await this.storage.put("l:" + code, lobby);
-          return d(2, lobby.gen + 1);                     // both ready: reset done, gen bumped
+          return d(2, lobby.gen + 1);                     // everyone ready: reset done, gen bumped
         }
         await this.storage.put("l:" + code, lobby);
         return d(1, lobby.gen + 1);                       // waiting for the opponent
@@ -810,6 +852,11 @@ export class Hub {
         if (!lobby) return d(9, 9);
         const seat = seatOf(lobby, q.get("tok"));
         if (seat < 0) return d(9, 3);
+        // Same MOVE_CAP guard the 2-int games and poker already carry. durak's st.pub was the one
+        // monotonic log with no ceiling, so a seat that could keep appending events (see the PASS
+        // idempotency fix in durakAct) could grow the lobby past the Durable Object's 128 KiB
+        // per-value limit, after which storage.put threw and the table answered (9,7) forever.
+        if (lobby.state && lobby.state.pub && lobby.state.pub.length >= MOVE_CAP) return d(9, 2);
         const a = clampInt(q.get("a"), 0, 1, 4);
         const pr = clampInt(q.get("p"), 0, 0, 5);
         const c = clampInt(q.get("c"), 0, 0, 35);
@@ -855,7 +902,7 @@ export class Hub {
           game: 3, players: 1, moves: [], pub: 0, t: nowSeq(), cap: cap,
           seats: [{ tok: q.get("tok") || "" }],              // host = seat 0
           turn: 0,
-          state: initState(3)
+          state: initState(3, null, cap)
         };
         await this.storage.put("l:" + newCode, lobby);
         // HOST (+100 on width, like create) · height carries the seat cap so the joiner UI
@@ -870,20 +917,25 @@ export class Hub {
         const existingSeat = seatOf(lobby, q.get("tok"));
         if (existingSeat >= 0)                                           // idempotent re-join (poll safety)
           return d(lobby.cap, existingSeat + 1);                         // preserve the caller's seat
-        if (lobby.players >= lobby.cap) return d(21, 1);              // full
-        lobby.seats.push({ tok: q.get("tok") || "" });
-        lobby.players++;
+        if (presentCount(lobby) >= lobby.cap) return d(21, 1);        // full
+        // Reuse a hole a pre-start leave left behind before growing the table, so a 3-seat lobby
+        // whose seat 1 walked away can be refilled instead of overflowing past `cap`.
+        const holeD = seatHole(lobby);
+        if (holeD >= 0) lobby.seats[holeD] = { tok: q.get("tok") || "" };
+        else { lobby.seats.push({ tok: q.get("tok") || "" }); lobby.players++; }
         lobby.t = nowSeq();
         await this.storage.put("l:" + code, lobby);
         // width = cap, height = the seat index this joiner took +1 (so it learns its seat)
-        return d(lobby.cap, lobby.players);
+        return d(lobby.cap, (holeD >= 0 ? holeD : lobby.seats.length - 1) + 1);
       }
       if (p === "/api/droom") {
         const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
         if (!lobby || lobby.game !== 3 || !lobby.cap) return d(9, 1); // gone / not an N-seat durak lobby
         const started = lobby.state && lobby.state.started ? ROOM_STARTED : 0;
-        // width = players joined (+ROOM_STARTED band once dealt) · height = seat cap
-        return d(lobby.players + started, lobby.cap);
+        // width = players PRESENT (+ROOM_STARTED band once dealt) · height = seat cap.
+        // presentCount, not `players`: a pre-start leave leaves a hole and `players` never drops,
+        // so the room UI used to keep showing a seat that nobody was sitting in.
+        return d(presentCount(lobby) + started, lobby.cap);
       }
 
       // ── Poker (authoritative dealer, 2–4 players; its own multi-seat lobby) ──────
@@ -913,20 +965,23 @@ export class Hub {
         const existingSeat = seatOf(lobby, q.get("tok"));
         if (existingSeat >= 0)                                // idempotent re-join (poll safety)
           return d(lobby.cap || 4, existingSeat + 1);          // preserve the caller's seat
-        if (lobby.players >= (lobby.cap || 4)) return d(21, 1); // full
-        lobby.seats.push({ tok: q.get("tok") || "" });
-        lobby.players++;
+        if (presentCount(lobby) >= (lobby.cap || 4)) return d(21, 1); // full
+        // Reuse a hole a pre-start leave left behind before growing the table (see /api/djoin).
+        const holeP = seatHole(lobby);
+        if (holeP >= 0) lobby.seats[holeP] = { tok: q.get("tok") || "" };
+        else { lobby.seats.push({ tok: q.get("tok") || "" }); lobby.players++; }
         lobby.t = nowSeq();
         await this.storage.put("l:" + code, lobby);
         // width = cap, height = the seat index this joiner took +1 (so it learns its seat)
-        return d(lobby.cap || 4, lobby.players);
+        return d(lobby.cap || 4, (holeP >= 0 ? holeP : lobby.seats.length - 1) + 1);
       }
       if (p === "/api/proom") {
         const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
         if (!lobby || lobby.game !== 6) return d(9, 1);    // gone
         const started = lobby.state && lobby.state.started ? ROOM_STARTED : 0;
-        // width = players joined (+ROOM_STARTED band once started) · height = seat cap
-        return d(lobby.players + started, lobby.cap || 4);
+        // width = players PRESENT (+ROOM_STARTED band once started) · height = seat cap.
+        // presentCount, not `players` — see /api/droom.
+        return d(presentCount(lobby) + started, lobby.cap || 4);
       }
       if (p === "/api/pstart") {
         const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
@@ -1312,8 +1367,32 @@ function seatOf(lobby, tok) {
   return -1;
 }
 
+// How many seats are actually occupied right now. `players` counts seats ever handed out and is
+// never decremented (the seat INDEX has to stay stable for clients that cached it), so a pre-start
+// leave leaves a null hole behind. Anything that asks "are there enough people to play / to show"
+// must use this, not `players`.
+function presentCount(lobby) {
+  if (!lobby.seats) return lobby.players | 0;
+  let n = 0;
+  for (let i = 0; i < lobby.seats.length; i++) if (lobby.seats[i]) n++;
+  return n;
+}
+
+// Index of the first seat a pre-start leave vacated, or -1 if the table is dense. Seat 0 (the
+// host) is never a hole — a host leaving pre-start tears the lobby down instead.
+function seatHole(lobby) {
+  if (!lobby.seats) return -1;
+  for (let i = 1; i < lobby.seats.length; i++) if (!lobby.seats[i]) return i;
+  return -1;
+}
+
 // Fresh authoritative state per game. null = no server engine → legacy relay.
-function initState(game, checkersVariant) {
+// Fresh authoritative state per game. null = no server engine → legacy relay.
+// `seatCount` matters only for durak: its private-card array is per seat, and hard-coding two
+// slots handed a 3-4 seat table a state that ddraw could never index for seats 2/3 (a rematch on
+// such a table used to leave those seats permanently unable to read their own cards). Poker
+// allocates `priv` at deal time, so it needs nothing here.
+function initState(game, checkersVariant, seatCount) {
   const R = rules();
   if (game === 1) {
     const C = checkersVariantFor(game, checkersVariant) === "english" ? R.checkersEnglish : R.checkers;
@@ -1321,7 +1400,12 @@ function initState(game, checkersVariant) {
   }
   if (game === 2) return { board: [0, 0, 0, 0, 0, 0, 0, 0, 0] };            // tic-tac-toe
   if (game === 4) return { board: R.chess.initialChessBoard(), cst: R.chess.initialChessState() }; // chess
-  if (game === 3) return { started: 0, pub: [], priv: [[], []] };                                  // durak (dealt on /api/start)
+  if (game === 3) {                                                                                // durak (dealt on /api/start)
+    const priv = [];
+    const n = Math.max(2, seatCount | 0);
+    for (let i = 0; i < n; i++) priv.push([]);
+    return { started: 0, pub: [], priv: priv };
+  }
   if (game === 5) return { board: R.connectfour.initialBoard() };                                  // connect four
   if (game === 6) return { started: 0, pub: [], priv: [], st: null, stacks: null, button: -1 };    // poker (dealt on /api/pstart)
   return null;
@@ -1456,8 +1540,11 @@ function durakStart(lobby, seat) {
   const st = lobby.state;
   if (!st || st.started) return { ok: true };            // idempotent (already dealt)
   if (seat !== 0) return { ok: false, code: 1 };         // only the host (seat 0) starts
-  const n = lobby.players;                               // deal for however many actually seated (2..4)
-  if (n < 2) return { ok: false, code: 2 };              // need at least two players
+  // Deal for every seat INDEX that exists, holes included: a pre-start leave nulls seats[i] but
+  // must not renumber the others (each client cached its own index). Holes are folded out right
+  // after the deal, below.
+  const n = lobby.seats ? lobby.seats.length : lobby.players;
+  if (presentCount(lobby) < 2) return { ok: false, code: 2 };   // need at least two live players
   const seedBuf = new Uint32Array(1); crypto.getRandomValues(seedBuf);
   const seed = seedBuf[0] & 0x7fffffff;                  // SERVER owns the seed (never sent down)
   const g = R.newGame(n, seed);
@@ -1476,6 +1563,12 @@ function durakStart(lobby, seat) {
   for (let s = 0; s < n; s++) {
     for (let k = 0; k < g.hands[s].length; k++) st.priv[s].push(g.hands[s][k]);
     dpush(st, 50 + s, g.hands[s].length + 1);            // DRAW(s, 6)
+  }
+  // Fold out the holes a pre-start leave left behind, through the SAME path a mid-game leave
+  // uses — so every client replays it off the public log with no new event type. Runs after the
+  // deal because leaveSeat needs a live state to fold out of.
+  if (lobby.seats) {
+    for (let s = 0; s < n; s++) if (!lobby.seats[s]) durakLeave(lobby, s);
   }
   return { ok: true };
 }
@@ -1586,6 +1679,12 @@ function durakAct(lobby, seat, a, p, c) {
     // clients update their local `passed` set (which gates their own Pass button + status).
     if (seat === st.defender || st.out[seat]) return { ok: false, code: 1 };
     if (st.table.length === 0 || R.uncoveredCount(st) !== 0) return { ok: false, code: 2 };
+    // Idempotent: applyPass is (rules/durak.js just sets passed[seat] = true), but dpush is NOT.
+    // A client spamming /api/dact?a=4 from one seat appended a fresh PASS event every time, and
+    // st.pub is the ONE log MOVE_CAP never bounded — it grew until the Durable Object hit its
+    // 128 KiB per-value limit, at which point storage.put threw and EVERY later request on that
+    // lobby (including the defender's) answered (9,7) forever. Re-passing is now a no-op.
+    if (st.passed[seat]) return { ok: true };
     R.applyPass(st, seat);
     if (R.canBito(st)) { dpush(st, 40, 1); durakEndBout(st, false); }
     else dpush(st, 41 + seat, 1);                        // PASS(seat) — window stays open for others
@@ -1728,12 +1827,16 @@ function pokerStart(lobby, seat) {
   if (!s) return { ok: false, code: 2 };
   if (s.started) return { ok: true };                 // idempotent
   if (seat !== 0) return { ok: false, code: 1 };       // only the host starts
-  const n = lobby.players;
-  if (n < 2) return { ok: false, code: 2 };            // need at least two seated
+  // Seat COUNT is the index space, holes included: a pre-start leave nulls seats[i] and must not
+  // renumber anyone (each client cached its own index at join). A hole simply starts with a zero
+  // stack, which newHand's `stacks[s] > 0` test already reads as "sitting out" — no extra event,
+  // no special case downstream.
+  const n = lobby.seats ? lobby.seats.length : lobby.players;
+  if (presentCount(lobby) < 2) return { ok: false, code: 2 };   // need at least two live players
   s.n = n;
   s.button = -1;                                       // first hand normalises to seat 0
   s.stacks = [];
-  for (let i = 0; i < n; i++) s.stacks.push(PK_START);
+  for (let i = 0; i < n; i++) s.stacks.push(lobby.seats && !lobby.seats[i] ? 0 : PK_START);
   s.started = 1;
   pokerNewHand(lobby);
   return { ok: true };

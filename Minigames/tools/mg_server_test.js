@@ -1348,6 +1348,162 @@ async function main() {
         await req(whub, "/api/leave.png?code=" + wcode + "&tok=WLHOST001");
         var wstat = await req(whub, "/api/status.png?code=" + wcode);
         ok(wstat.w === 9, "leave: pre-start host leaving tears the waiting lobby down");
+
+        // E) Pre-start MULTI-seat leave keeps the table. A joiner walking away (closing the Esc
+        // menu in the room view calls /api/leave) used to delete the whole lobby, taking the host
+        // and every other seated player with it. The vacated index becomes a HOLE, never a
+        // renumbering — each client cached its own seat at join time and is never told otherwise.
+        var hhub = new Hub({ storage: new FakeStorage() });
+        var hc = await req(hhub, "/api/dcreate.png?n=4&tok=HOLEHOST");
+        var hcode = decCode(hc);
+        var hj1 = await req(hhub, "/api/djoin.png?code=" + hcode + "&tok=HOLEJ001");
+        var hj2 = await req(hhub, "/api/djoin.png?code=" + hcode + "&tok=HOLEJ002");
+        ok(hj1.h === 2 && hj2.h === 3, "hole: joiners took seats 1 and 2");
+        var hlv = await req(hhub, "/api/leave.png?code=" + hcode + "&tok=HOLEJ001");
+        ok(hlv.w === 1 && hlv.h === 1, "hole: pre-start joiner leave → (1,1)");
+        var hroom = await req(hhub, "/api/droom.png?code=" + hcode);
+        ok(hroom.w !== 9, "hole: table SURVIVES a pre-start joiner leave");
+        ok(hroom.w === 2, "hole: droom reports 2 present (not the 3 seats ever handed out)");
+        // The seat-2 player must keep index 2 — compacting would have handed it index 1.
+        var hre = await req(hhub, "/api/djoin.png?code=" + hcode + "&tok=HOLEJ002");
+        ok(hre.h === 3, "hole: the remaining joiner still holds seat 2 (no renumbering)");
+        // A fresh joiner refills the hole rather than growing the table past cap.
+        var hj3 = await req(hhub, "/api/djoin.png?code=" + hcode + "&tok=HOLEJ003");
+        ok(hj3.h === 2, "hole: a new joiner is seated INTO the vacated index 1");
+        ok((await req(hhub, "/api/droom.png?code=" + hcode)).w === 3, "hole: droom back to 3 present");
+        // Host leaving pre-start still ends it — nobody else can press Start.
+        await req(hhub, "/api/leave.png?code=" + hcode + "&tok=HOLEHOST");
+        ok((await req(hhub, "/api/droom.png?code=" + hcode)).w === 9, "hole: pre-start HOST leave still tears the table down");
+
+        // F) Start with an unfilled hole: the deal must run and fold the empty seat out, so the
+        // remaining players get a live game instead of a table that waits on a ghost.
+        var ghub = new Hub({ storage: new FakeStorage() });
+        var gc = await req(ghub, "/api/dcreate.png?n=3&tok=GAPHOST1");
+        var gcode = decCode(gc);
+        await req(ghub, "/api/djoin.png?code=" + gcode + "&tok=GAPJ0001");
+        await req(ghub, "/api/djoin.png?code=" + gcode + "&tok=GAPJ0002");
+        await req(ghub, "/api/leave.png?code=" + gcode + "&tok=GAPJ0001");   // hole at seat 1
+        var gst = await req(ghub, "/api/start.png?code=" + gcode + "&tok=GAPHOST1");
+        ok(gst.w === 1 && gst.h === 1, "gap: host can start a durak table with a hole in it");
+        var sawGapLeft = false, gapEvents = 0;
+        for (var gi = 0; gi < 60; gi++) {
+            var gev = await req(ghub, "/api/dlog.png?code=" + gcode + "&since=" + gi);
+            if (gev.w === 1 && gev.h === 1) break;
+            gapEvents++;
+            if (gev.w === 46) sawGapLeft = true;                 // LEFT(seat 1) = 45 + 1
+        }
+        ok(gapEvents > 0, "gap: the deal produced a public log");
+        ok(sawGapLeft, "gap: the empty seat is folded out via a LEFT event");
+        // Poker takes the same route, but a hole just starts with a zero stack (newHand sits it out).
+        var qhub = new Hub({ storage: new FakeStorage() });
+        var qc = await req(qhub, "/api/pcreate.png?n=3&tok=GAPPHST1");
+        var qcode = decCode(qc);
+        await req(qhub, "/api/pjoin.png?code=" + qcode + "&tok=GAPPJ001");
+        await req(qhub, "/api/pjoin.png?code=" + qcode + "&tok=GAPPJ002");
+        await req(qhub, "/api/leave.png?code=" + qcode + "&tok=GAPPJ001");
+        var qst = await req(qhub, "/api/pstart.png?code=" + qcode + "&tok=GAPPHST1");
+        ok(qst.w === 1 && qst.h === 1, "gap: host can deal a poker table with a hole in it");
+        ok((await req(qhub, "/api/proom.png?code=" + qcode)).w >= 50, "gap: poker table reports started");
+
+        // G) /api/join must REFUSE an mquick lobby. It sits at game 0 until a seeker resolves it
+        // through finalizeJoin; the generic join hard-set players=2 with game 0 and state null,
+        // which bricked the lobby for its full 30-minute life (host span forever on waitForMulti-
+        // Match, every move answered (9,2), and the pubq:m:* keys stayed pinned to a dead code).
+        var mhub = new Hub({ storage: new FakeStorage() });
+        var mc = await req(mhub, "/api/mquick.png?games=1,2&tok=MQHOST001");
+        var mcode = decCode(mc);
+        var mj = await req(mhub, "/api/join.png?code=" + mcode + "&tok=MQJOIN001");
+        ok(mj.w === 20 && mj.h === 1, "mquick: generic /api/join is refused with (20,1) missing");
+        var mstat = await req(mhub, "/api/status.png?code=" + mcode);
+        ok(mstat.w === 1, "mquick: the lobby is untouched — still waiting with 1 player");
+        // …and the intended path still works: a seeker matches through mquick itself.
+        var ms = await req(mhub, "/api/mquick.png?games=2,4&tok=MQSEEK001");
+        ok(ms.w > 0 && ms.w !== 9, "mquick: a real seeker still matches into the lobby");
+
+        // H) Rematch on a 3-seat table needs EVERY seat, not just seats 0 and 1. Two players used
+        // to be able to reset the game from under the third: state was re-initialised and the
+        // public log truncated to empty, leaving that seat's `since` cursor past the end of it —
+        // a frozen screen with no way back.
+        var rhub = new Hub({ storage: new FakeStorage() });
+        var rc = await req(rhub, "/api/dcreate.png?n=3&tok=RMHOST01");
+        var rcode = decCode(rc);
+        await req(rhub, "/api/djoin.png?code=" + rcode + "&tok=RMPLR001");
+        await req(rhub, "/api/djoin.png?code=" + rcode + "&tok=RMPLR002");
+        await req(rhub, "/api/start.png?code=" + rcode + "&tok=RMHOST01");
+        var rlogLen = 0;
+        for (var ri = 0; ri < 80; ri++) {
+            var rev = await req(rhub, "/api/dlog.png?code=" + rcode + "&since=" + ri);
+            if (rev.w === 1 && rev.h === 1) { rlogLen = ri; break; }
+        }
+        ok(rlogLen > 0, "rematch: the started table has a public log");
+        var rm0 = await req(rhub, "/api/rematch.png?code=" + rcode + "&tok=RMHOST01&gen=0");
+        var rm1 = await req(rhub, "/api/rematch.png?code=" + rcode + "&tok=RMPLR001&gen=0");
+        ok(rm0.w === 1 && rm1.w === 1, "rematch: seats 0 and 1 agreeing is NOT enough on a 3-seat table");
+        var stillThere = await req(rhub, "/api/dlog.png?code=" + rcode + "&since=" + (rlogLen - 1));
+        ok(!(stillThere.w === 1 && stillThere.h === 1), "rematch: seat 2's log cursor is still valid");
+        var rm2 = await req(rhub, "/api/rematch.png?code=" + rcode + "&tok=RMPLR002&gen=0");
+        ok(rm2.w === 2, "rematch: the LAST seat agreeing performs the reset");
+        ok((await req(rhub, "/api/droom.png?code=" + rcode)).w === 3, "rematch: all 3 seats still seated after the reset");
+        // An empty seat can never answer, so it must not hold the rematch hostage.
+        var ehub = new Hub({ storage: new FakeStorage() });
+        var ec = await req(ehub, "/api/dcreate.png?n=3&tok=RMEHOST1");
+        var ecode = decCode(ec);
+        await req(ehub, "/api/djoin.png?code=" + ecode + "&tok=RMEPLR01");
+        await req(ehub, "/api/djoin.png?code=" + ecode + "&tok=RMEPLR02");
+        await req(ehub, "/api/start.png?code=" + ecode + "&tok=RMEHOST1");
+        await req(ehub, "/api/leave.png?code=" + ecode + "&tok=RMEPLR02");   // seat 2 walks out mid-game
+        await req(ehub, "/api/rematch.png?code=" + ecode + "&tok=RMEHOST1&gen=0");
+        var erm = await req(ehub, "/api/rematch.png?code=" + ecode + "&tok=RMEPLR01&gen=0");
+        ok(erm.w === 2, "rematch: a departed seat does not block the remaining players");
+
+        // I) Durak PASS is idempotent. applyPass always was, but the event push was not, so a seat
+        // spamming /api/dact?a=4 appended a PASS event every time. st.pub was the one monotonic log
+        // MOVE_CAP never bounded, so it grew until the Durable Object's 128 KiB per-value limit made
+        // storage.put throw — after which EVERY request on that lobby answered (9,7) forever.
+        // PASS is only legal on a fully-covered non-empty table, so build one first (same shape as
+        // the durak-pass test above): opener attacks, defender covers.
+        var shub = new Hub({ storage: new FakeStorage() });
+        var sc = await req(shub, "/api/dcreate.png?n=3&tok=SPHOST01");
+        var scode = decCode(sc);
+        var stoks = ["SPHOST01", "SPPLR001", "SPPLR002"];
+        await req(shub, "/api/djoin.png?code=" + scode + "&tok=SPPLR001");
+        await req(shub, "/api/djoin.png?code=" + scode + "&tok=SPPLR002");
+        await req(shub, "/api/start.png?code=" + scode + "&tok=SPHOST01");
+        var sOpenEv = await req(shub, "/api/dlog.png?code=" + scode + "&since=1");
+        var sOpen = sOpenEv.h - 1, sDef = (sOpen + 1) % 3;
+        var sAtk = (await req(shub, "/api/ddraw.png?code=" + scode + "&tok=" + stoks[sOpen] + "&i=0")).w - 2;
+        await req(shub, "/api/dact.png?code=" + scode + "&tok=" + stoks[sOpen] + "&a=1&c=" + sAtk);
+        var sCovered = false;
+        for (var sdi = 0; sdi < 6 && !sCovered; sdi++) {
+            var sdc = (await req(shub, "/api/ddraw.png?code=" + scode + "&tok=" + stoks[sDef] + "&i=" + sdi)).w - 2;
+            var scov = await req(shub, "/api/dact.png?code=" + scode + "&tok=" + stoks[sDef] + "&a=2&p=0&c=" + sdc);
+            if (scov.w === 1 && scov.h === 1) sCovered = true;
+        }
+        async function logLen(hub, c) {
+            for (var i = 0; i < 400; i++) {
+                var e = await req(hub, "/api/dlog.png?code=" + c + "&since=" + i);
+                if (e.w === 1 && e.h === 1) return i;
+            }
+            return -1;
+        }
+        if (sCovered) {
+            // Pass ONCE from the opener. On a 3-seat table this only settles that seat — Bito waits
+            // for the co-attacker — so the pass window stays open, which is the state the unbounded
+            // push exploited. (If the co-attacker held no legal throw-in the cover already beat the
+            // table; then there is nothing to spam and we skip, same as the durak-pass test does.)
+            var firstPass = await req(shub, "/api/dact.png?code=" + scode + "&tok=" + stoks[sOpen] + "&a=4");
+            var afterFirst = await logLen(shub, scode);
+            var stillOpen = (await req(shub, "/api/dact.png?code=" + scode + "&tok=" + stoks[sOpen] + "&a=4")).w === 1;
+            if (firstPass.w === 1 && stillOpen) {
+                // Re-passing the SAME already-settled seat must be a no-op. Without the guard each
+                // call pushed another PASS event, and st.pub had no MOVE_CAP ceiling.
+                for (var sp = 0; sp < 40; sp++)
+                    await req(shub, "/api/dact.png?code=" + scode + "&tok=" + stoks[sOpen] + "&a=4");
+                var afterSpam = await logLen(shub, scode);
+                ok(afterSpam === afterFirst,
+                    "pass-spam: 41 re-passes from a settled seat add 0 events (added " + (afterSpam - afterFirst) + ")");
+            }
+        }
     })();
 
     console.log("\nALL SERVER TESTS PASSED (" + passed + " checks)");
