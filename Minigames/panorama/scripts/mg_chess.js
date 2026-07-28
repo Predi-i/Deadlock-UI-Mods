@@ -17,12 +17,8 @@
     if (MG._chessLoaded) return;
     MG._chessLoaded = true;
 
-    // idx (from the checkers engine) is the only checkers-rules export needed here — the
-    // board index helper reused by chess for square addressing. The full RX chess alias
-    // block follows inside the body (moved verbatim from the old mg_games.js).
-    var idx = MG.Rules.checkers.idx;
-
-    // The two-side game clock lives in mg_games.js and is shared via MG.Widgets.
+    // The two-side game clock and the shared <Image> face-setter live in mg_games.js
+    // (this file can't see that closure), exposed via MG.Widgets.
     var createClock = MG.Widgets.createClock;
 
     // ══ CHESS ═══════════════════════════════════════════════════════════════════
@@ -126,22 +122,11 @@
             var name = (v > 0 ? "White" : "Black") + ["", "Pawn", "Knight", "Bishop", "Rook", "Queen", "King"][cType(v)];
             return "s2r://panorama/images/" + name + ".vtex";
         }
-        // Draw a piece sprite with a CHILD <Image> (SetImage + scaling), NOT the container's
-        // style.backgroundImage. A Panel background paints the .vtex at its NATIVE pixel size
-        // (250²) until the panel is re-laid-out, the same first-frame zoom the cards hit. An
-        // <Image> fills its CSS box from frame 1 (game idiom: hud_ability_icon.xml). The piece
-        // panel keeps its transform/anim/drag-source state; the Image just fills it and is
-        // transparent to input. SetImage takes the BARE s2r:// url.
-        function setFace(container, url) {
-            var img = container._faceImg;
-            if (!img) {
-                img = $.CreatePanel("Image", container, "", { scaling: "stretch-to-fit-preserve-aspect" });
-                img.AddClass("mg-face-img");
-                try { img.SetAttributeString("hittest", "false"); } catch (e) {}
-                container._faceImg = img;
-            }
-            img.SetImage(url);
-        }
+        // Piece sprites are drawn by a CHILD <Image>, not the container's background: a Panel
+        // background paints the .vtex at its NATIVE size (250²) until the panel is re-laid-out.
+        // The piece panel keeps its transform/anim/drag-source state; the Image just fills it and
+        // is transparent to input. Shared implementation: MG.Widgets.setFace (mg_games.js).
+        var setFace = MG.Widgets.setFace;
 
         var root = $.CreatePanel("Panel", container, "MG_ChessRoot");
         root.AddClass("mg-chess");

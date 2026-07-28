@@ -561,17 +561,8 @@
     // re-laid-out (hover = restyle = relayout), which is the ~300% first-frame zoom the
     // maintainer kept seeing. An <Image> sizes to its CSS box from frame 1 — the game's
     // own idiom (hud_ability_icon.xml, QOLLOCK ArcadeFlappyBird). SetImage wants the BARE
-    // s2r:// url, never a url('…') wrapper.
-    function setFace(container, url) {
-        var img = container._faceImg;
-        if (!img) {
-            img = $.CreatePanel("Image", container, "", { scaling: "stretch-to-fit-preserve-aspect" });
-            img.AddClass("mg-face-img");
-            try { img.SetAttributeString("hittest", "false"); } catch (e) {}
-            container._faceImg = img;
-        }
-        img.SetImage(url);
-    }
+    // s2r:// url, never a url('…') wrapper. Shared implementation: MG.Widgets.setFace.
+    var setFace = MG.Widgets.setFace;
 
     // ── views ───────────────────────────────────────────────────────────────
     // The lobby is a two-column layout: LEFT is the game picker grid, RIGHT is the

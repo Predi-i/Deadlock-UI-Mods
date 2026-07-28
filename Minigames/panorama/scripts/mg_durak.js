@@ -60,16 +60,7 @@
     // The container keeps ALL of its state (transform slide, .mg-dk-anim, .mg-dk-trump
     // rotateZ, playable frame); the Image just fills it and is transparent to input, so drag
     // hit-testing still lands on the card panel.
-    function setFace(container, url) {
-        var img = container._faceImg;
-        if (!img) {
-            img = $.CreatePanel("Image", container, "", { scaling: "stretch-to-fit-preserve-aspect" });
-            img.AddClass("mg-face-img");
-            try { img.SetAttributeString("hittest", "false"); } catch (e) {}
-            container._faceImg = img;
-        }
-        img.SetImage(url);
-    }
+    var setFace = MG.Widgets.setFace;   // shared with poker / chess / the picker (see mg_games.js)
     function setBack(container) { setFace(container, BACK_URL); }
 
     // Where each opponent sits on MY screen, given their offset from me around the table.

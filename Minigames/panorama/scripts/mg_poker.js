@@ -37,20 +37,9 @@
     function cardFaceUrl(id) { return DECK_DIR + SUIT_CHARS[P.suitOf(id)] + RANK_CHARS[P.rankOf(id)] + ".vtex"; }
     var BACK_URL = DECK_DIR + "BACK.vtex";
 
-    // Draw a card face/back with a CHILD <Image> (SetImage + scaling), NOT the container's
-    // style.backgroundImage — a Panel background paints the .vtex at its native pixel size until
-    // the panel is re-laid-out (the ~300% first-frame zoom). An <Image> fills its CSS box from
-    // frame 1 (game idiom: hud_ability_icon.xml). The Image is transparent to input.
-    function setFace(container, url) {
-        var img = container._faceImg;
-        if (!img) {
-            img = $.CreatePanel("Image", container, "", { scaling: "stretch-to-fit-preserve-aspect" });
-            img.AddClass("mg-face-img");
-            try { img.SetAttributeString("hittest", "false"); } catch (e) {}
-            container._faceImg = img;
-        }
-        img.SetImage(url);
-    }
+    // Card faces/backs are drawn by a CHILD <Image>, not the container's background — see
+    // MG.Widgets.setFace in mg_games.js for why (and for the copy durak/chess/the picker share).
+    var setFace = MG.Widgets.setFace;
     function setBack(container) { setFace(container, BACK_URL); }
 
     // Where each opponent sits on MY screen, given their relative seat offset. I always sit at

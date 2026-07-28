@@ -382,6 +382,23 @@
         }
     };
 
+    // Draw an image INSIDE `container` (creating the child <Image> on first use and caching it on
+    // the panel), rather than setting container.style.backgroundImage. A Panel background paints
+    // the .vtex at its native pixel size until the panel is re-laid-out, which is the ~300%
+    // first-frame zoom this codebase kept hitting; a child <Image> sizes to its CSS box from frame
+    // one. Used for card faces/backs (durak, poker), chess pieces and the picker card art — four
+    // byte-identical copies of this lived in mg_chess/mg_durak/mg_poker/mg_ui.
+    function setFace(container, url) {
+        var img = container._faceImg;
+        if (!img) {
+            img = $.CreatePanel("Image", container, "", { scaling: "stretch-to-fit-preserve-aspect" });
+            img.AddClass("mg-face-img");
+            try { img.SetAttributeString("hittest", "false"); } catch (e) {}
+            container._faceImg = img;
+        }
+        img.SetImage(url);
+    }
+
     // Shared widget factories reused by the separate game files via MG.Widgets — they can't
     // see this file's closure otherwise. createTurnTimer: durak / poker / connect-four / ttt.
     // createClock: checkers / chess (the two-side game clock). createStub: the picker fallback.
@@ -389,6 +406,7 @@
     MG.Widgets.createTurnTimer = createTurnTimer;
     MG.Widgets.createClock = createClock;
     MG.Widgets.createStub = createStub;
+    MG.Widgets.setFace = setFace;
     MG.Widgets.TURN_SECS = TURN_SECS;
 
     // Built-in game controllers now live in their OWN files (mg_checkers / mg_ttt / mg_chess),
