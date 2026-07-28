@@ -245,9 +245,9 @@
             fill.AddClass("mg-tt-anim");
             // The drain duration lives in CSS (.mg-tt-fill.mg-tt-anim = 25s) but callers may pass a
             // shorter budget (durak's 10s Bito window). Override the transform leg inline so the slide
-            // matches curSecs; opacity/colour legs keep their CSS timings. Order MUST match the CSS
-            // transition-property list (transform, opacity, background-color).
-            fill.style.transitionDuration = curSecs + "s, 0.15s, 0.3s";
+            // matches curSecs; the colour leg keeps its CSS timing. Order MUST match the CSS
+            // transition-property list (transform, background-color).
+            fill.style.transitionDuration = curSecs + "s, 0.3s";
             fill.style.transform = "translate3d(0px, " + TRACK_H + "px, 0px)";   // drain top→bottom over curSecs
         }
 
@@ -343,8 +343,8 @@
             { id: 4, key: "chess", name: "Chess", enabled: true },
             { id: 5, key: "connectfour", name: "Connect Four", short: "Connect 4", enabled: false },
             { id: 6, key: "poker", name: "Poker", short: "Hold'em", enabled: true },
-            { id: 7, key: "soon2", name: "Coming Soon", enabled: false },
-            { id: 8, key: "soon3", name: "Coming Soon", enabled: false },
+            { id: 7, key: "pixelbattle", name: "Pixel Battle", enabled: false },
+            { id: 8, key: "wordle", name: "Wordle", enabled: false },
             { id: 9, key: "soon4", name: "Coming Soon", enabled: false },
             { id: 10, key: "soon5", name: "Coming Soon", enabled: false },
             { id: 11, key: "soon6", name: "Coming Soon", enabled: false },

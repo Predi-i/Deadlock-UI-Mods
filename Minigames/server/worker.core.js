@@ -1,3 +1,4 @@
+/* global CompressionStream, PX_ALPHA, PX_LAND_SPANS, PX_PALETTE, PX_VIEW_PALETTE, adminAssetResponse */
 /**
  * Deadlock Minigames relay — Cloudflare Worker CORE (authored source).
  *
@@ -26,9 +27,15 @@
  * decodes back), NOT raw pixels. Only /api/probe stays literal pixels (600,1000) — it's
  * the calibration reference. Proven 720p–8K by tools/mg_simulate_resolutions.js.
  *
- * Routes (all GET, all return a PNG; pass &rnd=<random> to defeat engine caching):
+ * Game routes below are GET + PNG (pass &rnd=... to defeat engine caching).
+ * `/admin` and `/admin/*` are the separate GitHub-authenticated browser admin + JSON API.
  *   /api/probe                                    -> (600,1000) LITERAL px      swap + scale calibration
  *   /api/ping                                     -> (1,1)                       UI tester route
+ *   /api/pxcanvas                                 -> 512x256 transparent PNG     shared Pixel Battle layer
+ *   /api/pxview?x=X&y=Y&z=Z                       -> 800x400 opaque PNG           sharp 1/2/4/8/16x view
+ *   /api/pxversion                                -> (version&63, version>>6)     reload only after a change
+ *   /api/pxbank?id=STEAM32                        -> (balance&63, balance>>6)     100 cap, +1 / 30 seconds
+ *   /api/pxput?id=STEAM32&b=x,y,c;...             -> remaining balance           10..128 unique pixels
  *   /api/create?game=G&tok=T                      -> dCode(code, host=false)     new PRIVATE lobby, host = seat 0
  *   /api/quick?game=G&tok=T&tc=..&cv=..            -> dCode(code, JOINER|HOST)   role is the code BAND, not +100
  *   /api/mquick?games=..&tok=T&tc=..&cv=..         -> dCode(code, JOINER|HOST)   multi-select; game fixed on join
@@ -68,7 +75,27 @@
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (!url.pathname.startsWith("/api/")) {
+    if (isAdminPath(url.pathname)) {
+      if (url.pathname === "/admin/login") return beginGitHubLogin(url, env);
+      if (url.pathname === "/admin/auth/callback") return finishGitHubLogin(request, url, env);
+      if (url.pathname === "/admin/logout") return adminLogout(url);
+
+      const auth = await authorizeAdmin(request, env);
+      if (!auth.ok) return auth.response;
+
+      const asset = adminAssetResponse(url.pathname);
+      if (asset) return asset;
+      if (!url.pathname.startsWith("/admin/api/")) {
+        return new Response("Not found", { status: 404 });
+      }
+
+      // Durable Objects are not publicly addressable. Strip any caller-supplied value
+      // and inject only the login from the Worker-verified signed session.
+      const headers = new Headers(request.headers);
+      headers.delete("X-MG-Admin-Login");
+      headers.set("X-MG-Admin-Login", auth.login);
+      request = new Request(request, { headers: headers });
+    } else if (!url.pathname.startsWith("/api/")) {
       return new Response("Deadlock Minigames relay OK", { status: 200 });
     }
     // All game state lives in a single strongly-consistent Durable Object.
@@ -77,6 +104,240 @@ export default {
     return stub.fetch(request);
   },
 };
+
+const ADMIN_SESSION_COOKIE = "mg_admin_session";
+const ADMIN_OAUTH_STATE_COOKIE = "mg_oauth_state";
+const ADMIN_OAUTH_VERIFIER_COOKIE = "mg_oauth_verifier";
+const ADMIN_SESSION_SECONDS = 8 * 60 * 60;
+
+function isAdminPath(pathname) {
+  return pathname === "/admin" || pathname.startsWith("/admin/");
+}
+
+function adminDenied(message, status) {
+  return {
+    ok: false,
+    response: new Response(message, {
+      status: status,
+      headers: {
+        "Content-Type": "text/plain; charset=utf-8",
+        "Cache-Control": "no-store",
+        "X-Content-Type-Options": "nosniff"
+      }
+    })
+  };
+}
+
+function base64UrlBytes(value) {
+  let text = String(value || "").replace(/-/g, "+").replace(/_/g, "/");
+  while (text.length % 4) text += "=";
+  const decoded = atob(text);
+  const bytes = new Uint8Array(decoded.length);
+  for (let i = 0; i < decoded.length; i++) bytes[i] = decoded.charCodeAt(i);
+  return bytes;
+}
+
+function base64UrlEncode(bytes) {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+  let out = "";
+  for (let i = 0; i < bytes.length; i += 3) {
+    const a = bytes[i], b = i + 1 < bytes.length ? bytes[i + 1] : 0;
+    const c = i + 2 < bytes.length ? bytes[i + 2] : 0;
+    out += alphabet[a >> 2];
+    out += alphabet[((a & 3) << 4) | (b >> 4)];
+    if (i + 1 < bytes.length) out += alphabet[((b & 15) << 2) | (c >> 6)];
+    if (i + 2 < bytes.length) out += alphabet[c & 63];
+  }
+  return out;
+}
+
+function randomBase64Url(size) {
+  const bytes = new Uint8Array(size);
+  crypto.getRandomValues(bytes);
+  return base64UrlEncode(bytes);
+}
+
+function cookieValue(request, name) {
+  const header = request.headers.get("Cookie") || "";
+  const parts = header.split(";");
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i].trim(), equals = part.indexOf("=");
+    if (equals > 0 && part.substring(0, equals) === name) {
+      return part.substring(equals + 1);
+    }
+  }
+  return "";
+}
+
+function adminConfig(env) {
+  const config = {
+    clientId: String(env.GITHUB_CLIENT_ID || "").trim(),
+    clientSecret: String(env.GITHUB_CLIENT_SECRET || "").trim(),
+    githubId: String(env.ADMIN_GITHUB_ID || "").trim(),
+    sessionSecret: String(env.ADMIN_SESSION_SECRET || "")
+  };
+  config.ok = !!(config.clientId && config.clientSecret &&
+    /^\d+$/.test(config.githubId) && config.githubId !== "0" &&
+    config.sessionSecret.length >= 32);
+  return config;
+}
+
+function adminCookie(name, value, maxAge, path) {
+  return name + "=" + value + "; Path=" + path +
+    "; Max-Age=" + maxAge + "; HttpOnly; Secure; SameSite=Lax";
+}
+
+function redirectWithCookies(location, cookies) {
+  const headers = new Headers({
+    "Location": location,
+    "Cache-Control": "no-store",
+    "Referrer-Policy": "no-referrer"
+  });
+  for (let i = 0; i < cookies.length; i++) headers.append("Set-Cookie", cookies[i]);
+  return new Response(null, { status: 302, headers: headers });
+}
+
+async function sha256Base64Url(value) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return base64UrlEncode(new Uint8Array(digest));
+}
+
+async function adminHmacKey(secret) {
+  return crypto.subtle.importKey(
+    "raw", new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]
+  );
+}
+
+async function issueAdminSession(config, user) {
+  const payload = base64UrlEncode(new TextEncoder().encode(JSON.stringify({
+    id: String(user.id),
+    login: String(user.login || ""),
+    exp: Math.floor(Date.now() / 1000) + ADMIN_SESSION_SECONDS
+  })));
+  const signature = await crypto.subtle.sign(
+    "HMAC", await adminHmacKey(config.sessionSecret), new TextEncoder().encode(payload)
+  );
+  return payload + "." + base64UrlEncode(new Uint8Array(signature));
+}
+
+async function verifyAdminSession(request, config) {
+  const token = cookieValue(request, ADMIN_SESSION_COOKIE);
+  const parts = token.split(".");
+  if (parts.length !== 2) return null;
+  try {
+    const valid = await crypto.subtle.verify(
+      "HMAC", await adminHmacKey(config.sessionSecret), base64UrlBytes(parts[1]),
+      new TextEncoder().encode(parts[0])
+    );
+    if (!valid) return null;
+    const payload = JSON.parse(new TextDecoder().decode(base64UrlBytes(parts[0])));
+    const now = Math.floor(Date.now() / 1000);
+    if (String(payload.id || "") !== config.githubId ||
+        !/^[A-Za-z0-9-]{1,39}$/.test(String(payload.login || "")) ||
+        !Number.isFinite(payload.exp) || payload.exp <= now) return null;
+    return payload;
+  } catch (error) {
+    return null;
+  }
+}
+
+async function beginGitHubLogin(url, env) {
+  const config = adminConfig(env);
+  if (!config.ok) return adminDenied("Admin authentication is not configured.", 503).response;
+  const state = randomBase64Url(32), verifier = randomBase64Url(48);
+  const authorize = new URL("https://github.com/login/oauth/authorize");
+  authorize.searchParams.set("client_id", config.clientId);
+  authorize.searchParams.set("redirect_uri", url.origin + "/admin/auth/callback");
+  authorize.searchParams.set("state", state);
+  authorize.searchParams.set("code_challenge", await sha256Base64Url(verifier));
+  authorize.searchParams.set("code_challenge_method", "S256");
+  authorize.searchParams.set("allow_signup", "false");
+  return redirectWithCookies(authorize.toString(), [
+    adminCookie(ADMIN_OAUTH_STATE_COOKIE, state, 600, "/admin/auth/callback"),
+    adminCookie(ADMIN_OAUTH_VERIFIER_COOKIE, verifier, 600, "/admin/auth/callback")
+  ]);
+}
+
+async function finishGitHubLogin(request, url, env) {
+  const config = adminConfig(env);
+  if (!config.ok) return adminDenied("Admin authentication is not configured.", 503).response;
+  const state = url.searchParams.get("state") || "";
+  const code = url.searchParams.get("code") || "";
+  const savedState = cookieValue(request, ADMIN_OAUTH_STATE_COOKIE);
+  const verifier = cookieValue(request, ADMIN_OAUTH_VERIFIER_COOKIE);
+  const clearFlow = [
+    adminCookie(ADMIN_OAUTH_STATE_COOKIE, "", 0, "/admin/auth/callback"),
+    adminCookie(ADMIN_OAUTH_VERIFIER_COOKIE, "", 0, "/admin/auth/callback")
+  ];
+  if (!code || !state || state !== savedState || !verifier) {
+    return redirectWithCookies("/admin/login?error=oauth", clearFlow);
+  }
+
+  try {
+    const tokenResponse = await fetch("https://github.com/login/oauth/access_token", {
+      method: "POST",
+      headers: { "Accept": "application/json", "Content-Type": "application/json" },
+      body: JSON.stringify({
+        client_id: config.clientId,
+        client_secret: config.clientSecret,
+        code: code,
+        redirect_uri: url.origin + "/admin/auth/callback",
+        code_verifier: verifier
+      })
+    });
+    const tokenBody = await tokenResponse.json();
+    if (!tokenResponse.ok || !tokenBody || !tokenBody.access_token) {
+      return redirectWithCookies("/admin/login?error=token", clearFlow);
+    }
+    const userResponse = await fetch("https://api.github.com/user", {
+      headers: {
+        "Accept": "application/vnd.github+json",
+        "Authorization": "Bearer " + tokenBody.access_token,
+        "User-Agent": "Deadlock-Minigames-Admin",
+        "X-GitHub-Api-Version": "2022-11-28"
+      }
+    });
+    const user = await userResponse.json();
+    if (!userResponse.ok || String(user && user.id || "") !== config.githubId ||
+        !/^[A-Za-z0-9-]{1,39}$/.test(String(user && user.login || ""))) {
+      const headers = new Headers({
+        "Content-Type": "text/plain; charset=utf-8",
+        "Cache-Control": "no-store"
+      });
+      for (let i = 0; i < clearFlow.length; i++) headers.append("Set-Cookie", clearFlow[i]);
+      return new Response("This GitHub account is not allowed.", { status: 403, headers: headers });
+    }
+    const session = await issueAdminSession(config, user);
+    clearFlow.push(adminCookie(ADMIN_SESSION_COOKIE, session, ADMIN_SESSION_SECONDS, "/admin"));
+    return redirectWithCookies("/admin", clearFlow);
+  } catch (error) {
+    return redirectWithCookies("/admin/login?error=github", clearFlow);
+  }
+}
+
+function adminLogout(url) {
+  return redirectWithCookies(url.origin + "/admin/login", [
+    adminCookie(ADMIN_SESSION_COOKIE, "", 0, "/admin")
+  ]);
+}
+
+async function authorizeAdmin(request, env) {
+  const config = adminConfig(env);
+  if (!config.ok) {
+    return adminDenied("Admin authentication is not configured.", 503);
+  }
+  const session = await verifyAdminSession(request, config);
+  if (session) return { ok: true, login: session.login };
+  const url = new URL(request.url);
+  if (url.pathname.startsWith("/admin/api/")) return adminDenied("GitHub login required.", 401);
+  return {
+    ok: false,
+    response: redirectWithCookies("/admin/login", [
+      adminCookie(ADMIN_SESSION_COOKIE, "", 0, "/admin")
+    ])
+  };
+}
 
 export class Hub {
   constructor(state) {
@@ -91,6 +352,9 @@ export class Hub {
     // would be misread by the poll decoder as a real move. Bounded to RL_MAX_IPS entries so
     // the map itself can't be used to exhaust memory.
     this.rl = new Map();          // ip -> array of recent request timestamps (ms)
+    this.pxrl = new Map();        // account+ip -> recent Pixel Battle uploads
+    this.pxTiles = null;          // lazily hydrated sparse 32x32 canvas tiles
+    this.pxViewCache = new Map(); // version+origin -> native-size edit viewport PNG
   }
 
   // Sliding-window rate check for one IP. Returns true if this request is ALLOWED. A null/
@@ -134,8 +398,42 @@ export class Hub {
     }
 
     try {
+      if (p.startsWith("/admin/api/")) return await handlePixelAdmin(this, request, url);
       if (p === "/api/probe") return png(600, 1000);
       if (p === "/api/ping") return d(1, 1);
+      if (p === "/api/pxcanvas") return await pixelCanvasPng(this);
+      if (p === "/api/pxview") {
+        const account = validPixelAccount(q.get("id"));
+        if (account && await pixelBan(this, account)) return d(5, 63);
+        const zoom = pixelViewZoom(q.get("z"));
+        const viewCols = PX_W / zoom, viewRows = PX_H / zoom;
+        const viewX = clampInt(q.get("x"), 0, 0, PX_W - viewCols);
+        const viewY = clampInt(q.get("y"), 0, 0, PX_H - viewRows);
+        return await pixelViewPng(this, viewX, viewY, zoom);
+      }
+      if (p === "/api/pxversion") {
+        const account = validPixelAccount(q.get("id"));
+        if (account && await pixelBan(this, account)) return d(5, 63);
+        return pixelVersionPng(await pixelVersion(this));
+      }
+      if (p === "/api/pxbank") {
+        const account = validPixelAccount(q.get("id"));
+        if (!account) return d(1, 63);
+        if (await pixelBan(this, account)) return d(5, 63);
+        const bank = await pixelBank(this, account, 0);
+        return pixelBankPng(bank.balance);
+      }
+      if (p === "/api/pxput") {
+        const account = validPixelAccount(q.get("id"));
+        if (!account) return d(1, 63);
+        if (await pixelBan(this, account)) return d(5, 63);
+        if (!pixelUploadRateOk(this, account, request.headers.get("CF-Connecting-IP"))) return d(4, 63);
+        const batch = parsePixelBatch(q.get("b"));
+        if (!batch) return d(2, 63);
+        const result = await applyPixelBatch(this, account, batch);
+        if (!result.ok) return d(result.reason, 63);
+        return pixelBankPng(result.balance);
+      }
 
       if (p === "/api/create") {
         await this.maybeSweep();
@@ -1493,6 +1791,782 @@ function pokerNext(lobby, seat) {
  * through d(w,h). */
 const STEP = 9, BASE = 15;
 function d(w, h) { return png(w * STEP + BASE, h * STEP + BASE); }
+
+/* ───────────────────────── Pixel Battle ─────────────────────────
+ * The generated Natural Earth mask is the immutable base; paint is stored in
+ * sparse 32x32 chunks. /pxcanvas emits a transparent paint layer for compatibility,
+ * while /pxview composites a sharp native-size frame for every interactive zoom.
+ */
+const PX_W = 512, PX_H = 256, PX_TILE = 32, PX_TILE_COLS = PX_W / PX_TILE;
+const PX_VIEW_W = 800, PX_VIEW_H = 400;
+const PX_BANK_CAP = 100, PX_REGEN_MS = 30000;
+const PX_MIN_BATCH = 10, PX_MAX_BATCH = 128;
+const PX_UPLOAD_WINDOW_MS = 60000, PX_UPLOAD_MAX_HITS = 30, PX_UPLOAD_MAX_KEYS = 5000;
+const PX_ADMIN_MAX_BATCH = 4096;
+const PX_ADMIN_COLOR_NAMES = [
+  "eraser", "white", "light gray", "dark gray", "black", "red", "orange", "yellow",
+  "lime", "green", "cyan", "blue", "navy", "purple", "magenta", "pink", "brown",
+  "ocean", "land"
+];
+
+function pixelViewZoom(raw) {
+  const zoom = Number(raw);
+  return zoom === 1 || zoom === 2 || zoom === 4 || zoom === 8 || zoom === 16 ? zoom : 16;
+}
+
+function validPixelAccount(raw) {
+  if (typeof raw !== "string" || !/^[0-9]{5,12}$/.test(raw) || raw === "0") return "";
+  return raw;
+}
+
+async function pixelBan(hub, account) {
+  return await hub.storage.get("px:b:" + account) || null;
+}
+
+function pixelBankPng(balance) {
+  return d(balance & 63, (balance >> 6) & 63);
+}
+
+function pixelVersionPng(version) {
+  return d(version & 63, (version >> 6) & 63);
+}
+
+async function pixelVersion(hub) {
+  return ((await hub.storage.get("px:version")) || 0) & 4095;
+}
+
+async function pixelBank(hub, account, spend) {
+  const key = "px:u:" + account;
+  const now = Date.now();
+  let record = await hub.storage.get(key);
+  if (!record || !Number.isFinite(record.balance) || !Number.isFinite(record.at)) {
+    record = { balance: PX_BANK_CAP, at: now };
+  }
+
+  let current = Math.max(0, Math.min(PX_BANK_CAP, record.balance | 0));
+  let at = Math.min(now, Math.max(0, Number(record.at) || now));
+  if (current >= PX_BANK_CAP) {
+    at = now;
+  } else {
+    const gained = Math.floor((now - at) / PX_REGEN_MS);
+    if (gained > 0) {
+      current = Math.min(PX_BANK_CAP, current + gained);
+      at = current >= PX_BANK_CAP ? now : at + gained * PX_REGEN_MS;
+    }
+  }
+
+  if (spend > current) return { ok: false, balance: current };
+  current -= spend;
+  await hub.storage.put(key, { balance: current, at: at });
+  return { ok: true, balance: current };
+}
+
+function parsePixelBatch(raw) {
+  if (typeof raw !== "string" || raw.length > 4096) return null;
+  const parts = raw.split(";");
+  if (parts.length < PX_MIN_BATCH || parts.length > PX_MAX_BATCH) return null;
+  const unique = new Map();
+  for (let i = 0; i < parts.length; i++) {
+    const match = /^([0-9]{1,3}),([0-9]{1,3}),([0-9]{1,2})$/.exec(parts[i]);
+    if (!match) return null;
+    const x = parseInt(match[1], 10), y = parseInt(match[2], 10), color = parseInt(match[3], 10);
+    if (x < 0 || x >= PX_W || y < 0 || y >= PX_H || color < 0 || color >= PX_PALETTE.length) return null;
+    unique.set(x + "," + y, { x: x, y: y, color: color });
+  }
+  if (unique.size < PX_MIN_BATCH || unique.size > PX_MAX_BATCH) return null;
+  return Array.from(unique.values());
+}
+
+function pixelUploadRateOk(hub, account, ip) {
+  if (!ip) return true;
+  const key = account + "|" + ip;
+  const now = Date.now();
+  let hits = hub.pxrl.get(key);
+  if (!hits) {
+    if (hub.pxrl.size >= PX_UPLOAD_MAX_KEYS) {
+      const oldest = hub.pxrl.keys().next().value;
+      if (oldest !== undefined) hub.pxrl.delete(oldest);
+    }
+    hits = [];
+    hub.pxrl.set(key, hits);
+  }
+  let keep = 0;
+  for (let i = 0; i < hits.length; i++) if (now - hits[i] < PX_UPLOAD_WINDOW_MS) hits[keep++] = hits[i];
+  hits.length = keep;
+  if (hits.length >= PX_UPLOAD_MAX_HITS) return false;
+  hits.push(now);
+  return true;
+}
+
+async function pixelTiles(hub) {
+  if (hub.pxTiles) return hub.pxTiles;
+  const stored = await hub.storage.list({ prefix: "px:t:" });
+  const tiles = new Map();
+  for (const [key, value] of stored) {
+    const index = parseInt(String(key).substring(5), 10);
+    if (!Number.isFinite(index) || index < 0) continue;
+    if (value instanceof Uint8Array && value.length === PX_TILE * PX_TILE) tiles.set(index, value);
+    else if (Array.isArray(value) && value.length === PX_TILE * PX_TILE) tiles.set(index, Uint8Array.from(value));
+  }
+  hub.pxTiles = tiles;
+  return tiles;
+}
+
+function pixelAt(tiles, x, y) {
+  const tx = Math.floor(x / PX_TILE), ty = Math.floor(y / PX_TILE);
+  const tile = tiles.get(ty * PX_TILE_COLS + tx);
+  return tile ? tile[(y % PX_TILE) * PX_TILE + (x % PX_TILE)] : 0;
+}
+
+async function applyPixelBatch(hub, account, batch) {
+  const tiles = await pixelTiles(hub);
+  const changed = [];
+  for (let i = 0; i < batch.length; i++) {
+    const pixel = batch[i];
+    const before = pixelAt(tiles, pixel.x, pixel.y);
+    if (before !== pixel.color) {
+      changed.push({ x: pixel.x, y: pixel.y, before: before, after: pixel.color });
+    }
+  }
+
+  const bank = await pixelBank(hub, account, changed.length);
+  if (!bank.ok) return { ok: false, reason: 3, balance: bank.balance };
+  if (changed.length === 0) return { ok: true, balance: bank.balance };
+
+  const ownership = await attachPixelOwners(hub, changed);
+  await persistPixelDeltas(hub, changed);
+  const action = await logPixelAction(hub, {
+    actor: "player",
+    steamid: account,
+    kind: "paint",
+    deltas: changed
+  });
+  await persistPixelOwnership(hub, changed, action.id, ownership);
+  return { ok: true, balance: bank.balance };
+}
+
+async function persistPixelDeltas(hub, changed) {
+  const tiles = await pixelTiles(hub);
+  const dirty = new Map();
+  for (let i = 0; i < changed.length; i++) {
+    const pixel = changed[i];
+    const tx = Math.floor(pixel.x / PX_TILE), ty = Math.floor(pixel.y / PX_TILE);
+    const index = ty * PX_TILE_COLS + tx;
+    let tile = tiles.get(index);
+    if (!tile) {
+      tile = new Uint8Array(PX_TILE * PX_TILE);
+      tiles.set(index, tile);
+    }
+    tile[(pixel.y % PX_TILE) * PX_TILE + (pixel.x % PX_TILE)] = pixel.after;
+    dirty.set(index, tile);
+  }
+  for (const [index, tile] of dirty) {
+    let hasPaint = false;
+    for (let i = 0; i < tile.length; i++) {
+      if (tile[i] !== 0) { hasPaint = true; break; }
+    }
+    if (hasPaint) {
+      await hub.storage.put("px:t:" + index, tile);
+    } else {
+      await hub.storage.delete("px:t:" + index);
+      tiles.delete(index);
+    }
+  }
+  const version = ((await pixelVersion(hub)) + 1) & 4095;
+  await hub.storage.put("px:version", version);
+  hub.pxViewCache.clear();
+  return version;
+}
+
+function pixelActionId() {
+  const random = new Uint32Array(1);
+  crypto.getRandomValues(random);
+  return String(Date.now()).padStart(13, "0") + "-" + random[0].toString(16).padStart(8, "0");
+}
+
+function validPixelActionId(raw) {
+  return typeof raw === "string" && /^[0-9]{13}-[0-9a-f]{8}$/.test(raw) ? raw : "";
+}
+
+function pixelDeltaBounds(deltas) {
+  if (!Array.isArray(deltas) || !deltas.length) return null;
+  let minX = PX_W, minY = PX_H, maxX = -1, maxY = -1;
+  for (let i = 0; i < deltas.length; i++) {
+    const dlt = deltas[i];
+    const x = Array.isArray(dlt) ? dlt[0] : dlt.x;
+    const y = Array.isArray(dlt) ? dlt[1] : dlt.y;
+    if (!Number.isInteger(x) || !Number.isInteger(y)) continue;
+    minX = Math.min(minX, x); minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
+  }
+  return maxX >= 0 ? [minX, minY, maxX, maxY] : null;
+}
+
+async function logPixelAction(hub, input) {
+  const id = pixelActionId();
+  const action = {
+    id: id,
+    at: Date.now(),
+    actor: input.actor,
+    steamid: input.steamid || "",
+    admin: input.admin || "",
+    kind: input.kind || "paint",
+    note: input.note || "",
+    targetActionId: input.targetActionId || "",
+    deltas: input.deltas.map(function (p) {
+      return [p.x, p.y, p.before, p.after, p.beforeOwnerActionId || ""];
+    })
+  };
+  action.bounds = pixelDeltaBounds(action.deltas);
+  await hub.storage.put("px:a:" + id, action);
+  if (action.steamid) await hub.storage.put("px:ua:" + action.steamid + ":" + id, true);
+  return action;
+}
+
+function pixelActionSummary(action) {
+  return {
+    id: action.id,
+    at: action.at,
+    actor: action.actor,
+    steamid: action.steamid || "",
+    admin: action.admin || "",
+    kind: action.kind,
+    note: action.note || "",
+    targetActionId: action.targetActionId || "",
+    count: Array.isArray(action.deltas) ? action.deltas.length : 0,
+    undoneAt: action.undoneAt || 0,
+    undoneBy: action.undoneBy || "",
+    undoSkipped: action.undoSkipped || 0,
+    undoActionId: action.undoActionId || "",
+    bounds: action.bounds || pixelDeltaBounds(action.deltas)
+  };
+}
+
+function pixelOwnershipLocation(x, y) {
+  const tx = Math.floor(x / PX_TILE), ty = Math.floor(y / PX_TILE);
+  return {
+    tile: ty * PX_TILE_COLS + tx,
+    offset: (y % PX_TILE) * PX_TILE + (x % PX_TILE)
+  };
+}
+
+function pixelOwnershipRecord(raw) {
+  if (!raw || !Array.isArray(raw.entries)) {
+    return { entries: [], refs: new Uint16Array(PX_TILE * PX_TILE) };
+  }
+  let refs = raw.refs;
+  if (!(refs instanceof Uint16Array) || refs.length !== PX_TILE * PX_TILE) {
+    refs = Array.isArray(refs) && refs.length === PX_TILE * PX_TILE
+      ? Uint16Array.from(refs) : new Uint16Array(PX_TILE * PX_TILE);
+  }
+  return { entries: raw.entries.slice(0, PX_TILE * PX_TILE), refs: refs };
+}
+
+function pixelOwnerFromRecord(record, offset) {
+  const ref = record.refs[offset] || 0;
+  return ref > 0 && ref <= record.entries.length ? String(record.entries[ref - 1] || "") : "";
+}
+
+async function pixelOwnerActionId(hub, x, y) {
+  const location = pixelOwnershipLocation(x, y);
+  const record = pixelOwnershipRecord(await hub.storage.get("px:o:" + location.tile));
+  return pixelOwnerFromRecord(record, location.offset);
+}
+
+async function attachPixelOwners(hub, changed) {
+  const records = new Map();
+  for (let i = 0; i < changed.length; i++) {
+    const p = changed[i], location = pixelOwnershipLocation(p.x, p.y);
+    let record = records.get(location.tile);
+    if (!record) {
+      record = pixelOwnershipRecord(await hub.storage.get("px:o:" + location.tile));
+      records.set(location.tile, record);
+    }
+    p.beforeOwnerActionId = pixelOwnerFromRecord(record, location.offset);
+  }
+  return records;
+}
+
+async function persistPixelOwnership(hub, changed, defaultActionId, loadedRecords) {
+  const grouped = new Map();
+  for (let i = 0; i < changed.length; i++) {
+    const p = changed[i], location = pixelOwnershipLocation(p.x, p.y);
+    let updates = grouped.get(location.tile);
+    if (!updates) { updates = []; grouped.set(location.tile, updates); }
+    const owner = Object.prototype.hasOwnProperty.call(p, "ownerActionId")
+      ? String(p.ownerActionId || "") : String(defaultActionId || "");
+    updates.push({ offset: location.offset, owner: owner });
+  }
+
+  for (const [tile, updates] of grouped) {
+    const key = "px:o:" + tile;
+    const old = loadedRecords && loadedRecords.has(tile)
+      ? loadedRecords.get(tile) : pixelOwnershipRecord(await hub.storage.get(key));
+    const values = new Array(PX_TILE * PX_TILE);
+    for (let i = 0; i < values.length; i++) values[i] = pixelOwnerFromRecord(old, i);
+    for (let i = 0; i < updates.length; i++) values[updates[i].offset] = updates[i].owner;
+
+    const entries = [], entryRefs = new Map(), refs = new Uint16Array(PX_TILE * PX_TILE);
+    for (let i = 0; i < values.length; i++) {
+      const owner = values[i];
+      if (!owner) continue;
+      let ref = entryRefs.get(owner);
+      if (!ref) {
+        entries.push(owner);
+        ref = entries.length;
+        entryRefs.set(owner, ref);
+      }
+      refs[i] = ref;
+    }
+    if (entries.length) await hub.storage.put(key, { entries: entries, refs: refs });
+    else await hub.storage.delete(key);
+  }
+}
+
+function adminJson(value, status) {
+  return new Response(JSON.stringify(value), {
+    status: status || 200,
+    headers: {
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "no-store",
+      "X-Content-Type-Options": "nosniff"
+    }
+  });
+}
+
+function adminError(message, status) {
+  return adminJson({ error: message }, status || 400);
+}
+
+function adminIdentity(request) {
+  const login = String(request.headers.get("X-MG-Admin-Login") || "").trim();
+  return /^[A-Za-z0-9-]{1,39}$/.test(login) ? login : "";
+}
+
+function adminMutationAllowed(request, url) {
+  if (request.method !== "POST" || request.headers.get("X-MG-Admin") !== "1") return false;
+  const origin = request.headers.get("Origin") || "";
+  const fetchSite = request.headers.get("Sec-Fetch-Site") || "";
+  return origin === url.origin && (!fetchSite || fetchSite === "same-origin");
+}
+
+async function readAdminPixels(request) {
+  const declared = Number(request.headers.get("Content-Length") || 0);
+  if (declared > 400000) return null;
+  let body;
+  try { body = await request.json(); } catch (error) { return null; }
+  if (!body || !Array.isArray(body.pixels) ||
+      body.pixels.length < 1 || body.pixels.length > PX_ADMIN_MAX_BATCH) return null;
+  const unique = new Map();
+  for (let i = 0; i < body.pixels.length; i++) {
+    const p = body.pixels[i];
+    if (!p || !Number.isInteger(p.x) || !Number.isInteger(p.y) || !Number.isInteger(p.color) ||
+        p.x < 0 || p.x >= PX_W || p.y < 0 || p.y >= PX_H ||
+        p.color < 0 || p.color >= PX_PALETTE.length) return null;
+    unique.set(p.x + "," + p.y, { x: p.x, y: p.y, color: p.color });
+  }
+  return Array.from(unique.values());
+}
+
+async function adminPixelState(hub, login) {
+  const tiles = await pixelTiles(hub);
+  let painted = 0;
+  for (const tile of tiles.values()) {
+    for (let i = 0; i < tile.length; i++) if (tile[i]) painted++;
+  }
+  const bans = await hub.storage.list({ prefix: "px:b:" });
+  return adminJson({
+    admin: login,
+    version: await pixelVersion(hub),
+    painted: painted,
+    bans: bans.size,
+    palette: PX_PALETTE,
+    paletteNames: PX_ADMIN_COLOR_NAMES
+  });
+}
+
+async function adminPixelActions(hub, url) {
+  const steamidRaw = url.searchParams.get("steamid") || "";
+  const steamid = steamidRaw ? validPixelAccount(steamidRaw) : "";
+  if (steamidRaw && !steamid) return adminError("Invalid Steam32 ID.", 400);
+  const beforeRaw = url.searchParams.get("before") || "";
+  const before = beforeRaw ? validPixelActionId(beforeRaw) : "";
+  if (beforeRaw && !before) return adminError("Invalid action cursor.", 400);
+  const limit = clampInt(url.searchParams.get("limit"), 50, 1, 100);
+  const prefix = steamid ? "px:ua:" + steamid + ":" : "px:a:";
+  const options = { prefix: prefix, reverse: true, limit: limit + 1 };
+  if (before) options.end = prefix + before;
+  const listed = await hub.storage.list(options);
+  const ids = [];
+  for (const key of listed.keys()) ids.push(String(key).substring(prefix.length));
+  const hasMore = ids.length > limit;
+  if (hasMore) ids.length = limit;
+
+  const actions = [];
+  for (let i = 0; i < ids.length; i++) {
+    const action = await hub.storage.get("px:a:" + ids[i]);
+    if (action) actions.push(pixelActionSummary(action));
+  }
+  return adminJson({
+    actions: actions,
+    next: hasMore && ids.length ? ids[ids.length - 1] : ""
+  });
+}
+
+async function adminPixelPaint(hub, request, login) {
+  const pixels = await readAdminPixels(request);
+  if (!pixels) return adminError("Invalid pixel batch.", 400);
+  const tiles = await pixelTiles(hub);
+  const changed = [];
+  for (let i = 0; i < pixels.length; i++) {
+    const p = pixels[i], before = pixelAt(tiles, p.x, p.y);
+    if (before !== p.color) changed.push({ x: p.x, y: p.y, before: before, after: p.color });
+  }
+  if (!changed.length) {
+    return adminJson({ changed: 0, version: await pixelVersion(hub) });
+  }
+  const ownership = await attachPixelOwners(hub, changed);
+  const version = await persistPixelDeltas(hub, changed);
+  const action = await logPixelAction(hub, {
+    actor: "admin", admin: login, kind: "paint", deltas: changed
+  });
+  await persistPixelOwnership(hub, changed, action.id, ownership);
+  return adminJson({ changed: changed.length, version: version, actionId: action.id });
+}
+
+async function adminPixelUndo(hub, request, login) {
+  let body;
+  try { body = await request.json(); } catch (error) { return adminError("Invalid JSON body.", 400); }
+  const actionId = validPixelActionId(body && body.actionId);
+  const force = !!(body && body.force);
+  if (!actionId) return adminError("Invalid action ID.", 400);
+  const actionKey = "px:a:" + actionId;
+  const action = await hub.storage.get(actionKey);
+  if (!action || action.kind !== "paint" || !Array.isArray(action.deltas)) {
+    return adminError("Action not found or cannot be undone.", 404);
+  }
+  if (action.undoneAt) return adminError("Action was already undone.", 409);
+
+  const tiles = await pixelTiles(hub);
+  const changed = [];
+  let skipped = 0;
+  for (let i = 0; i < action.deltas.length; i++) {
+    const dlt = action.deltas[i];
+    if (!Array.isArray(dlt) || dlt.length < 4) continue;
+    const current = pixelAt(tiles, dlt[0], dlt[1]);
+    if (!force && current !== dlt[3]) { skipped++; continue; }
+    if (current !== dlt[2]) {
+      changed.push({
+        x: dlt[0], y: dlt[1], before: current, after: dlt[2],
+        ownerActionId: validPixelActionId(dlt[4]) || ""
+      });
+    }
+  }
+
+  let version = await pixelVersion(hub), undoAction = null;
+  if (changed.length) {
+    const ownership = await attachPixelOwners(hub, changed);
+    version = await persistPixelDeltas(hub, changed);
+    undoAction = await logPixelAction(hub, {
+      actor: "admin",
+      admin: login,
+      kind: "undo",
+      targetActionId: actionId,
+      deltas: changed
+    });
+    await persistPixelOwnership(hub, changed, undoAction.id, ownership);
+  }
+  action.undoneAt = Date.now();
+  action.undoneBy = login;
+  action.undoSkipped = skipped;
+  action.undoActionId = undoAction ? undoAction.id : "";
+  await hub.storage.put(actionKey, action);
+  return adminJson({
+    changed: changed.length,
+    skipped: skipped,
+    version: version,
+    undoActionId: action.undoActionId
+  });
+}
+
+async function adminPixelAction(hub, url) {
+  const actionId = validPixelActionId(url.searchParams.get("id") || "");
+  if (!actionId) return adminError("Invalid action ID.", 400);
+  const action = await hub.storage.get("px:a:" + actionId);
+  if (!action) return adminError("Action not found.", 404);
+  const detail = pixelActionSummary(action);
+  const tiles = await pixelTiles(hub);
+  const deltas = Array.isArray(action.deltas) ? action.deltas : [];
+  detail.pixels = [];
+  detail.revertible = 0;
+  detail.conflicts = 0;
+  for (let i = 0; i < deltas.length; i++) {
+    const dlt = deltas[i];
+    if (!Array.isArray(dlt) || dlt.length < 4) continue;
+    const current = pixelAt(tiles, dlt[0], dlt[1]);
+    const revertible = current === dlt[3];
+    if (revertible) detail.revertible++;
+    else detail.conflicts++;
+    detail.pixels.push({
+      x: dlt[0], y: dlt[1],
+      before: dlt[2], after: dlt[3], current: current,
+      beforeDisplay: dlt[2] || (pixelLandAt(dlt[0], dlt[1]) ? 18 : 17),
+      afterDisplay: dlt[3] || (pixelLandAt(dlt[0], dlt[1]) ? 18 : 17),
+      currentDisplay: current || (pixelLandAt(dlt[0], dlt[1]) ? 18 : 17),
+      revertible: revertible
+    });
+  }
+  return adminJson(detail);
+}
+
+async function legacyPixelOwnerAction(hub, x, y) {
+  let before = "", scanned = 0;
+  while (scanned < 5000) {
+    const options = { prefix: "px:a:", reverse: true, limit: 250 };
+    if (before) options.end = before;
+    const listed = await hub.storage.list(options);
+    if (!listed.size) break;
+    let lastKey = "";
+    for (const [key, action] of listed) {
+      lastKey = String(key);
+      scanned++;
+      if (!action || !Array.isArray(action.deltas)) continue;
+      for (let i = action.deltas.length - 1; i >= 0; i--) {
+        const dlt = action.deltas[i];
+        if (Array.isArray(dlt) && dlt[0] === x && dlt[1] === y) {
+          await persistPixelOwnership(hub, [{ x: x, y: y, ownerActionId: action.id }], "");
+          return action;
+        }
+      }
+    }
+    if (listed.size < 250 || !lastKey) break;
+    before = lastKey;
+  }
+  return null;
+}
+
+async function adminPixelInspect(hub, url) {
+  const x = Number(url.searchParams.get("x")), y = Number(url.searchParams.get("y"));
+  if (!Number.isInteger(x) || !Number.isInteger(y) || x < 0 || x >= PX_W || y < 0 || y >= PX_H) {
+    return adminError("Invalid pixel coordinate.", 400);
+  }
+  const tiles = await pixelTiles(hub);
+  const color = pixelAt(tiles, x, y);
+  let actionId = await pixelOwnerActionId(hub, x, y);
+  let action = actionId ? await hub.storage.get("px:a:" + actionId) : null;
+  if (!action) {
+    action = await legacyPixelOwnerAction(hub, x, y);
+    actionId = action ? action.id : "";
+  }
+  return adminJson({
+    x: x,
+    y: y,
+    color: color,
+    colorName: PX_ADMIN_COLOR_NAMES[color] || ("color " + color),
+    action: action ? pixelActionSummary(action) : null
+  });
+}
+
+async function readAdminBanTarget(request) {
+  let body;
+  try { body = await request.json(); } catch (error) { return null; }
+  const steamid = validPixelAccount(String(body && body.steamid || ""));
+  if (!steamid) return null;
+  const reason = String(body && body.reason || "").trim().substring(0, 200);
+  return { steamid: steamid, reason: reason };
+}
+
+async function adminPixelBanStatus(hub, url) {
+  const steamid = validPixelAccount(url.searchParams.get("steamid") || "");
+  if (!steamid) return adminError("Invalid Steam32 ID.", 400);
+  const ban = await pixelBan(hub, steamid);
+  return adminJson({
+    steamid: steamid,
+    banned: !!ban,
+    ban: ban || null
+  });
+}
+
+async function adminPixelBan(hub, request, login, banned) {
+  const target = await readAdminBanTarget(request);
+  if (!target) return adminError("Invalid Steam32 ID or JSON body.", 400);
+  const key = "px:b:" + target.steamid;
+  if (banned) {
+    const record = {
+      steamid: target.steamid,
+      at: Date.now(),
+      by: login,
+      reason: target.reason
+    };
+    await hub.storage.put(key, record);
+    const action = await logPixelAction(hub, {
+      actor: "admin", admin: login, steamid: target.steamid,
+      kind: "ban", note: target.reason, deltas: []
+    });
+    return adminJson({ steamid: target.steamid, banned: true, ban: record, actionId: action.id });
+  }
+  const previous = await pixelBan(hub, target.steamid);
+  await hub.storage.delete(key);
+  const action = await logPixelAction(hub, {
+    actor: "admin", admin: login, steamid: target.steamid,
+    kind: "unban", note: previous && previous.reason || "", deltas: []
+  });
+  return adminJson({ steamid: target.steamid, banned: false, actionId: action.id });
+}
+
+async function handlePixelAdmin(hub, request, url) {
+  const login = adminIdentity(request);
+  if (!login) return adminError("Verified admin identity required.", 403);
+  const path = url.pathname;
+  if (request.method === "GET" && path === "/admin/api/state") {
+    return adminPixelState(hub, login);
+  }
+  if (request.method === "GET" && path === "/admin/api/actions") {
+    return adminPixelActions(hub, url);
+  }
+  if (request.method === "GET" && path === "/admin/api/action") {
+    return adminPixelAction(hub, url);
+  }
+  if (request.method === "GET" && path === "/admin/api/pixel") {
+    return adminPixelInspect(hub, url);
+  }
+  if (request.method === "GET" && path === "/admin/api/ban-status") {
+    return adminPixelBanStatus(hub, url);
+  }
+  if (request.method === "GET" && path === "/admin/api/canvas") {
+    return pixelAdminCanvasPng(hub);
+  }
+  if (path === "/admin/api/paint" || path === "/admin/api/undo" ||
+      path === "/admin/api/ban" || path === "/admin/api/unban") {
+    if (!adminMutationAllowed(request, url)) return adminError("Same-origin admin request required.", 403);
+    if (path === "/admin/api/paint") return adminPixelPaint(hub, request, login);
+    if (path === "/admin/api/undo") return adminPixelUndo(hub, request, login);
+    return adminPixelBan(hub, request, login, path === "/admin/api/ban");
+  }
+  return adminError("Admin route not found.", 404);
+}
+
+async function pixelCanvasPng(hub) {
+  const tiles = await pixelTiles(hub);
+  return pngResponse(await indexedPngBytes(PX_W, PX_H, PX_PALETTE, function (x, y) {
+    return pixelAt(tiles, x, y);
+  }, PX_ALPHA));
+}
+
+function pixelLandAt(x, y) {
+  const spans = PX_LAND_SPANS[y] || [];
+  for (let i = 0; i + 1 < spans.length; i += 2) {
+    if (x < spans[i]) return false;
+    if (x <= spans[i + 1]) return true;
+  }
+  return false;
+}
+
+async function pixelAdminCanvasPng(hub) {
+  const tiles = await pixelTiles(hub);
+  return pngResponse(await indexedPngBytes(PX_W, PX_H, PX_VIEW_PALETTE, function (x, y) {
+    const paint = pixelAt(tiles, x, y);
+    return paint ? paint + 1 : (pixelLandAt(x, y) ? 1 : 0);
+  }));
+}
+
+async function pixelViewPng(hub, originX, originY, zoom) {
+  const version = await pixelVersion(hub);
+  const cacheKey = version + ":" + zoom + ":" + originX + ":" + originY;
+  const cached = hub.pxViewCache.get(cacheKey);
+  if (cached) return pngResponse(cached);
+
+  const tiles = await pixelTiles(hub);
+  const viewCols = PX_W / zoom, viewRows = PX_H / zoom;
+  const logical = new Uint8Array(viewCols * viewRows);
+  for (let row = 0; row < viewRows; row++) {
+    for (let col = 0; col < viewCols; col++) {
+      const mapX = originX + col, mapY = originY + row;
+      const paint = pixelAt(tiles, mapX, mapY);
+      logical[row * viewCols + col] =
+        paint ? paint + 1 : (pixelLandAt(mapX, mapY) ? 1 : 0);
+    }
+  }
+  const bytes = await indexedPngBytes(PX_VIEW_W, PX_VIEW_H, PX_VIEW_PALETTE, function (x, y) {
+    const col = Math.min(viewCols - 1, Math.floor(x * viewCols / PX_VIEW_W));
+    const row = Math.min(viewRows - 1, Math.floor(y * viewRows / PX_VIEW_H));
+    return logical[row * viewCols + col];
+  });
+  if (hub.pxViewCache.size >= 24) {
+    const oldest = hub.pxViewCache.keys().next().value;
+    if (oldest !== undefined) hub.pxViewCache.delete(oldest);
+  }
+  hub.pxViewCache.set(cacheKey, bytes);
+  return pngResponse(bytes);
+}
+
+async function indexedPngBytes(w, h, palette, pixelAt, alpha) {
+  const sig = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+  const ihdr = u32(w).concat(u32(h), [8, 3, 0, 0, 0]); // 8-bit indexed colour
+  const plte = [];
+  for (let i = 0; i < palette.length; i++) {
+    plte.push(palette[i][0] & 255, palette[i][1] & 255, palette[i][2] & 255);
+  }
+
+  // PNG filter 0 per row followed by one palette index per physical pixel.
+  const raw = [];
+  for (let y = 0; y < h; y++) {
+    raw.push(0);
+    for (let x = 0; x < w; x++) raw.push(pixelAt(x, y) & 255);
+  }
+
+  let bytes = sig.concat(chunk("IHDR", ihdr)).concat(chunk("PLTE", plte));
+  if (alpha && alpha.length) bytes = bytes.concat(chunk("tRNS", alpha));
+  bytes = bytes.concat(chunk("IDAT", Array.from(await deflateBytes(raw)))).concat(chunk("IEND", []));
+  return new Uint8Array(bytes);
+}
+
+async function deflateBytes(raw) {
+  if (typeof CompressionStream !== "undefined") {
+    const source = new Response(new Uint8Array(raw)).body;
+    const compressed = source.pipeThrough(new CompressionStream("deflate"));
+    return new Uint8Array(await new Response(compressed).arrayBuffer());
+  }
+  return new Uint8Array(storedZlib(raw));
+}
+
+function storedZlib(raw) {
+  const zlib = [0x78, 0x01]; // zlib header: deflate, fastest/no compression
+  let off = 0;
+  do {
+    const blockLen = Math.min(65535, raw.length - off);
+    const final = off + blockLen >= raw.length ? 1 : 0;
+    zlib.push(final, blockLen & 255, (blockLen >> 8) & 255,
+      ~blockLen & 255, (~blockLen >> 8) & 255);
+    for (let i = 0; i < blockLen; i++) zlib.push(raw[off + i]);
+    off += blockLen;
+  } while (off < raw.length);
+  zlib.push(...u32(adler32Bytes(raw)));
+  return zlib;
+}
+
+function adler32Bytes(bytes) {
+  const MOD = 65521;
+  let a = 1, b = 0;
+  for (let i = 0; i < bytes.length; i++) {
+    a += bytes[i] & 255;
+    b += a;
+    // Keep the sums bounded without paying a modulo on every byte.
+    if ((i & 4095) === 4095) { a %= MOD; b %= MOD; }
+  }
+  a %= MOD; b %= MOD;
+  return ((b << 16) | a) >>> 0;
+}
+
+function pngResponse(bytes) {
+  return new Response(bytes, {
+    headers: {
+      "content-type": "image/png",
+      "cache-control": "no-store, no-cache, must-revalidate, max-age=0",
+      "access-control-allow-origin": "*",
+    },
+  });
+}
 
 /* ─────────────────────────── PNG encoder ───────────────────────────
  * Emits an 8-bit grayscale PNG of exactly W x H black pixels. Data is all

@@ -21,7 +21,8 @@ match. Shipping games (all online + vs bot): **Checkers** (Russian draughts),
 and **online for 2 players** (worker-as-dealer, §8.6); 3–4-seat online is deferred. **Poker**
 (No-Limit Texas Hold'em, §8.8) plays vs bot and **online for 2–4 players** (worker-as-dealer,
 same private-deal channel as durak) — the online path is built + Node-tested but not yet
-in-game verified.
+in-game verified. **Pixel Battle** is one persistent public canvas backed by the Worker
+(§8.9). **Wordle** is a fully offline single-player game (§8.10).
 
 Shared UI features across the games: a **per-turn countdown timer** (§9.1) in durak / poker /
 TTT / Connect Four, **server-authoritative side clocks** (time-control matchmaking) in chess /
@@ -72,7 +73,8 @@ panorama/
                            include order): mg_net → mg_sound → rules/* (checkers, ttt, chess,
                            connectfour, durak, poker) → mg_games ($.MG.Games + $.MG.Widgets) →
                            mg_checkers → mg_ttt → mg_chess → mg_durak → mg_connectfour → mg_poker
-                           → mg_ui. Rule modules load before the controllers that alias them;
+                           → mg_pixelbattle → mg_wordle → mg_ui. Rule modules load before the controllers that alias them;
+                           mg_wordle_words.generated loads immediately before mg_wordle;
                            mg_games loads before the per-game controllers (they need MG.Widgets +
                            MG.Games); mg_ui loads last (it drives all views).
   styles/mg.css            all styling. Note the Panorama-specific idioms (§6).
@@ -96,10 +98,20 @@ panorama/
     mg_connectfour.js      Connect Four CONTROLLER; self-registers game id 5 (§8.7).
     mg_durak.js            Durak CONTROLLER (render + click/drag + bot + online); self-registers game id 3.
     mg_poker.js            Poker CONTROLLER (render + betting UI + bot + online); self-registers game id 6 (§8.8).
+    mg_pixelbattle_palette.generated.js
+                            Generated paint + terrain swatches; built from the shared JSON source.
+    mg_pixelbattle.js       Persistent Pixel Battle controller (zoom/editor/batching/sync);
+                            self-registers game id 7 (§8.9).
+    mg_wordle_words.generated.js
+                            Offline five-letter answer/guess dictionaries generated from the
+                            pinned MIT-licensed ayaanhossain/weldor wordbase.
+    mg_wordle.js            Offline Wordle controller + pure duplicate-letter scoring;
+                            self-registers game id 8 (§8.10), never touches the Worker.
     mg_ui.js               Esc-menu button injection + full-screen lobby overlay ($.MG.UI); header
                            UI-scale + volume dropdowns; seat/time-control/variant pickers.
 
 server/                    Cloudflare Worker (dev-only, NOT packed into the VPK)
+  admin_panel.js           Browser admin HTML/CSS/JS assets (no credentials; GitHub-authenticated).
   worker.core.js           AUTHORED relay + validators + PNG encoder (edit this)
   worker.js                GENERATED (rules/*.js + worker.core.js via tools/build_worker.js) — deploy artifact
   wrangler.jsonc, README.md
@@ -109,6 +121,7 @@ tools/                     dev-only Node test harnesses + build helpers (NOT pac
   strip_comments.js        strip comments from scripts for a Public (non-dev) build
   svg_to_deck.py           compile card SVGs → the deck/<S><R> art
   mg_rules_test.js         checkers rules: captures, flying kings, full bot game
+  mg_wordle_test.js        Wordle duplicate-letter scoring.
   mg_chess_test.js         chess rules: perft, castling, en passant, promotion, mate/stalemate
   mg_connectfour_test.js   connect-four rules + bot
   mg_durak_test.js         durak rules: deal, beats(), throw-in legality, 120 full bot games
@@ -853,6 +866,98 @@ Registers **game id 6** (`enabled:true`). Offline vs bot is proven in Node; onli
   (`mg_server_test`). Reasoned only (needs a VPK repack): the render/betting UI + online sync + the
   room-token binding above (the `(9,3)` was never reproduced server-side — the fix is a reasoned
   hardening of the most plausible client-side cause).
+
+---
+
+## 8.9 Pixel Battle (mg_pixelbattle.js)
+
+- Pixel Battle is one public 512×256 canvas on a real two-colour Natural Earth world-map PNG,
+  with no room creation, join code, or matchmaking.
+- The immutable `panorama/images/pixelbattle/world_map.png` base is generated from the public-domain
+  Natural Earth 1:110m land polygons directly at 512×256. One source texel is one placeable canvas
+  pixel, so coastlines cannot contain filtered subpixels inside an editable cell.
+- The 32×16 input grid is reused at every zoom. Overview clicks drill into a region; at 16× each
+  input cell maps to exactly one canvas pixel. At every zoom the Worker composites the base and
+  shared paint into a compressed native 800×400 viewport using nearest-neighbour boundaries,
+  bypassing Panorama texture filtering in previews as well as the editor. Navigation stores an
+  integer top-left pixel rather than a fractional centre, so server pixels and pending client
+  pixels share the exact same boundaries. Arrow/reset/zoom controls provide navigation without
+  relying on `GameUI.GetCursorPosition`, which Deadlock does not expose.
+- Terrain, the 16 regular paint colours, and the ocean/land swatches have one source of truth in
+  `tools/assets/pixelbattle_palette.json`. The map builder emits both client and Worker constants;
+  `mg_pixelbattle_palette_test.js` enforces uniqueness and minimum CIE L*a*b* distances between
+  paint/terrain colours so a swatch cannot silently become indistinguishable from ocean or land.
+- The server-authoritative bank is 100 pixels, regenerating 1 per 30 seconds and keyed by the
+  Steam32 account id discovered through the local party avatar panel.
+- Eraser batches use colour index 0: the Worker removes stored paint to reveal the immutable map,
+  deletes a sparse tile when it becomes empty, and charges only pixels that actually changed.
+  On the client, erasing a still-local paint cancels that queued change instead, immediately
+  returning its reserved pixel. Navigation uses a fixed two-row zoom group plus keyboard-style
+  arrow D-pad so adding controls cannot push a direction button onto a third row.
+- Uploads contain 10–128 unique pixels. The client checks and batches first; the Worker deduplicates,
+  validates the bank again, rate-limits uploads, and persists modified 32×32 tiles.
+- Clients poll only the 12-bit canvas version, backing off from 8 to 30 seconds while idle, and
+  download the 512×256 shared PNG only when that version changes.
+- Every accepted player batch is also stored as an immutable audit action containing Steam32,
+  timestamp, and exact per-pixel `before → after` deltas. The browser admin at `/admin` can search
+  this log by Steam32, paint without using a player's bank, and undo an action. Safe undo skips
+  coordinates changed by somebody later; force undo is explicit and overwrites those conflicts.
+- `/admin*` fails closed unless GitHub OAuth is configured with `GITHUB_CLIENT_ID`,
+  `GITHUB_CLIENT_SECRET`, the owner's stable numeric `ADMIN_GITHUB_ID`, and a random
+  `ADMIN_SESSION_SECRET`. Login uses OAuth state + PKCE, calls GitHub's authenticated-user API,
+  compares the exact numeric ID, discards the OAuth token, and issues an eight-hour
+  HttpOnly/Secure HMAC-signed cookie. None of these values are source constants. The Durable
+  Object is private and receives only the outer-Worker-verified GitHub login through an injected
+  header; mutation routes additionally require same-origin + a custom CSRF header.
+- Admin ban/unban state is stored by Steam32 and audited alongside paint actions. The normal
+  client performs one `/pxbank` access preflight before loading the canvas: a ban renders a red
+  `YOU ARE BANNED` button and sends no Pixel Battle view/version requests. `/pxput`, `/pxbank`,
+  `/pxview`, and identified `/pxversion` all reject banned IDs; an already-open client sees the
+  marker on its next poll and stops. Unban requires a client reload because a banned client
+  intentionally does not poll.
+- The browser editor is not constrained by Panorama: its canvas has cursor-centred wheel zoom
+  from fit to 3200%, `−`/`+`/Fit controls, a persistent Pan mode, Shift/middle-button panning,
+  live logical pixel coordinates, and interpolated drag painting. The map lives in a bounded
+  scroll workspace so high zoom does not push the audit log thousands of pixels down the page.
+  It loads a protected native 512×256 composite from `/admin/api/canvas`; it must never reuse
+  Panorama's 800×400 `/pxview`, because that route has already rasterised 512 logical columns
+  into a non-integer display width and cannot be losslessly downsampled back for editing.
+- Every current pixel is attributed through a compact `px:o:<tile>` ownership record: one
+  deduplicated action-id dictionary plus a `Uint16Array(1024)` per touched 32×32 tile. An
+  accepted paint reuses the ownership read that captures its previous owners, then performs
+  one ownership write per touched tile; it creates no additional client request. Undo restores
+  both the previous colour and previous owner. For pre-index actions, Inspect scans the existing
+  immutable audit log once for that coordinate and caches the answer in the ownership tile.
+- Action lists contain summaries only. Preview fetches one full action on demand, computes each
+  pixel's current colour and whether safe undo would still apply, renders the exact post-undo
+  colours, marks conflicts red, and zooms to the action bounds. Inspect makes one on-demand admin
+  request per clicked coordinate and exposes the owning Steam32, action, user log, and ban path.
+- Steam32 is client-reported, not a cryptographic Steam authentication ticket. A modified client
+  can spoof an unbanned ID, and Worker-side rejection happens only after Cloudflare has received
+  the request. The ban is therefore authoritative for normal clients and all requests using the
+  banned ID, but it cannot be an edge-level request-cost firewall without a separate identity
+  service or verifiable Steam ticket.
+
+---
+
+## 8.10 Wordle (mg_wordle.js)
+
+- Wordle is fully offline: no Worker route, account id, lobby, bot, or polling.
+- `mg_wordle_words.generated.js` contains 3,158 possible answers and 11,697 additional accepted
+  guesses from the pinned MIT-licensed `ayaanhossain/weldor` wordbase. It loads immediately before
+  the controller and is checked into the VPK sources, so gameplay performs no dictionary request.
+  `tools/build_wordle_words.js` validates five-letter ASCII words, duplicates, and list overlap
+  before regenerating the file.
+- The controller self-registers game id 8 and is mounted directly from its picker detail view.
+  The existing local Play Again path remounts it with another answer.
+- Six explicit rows of five tiles and three explicit keyboard rows avoid Panorama wrap/layout
+  ambiguity. Input comes from the on-screen keyboard, so it does not depend on an undocumented
+  Deadlock key event bridge.
+- `scoreGuess(answer, guess)` uses two passes: exact matches consume first, then remaining answer
+  letter counts are consumed by present matches. This prevents duplicate letters in a guess from
+  receiving more yellow/green marks than the answer actually contains; `mg_wordle_test.js` covers it.
+- Visual layout is reasoned from the existing Panorama CSS patterns and still needs a VPK repack
+  and in-game verification.
 
 ---
 

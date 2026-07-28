@@ -19,6 +19,8 @@ const root = path.join(__dirname, "..");
 const rulesDir = path.join(root, "panorama", "scripts", "rules");
 const RULES = ["checkers.js", "ttt.js", "chess.js", "connectfour.js", "durak.js", "poker.js"];
 const corePath = path.join(root, "server", "worker.core.js");
+const pixelMapPath = path.join(root, "server", "pixelbattle_map.generated.js");
+const adminPanelPath = path.join(root, "server", "admin_panel.js");
 const outPath = path.join(root, "server", "worker.js");
 
 function read(p) { return fs.readFileSync(p, "utf8"); }
@@ -27,7 +29,9 @@ const banner =
     "/* ============================================================================\n" +
     " * GENERATED FILE — DO NOT EDIT BY HAND.\n" +
     " * Produced by `node tools/build_worker.js` from:\n" +
-    " *   panorama/scripts/rules/checkers.js + ttt.js + chess.js   (shared with client)\n" +
+    " *   panorama/scripts/rules/*.js                              (shared with client)\n" +
+    " *   server/pixelbattle_map.generated.js                     (generated land mask)\n" +
+    " *   server/admin_panel.js                                   (browser admin assets)\n" +
     " *   server/worker.core.js                                    (authored core)\n" +
     " * Edit those sources, then rebuild. See server/README.md.\n" +
     " * ============================================================================ */\n\n";
@@ -38,9 +42,13 @@ for (const name of RULES) {
     out += "// ---- rules/" + name + " ----\n";
     out += read(path.join(rulesDir, name)).replace(/\s*$/, "") + "\n\n";
 }
+out += "/* ── generated Pixel Battle land mask ── */\n";
+out += read(pixelMapPath).replace(/\s*$/, "") + "\n\n";
+out += "/* ── authored Pixel Battle browser admin assets ── */\n";
+out += read(adminPanelPath).replace(/\s*$/, "") + "\n\n";
 out += "/* ── authored core (from server/worker.core.js) ── */\n";
 out += read(corePath).replace(/^\s*\/\*\*[\s\S]*?\*\/\s*/, ""); // drop the core's leading banner comment; keep the code
 
 fs.writeFileSync(outPath, out, "utf8");
 console.log("wrote " + path.relative(root, outPath) + " (" + out.length + " bytes) from " +
-    RULES.length + " rule files + worker.core.js");
+    RULES.length + " rule files + Pixel Battle map/admin + worker.core.js");

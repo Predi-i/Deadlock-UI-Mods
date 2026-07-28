@@ -1,0 +1,169 @@
+"use strict";
+
+// Builds the two-colour Pixel Battle base map from Natural Earth 1:110m land
+// polygons. The generated PNG is packed into the VPK; the GeoJSON stays dev-only.
+
+const fs = require("fs");
+const path = require("path");
+const zlib = require("zlib");
+
+// These dimensions are the GAME canvas, not merely display art. One source texel
+// must equal one placeable pixel so coastlines can never fall inside a paint cell.
+const W = 512;
+const H = 256;
+const sourcePath = path.join(__dirname, "assets", "ne_110m_land.geojson");
+const palettePath = path.join(__dirname, "assets", "pixelbattle_palette.json");
+const outputPath = path.join(__dirname, "..", "panorama", "images", "pixelbattle", "world_map.png");
+const serverMapPath = path.join(__dirname, "..", "server", "pixelbattle_map.generated.js");
+const clientPalettePath = path.join(__dirname, "..", "panorama", "scripts", "mg_pixelbattle_palette.generated.js");
+
+const geo = JSON.parse(fs.readFileSync(sourcePath, "utf8"));
+const palette = JSON.parse(fs.readFileSync(palettePath, "utf8"));
+const pixels = new Uint8Array(W * H);
+
+function rgb(hex) {
+    if (!/^#[0-9a-f]{6}$/i.test(hex)) throw new Error("Invalid palette colour: " + hex);
+    return [
+        parseInt(hex.slice(1, 3), 16),
+        parseInt(hex.slice(3, 5), 16),
+        parseInt(hex.slice(5, 7), 16)
+    ];
+}
+
+const oceanRgb = rgb(palette.ocean);
+const landRgb = rgb(palette.land);
+const paintHex = palette.paint.map(entry => entry.hex.toLowerCase());
+const paintNames = palette.paint.map(entry => entry.name);
+const paintRgb = paintHex.map(rgb);
+if (paintRgb.length !== 18) throw new Error("Pixel Battle requires exactly 18 paint colours");
+
+function project(coord) {
+    return [
+        (coord[0] + 180) * W / 360,
+        (90 - coord[1]) * H / 180
+    ];
+}
+
+function fillPolygon(rings) {
+    const projected = rings.map(ring => ring.map(project));
+    let minY = H - 1;
+    let maxY = 0;
+
+    for (const ring of projected) {
+        for (const point of ring) {
+            minY = Math.min(minY, Math.floor(point[1]));
+            maxY = Math.max(maxY, Math.ceil(point[1]));
+        }
+    }
+
+    minY = Math.max(0, minY);
+    maxY = Math.min(H - 1, maxY);
+
+    for (let y = minY; y <= maxY; y++) {
+        const scanY = y + 0.5;
+        const intersections = [];
+
+        for (const ring of projected) {
+            for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+                const a = ring[j];
+                const b = ring[i];
+                if ((a[1] > scanY) === (b[1] > scanY)) continue;
+                intersections.push(a[0] + (scanY - a[1]) * (b[0] - a[0]) / (b[1] - a[1]));
+            }
+        }
+
+        intersections.sort((a, b) => a - b);
+        for (let i = 0; i + 1 < intersections.length; i += 2) {
+            const from = Math.max(0, Math.ceil(intersections[i] - 0.5));
+            const to = Math.min(W - 1, Math.floor(intersections[i + 1] - 0.5));
+            pixels.fill(1, y * W + from, y * W + to + 1);
+        }
+    }
+}
+
+for (const feature of geo.features) {
+    const geometry = feature.geometry;
+    if (!geometry) continue;
+    if (geometry.type === "Polygon") {
+        fillPolygon(geometry.coordinates);
+    } else if (geometry.type === "MultiPolygon") {
+        for (const polygon of geometry.coordinates) fillPolygon(polygon);
+    }
+}
+
+function u32(n) {
+    const b = Buffer.alloc(4);
+    b.writeUInt32BE(n >>> 0);
+    return b;
+}
+
+function crc32(buffer) {
+    let crc = 0xffffffff;
+    for (const byte of buffer) {
+        crc ^= byte;
+        for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0);
+    }
+    return (crc ^ 0xffffffff) >>> 0;
+}
+
+function chunk(type, data) {
+    const name = Buffer.from(type, "ascii");
+    const body = Buffer.concat([name, data]);
+    return Buffer.concat([u32(data.length), body, u32(crc32(body))]);
+}
+
+const raw = Buffer.alloc((W + 1) * H);
+for (let y = 0; y < H; y++) {
+    raw[y * (W + 1)] = 0;
+    Buffer.from(pixels.buffer, y * W, W).copy(raw, y * (W + 1) + 1);
+}
+
+const png = Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk("IHDR", Buffer.concat([u32(W), u32(H), Buffer.from([8, 3, 0, 0, 0])])),
+    chunk("PLTE", Buffer.from(oceanRgb.concat(landRgb))),
+    chunk("IDAT", zlib.deflateSync(raw, { level: 9 })),
+    chunk("IEND", Buffer.alloc(0))
+]);
+
+fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+fs.writeFileSync(outputPath, png);
+
+// The Worker uses the same mask to render a native 800x400 edit viewport. Store
+// compact inclusive land spans per row instead of shipping the full GeoJSON.
+const spans = [];
+for (let y = 0; y < H; y++) {
+    const row = [];
+    let x = 0;
+    while (x < W) {
+        while (x < W && pixels[y * W + x] === 0) x++;
+        if (x >= W) break;
+        const from = x;
+        while (x + 1 < W && pixels[y * W + x + 1] === 1) x++;
+        row.push(from, x);
+        x++;
+    }
+    spans.push(row);
+}
+
+const generated =
+    "/* GENERATED by tools/build_pixelbattle_map.js — DO NOT EDIT. */\n" +
+    "const PX_PALETTE = " + JSON.stringify([[0, 0, 0]].concat(paintRgb)) + ";\n" +
+    "const PX_ALPHA = " + JSON.stringify([0].concat(paintRgb.map(() => 255))) + ";\n" +
+    "const PX_VIEW_PALETTE = " + JSON.stringify([oceanRgb, landRgb].concat(paintRgb)) + ";\n" +
+    "const PX_LAND_SPANS = " + JSON.stringify(spans) + ";\n";
+fs.writeFileSync(serverMapPath, generated, "utf8");
+
+const clientPalette =
+    "/* GENERATED by tools/build_pixelbattle_map.js — DO NOT EDIT. */\n" +
+    "/* global $ */\n" +
+    "(function () {\n" +
+    "    \"use strict\";\n" +
+    "    var MG = $.MG = $.MG || {};\n" +
+    "    MG.PixelBattlePalette = " + JSON.stringify(paintHex) + ";\n" +
+    "    MG.PixelBattlePaletteNames = " + JSON.stringify(paintNames) + ";\n" +
+    "})();\n";
+fs.writeFileSync(clientPalettePath, clientPalette, "utf8");
+console.log(`built ${outputPath} (${W}x${H}, ${png.length} bytes)`);
+console.log(`built ${serverMapPath} (${generated.length} bytes)`);
+console.log(`built ${clientPalettePath} (${clientPalette.length} bytes)`);

@@ -611,12 +611,27 @@
             }, function () { status("Server unavailable."); });
         }
 
+        // ── deal watchdog ─────────────────────────────────────────────────────────────
+        // Same pattern as mg_durak.js: if logSeq is still 0 after a few seconds, the poll
+        // chain has likely stalled (mg_net FIFO wedge). Re-kick startPolling() to recover.
+        function dealWatchdog(tries) {
+            if (destroyed || gameOver || !online) return;
+            if (logSeq > 0) return;
+            if (tries >= 6) { status("Still dealing… check your connection or try again."); return; }
+            $.Schedule(3.0, function () {
+                if (destroyed || gameOver || logSeq > 0) return;
+                startPolling();
+                dealWatchdog(tries + 1);
+            });
+        }
+
         // ── boot ────────────────────────────────────────────────────────────────────
         if (!P) {
             status("Poker engine failed to load.");
         } else if (online) {
             status("Dealing…");
             startPolling();
+            dealWatchdog(0);
         } else {
             startHand();
         }
