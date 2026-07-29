@@ -317,12 +317,16 @@ These are the mistakes to NOT repeat. Every one was confirmed against the game's
    `transform`. Initial deal doesn't animate because a panel's first committed value is its
    baseline (no slide-in from the corner).
 
-4. **`hittest` / `hittestchildren` are XML-construction attributes, NOT live styles.**
-   Setting them at runtime with `SetAttributeString` does **not** reliably pass input
-   through. This is why the net host, sitting invisibly over the bare Esc menu, **ate hover
-   on every native setting** (Bug #1). The real fix was structural: **don't have the panel
-   exist over the menu** — calibration is now lazy (see trap 7), and the host is torn down
-   the moment the request queue drains (`releaseHost`).
+4. **`hittest` / `hittestchildren` set at runtime: works for DISABLING input, don't rely on it to
+   RE-ENABLE.** Confirmed in-game 2026-07-29: `setEscapeBackgroundActive` turns `hittest` off on
+   the native `#EscapeBackground` while our modal is open, and closing the mod via Esc **and** via
+   the X both work — so a runtime `SetAttributeString("hittest", "false")` does take effect. What it
+   does **not** fix is a panel of ours sitting over the menu and eating hover: the net host still
+   swallowed hover on every native setting with `hittest`/`hittestchildren` false at construction
+   (Bug #1). That fix had to be structural — **don't have the panel exist over the menu**:
+   calibration is lazy (trap 7) and the host is torn down as soon as the request queue drains
+   (`releaseHost`). Treat runtime hit-test writes as a blunt on/off for a panel you own, not as a
+   way to make an overlapping panel input-transparent.
 
 5. **Scaling a small effect IN PLACE: use `pre-transform-scale2d`, NOT `scale3d` inside
    `transform`.** `transform: translate3d(x,y) scale3d(0.2…)` multiplies the translate offset,
@@ -541,19 +545,31 @@ These are the mistakes to NOT repeat. Every one was confirmed against the game's
    - **Blur** (the reason for the switch, commit `d5a7433`): the earlier `pre-transform-scale2d` on the
      modal is a transform-family prop that runs AFTER layout and stretches the rendered texture → blurry
      bitmap above 100%. `ui-scale` re-lays-out instead. **Do not revert to a raster scale.**
-   - **Clipping** (2026-07-20, the maintainer's 200% screenshot with "PLAY WITH A FRIEND" cut off):
+   - **Clipping** (2026-07-20, the maintainer's 200% screenshot with "PLAY WITH A FRIEND" cut off;
+     revisited 2026-07-29 when 125% ate poker's LEAVE button):
      `ui-scale` grows the modal's LAYOUT box by the factor, and the modal is `vertical-align: center`
      in the full-screen overlay, so once `natural_height × scale` exceeds the viewport height the top
-     AND bottom clip off-screen. **`max-height: 92%` on `.mg-modal` can NOT stop this** — that cap is
-     in logical px, evaluated BEFORE `ui-scale` multiplies. Width never overflows (900px even ×2 is
-     < the 1920 canvas), so only height is at risk. Fix: `applyUiScale` measures the modal's natural
-     height (forcing `ui-scale:100%` for one frame first, so the reading is unambiguously unscaled and
-     the clamp can't spiral) against `overlay.actuallayoutheight` (the ui-scale-free full-screen
-     sibling = the viewport height, same layout units), and caps the applied scale to the largest whole
-     % that fits with a `FIT_MARGIN` (0.96) — **never below 100%** (the natural modal always fits under
-     the 92% cap). `clearBody` re-runs it on every view switch because a game board is taller than the
-     menu and fits a smaller max scale. ⚠ The clamp maths are reasoned + measured, not renderable from
-     a shell — needs a VPK repack to confirm the exact cap at 200% on 16:9 / ultrawide.
+     AND bottom clip off-screen. Width never overflows (900px even ×2 is < the 1920 canvas), so only
+     height is at risk.
+     **There are TWO ceilings, and they must be ordered correctly.** `.mg-modal`'s own `max-height`
+     is a percentage, and a percentage resolves in the SCALED space — the real ceiling is
+     `maxHeight × viewport / scale`. At 92% that meant `0.92·1080/1.25 = 795px` at 125%, against a
+     poker view needing ~838px, and the engine simply **truncated** the modal: no scrollbar, no
+     warning, just a missing footer. So the CSS cap is now the LOOSER of the two (99%) and acts only
+     as a backstop for the frames before the first measurement; the JS clamp (`FIT_MARGIN` 0.98)
+     decides. Getting this backwards is silent — nothing logs, the content is just gone.
+     `measureNaturalH` reads `modalPanel.actuallayoutheight` (window px) and divides the applied
+     scale back out, so it works at ANY current scale — the old version only read at exactly 100%,
+     so a player whose saved scale was already >100% never got a measurement and never got a clamp.
+     It runs on every view switch (`clearBody` schedules it a frame later, once the incoming view is
+     laid out) and keeps the **tallest** height seen: the poker felt is ~200px taller than the menu,
+     and clamping against the menu is precisely what let 125% clip. This is NOT the old per-view
+     re-fit that caused button jitter — that one forced the scale to 100% for a frame to take a clean
+     reading; this one just divides, so nothing moves unless a genuinely taller view appears.
+     It never clamps below 100%. Consequence, not a bug: on 1080p the poker view can't exceed ~126%,
+     so 150/175/200% all land there; the menu goes higher. On 1440p+ the steps open up.
+     ⚠ The clamp maths are covered by `tools/mg_uiscale_test.js` using heights measured off real
+     1080p screenshots, but the RENDERED result still needs a VPK repack to confirm on ultrawide.
 
 ---
 

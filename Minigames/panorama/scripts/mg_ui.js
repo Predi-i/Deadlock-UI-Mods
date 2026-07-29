@@ -457,22 +457,26 @@
     // LOGICAL px, evaluated BEFORE ui-scale multiplies. Width never overflows (900px even at 200% is
     // < the canvas), so only height is clamped.
     //
-    // The modal's natural height is EFFECTIVELY constant across views: the menu columns are fixed at
-    // 500px (.mg-picker & .mg-detail, mg.css) and every game stage is within a few px of that (durak
-    // 500, poker 520). So we measure the height ONCE at 100% (cached in naturalModalH by
-    // measureNaturalH, scheduled from ensureOverlay while the scale is still 100%) and reuse it — NO
-    // per-view remeasure, NO forcing the scale to 100% for a frame on every pick. That frame-reset was
-    // the "buttons jump around" jitter on 150%+; killing it keeps every view switch stable. The tiny
-    // stage-vs-menu variance (~20px) is swallowed by FIT_MARGIN's 4% headroom, so a taller stage still
-    // can't clip at the clamped scale.
+    // The modal's natural height is NOT constant across views, and assuming it was is what made
+    // 125% eat the poker LEAVE button. The menu is ~640 logical px (header + the 500px columns);
+    // the poker view is ~838 (a 520px felt + a fixed 104px controls row + LEAVE + status). So the
+    // height is measured per VIEW, cached per view, and the largest measurement seen wins —
+    // clamping for the tallest view we know about is safe for the shorter ones (they just sit a bit
+    // further from the edge), whereas clamping for the shortest lets the tallest clip.
     //
-    // ⚠ CONSEQUENCE, not a bug: on a 1080p screen the natural modal (~header + 500px columns) only
-    // fits up to ~150% before it would clip, so 150/175/200% all clamp to about the same size. That is
-    // the physical ceiling — a bigger modal literally can't show without cutting content off (exactly
-    // the clip this clamp exists to prevent). On a taller display (1440p+) the higher steps open up.
-    // We keep all 5 dropdown steps; they just cap where the screen runs out of room.
-    var FIT_MARGIN = 0.96;                 // scaled modal may fill up to this fraction of viewport height
-    var naturalModalH = 0;                 // cached unscaled modal height (layout px); constant across views
+    // ⚠ The clamp must be STRICTER than .mg-modal's own `max-height` (mg.css) or it never gets to
+    // act: a % max-height resolves in the SCALED space, i.e. the real ceiling is
+    // `maxHeightPct * viewport / scale`, so CSS silently truncated the modal — no scrollbar, no
+    // symptom, just a missing footer — before JS ever considered clamping. FIT_MARGIN was 0.96
+    // against a CSS 0.92, which is backwards. They are now 0.98 / 0.99, with CSS the looser of the
+    // two, so the JS clamp is what decides and it reports a scale that actually fits.
+    //
+    // ⚠ CONSEQUENCE, not a bug: on 1080p the poker view can't show much past ~125%, and the menu
+    // past ~160%. Higher dropdown steps clamp to those. That is the physical ceiling — a taller
+    // modal cannot be shown without cutting content off, which is the whole point of the clamp.
+    // On a 1440p+ display the higher steps open up.
+    var FIT_MARGIN = 0.98;                 // scaled modal may fill up to this fraction of viewport height
+    var naturalModalH = 0;                 // tallest unscaled modal height measured so far (layout px)
     function fittedScalePct(pct) {
         if (pct <= 100 || !naturalModalH) return pct;             // ≤100% always fits; no cache yet → don't clamp
         var vpH = (overlay && overlay.IsValid && overlay.IsValid()) ? Number(overlay.actuallayoutheight) : NaN;
@@ -480,20 +484,34 @@
         var maxPct = Math.floor((vpH * FIT_MARGIN / naturalModalH) * 100);
         return (maxPct >= 100 && pct > maxPct) ? maxPct : pct;    // clamp; never below 100 (natural fits)
     }
-    // Read the natural height ONCE, only while the modal is genuinely at 100% (so actuallayoutheight —
-    // in layout px — is unscaled and unambiguous), then re-apply so a >100% default scale takes effect.
-    // RETRIES until the engine has actually laid the modal out. The single scheduled attempt this
-    // replaces could read 0: the overlay is built `visibility: collapse` and showOverlay makes it
-    // visible and fills the body in the SAME frame, so actuallayoutheight is not guaranteed yet. On a
-    // 0 read nothing was rescheduled and buildOverlay never runs twice, so naturalModalH stayed 0 for
-    // the whole session and fittedScalePct silently stopped clamping — which is exactly the clipped
-    // 175/200% modal the clamp exists to prevent, failing with no symptom to notice.
+    // Measure the modal's UNSCALED height and keep the tallest value seen. Runs after every view
+    // switch, not once per session: the poker felt is ~200px taller than the menu, and clamping
+    // against the menu's height is what let 125% cut the LEAVE button off.
+    //
+    // Reads actuallayoutheight and divides by the CURRENT scale, so it works at any scale instead of
+    // only at 100% — the old version bailed unless uiScalePct was 100, which meant a player whose
+    // saved scale was already >100% never got a measurement at all and never got a clamp.
+    //
+    // RETRIES until the engine has laid the modal out: a fresh view is built and measured in the
+    // same frame, so the first read can legitimately be 0. On a 0 read the old code rescheduled
+    // nothing, so naturalModalH stayed 0 for the session and fittedScalePct silently stopped
+    // clamping — the exact clipped modal the clamp exists to prevent, with no symptom to notice.
     var naturalTries = 0;
     function measureNaturalH() {
         if (!(modalPanel && modalPanel.IsValid && modalPanel.IsValid())) return;
-        if (naturalModalH || uiScalePct > 100) return;            // already cached, or not at 100% to read cleanly
         var h = Number(modalPanel.actuallayoutheight);
-        if (isFinite(h) && h > 0) { naturalModalH = h; applyUiScale(); return; }
+        if (isFinite(h) && h > 0) {
+            // actuallayoutheight is in WINDOW px, i.e. already multiplied by the applied scale.
+            // Divide it back out to get the layout-space height the clamp reasons about.
+            var applied = fittedScalePct(uiScalePct) / 100;
+            var natural = (applied > 0) ? (h / applied) : h;
+            if (natural > naturalModalH + 1) {   // +1: ignore sub-pixel jitter between identical views
+                naturalModalH = natural;
+                applyUiScale();                  // a taller view may need a tighter scale right now
+            }
+            naturalTries = 0;
+            return;
+        }
         if (naturalTries++ < 40) $.Schedule(0.05, measureNaturalH);   // ~2s of frames, then give up quietly
     }
     function applyUiScale() {
@@ -545,9 +563,14 @@
         detailPanel = null;
         cardEls = [];
         if (modalBody) modalBody.RemoveAndDeleteChildren();
-        // NO per-view re-fit: the modal's natural height is constant (fixed-height columns), and the
-        // ui-scale lives on modalPanel (NOT modalBody, which is what we just cleared), so it persists
-        // across the view switch untouched. Re-applying here was the source of the button jitter.
+        // Re-measure on the NEXT frame, once the incoming view has been built and laid out. This is
+        // NOT the old per-view re-fit that caused the button jitter: that one forced the scale back
+        // to 100% for a frame to take a clean reading. This only reads a height and divides the
+        // applied scale out, so nothing moves unless the new view is genuinely TALLER than anything
+        // seen so far (poker's felt vs the menu's columns — the difference that made 125% clip the
+        // LEAVE button). The scale itself lives on modalPanel, which we did not clear.
+        naturalTries = 0;
+        $.Schedule(0.0, measureNaturalH);
     }
 
     // ── card art ────────────────────────────────────────────────────────────
