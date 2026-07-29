@@ -16,13 +16,13 @@ When you change layout/animation/input, say honestly which of the two it is.
 ## 1. What this mod is
 
 Online mini-games played **inside Deadlock's pause (Esc) menu**, without leaving the
-match. Shipping games (all online + vs bot): **Checkers** (Russian draughts),
-**Tic-Tac-Toe**, **Chess** and **Connect Four**. **Durak** plays vs bot for 2–4 players
-and **online for 2 players** (worker-as-dealer, §8.6); 3–4-seat online is deferred. **Poker**
-(No-Limit Texas Hold'em, §8.8) plays vs bot and **online for 2–4 players** (worker-as-dealer,
-same private-deal channel as durak) — the online path is built + Node-tested but not yet
-in-game verified. **Pixel Battle** is one persistent public canvas backed by the Worker
-(§8.9). **Wordle** is a fully offline single-player game (§8.10).
+match. **Checkers** (Russian draughts), **Tic-Tac-Toe**, **Chess** and **Connect Four**
+support online play and bots. **Durak** (§8.6) and **Poker** (No-Limit Texas Hold'em,
+§8.8) support 2–4-player bot games and private 2–4-seat online tables through the
+worker-as-dealer transport; public Durak matchmaking remains heads-up. Those online
+dealer paths are built + Node-tested but not yet in-game verified. **Pixel Battle** is
+one persistent public canvas backed by the Worker (§8.9). **Wordle** is a fully offline
+single-player game (§8.10).
 
 Shared UI features across the games: a **per-turn countdown timer** (§9.1) in durak / poker /
 TTT / Connect Four, **server-authoritative side clocks** (time-control matchmaking) in chess /
@@ -280,9 +280,11 @@ swapped**. So on boot-ish (lazily; see trap below) the client fetches `/api/prob
 
 ### Request discipline (learned the hard way)
 
-- **One request at a time.** Panorama's image loader wedges if several `<Image>` loads are
-  in flight — pending loads stall at dims 0 until timeout. So requests run through a strict
-  FIFO queue (`reqQueue`, `reqActive`); the poll loop and user actions never overlap.
+- **One image load at a time.** Panorama's image loader wedges if several `<Image>` loads are
+  in flight — pending loads stall at dims 0 until timeout. Dimension-encoded API traffic and
+  ordinary remote images (the update marker and Pixel Battle viewport) therefore share the same
+  strict FIFO (`reqQueue`, `reqActive`, `MG.Net.loadImage`); polls, actions and asset loads never
+  overlap. A successful ordinary load transfers its already-loaded `<Image>` to the caller.
 - **A started request always runs to completion** (response or 8s timeout). There is
   deliberately **no abort**: a silent abort once left `calibrating` latched true forever,
   deadlocking all networking.
@@ -804,7 +806,7 @@ written once and reused by both.
   in during the attack phase (other attackers don't pile on — matters only at 3–4 players);
   throw-ins are allowed only while the table is fully covered. Full podkidnoy throw-in from
   all attackers is a Stage-2 concern.
-- **Stage 2 transport (BUILT — 2-player online).** The public move log can't hide hands, so the
+- **Stage 2 transport (BUILT — 2–4-player online).** The public move log can't hide hands, so the
   **worker is an authoritative dealer**: it owns the deck/hands/seed, deals privately per seat
   via an indexed `/api/ddraw` channel (gated by the seat token, so a caller can only read its
   OWN cards → a foreign token gets `(9,3)`, closing `trust_refactor_plan §1 T3`), and relays
@@ -817,9 +819,10 @@ written once and reused by both.
   via `dact` **without** optimistic local mutation (the echoed event is the single source of
   truth, so a rejected action simply never lands — no rollback). Roles rotate deterministically
   after each bout (2-player: Bito swaps attacker/defender, Take keeps them). The online buttons
-  (Quick/Create/Join) are enabled in `mg_ui.js`, entering a 2-seat **room** view with a host
-  **Start**; the offline bot branch is unchanged. **⚠ 2 players only** — 3–4-seat online
-  seating/throw-in is deliberately deferred (the pure rules + offline bot already handle 2/3/4).
+  are enabled in `mg_ui.js`: public Quick enters a 2-seat room, while private Create/Join uses
+  the dedicated `dcreate`/`djoin`/`droom` routes and a host-selected 2–4-seat room. The host
+  starts the dealer once at least two seats are present; unfilled seats become inactive holes.
+  The offline bot branch is unchanged.
   Verified in Node: server routes/privacy/encoding (`mg_server_test`), client↔server rule parity
   (`mg_parity_test`). Reasoned only (needs in-game repack): the online render/slide/sync itself.
 
@@ -1043,8 +1046,8 @@ both defined ONCE in `mg_net.js`:
   pure waste that scaled with idle players, not games played. Ramps HARD and monotonically (a
   waiting room has no "real move" to reset on): steps `[1.5, 1.5, 3.0, 3.0, 4.0, 5.0]`s, clamped at
   5s. Each waiting loop keeps its own `var misses = 0` and passes `misses++` in both branches. The
-  six loops on it: `pollDurakRoom`, `pollPokerRoom`, `pollDurakTable`, `waitForJoiner`,
-  `waitForMultiMatch`, and the rematch `tick` (`mg_ui.js`).
+  four loops on it: shared `pollLobbyRoom`, `waitForJoiner`, `waitForMultiMatch`, and the rematch
+  `tick` (`mg_ui.js`).
 
 ⚠ There is **no `Net` alias** in the controllers — call both fully qualified as `MG.Net.pollDelay`
 / `MG.Net.waitDelay` (a bare `Net.pollDelay` throws `ReferenceError` and, like the TTT `sfx` crash,
@@ -1095,6 +1098,11 @@ Two DIFFERENT time widgets, both built in `mg_games.js` and exposed on `MG.Widge
     measures its height from the board, not the bar.
   - **`opts.boardW`** attaches the bar to that board's LEFT EDGE (TTT/C4 pass it — narrow centred
     boards; durak/poker omit it and keep the wide-felt gutter placement).
+  - **An authoritative action in flight parks the timer.** Durak/Poker set `pendingAct` and call
+    `refreshTimer()` before entering the network FIFO, so an expiry callback cannot forfeit a move
+    that the server is already processing. A rejection or transport failure clears `pendingAct`
+    and starts a fresh local countdown; an accepted action stays parked until its echoed event
+    changes the authoritative turn.
 
 ### 9.2 Sound (`MG.Sound`, mg_sound.js)
 
