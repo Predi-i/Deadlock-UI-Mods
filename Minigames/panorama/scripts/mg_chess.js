@@ -20,6 +20,13 @@
     // The two-side game clock and the shared <Image> face-setter live in mg_games.js
     // (this file can't see that closure), exposed via MG.Widgets.
     var createClock = MG.Widgets.createClock;
+    // State-free board/nav helpers, likewise shared with mg_checkers.js. The rest of the drag and
+    // review stacks stay local: they read this controller's own closure, and a few that LOOK
+    // identical to the checkers copies are not (sqName uses cCol vs colOf, clockNames compares
+    // myColor against 1 vs WHITE).
+    var winPos = MG.Widgets.winPos, parsePx = MG.Widgets.parsePx;
+    var squareFromPanel = MG.Widgets.squareFromPanel;
+    var makeNavBtn = MG.Widgets.makeNavBtn, setNavState = MG.Widgets.setNavState;
 
     // ══ CHESS ═══════════════════════════════════════════════════════════════════
     // ── chess: shared pure rules (single source of truth: rules/chess.js) ──────────
@@ -108,11 +115,8 @@
             if (fx.captured) return "Capture";
             return self ? "MoveSelf" : "MoveOpp";
         }
-        function parsePx(v) {
-            if (typeof v !== "string" || !v.length) return null;
-            var m = v.match(/-?\d+(\.\d+)?/);
-            return m ? parseFloat(m[0]) : null;
-        }
+                // parsePx: shared, see MG.Widgets in mg_games.js
+
 
         // Black sees the board rotated 180° so its own pieces sit at the bottom.
         function toDisplay(i) { return myColor === 1 ? i : 63 - i; }
@@ -157,13 +161,8 @@
             navNextBtn = makeNavBtn(nav, "Next >", function () { navNext(); });
             renderMoveList();
         })();
-        function makeNavBtn(parent, text, onClick) {
-            var b = $.CreatePanel("Button", parent, "");
-            b.AddClass("mg-nav-btn");
-            var l = $.CreatePanel("Label", b, ""); l.text = text;
-            b.SetPanelEvent("onactivate", onClick);
-            return b;
-        }
+                // makeNavBtn: shared, see MG.Widgets in mg_games.js
+
         // Clock rows are indexed by SERVER seat (0 = host = white, 1 = joiner = black).
         function clockNames() {
             return session.bot
@@ -342,29 +341,10 @@
             for (var t = 0; t < legalTargets.length; t++) if (legalTargets[t].to === sq) return true;
             return false;
         }
-        function squareFromPanel(p) {
-            for (var hops = 0; p && hops < 6; hops++) {
-                var id = null;
-                try { id = p.id; } catch (e) {}
-                if (id && id.indexOf("cell_") === 0) {
-                    var n = parseInt(id.substring(5), 10);
-                    if (isFinite(n) && n >= 0 && n < 64) return n;
-                }
-                try { p = p.GetParent ? p.GetParent() : null; } catch (e2) { p = null; }
-            }
-            return -1;
-        }
-        function winPos(panel) {
-            if (!panel || !panel.GetPositionWithinWindow) return null;
-            var r;
-            try { r = panel.GetPositionWithinWindow(); } catch (e) { return null; }
-            if (!r) return null;
-            var x = (typeof r.x === "number") ? r.x : (typeof r[0] === "number" ? r[0] : null);
-            var y = (typeof r.y === "number") ? r.y : (typeof r[1] === "number" ? r[1] : null);
-            if (x === null || y === null || !isFinite(x) || !isFinite(y)) return null;
-            if (Math.abs(x) > 100000 || Math.abs(y) > 100000) return null;
-            return { x: x, y: y };
-        }
+                // squareFromPanel: shared, see MG.Widgets in mg_games.js
+
+                // winPos: shared, see MG.Widgets in mg_games.js
+
         // Render scale = WINDOW px per LAYOUT px — see the checkers copy for the full rationale.
         // GetPositionWithinWindow is window px; actuallayoutwidth is layout px; dividing one by the
         // other only agreed at 100% UI scale, so drops landed off at 125%. Derive scale from two
@@ -527,10 +507,8 @@
             updateNav();
             if (reviewIndex === null) { try { moveListRows.ScrollToBottom(); } catch (e2) {} }
         }
-        function setNavState(btn, enabled) {
-            if (!btn) return;
-            if (enabled) btn.RemoveClass("mg-nav-disabled"); else btn.AddClass("mg-nav-disabled");
-        }
+                // setNavState: shared, see MG.Widgets in mg_games.js
+
         function updateNav() {
             var shown = (history.length === 0) ? -2 : (reviewIndex === null ? history.length - 1 : reviewIndex);
             setNavState(navPrevBtn, shown > -1);

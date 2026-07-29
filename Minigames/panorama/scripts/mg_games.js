@@ -399,6 +399,64 @@
         img.SetImage(url);
     }
 
+    // ── board-widget helpers shared by chess and checkers ────────────────────
+    // Only genuinely STATE-FREE helpers live here. The rest of those two files' drag/review
+    // stacks (squareFromWindow, dropSquare, renderReview, tryPremove, …) read the controller's
+    // own closure — board, cells, piecesLayer, history, myColor — so they are not extractable
+    // without inventing a context object, and several that LOOK identical are not: sqName uses
+    // colOf vs cCol, clockNames compares myColor against WHITE vs 1. Moving those on the
+    // assumption that they matched would have silently broken one of the two games.
+
+    // A panel's window-space position, or null. GetPositionWithinWindow returns either {x,y} or
+    // an array depending on build, and can hand back an FLT_MAX sentinel for a panel that has not
+    // been laid out yet — both are normalised here so callers only see a usable point or null.
+    function winPos(panel) {
+        if (!panel || !panel.GetPositionWithinWindow) return null;
+        var r;
+        try { r = panel.GetPositionWithinWindow(); } catch (e) { return null; }
+        if (!r) return null;
+        var x = (typeof r.x === "number") ? r.x : (typeof r[0] === "number" ? r[0] : null);
+        var y = (typeof r.y === "number") ? r.y : (typeof r[1] === "number" ? r[1] : null);
+        if (x === null || y === null || !isFinite(x) || !isFinite(y)) return null;
+        if (Math.abs(x) > 100000 || Math.abs(y) > 100000) return null; // FLT_MAX sentinel
+        return { x: x, y: y };
+    }
+
+    // First number out of a CSS length string ("60px", "-12.5px" → 60, -12.5), or null.
+    function parsePx(v) {
+        if (typeof v !== "string" || !v.length) return null;
+        var m = v.match(/-?\d+(\.\d+)?/);
+        return m ? parseFloat(m[0]) : null;
+    }
+
+    // Walk up from `panel` looking for a board cell id ("cell_<0..63>"), so a drop that landed on
+    // a child (a piece image, a highlight) still resolves to its square. -1 if none within 6 hops.
+    function squareFromPanel(p) {
+        for (var hops = 0; p && hops < 6; hops++) {
+            var id = null;
+            try { id = p.id; } catch (e) {}
+            if (id && id.indexOf("cell_") === 0) {
+                var n = parseInt(id.substring(5), 10);
+                if (isFinite(n) && n >= 0 && n < 64) return n;
+            }
+            try { p = p.GetParent ? p.GetParent() : null; } catch (e2) { p = null; }
+        }
+        return -1;
+    }
+
+    // Move-list navigation buttons (◀ ▶ live).
+    function makeNavBtn(parent, text, onClick) {
+        var b = $.CreatePanel("Button", parent, "");
+        b.AddClass("mg-nav-btn");
+        var l = $.CreatePanel("Label", b, ""); l.text = text;
+        b.SetPanelEvent("onactivate", onClick);
+        return b;
+    }
+    function setNavState(btn, enabled) {
+        if (!btn) return;
+        if (enabled) btn.RemoveClass("mg-nav-disabled"); else btn.AddClass("mg-nav-disabled");
+    }
+
     // Shared widget factories reused by the separate game files via MG.Widgets — they can't
     // see this file's closure otherwise. createTurnTimer: durak / poker / connect-four / ttt.
     // createClock: checkers / chess (the two-side game clock). createStub: the picker fallback.
@@ -407,6 +465,11 @@
     MG.Widgets.createClock = createClock;
     MG.Widgets.createStub = createStub;
     MG.Widgets.setFace = setFace;
+    MG.Widgets.winPos = winPos;
+    MG.Widgets.parsePx = parsePx;
+    MG.Widgets.squareFromPanel = squareFromPanel;
+    MG.Widgets.makeNavBtn = makeNavBtn;
+    MG.Widgets.setNavState = setNavState;
     MG.Widgets.TURN_SECS = TURN_SECS;
 
     // Built-in game controllers now live in their OWN files (mg_checkers / mg_ttt / mg_chess),

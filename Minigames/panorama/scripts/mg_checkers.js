@@ -40,6 +40,13 @@
     // The two-side game clock lives in mg_games.js and is shared via MG.Widgets (this file
     // can't see that closure). Same handle the old inline createClock returned.
     var createClock = MG.Widgets.createClock;
+    // State-free board/nav helpers, likewise shared with mg_chess.js. The rest of the drag and
+    // review stacks stay local: they read this controller's own closure (board, cells, history,
+    // myColor), and a few that LOOK identical to the chess copies are not (sqName uses colOf vs
+    // cCol, clockNames compares against WHITE vs 1).
+    var winPos = MG.Widgets.winPos, parsePx = MG.Widgets.parsePx;
+    var squareFromPanel = MG.Widgets.squareFromPanel;
+    var makeNavBtn = MG.Widgets.makeNavBtn, setNavState = MG.Widgets.setNavState;
 
     function createCheckers(container, session) {
         var Api = MG.Api;
@@ -130,12 +137,8 @@
         function status(t) { if (session.onStatus) session.onStatus(t); }
         function sfx(n) { if (MG.Sound) MG.Sound.play(n); }
 
-        // Parse a Panorama px-like style value ("123px", "123.0px") to a number, else null.
-        function parsePx(v) {
-            if (typeof v !== "string" || !v.length) return null;
-            var m = v.match(/-?\d+(\.\d+)?/);
-            return m ? parseFloat(m[0]) : null;
-        }
+// parsePx: shared, see MG.Widgets in mg_games.js
+
 
         // Display transform: black sees the board rotated 180° so its pieces sit at the bottom.
         function toDisplay(i) { return myColor === WHITE ? i : 63 - i; }
@@ -195,13 +198,8 @@
             finish(winnerColor, "time");
         }
         function syncClockTurn() { if (clock && clock.isTimed) clock.setTurn(clockSeatFor(turn)); }
-        function makeNavBtn(parent, text, onClick) {
-            var b = $.CreatePanel("Button", parent, "");
-            b.AddClass("mg-nav-btn");
-            var l = $.CreatePanel("Label", b, ""); l.text = text;
-            b.SetPanelEvent("onactivate", onClick);
-            return b;
-        }
+                // makeNavBtn: shared, see MG.Widgets in mg_games.js
+
 
         // ── board geometry (must match mg.css: 60px cells, 46px pieces) ──────
         var SQ = 60, PIECE_SZ = 46, INSET = (SQ - PIECE_SZ) / 2;
@@ -445,38 +443,11 @@
             return false;
         }
 
-        // Our cells are named "cell_<realSquare>". Recover the square from a panel id (or
-        // from an ancestor's, since a drop may report a child). -1 if it isn't one of ours.
-        function squareFromPanel(p) {
-            for (var hops = 0; p && hops < 6; hops++) {
-                var id = null;
-                try { id = p.id; } catch (e) {}
-                if (id && id.indexOf("cell_") === 0) {
-                    var n = parseInt(id.substring(5), 10);
-                    if (isFinite(n) && n >= 0 && n < 64) return n;
-                }
-                try { p = p.GetParent ? p.GetParent() : null; } catch (e2) { p = null; }
-            }
-            return -1;
-        }
+// squareFromPanel: shared, see MG.Widgets in mg_games.js
 
-        // Absolute position of a panel in WINDOW pixels. GetPositionWithinWindow is a real
-        // engine method (confirmed present in Deadlock's panorama_strings), and — unlike
-        // actualxoffset (which returned FLT_MAX because the dragged ghost is culled out of
-        // layout) — it's computed from the render tree, so it stays valid mid/post-drag and
-        // needs no reparenting. Return shape is defended (object {x,y} or array). FLT_MAX-ish
-        // magnitudes are rejected as the "invalid" sentinel.
-        function winPos(panel) {
-            if (!panel || !panel.GetPositionWithinWindow) return null;
-            var r;
-            try { r = panel.GetPositionWithinWindow(); } catch (e) { return null; }
-            if (!r) return null;
-            var x = (typeof r.x === "number") ? r.x : (typeof r[0] === "number" ? r[0] : null);
-            var y = (typeof r.y === "number") ? r.y : (typeof r[1] === "number" ? r[1] : null);
-            if (x === null || y === null || !isFinite(x) || !isFinite(y)) return null;
-            if (Math.abs(x) > 100000 || Math.abs(y) > 100000) return null; // FLT_MAX sentinel
-            return { x: x, y: y };
-        }
+
+// winPos: shared, see MG.Widgets in mg_games.js
+
 
         // Render scale = WINDOW px per LAYOUT px. Panorama scales the whole UI by one uniform
         // factor, but a panel's actuallayoutwidth stays in LAYOUT px while GetPositionWithinWindow
@@ -691,10 +662,8 @@
             if (reviewIndex === null) { try { moveListRows.ScrollToBottom(); } catch (e2) {} }
         }
 
-        function setNavState(btn, enabled) {
-            if (!btn) return;
-            if (enabled) btn.RemoveClass("mg-nav-disabled"); else btn.AddClass("mg-nav-disabled");
-        }
+                // setNavState: shared, see MG.Widgets in mg_games.js
+
         function updateNav() {
             var shown = (history.length === 0) ? -2 : (reviewIndex === null ? history.length - 1 : reviewIndex);
             setNavState(navPrevBtn, shown > -1);           // something earlier to step back to
