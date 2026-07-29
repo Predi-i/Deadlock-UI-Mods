@@ -116,6 +116,7 @@ const ui = source("mg_ui.js");
 const pixel = source("mg_pixelbattle.js");
 const durak = source("mg_durak.js");
 const poker = source("mg_poker.js");
+const games = source("mg_games.js");
 
 assert(/var MULTI_GAME_IDS = \[1, 2, 3, 4, 5\];/.test(ui),
     "multi-quick tick set must include heads-up Durak");
@@ -123,6 +124,29 @@ assert(/function waitForMultiMatch[\s\S]*?isDurakOnlineGame\(st\.game\)[\s\S]*?r
     "a multi-quick Durak result must enter its two-seat dealer room");
 assert(/function renderRoom[\s\S]*?autoStartOnly:\s*true/.test(ui),
     "a matched heads-up Durak room must rely on server auto-start");
+assert(/function mountOnlineGame[\s\S]*?function retryMatch[\s\S]*?MG\.Api\.match[\s\S]*?m\.gone[\s\S]*?m\.variant/.test(ui) &&
+    !/function mountOnlineGame[\s\S]{0,1400}opts\.variant\s*=\s*"russian"/.test(ui),
+    "online checkers must retry authoritative match metadata instead of guessing Russian");
+const net = source("mg_net.js");
+assert(/clocks:\s*function[\s\S]*?w === 9 && h === 8/.test(net) &&
+    /if \(w === 9\) \{ fail\(/.test(net) &&
+    /request\("\/api\/clocks"[\s\S]{0,1000}\}, fail\);/.test(net),
+    "clock transport/server failures must reach createClock's retry callback");
+assert(/function resyncTick[\s\S]*?function \(\) \{ if \(!stopped\) \$\.Schedule/.test(games),
+    "createClock must retain a retry path for transient authoritative-clock failures");
+assert(/status:\s*function \(code, tok, cb, err\)[\s\S]{0,150}tok:\s*tok \|\| ""/.test(net) &&
+    /room:\s*function \(code, tok, cb, err\)/.test(net) &&
+    /droom:\s*function \(code, tok, cb, err\)/.test(net) &&
+    /proom:\s*function \(code, tok, cb, err\)/.test(net) &&
+    /cfg\.roomApi\(code, ctx \? ctx\.tok : currentTok/.test(ui),
+    "authenticated waiting-room polls must carry their seat token for sparse TTL refresh");
+const statusSource = net.match(/status:\s*function[\s\S]*?\r?\n        },\r?\n\r?\n        \/\/ Resolved-options/);
+const matchSource = net.match(/match:\s*function[\s\S]*?\r?\n        },\r?\n\r?\n        \/\/ The seat token/);
+assert(statusSource && /w === 9 && h === 1/.test(statusSource[0]) &&
+    /err\("transient"\)/.test(statusSource[0]) &&
+    matchSource && /w === 9 && h === 1/.test(matchSource[0]) &&
+    /err\("transient"\)/.test(matchSource[0]),
+    "status/match must retry non-gone server sentinels instead of closing a live lobby");
 assert(/function checkUpdates[\s\S]*?MG\.Net\.loadImage\(url,/.test(ui),
     "update marker must load through the shared MG.Net FIFO");
 assert(!/function checkUpdates[\s\S]*?img\.SetImage\(url\)/.test(ui),
@@ -131,6 +155,10 @@ assert(/function refreshCrispView[\s\S]*?MG\.Net\.loadImage\(url,/.test(pixel),
     "Pixel Battle viewport must load through the shared MG.Net FIFO");
 assert(!/crispImage\.SetImage\(MG\.Net\.getBaseUrl\(\)/.test(pixel),
     "Pixel Battle must not bypass the FIFO with a direct remote SetImage");
+assert(/var aspect = shortSide > 0 \? longSide \/ shortSide : 0;[\s\S]{0,350}Map server is busy/.test(pixel),
+    "Pixel Battle must reject and retry the Worker's viewport-throttle image sentinel");
+assert(/lastOuterStatus === "Map server is busy\. Retrying…"[\s\S]{0,100}Shared world loaded/.test(pixel),
+    "Pixel Battle must clear the busy status after a successful viewport retry");
 assert(/if \(!crispReady\)[\s\S]{0,200}Map view is still loading/.test(pixel) &&
     /function scheduleCrispView[\s\S]{0,250}crispReady = false/.test(pixel),
     "Pixel Battle must block grid clicks while the matching viewport frame is loading");

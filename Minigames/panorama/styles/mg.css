@@ -56,14 +56,9 @@
 .mg-modal {
     width: 900px;
     min-height: 300px;
-    /* ⚠ Deliberately LOOSER than the JS clamp (FIT_MARGIN in mg_ui.js). A percentage max-height
-       resolves in the SCALED space, so the real ceiling is 99% * viewport / ui-scale - at 125% on
-       1080p that was 0.92*1080/1.25 = 795px against a poker view needing ~838px, and the engine
-       simply truncated the modal: no scrollbar, no warning, just a missing footer (the vanished
-       LEAVE button). This value must stay ABOVE FIT_MARGIN so the JS clamp, which measures the
-       actual view height and picks a scale that fits, is what decides. It stays as a last-resort
-       backstop for the frames before the first measurement lands. */
-    max-height: 99%;
+    /* No max-height here. A percentage cap is evaluated after ui-scale and can truncate a newly
+       taller view before mg_ui.js measures its natural height (menu→Poker at 150% was the hidden
+       case). The JS viewport clamp is the sole height authority; see measureNaturalH(). */
     background-color: #0f141c;
     border: 1px solid #232f3e;
     box-shadow: 0px 22px 60px 0px #00000099;   /* soft elevation (R10), not a glow */

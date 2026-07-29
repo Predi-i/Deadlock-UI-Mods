@@ -16,6 +16,11 @@
 const fs = require("fs");
 const path = require("path");
 const zlib = require("zlib");
+const v8 = require("v8");
+
+function cloneStored(value) {
+    return v8.deserialize(v8.serialize(value));
+}
 
 let src = fs.readFileSync(path.join(__dirname, "..", "server", "worker.js"), "utf8");
 src = src.replace("export default", "const __workerDefault =").replace("export class Hub", "class Hub");
@@ -46,6 +51,14 @@ class FakeStorage {
         for (e of entries) out.set(e[0], e[1]);
         return out;
     }
+    async transaction(callback) {
+        var tx = new FakeStorage();
+        tx.m = new Map();
+        for (var entry of this.m) tx.m.set(entry[0], cloneStored(entry[1]));
+        var result = await callback(tx);
+        this.m = tx.m;
+        return result;
+    }
 }
 
 // Downlink is now LEVEL-quantised: the worker sends dim = level*STEP + BASE (see
@@ -66,6 +79,12 @@ async function reqRaw(hub, pathAndQuery) {
 }
 async function req(hub, pathAndQuery) {
     return delevel(await reqRaw(hub, pathAndQuery));
+}
+async function reqIp(hub, pathAndQuery, ip) {
+    var res = await hub.fetch(new Request("https://mg.test" + pathAndQuery, {
+        headers: { "CF-Connecting-IP": ip }
+    }));
+    return delevel(await rawDims(res));
 }
 async function adminReq(hub, pathAndQuery, method, body, extraHeaders) {
     var headers = Object.assign({
@@ -289,7 +308,174 @@ async function main() {
     ok((await hub.storage.get("px:t:0")) === undefined,
         "fully erased sparse tile is removed from storage");
 
+    // A forged Steam32 cannot reset the shared IP pixel budget. Six people behind one NAT may
+    // still spend a full fresh 100px bank at once; only the seventh immediate full-bank burst
+    // is asked to slow down. No IP is banned, and another IP is unaffected.
+    await (async function () {
+        var budgetHub = new Hub({ storage: new FakeStorage() });
+        var budgetIp = "203.0.113.40";
+        var result = null;
+        for (var accountNo = 0; accountNo < 6; accountNo++) {
+            var fullBank = [];
+            for (var x = 0; x < 100; x++) fullBank.push(x + "," + accountNo + "," + (accountNo + 1));
+            result = await reqIp(budgetHub,
+                "/api/pxput.png?id=" + (31000000 + accountNo) + "&b=" + fullBank.join(";"), budgetIp);
+            ok(result.h !== 63, "pixel IP budget allows full bank for NAT player " + (accountNo + 1));
+        }
+        var seventh = [];
+        for (var sx = 0; sx < 100; sx++) seventh.push(sx + ",6,7");
+        result = await reqIp(budgetHub,
+            "/api/pxput.png?id=31000006&b=" + seventh.join(";"), budgetIp);
+        ok(result.w === 4 && result.h === 63,
+            "rotating Steam32 on one IP eventually receives the retryable pixel throttle");
+        result = await reqIp(budgetHub,
+            "/api/pxput.png?id=31000006&b=" + seventh.join(";"), "198.51.100.40");
+        ok(result.h !== 63, "pixel throttle neither bans nor affects a different IP");
+    })();
+
+    // Expensive uncached 800x400 viewport renders get a human-sized burst. Cached navigation
+    // remains free even after the burst, and another IP gets its own budget.
+    await (async function () {
+        var viewHub = new Hub({ storage: new FakeStorage() });
+        var viewIp = "203.0.113.41";
+        var dims;
+        for (var vx = 0; vx < 12; vx++) {
+            dims = await viewHub.fetch(new Request(
+                "https://mg.test/api/pxview.png?x=" + vx + "&y=0&z=16", {
+                    headers: { "CF-Connecting-IP": viewIp }
+                })).then(rawDims);
+            ok(dims.w === 800 && dims.h === 400, "viewport burst frame " + (vx + 1) + " renders");
+        }
+        dims = await viewHub.fetch(new Request(
+            "https://mg.test/api/pxview.png?x=12&y=0&z=16", {
+                headers: { "CF-Connecting-IP": viewIp }
+            })).then(rawDims).then(delevel);
+        ok(dims.w === 6 && dims.h === 63, "uncached viewport flood receives retryable busy image");
+        dims = await viewHub.fetch(new Request(
+            "https://mg.test/api/pxview.png?x=0&y=0&z=16", {
+                headers: { "CF-Connecting-IP": viewIp }
+            })).then(rawDims);
+        ok(dims.w === 800 && dims.h === 400, "cached viewport remains available while throttled");
+        dims = await viewHub.fetch(new Request(
+            "https://mg.test/api/pxview.png?x=13&y=0&z=16", {
+                headers: { "CF-Connecting-IP": "198.51.100.41" }
+            })).then(rawDims);
+        ok(dims.w === 800 && dims.h === 400, "viewport throttle does not affect another IP");
+    })();
+
     // ── token & game-id validation on create ──
+    // Audit history is append-only during its retention window, then old action and per-user
+    // index records are pruned together so public canvas use cannot grow storage forever.
+    await (async function () {
+        var retentionHub = new Hub({ storage: new FakeStorage() });
+        var oldAt = Date.now() - 181 * 24 * 60 * 60000;
+        var oldIds = [];
+        for (var oi = 0; oi < 513; oi++) {
+            var oldId = String(oldAt + oi).padStart(13, "0") + "-00000001";
+            oldIds.push(oldId);
+            await retentionHub.storage.put("px:a:" + oldId, {
+                id: oldId, at: oldAt + oi, actor: "player", steamid: "32000000",
+                kind: "paint", deltas: [[0, 0, 0, 1, ""]]
+            });
+            await retentionHub.storage.put("px:ua:32000000:" + oldId, true);
+        }
+        var retentionBatch = [];
+        for (var rx = 0; rx < 10; rx++) retentionBatch.push(rx + ",0,5");
+        var retained = await req(retentionHub,
+            "/api/pxput.png?id=32000001&b=" + retentionBatch.join(";"));
+        ok(retained.h !== 63, "new pixel action is accepted while retention cleanup runs");
+        ok(!(await retentionHub.storage.get("px:a:" + oldIds[0])) &&
+            !!(await retentionHub.storage.get("px:a:" + oldIds[512])) &&
+            !(await retentionHub.storage.get("px:audit:lastPrune")),
+            "pixel audit removes 512 expired actions and stays in catch-up mode");
+        var retentionBatch2 = [];
+        for (rx = 0; rx < 10; rx++) retentionBatch2.push(rx + ",1,6");
+        await req(retentionHub, "/api/pxput.png?id=32000001&b=" + retentionBatch2.join(";"));
+        ok(!(await retentionHub.storage.get("px:a:" + oldIds[512])) &&
+            !(await retentionHub.storage.get("px:ua:32000000:" + oldIds[512])) &&
+            !!(await retentionHub.storage.get("px:audit:lastPrune")),
+            "next action finishes audit catch-up before restoring the daily cadence");
+    })();
+
+    // Fault injection: bank, tiles/version, audit and ownership must roll back as one unit.
+    await (async function () {
+        var atomicStorage = new FakeStorage();
+        var atomicHub = new Hub({ storage: atomicStorage });
+        var normalTransaction = atomicStorage.transaction.bind(atomicStorage);
+        atomicStorage.transaction = async function (callback) {
+            var tx = new FakeStorage();
+            tx.m = new Map();
+            for (var entry of this.m) tx.m.set(entry[0], cloneStored(entry[1]));
+            var writes = 0;
+            var normalPut = tx.put.bind(tx);
+            tx.put = async function (key, value) {
+                writes++;
+                if (writes === 3) throw new Error("injected storage failure");
+                return normalPut(key, value);
+            };
+            return callback(tx); // deliberately never commits if callback throws
+        };
+        var atomicBatch = [];
+        for (var ax = 0; ax < 10; ax++) atomicBatch.push(ax + ",0,5");
+        var failedAtomic = await req(atomicHub,
+            "/api/pxput.png?id=33000000&b=" + atomicBatch.join(";"));
+        ok(failedAtomic.w === 9 && failedAtomic.h === 7,
+            "injected Pixel Battle storage failure returns the server-error sentinel");
+        ok(!(await atomicStorage.get("px:u:33000000")) &&
+            !(await atomicStorage.get("px:t:0")) &&
+            !(await atomicStorage.get("px:version")) &&
+            (await atomicStorage.list({ prefix: "px:a:" })).size === 0,
+            "failed Pixel Battle transaction rolls bank, tiles, version and audit back together");
+        atomicStorage.transaction = normalTransaction;
+        var retriedAtomic = await req(atomicHub,
+            "/api/pxput.png?id=33000000&b=" + atomicBatch.join(";"));
+        ok(retriedAtomic.h * 64 + retriedAtomic.w === 90,
+            "the same Pixel Battle batch succeeds once storage recovers");
+    })();
+
+    await (async function () {
+        var adminAtomicStorage = new FakeStorage();
+        var adminAtomicHub = new Hub({ storage: adminAtomicStorage });
+        var normalAdminTransaction = adminAtomicStorage.transaction.bind(adminAtomicStorage);
+        adminAtomicStorage.transaction = async function (callback) {
+            var tx = new FakeStorage();
+            tx.m = new Map();
+            for (var entry of this.m) tx.m.set(entry[0], cloneStored(entry[1]));
+            var writes = 0;
+            var normalPut = tx.put.bind(tx);
+            tx.put = async function (key, value) {
+                writes++;
+                if (writes === 3) throw new Error("injected admin storage failure");
+                return normalPut(key, value);
+            };
+            return callback(tx);
+        };
+        var adminAtomicPixels = [];
+        for (var apx = 0; apx < 10; apx++) adminAtomicPixels.push({ x: apx, y: 0, color: 6 });
+        var failedAdminResponse = await adminAtomicHub.fetch(new Request(
+            "https://mg.test/admin/api/paint", {
+                method: "POST",
+                headers: {
+                    "X-MG-Admin-Login": "pixel-owner",
+                    "X-MG-Admin": "1",
+                    "Origin": "https://mg.test"
+                },
+                body: JSON.stringify({ pixels: adminAtomicPixels })
+            }));
+        var failedAdmin = delevel(await rawDims(failedAdminResponse));
+        ok(failedAdmin.w === 9 && failedAdmin.h === 7,
+            "injected admin paint storage failure returns the server-error sentinel");
+        ok(!(await adminAtomicStorage.get("px:t:0")) &&
+            !(await adminAtomicStorage.get("px:version")) &&
+            (await adminAtomicStorage.list({ prefix: "px:a:" })).size === 0,
+            "failed admin paint transaction rolls tiles, version and audit back together");
+        adminAtomicStorage.transaction = normalAdminTransaction;
+        var retriedAdmin = await adminReq(adminAtomicHub,
+            "/admin/api/paint", "POST", { pixels: adminAtomicPixels });
+        ok(retriedAdmin.status === 200 && retriedAdmin.body.changed === 10,
+            "the same admin paint succeeds once storage recovers");
+    })();
+
     // Pixel Battle browser admin: audit, unlimited paint, safe undo, and CSRF.
     var adminHub = new Hub({ storage: new FakeStorage() });
     var deniedAdmin = await adminHub.fetch(new Request("https://mg.test/admin/api/state"));
@@ -357,8 +543,11 @@ async function main() {
         adminPageHtml.indexOf('id="inspectMode"') >= 0 &&
         adminPageHtml.indexOf('id="debugPanel"') >= 0,
         "browser admin ships zoom, pan, pixel inspector, and preview controls");
-    var tamperedSession = sessionMatch[1].substring(0, sessionMatch[1].length - 1) +
-        (sessionMatch[1].endsWith("A") ? "B" : "A");
+    // Mutate signed PAYLOAD bits, not the final base64url character of the signature: the latter
+    // may contain only padding bits and occasionally decode to the exact same HMAC byte string.
+    var sessionParts = sessionMatch[1].split(".");
+    var tamperedPayload = (sessionParts[0][0] === "A" ? "B" : "A") + sessionParts[0].substring(1);
+    var tamperedSession = tamperedPayload + "." + sessionParts[1];
     var tamperedPage = await Worker.fetch(new Request("https://mg.test/admin", {
         headers: { "Cookie": "mg_admin_session=" + tamperedSession }
     }), oauthEnv);
@@ -669,6 +858,67 @@ async function main() {
         // A different IP is unaffected by the first IP's throttle.
         var other = await th.fetch(new Request("https://mg.test/api/create.png?game=1&tok=CLEANIP01", { headers: { "CF-Connecting-IP": "198.51.100.7" } })).then(rawDims).then(delevel);
         ok(other.w !== 9, "H3: a different IP is not throttled (" + other.w + "," + other.h + ")");
+
+        // H4: normal polling of one code is free, but distinct-code enumeration is capped.
+        // The cap resets with time (not a ban), and every IP/NAT gets its own generous set.
+        var scan = new Hub({ storage: new FakeStorage() });
+        for (var sc = 0; sc < 16; sc++) {
+            var sr = await reqIp(scan, "/api/status.png?code=" + sc, "203.0.113.10");
+            ok(sr.w === 9 && sr.h === 1, "H4: distinct code probe " + (sc + 1) + " is allowed");
+        }
+        var scanBlocked = await reqIp(scan, "/api/status.png?code=16", "203.0.113.10");
+        ok(scanBlocked.w === 9 && scanBlocked.h === 4,
+            "H4: seventeenth distinct code in one minute is softly throttled");
+        var sameCode = await reqIp(scan, "/api/status.png?code=0", "203.0.113.10");
+        ok(sameCode.w === 9 && sameCode.h === 1,
+            "H4: retrying an already-seen lobby code remains free");
+        var hotBlocked = await reqIp(scan, "/api/poll.png?code=16&since=0", "203.0.113.10");
+        ok(hotBlocked.w === 1 && hotBlocked.h === 1,
+            "H4: a hot poll gets non-terminal nothing-new when scan-throttled");
+        var clockBlocked = await reqIp(scan, "/api/clocks.png?code=16&seat=0", "203.0.113.10");
+        ok(clockBlocked.w === 9 && clockBlocked.h === 7,
+            "H4: clocks get a retryable server sentinel instead of false lobby-gone");
+        var writeBlocked = await reqIp(scan,
+            "/api/move.png?code=16&from=1&to=2&tok=SCANHOST", "203.0.113.10");
+        ok(writeBlocked.w === 9 && writeBlocked.h === 3,
+            "H4: an authenticated hot write gets non-terminal bad-token when scan-throttled");
+        scan.freshCode = async function () { return 16; };
+        var cleanupLobby = await reqIp(scan,
+            "/api/create.png?game=2&tok=SCANHOST", "203.0.113.10");
+        ok(decCode(cleanupLobby) === 16, "H4: creates still work inside the broad formation burst");
+        var cleanupResult = await reqIp(scan,
+            "/api/cancel.png?code=16&tok=SCANHOST", "203.0.113.10");
+        ok(cleanupResult.w === 1 && cleanupResult.h === 1 &&
+            !(await scan.storage.get("l:16")),
+            "H4: cancel is exempt and cannot strand a throttled lobby or queue");
+        var scanOther = await reqIp(scan, "/api/status.png?code=16", "198.51.100.10");
+        ok(scanOther.w === 9 && scanOther.h === 1,
+            "H4: distinct-code throttle does not affect another IP");
+
+        // H5: an authenticated seat refreshes a genuinely waiting lobby, but an anonymous
+        // existence probe cannot pin it forever and is removed by the normal sweep.
+        var ttl = new Hub({ storage: new FakeStorage() });
+        var ttlCreate = await req(ttl, "/api/create.png?game=2&tok=TTLHOST1");
+        var ttlCode = decCode(ttlCreate);
+        var ttlLobby = await ttl.storage.get("l:" + ttlCode);
+        ttlLobby.t = Date.now() - 31 * 60000;
+        await ttl.storage.put("l:" + ttlCode, ttlLobby);
+        await req(ttl, "/api/status.png?code=" + ttlCode + "&tok=TTLHOST1");
+        await ttl.storage.put("lastSweep", 0);
+        await ttl.maybeSweep();
+        ok(!!(await ttl.storage.get("l:" + ttlCode)),
+            "H5: authenticated waiting-room polling keeps the lobby alive");
+
+        var anonymousCreate = await req(ttl, "/api/create.png?game=2&tok=TTLANON1");
+        var anonymousCode = decCode(anonymousCreate);
+        var anonymousLobby = await ttl.storage.get("l:" + anonymousCode);
+        anonymousLobby.t = Date.now() - 31 * 60000;
+        await ttl.storage.put("l:" + anonymousCode, anonymousLobby);
+        await req(ttl, "/api/status.png?code=" + anonymousCode);
+        await ttl.storage.put("lastSweep", 0);
+        await ttl.maybeSweep();
+        ok(!(await ttl.storage.get("l:" + anonymousCode)),
+            "H5: anonymous status probes cannot keep guessed lobbies alive");
     })();
 
     // ── checkers: forced capture is enforced by the server ──
@@ -772,7 +1022,7 @@ async function main() {
         ok(rm2.w === 2 && rm2.h === 2, "durak: room remains started");
         // Public log: TRUMP, OPEN, DRAW(0,6), DRAW(1,6).
         var e0 = await req(L.hub, "/api/dlog.png?code=" + L.code + "&since=0");
-        ok(e0.w === 2 && e0.h >= 2 && e0.h <= 37, "durak: dlog[0] = TRUMP (2, trumpCard+1)");
+        ok(e0.w === 2 && e0.h >= 1 && e0.h <= 36, "durak: dlog[0] = TRUMP (2, trumpCard+1)");
         var e1 = await req(L.hub, "/api/dlog.png?code=" + L.code + "&since=1");
         ok(e1.w === 3 && (e1.h === 1 || e1.h === 2), "durak: dlog[1] = OPEN (3, attacker+1)");
         var attacker = e1.h - 1, defender = attacker === 0 ? 1 : 0;
@@ -1189,7 +1439,7 @@ async function main() {
         ok(room.w === 2 && room.h === 2,
             "mquick/durak: filled two-seat room starts automatically");
         var first = await req(hm, "/api/dlog.png?code=" + mc + "&since=0");
-        ok(first.w === 2 && first.h >= 2 && first.h <= 37,
+        ok(first.w === 2 && first.h >= 1 && first.h <= 36,
             "mquick/durak: authoritative deal begins with TRUMP");
         var third = await req(hm, "/api/quick.png?game=3&tok=MQDTHIRD");
         ok(codeHost(third) && decCode(third) !== mc,

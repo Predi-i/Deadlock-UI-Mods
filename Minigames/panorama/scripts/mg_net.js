@@ -22,18 +22,18 @@
  *   $.MG.Api.mquick(games[], tok, cb({role,code}), err)   multi-select; game learned via status
  *   $.MG.Api.cancel(code, cb(ok), err)
  *   $.MG.Api.join(code, tok, cb({ok,game,reason}), err)
- *   $.MG.Api.status(code, cb({gone,players,game}), err)  game = fixed game (0 while undecided)
+ *   $.MG.Api.status(code, tok, cb({gone,players,game}), err) game = fixed game (0 while undecided)
  *   $.MG.Api.move(code, from, to, end, tok, cb({ok,reason}), err)   reason: turn|illegal|token|gone
  *   $.MG.Api.poll(code, since, cb(move|null), err)      move = {from,to,end,seq}
  *   $.MG.Api.reset(code, game, tok, cb(ok), err)
- *   $.MG.Api.room(code, cb({gone,players,started}), err)            Durak online room state
+ *   $.MG.Api.room(code, tok, cb({gone,players,started}), err)       Durak online room state
  *   $.MG.Api.start(code, tok, cb({ok,reason}), err)                 Durak host starts/deals
  *   $.MG.Api.dact(code, tok, a, pair, card, cb({ok,reason}), err)   Durak public action
  *   $.MG.Api.dlog(code, since, cb(event|null), err)                 Durak public event log
  *   $.MG.Api.ddraw(code, tok, index, cb(card|null), err)            Durak private draw log
  *   $.MG.Api.pcreate(cap, tok, cb({code,cap}), err)                 Poker private lobby (2-4 seats)
  *   $.MG.Api.pjoin(code, tok, cb({ok,seat,cap,reason}), err)        Poker join (learns own seat)
- *   $.MG.Api.proom(code, cb({gone,players,cap,started}), err)       Poker room state
+ *   $.MG.Api.proom(code, tok, cb({gone,players,cap,started}), err)  Poker room state
  *   $.MG.Api.pstart(code, tok, cb({ok,reason}), err)                Poker host starts/deals
  *   $.MG.Api.pact(code, tok, a, to, cb({ok,reason}), err)           Poker betting action (0f/1chk/2call/3raise)
  *   $.MG.Api.pnext(code, tok, cb({ok,reason}), err)                 Poker deal next hand
@@ -670,18 +670,18 @@
             }, err);
         },
 
-        status: function (code, cb, err) {
-            request("/api/status", { code: code }, function (w, h) {
+        status: function (code, tok, cb, err) {
+            request("/api/status", { code: code, tok: tok || "" }, function (w, h) {
                 log("status(" + code + ") decoded w=" + w + " h=" + h);
                 if (w === 9 && h === 4) { if (err) err("busy"); return; } // rate-limited: caller retries
-                if (w === 9) {
+                if (w === 9 && h === 1) {
                     // status is only polled while a host waits for a joiner, so a
                     // "gone" here means the lobby was swept/closed, not that an
                     // opponent dropped (nobody had joined yet).
-                    if (MG.UI && MG.UI.kickToMenu) MG.UI.kickToMenu("Lobby closed.");
                     cb({ gone: true, players: 0 });
                     return;
                 }
+                if (w === 9) { if (err) err("transient"); return; }
                 if (w !== 1 && w !== 2) {
                     suspectDecode("status w=" + w + " h=" + h);
                     if (err) err("decode");
@@ -701,7 +701,13 @@
         match: function (code, cb, err) {
             request("/api/match", { code: code }, function (w, h) {
                 if (w === 9 && h === 4) { if (err) err("busy"); return; } // rate-limited: caller retries
-                if (w < 1 || w > 9) { cb({ gone: true }); return; }        // (9,1) gone/undecided
+                if (w === 9 && h === 1) { cb({ gone: true }); return; }    // gone/undecided
+                if (w === 9) { if (err) err("transient"); return; }
+                if (w < 1 || w > 9) {
+                    suspectDecode("match w=" + w + " h=" + h);
+                    if (err) err("decode");
+                    return;
+                }
                 cb({ gone: false, game: w, tc: matchTcFromHeight(h), variant: matchVariantFromHeight(h) });
             }, err);
         },
@@ -767,19 +773,28 @@
         // the ~1 s poll cadence, so no visible drift. Sentinels: (9,9) gone · (9,8) untimed.
         // cb({ sec:[s0,s1], flag }) - flag is the seat that ran out of time, or -1.
         clocks: function (code, cb, err) {
+            function fail(reason) { if (err) err(reason); }
             function readSeat(seat, next) {
                 request("/api/clocks", { code: code, seat: seat }, function (w, h) {
-                    if (w === 9) { next(null); return; }          // (9,9) gone / (9,8) untimed
+                    // Only the explicit (9,8) sentinel means "this lobby is untimed". A gone,
+                    // server-error or transport failure must take the error path so createClock
+                    // retries instead of permanently deleting/freezing a real timed clock.
+                    if (w === 9 && h === 8) { next(null); return; }
+                    if (w === 9) { fail(h === 9 ? "gone" : "server"); return; }
                     // Real reading: width is the CLK band (30..39 = 30+hi), height is lo (0..63).
                     var sec = (w - 30) * 64 + h;
-                    if (w < 30 || w > 45 || sec < 0 || sec > 600) { next(NaN); return; }
+                    if (w < 30 || w > 39 || sec < 0 || sec > 600) {
+                        suspectDecode("clocks seat=" + seat + " w=" + w + " h=" + h);
+                        fail("decode");
+                        return;
+                    }
                     next(sec);
-                }, function () { next(null); });
+                }, fail);
             }
             readSeat(0, function (s0) {
-                if (s0 === null || (s0 !== s0)) { if (cb) cb(null); return; } // gone/untimed/decode
+                if (s0 === null) { if (cb) cb(null); return; } // authoritative untimed sentinel
                 readSeat(1, function (s1) {
-                    if (s1 === null || (s1 !== s1)) { if (cb) cb(null); return; }
+                    if (s1 === null) { if (cb) cb(null); return; }
                     // The running seat that hits 0 is the flag-fall loser; the server floors it
                     // at 0 and never lets the other tick past it, so at most one seat reads 0.
                     var flag = s0 === 0 ? 0 : (s1 === 0 ? 1 : -1);
@@ -805,8 +820,8 @@
         // event log (`dlog`) plus a private per-seat draw stream (`ddraw`). All writes and
         // private reads are authorised by the seat token. Event dimensions deliberately stay
         // small (<= ~63) and no real event is (1,1), so (1,1) remains "nothing new".
-        room: function (code, cb, err) {
-            request("/api/room", { code: code }, function (w, h) {
+        room: function (code, tok, cb, err) {
+            request("/api/room", { code: code, tok: tok || "" }, function (w, h) {
                 // ONLY (9,1) means the lobby is truly gone (swept/closed). Any OTHER 9,x - an
                 // unknown route on a stale-deployed worker (9,8), a server error (9,7), etc. - is
                 // treated as a TRANSIENT error so the poll retries instead of instantly kicking the
@@ -927,8 +942,8 @@
             }, err);
         },
 
-        droom: function (code, cb, err) {
-            request("/api/droom", { code: code }, function (w, h) {
+        droom: function (code, tok, cb, err) {
+            request("/api/droom", { code: code, tok: tok || "" }, function (w, h) {
                 // Same transient-vs-gone discipline as room(): only (9,1) is truly gone.
                 if (w === 9 && h === 1) { cb({ gone: true, players: 0, cap: 0, started: false }); return; }
                 if (w === 9) { if (err) err("transient"); return; }
@@ -978,8 +993,8 @@
             }, err);
         },
 
-        proom: function (code, cb, err) {
-            request("/api/proom", { code: code }, function (w, h) {
+        proom: function (code, tok, cb, err) {
+            request("/api/proom", { code: code, tok: tok || "" }, function (w, h) {
                 // Same transient-vs-gone discipline as room(): only (9,1) is truly gone.
                 if (w === 9 && h === 1) { cb({ gone: true, players: 0, cap: 0, started: false }); return; }
                 if (w === 9) { if (err) err("transient"); return; }

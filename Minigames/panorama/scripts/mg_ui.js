@@ -492,12 +492,12 @@
     // clamping for the tallest view we know about is safe for the shorter ones (they just sit a bit
     // further from the edge), whereas clamping for the shortest lets the tallest clip.
     //
-    // ⚠ The clamp must be STRICTER than .mg-modal's own `max-height` (mg.css) or it never gets to
-    // act: a % max-height resolves in the SCALED space, i.e. the real ceiling is
-    // `maxHeightPct * viewport / scale`, so CSS silently truncated the modal - no scrollbar, no
-    // symptom, just a missing footer - before JS ever considered clamping. FIT_MARGIN was 0.96
-    // against a CSS 0.92, which is backwards. They are now 0.98 / 0.99, with CSS the looser of the
-    // two, so the JS clamp is what decides and it reports a scale that actually fits.
+    // ⚠ The modal must NOT have a percentage CSS max-height. Even a nominally looser 99% cap is
+    // evaluated in the SCALED space. On the first menu→Poker switch at 150% it clips the 838px
+    // natural view to ~713px BEFORE this function can measure it; dividing that clipped height
+    // by 1.5 then permanently teaches the clamp the wrong "natural" height. CSS therefore leaves
+    // height uncapped and the JS measurement/clamp is the single authority. A newly-tall view can
+    // extend off-screen for one layout frame, then its full height is measured and fitted.
     //
     // ⚠ CONSEQUENCE, not a bug: on 1080p the poker view can't show much past ~125%, and the menu
     // past ~160%. Higher dropdown steps clamp to those. That is the physical ceiling - a taller
@@ -1215,7 +1215,7 @@
                     function () { fail("create (server unreachable or bad decode)"); });
             }],
             ["reading lobby status", function () {
-                MG.Api.status(code, function (st) {
+                MG.Api.status(code, hostTok, function (st) {
                     if (st.gone || st.players !== 1) { fail("status (got " + st.players + " players, expected 1)"); return; }
                     next();
                 }, netFail("status"));
@@ -1436,21 +1436,30 @@
     // Mount an ONLINE game once its lobby is settled. Checkers carries a server-resolved variant
     // (the picker's "Any" may have paired with either engine), and the 2-int join/quick replies
     // can't carry it - so for checkers we first read /api/match to learn the chosen variant, then
-    // mount. Every other game has no variant, so it mounts straight away. On a match() failure we
-    // fall back to Russian (the server default) rather than block the game from starting.
+    // mount. Every other game has no variant, so it mounts straight away. Never guess the variant
+    // after a transport/decode failure: an English lobby mounted with Russian rules disagrees with
+    // the authoritative server on king range, backward captures and promotion-chain turn endings.
     function mountOnlineGame(gameId, code, isHost, opts, ctx) {
         opts = opts || {};
         if (ctx && !actionAlive(ctx)) return;
         if (gameId !== 1) { renderGame(gameId, code, isHost, false, opts, ctx); return; }
-        MG.Api.match(code, function (m) {
+        var misses = 0;
+        function retryMatch() {
             if (ctx && !actionAlive(ctx)) return;
-            opts.variant = (!m.gone && m.variant) ? m.variant : "russian";
-            renderGame(gameId, code, isHost, false, opts, ctx);
-        }, function () {
+            setStatus("Syncing match settings…");
+            $.Schedule(MG.Net.waitDelay(misses++), readMatch);
+        }
+        function readMatch() {
             if (ctx && !actionAlive(ctx)) return;
-            opts.variant = "russian";
-            renderGame(gameId, code, isHost, false, opts, ctx);
-        });
+            MG.Api.match(code, function (m) {
+                if (ctx && !actionAlive(ctx)) return;
+                if (m.gone) { kickToMenu("Lobby closed."); return; }
+                if (!m.variant) { retryMatch(); return; }
+                opts.variant = m.variant;
+                renderGame(gameId, code, isHost, false, opts, ctx);
+            }, retryMatch);
+        }
+        readMatch();
     }
 
     // Online rematch: every present seat polls /api/rematch from the game-over screen. The server
@@ -1563,7 +1572,7 @@
     //   startingMsg, startVerb,  // "Starting Durak…" / "deal"
     //   waitHost, waitJoiner,    // status while waiting
     //   readyMsg,                // fn(players) → host status once ≥2 are seated
-    //   roomApi, startApi,       // fn(code, cb, err) / fn(code, tok, cb, err)
+    //   roomApi, startApi,       // fn(code, tok, cb, err)
     //   closedMsg                // kickToMenu text when the lobby is gone
     // }
     function renderLobbyRoom(cfg) {
@@ -1645,7 +1654,7 @@
         var code = cfg.code, isHost = cfg.isHost, ctx = cfg.ctx;
         function tick() {
             if (token !== statusPollToken || view !== "room" || (ctx && !actionAlive(ctx))) return;
-            cfg.roomApi(code, function (r) {
+            cfg.roomApi(code, ctx ? ctx.tok : currentTok, function (r) {
                 if (token !== statusPollToken || view !== "room" || (ctx && !actionAlive(ctx))) return;
                 // kickToMenu, not renderMenu: it clears currentCode first, so cleanupCurrentView
                 // does not fire /api/leave at a lobby the server has already reported gone.
@@ -1727,7 +1736,7 @@
         var misses = 0;
         function tick() {
             if (token !== statusPollToken || (ctx && !actionAlive(ctx))) return;
-            MG.Api.status(code, function (st) {
+            MG.Api.status(code, ctx ? ctx.tok : currentTok, function (st) {
                 if (token !== statusPollToken || (ctx && !actionAlive(ctx))) return;
                 if (st.players === 2) { mountOnlineGame(selectedGameId, code, true, { timeControl: tc | 0 }, ctx); return; }
                 // A swept or cancelled lobby answers `gone`. Without this the host sat on
@@ -1896,7 +1905,7 @@
         var misses = 0;
         function tick() {
             if (token !== statusPollToken || (ctx && !actionAlive(ctx))) return;
-            MG.Api.status(code, function (st) {
+            MG.Api.status(code, ctx ? ctx.tok : currentTok, function (st) {
                 if (token !== statusPollToken || (ctx && !actionAlive(ctx))) return;
                 if (st.gone) { renderMenu(); setStatus("⚠ Lobby closed."); return; }
                 if (st.players === 2 && st.game > 0) {

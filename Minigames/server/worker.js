@@ -2395,7 +2395,7 @@ function adminAssetResponse(path) {
  *   /api/mquick?games=..&tok=T&tc=..&cv=..         -> dCode(code, JOINER|HOST)   multi-select; game fixed on join
  *   /api/cancel?code=C                            -> (1,1)                       drop a still-waiting lobby
  *   /api/join?code=C&tok=T                         -> (G, tcIndex+1) ok · (20,1) missing · (21,1) full
- *   /api/status?code=C                            -> (players, game+1) · (9,1) gone
+ *   /api/status?code=C&tok=T                      -> (players, game+1) · (9,1) gone
  *   /api/match?code=C                             -> (game, tcIndex*2+variantBit+1) · (9,1) gone/undecided
  *   /api/move?code=C&from=F&to=T&end=E&tok=T       -> (1,1) ok · (9,1) not-your-turn · (9,2) illegal · (9,3) bad-token · (9,9) gone
  *   /api/poll?code=C&since=S                       -> (from, to) RAW squares · (1,1) nothing new
@@ -2723,14 +2723,18 @@ export class Hub {
     // Lives on the single Durable Object instance, so every request sees the same counters
     // (no KV lag). Keyed by CF-Connecting-IP: legit players sit on distinct IPs and never
     // approach the cap, while a brute-forcer sweeping the 4-digit code space or flooding
-    // `create` is one IP and gets throttled. A null IP (local/tests) is exempt (fails open),
-    // and the HOT read/poll loop is DELIBERATELY never throttled - a (9,x) sentinel there
-    // would be misread by the poll decoder as a real move. Bounded to RL_MAX_IPS entries so
-    // the map itself can't be used to exhaust memory.
+    // `create` is one IP and gets throttled. A null IP (local/tests) is exempt (fails open).
+    // Hot read/poll routes skip this REQUEST-frequency limiter, but the separate distinct-code
+    // guard below can safely slow enumeration with each route's existing gone sentinel.
+    // Bounded to RL_MAX_IPS entries so the maps cannot be used to exhaust memory.
     this.rl = new Map();          // ip -> array of recent request timestamps (ms)
+    this.codeScan = new Map();    // ip -> distinct lobby codes touched in the scan window
     this.pxrl = new Map();        // account+ip -> recent Pixel Battle uploads
+    this.pxIpBudget = new Map();  // ip -> shared pixel token bucket (Steam32 rotation cannot reset it)
+    this.pxViewRl = new Map();    // ip -> token bucket for expensive uncached viewport renders
     this.pxTiles = null;          // lazily hydrated sparse 32x32 canvas tiles
     this.pxViewCache = new Map(); // version+origin -> native-size edit viewport PNG
+    this.pxCanvasCache = null;    // { version, bytes } for the compatibility canvas route
   }
 
   // Sliding-window rate check for one IP. Returns true if this request is ALLOWED. A null/
@@ -2755,6 +2759,87 @@ export class Hub {
     return true;
   }
 
+  // A normal client touches one lobby code repeatedly. Curl-style enumeration touches dozens of
+  // DIFFERENT codes, so count distinct values rather than requests: polling, retries and several
+  // people behind one NAT remain free, while a 0..1023 sweep slows to a crawl. This is a temporary
+  // throttle, never a ban; the set resets after CODE_SCAN_WINDOW_MS.
+  codeProbeOk(ip, code) {
+    if (!ip || code === "") return true;
+    const now = Date.now();
+    let record = this.codeScan.get(ip);
+    if (!record || now - record.at >= CODE_SCAN_WINDOW_MS) {
+      if (!record && this.codeScan.size >= RL_MAX_IPS) {
+        const first = this.codeScan.keys().next().value;
+        if (first !== undefined) this.codeScan.delete(first);
+      }
+      record = { at: now, seen: new Set() };
+      this.codeScan.set(ip, record);
+    }
+    if (record.seen.has(code)) return true;
+    if (record.seen.size >= CODE_SCAN_MAX_CODES) return false;
+    record.seen.add(code);
+    return true;
+  }
+
+  // Shared IP pixel budget. It is deliberately generous enough for six fresh players behind one
+  // household/NAT to spend their entire 100px banks immediately. Unlike the account bank it cannot
+  // be reset by rotating a client-reported Steam32. Tokens refill continuously; no IP is banned.
+  pixelSpendOk(ip, cost) {
+    if (!ip || cost <= 0) return true;
+    const now = Date.now();
+    let record = this.pxIpBudget.get(ip);
+    if (!record) {
+      if (this.pxIpBudget.size >= PX_UPLOAD_MAX_KEYS) {
+        const first = this.pxIpBudget.keys().next().value;
+        if (first !== undefined) this.pxIpBudget.delete(first);
+      }
+      record = { at: now, tokens: PX_IP_PIXEL_BURST };
+      this.pxIpBudget.set(ip, record);
+    }
+    record.tokens = Math.min(PX_IP_PIXEL_BURST,
+      record.tokens + (now - record.at) * PX_IP_PIXEL_REFILL_PER_MS);
+    record.at = now;
+    if (record.tokens < cost) return false;
+    record.tokens -= cost;
+    return true;
+  }
+
+  // View navigation is bursty, so allow twelve uncached frames immediately and then one per
+  // second. Cache hits never consume this budget. A human's coalesced D-pad/zoom requests stay
+  // below it; a script cycling cache keys receives a retryable image sentinel instead of burning
+  // the single Durable Object on continuous 800x400 deflates.
+  pixelViewOk(ip) {
+    if (!ip) return true;
+    const now = Date.now();
+    let record = this.pxViewRl.get(ip);
+    if (!record) {
+      if (this.pxViewRl.size >= PX_UPLOAD_MAX_KEYS) {
+        const first = this.pxViewRl.keys().next().value;
+        if (first !== undefined) this.pxViewRl.delete(first);
+      }
+      record = { at: now, tokens: PX_VIEW_BURST };
+      this.pxViewRl.set(ip, record);
+    }
+    record.tokens = Math.min(PX_VIEW_BURST,
+      record.tokens + (now - record.at) * PX_VIEW_REFILL_PER_MS);
+    record.at = now;
+    if (record.tokens < 1) return false;
+    record.tokens -= 1;
+    return true;
+  }
+
+  // A seated client may wait in a private/public lobby for longer than the 30-minute idle
+  // sweep. Refresh the timestamp at most once per five minutes, and only for a valid seat
+  // token: anonymous code scanners cannot pin guessed lobbies in storage.
+  async touchWaitingLobby(code, lobby, tok) {
+    if (!lobby || code === "" || seatOf(lobby, tok) < 0) return;
+    const now = Date.now();
+    if (!lobby.t || now - lobby.t >= LOBBY_TOUCH_MS) {
+      lobby.t = now;
+      await this.storage.put("l:" + code, lobby);
+    }
+  }
+
   async fetch(request) {
     const url = new URL(request.url);
     // Panorama's <Image> loader only fetches URLs that look like an image, so the
@@ -2765,11 +2850,25 @@ export class Hub {
     // Code "0" is VALID, so route lookups must compare with "" rather than use truthiness.
     const code = validCode(q.get("code"));
 
+    const clientIp = request.headers.get("CF-Connecting-IP");
     // Rate-limit the formation + existence-probe routes by client IP (Cloudflare sets
     // CF-Connecting-IP; absent locally / in tests → fails open). (9,4) is a dedicated
     // "slow down" marker the throttled client methods surface as a friendly retry, and
     // it can never be confused with a real reply on these routes.
-    if (THROTTLED_ROUTES[p] && !this.rateOk(request.headers.get("CF-Connecting-IP"))) {
+    if (THROTTLED_ROUTES[p] && !this.rateOk(clientIp)) {
+      return d(9, 4);
+    }
+    // All code-bearing routes are existence oracles in some form (even token-gated draw/action
+    // routes distinguish "gone" from "bad token"). Limit DISTINCT codes per IP, but never forge
+    // a terminal "gone": each route family below gets a non-terminal/empty response it can decode.
+    if (code !== "" && !CODE_SCAN_EXEMPT_ROUTES[p] && !this.codeProbeOk(clientIp, code)) {
+      // Read/log routes return their ordinary "nothing new" value, hiding whether the code
+      // exists without falsely telling a real client that its opponent left. Authenticated
+      // writes use bad-token, clocks use a retryable server sentinel, and formation/status
+      // routes keep the explicit busy marker their callers already retry.
+      if (CODE_SCAN_EMPTY_ROUTES[p]) return d(1, 1);
+      if (p === "/api/clocks") return d(9, 7);
+      if (CODE_SCAN_AUTH_ROUTES[p]) return d(9, 3);
       return d(9, 4);
     }
 
@@ -2785,7 +2884,7 @@ export class Hub {
         const viewCols = PX_W / zoom, viewRows = PX_H / zoom;
         const viewX = clampInt(q.get("x"), 0, 0, PX_W - viewCols);
         const viewY = clampInt(q.get("y"), 0, 0, PX_H - viewRows);
-        return await pixelViewPng(this, viewX, viewY, zoom);
+        return await pixelViewPng(this, viewX, viewY, zoom, clientIp);
       }
       if (p === "/api/pxversion") {
         const account = validPixelAccount(q.get("id"));
@@ -2803,10 +2902,10 @@ export class Hub {
         const account = validPixelAccount(q.get("id"));
         if (!account) return d(1, 63);
         if (await pixelBan(this, account)) return d(5, 63);
-        if (!pixelUploadRateOk(this, account, request.headers.get("CF-Connecting-IP"))) return d(4, 63);
+        if (!pixelUploadRateOk(this, account, clientIp)) return d(4, 63);
         const batch = parsePixelBatch(q.get("b"));
         if (!batch) return d(2, 63);
-        const result = await applyPixelBatch(this, account, batch);
+        const result = await applyPixelBatch(this, account, batch, clientIp);
         if (!result.ok) return d(result.reason, 63);
         return pixelBankPng(result.balance);
       }
@@ -3065,6 +3164,7 @@ export class Hub {
       if (p === "/api/status") {
         const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
         if (!lobby) return d(9, 1);              // gone
+        await this.touchWaitingLobby(code, lobby, q.get("tok"));
         // height carries the chosen game + 1 (1 while an mquick lobby is still undecided,
         // game=0). A multi-select HOST reads it to learn which game a joiner picked; the
         // single-game callers ignore it (they already know their game). Never (9,x).
@@ -3252,6 +3352,7 @@ export class Hub {
       if (p === "/api/room") {
         const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
         if (!lobby) return d(9, 1);                        // gone
+        await this.touchWaitingLobby(code, lobby, q.get("tok"));
         const started = lobby.state && lobby.state.started ? 2 : 1; // h: 2 started, 1 waiting
         return d(lobby.players, started);
       }
@@ -3354,6 +3455,7 @@ export class Hub {
       if (p === "/api/droom") {
         const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
         if (!lobby || lobby.game !== 3 || !lobby.cap) return d(9, 1); // gone / not an N-seat durak lobby
+        await this.touchWaitingLobby(code, lobby, q.get("tok"));
         const started = lobby.state && lobby.state.started ? ROOM_STARTED : 0;
         // width = players PRESENT (+ROOM_STARTED band once dealt) · height = seat cap.
         // liveSeatCount, not `players`: pre-start leaves create holes, while started games retain
@@ -3405,6 +3507,7 @@ export class Hub {
       if (p === "/api/proom") {
         const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
         if (!lobby || lobby.game !== 6) return d(9, 1);    // gone
+        await this.touchWaitingLobby(code, lobby, q.get("tok"));
         const started = lobby.state && lobby.state.started ? ROOM_STARTED : 0;
         // width = players PRESENT (+ROOM_STARTED band once started) · height = seat cap.
         // liveSeatCount, not `players` - see /api/droom.
@@ -3604,18 +3707,18 @@ function dCode(code, isHost) {
 }
 
 // ── per-IP rate limit for lobby FORMATION + existence-probe routes ────────────
-// Window/cap are tuned so no legitimate flow comes close: a single client makes ~1
-// create/quick plus ~1 status|room poll per ~1.5 s (≈8 hits/10 s), and even several
-// players sharing one NAT/household IP stay well under RL_MAX_HITS. A brute-forcer
-// sweeping the 9000-code space or flooding `create` is one IP and gets capped to
-// RL_MAX_HITS/window (≈6 req/s → ~25 min for a full sweep - a real deterrent, and H2
-// already blocks multi-seat lobbies from a guessed join). RL_MAX_IPS bounds the map so
-// a spoofed-IP flood can't grow it without bound. The in-game hot loop (move/poll/log/
-// draw/clocks/rematch) is NEVER gated - a (9,x) throttle sentinel there would be
-// misread by the poll decoder as a real move (from=8,to=4) and corrupt the board.
+// Window/cap are tuned so no legitimate flow comes close: a single client makes about one
+// create/quick plus one status/room poll every 1.5 seconds, and even several players sharing
+// one NAT stay below RL_MAX_HITS. Formation floods are capped here; the separate guard slows
+// enumeration of the real 1024-code space to sixteen DISTINCT codes/minute while repeat reads
+// of one lobby stay free. Hot game loops skip this request-frequency limiter because a generic
+// (9,4) marker could corrupt their specialised decoders; scan rejection uses (9,9) instead.
 const RL_WINDOW_MS = 10000;   // sliding window length
 const RL_MAX_HITS = 60;       // max FORMATION/probe hits per IP per window
 const RL_MAX_IPS = 5000;      // cap on tracked IPs (memory bound)
+const CODE_SCAN_WINDOW_MS = 60000;
+const CODE_SCAN_MAX_CODES = 16; // one code retries freely; a full 1024-code sweep takes >=64 min/IP
+const LOBBY_TOUCH_MS = 5 * 60000; // authenticated room/status reads keep a waiting lobby alive cheaply
 // Hard ceiling on a lobby's monotonic event array (moves[] for the 2-int games, log[] for
 // poker, pub[] for durak). poll/plog/dlog `since` indexes these directly, so they can NEVER be
 // truncated - instead we refuse to grow them past a size no honest game reaches (a full
@@ -3629,7 +3732,7 @@ const RL_MAX_IPS = 5000;      // cap on tracked IPs (memory bound)
 const MOVE_CAP = 1200;
 // Routes the limiter guards. Formation (create + every join variant) is the DoS +
 // brute-force-join vector; the existence probes (status/room/proom/droom/match) are how a
-// sweeper discovers which of the 9000 codes are live. Everything else - probe/ping
+// sweeper discovers which of the 1024 codes are live. Everything else - probe/ping
 // (calibration must always work), cancel (frees lobbies), and the whole in-game loop -
 // is intentionally exempt.
 // /api/match belongs here despite answering per-lobby data: it is called ONCE per mount, not in
@@ -3641,6 +3744,19 @@ const THROTTLED_ROUTES = {
   "/api/pcreate": 1, "/api/pjoin": 1, "/api/dcreate": 1, "/api/djoin": 1,
   "/api/status": 1, "/api/room": 1, "/api/proom": 1, "/api/droom": 1,
   "/api/match": 1
+};
+// Distinct-code rejection must never masquerade as a terminal lobby/opponent departure.
+// Tokenless read streams get "nothing new"; authenticated writes get their existing bad-token
+// marker. leave/cancel are exempt because they reveal nothing and must always clean up.
+const CODE_SCAN_EMPTY_ROUTES = {
+  "/api/poll": 1, "/api/dlog": 1, "/api/ddraw": 1, "/api/plog": 1, "/api/pdraw": 1
+};
+const CODE_SCAN_AUTH_ROUTES = {
+  "/api/move": 1, "/api/rematch": 1, "/api/start": 1, "/api/dact": 1,
+  "/api/pstart": 1, "/api/pact": 1, "/api/pnext": 1, "/api/reset": 1
+};
+const CODE_SCAN_EXEMPT_ROUTES = {
+  "/api/leave": 1, "/api/cancel": 1
 };
 
 // Game ids the generic /api/create lobby accepts. 3 = durak creates its lobby here too, then
@@ -4403,7 +4519,14 @@ const PX_VIEW_W = 800, PX_VIEW_H = 400;
 const PX_BANK_CAP = 100, PX_REGEN_MS = 30000;
 const PX_MIN_BATCH = 10, PX_MAX_BATCH = 128;
 const PX_UPLOAD_WINDOW_MS = 60000, PX_UPLOAD_MAX_HITS = 30, PX_UPLOAD_MAX_KEYS = 5000;
+const PX_IP_PIXEL_BURST = 600;
+const PX_IP_PIXEL_REFILL_PER_MS = 120 / 60000; // 120 changed pixels/min after the six-player burst
+const PX_VIEW_BURST = 12;
+const PX_VIEW_REFILL_PER_MS = 1 / 1000;         // one new uncached viewport per second
 const PX_ADMIN_MAX_BATCH = 4096;
+const PX_AUDIT_RETENTION_MS = 180 * 24 * 60 * 60000;
+const PX_AUDIT_PRUNE_INTERVAL_MS = 24 * 60 * 60000;
+const PX_AUDIT_PRUNE_LIMIT = 512; // bounded once-daily cleanup; enough for normal public traffic
 const PX_ADMIN_COLOR_NAMES = [
   "eraser", "white", "light gray", "dark gray", "black", "red", "orange", "yellow",
   "lime", "green", "cyan", "blue", "navy", "purple", "magenta", "pink", "brown",
@@ -4528,7 +4651,7 @@ function pixelAt(tiles, x, y) {
   return tile ? tile[(y % PX_TILE) * PX_TILE + (x % PX_TILE)] : 0;
 }
 
-async function applyPixelBatch(hub, account, batch) {
+async function applyPixelBatch(hub, account, batch, ip) {
   const tiles = await pixelTiles(hub);
   const changed = [];
   for (let i = 0; i < batch.length; i++) {
@@ -4539,6 +4662,41 @@ async function applyPixelBatch(hub, account, batch) {
     }
   }
 
+  if (!hub.pixelSpendOk(ip, changed.length)) return { ok: false, reason: 4, balance: 0 };
+  // SQLite-backed Durable Objects expose transaction(). Keep the player's bank, sparse tiles,
+  // version, audit action, and ownership attribution all-or-nothing. Work on a cloned in-memory
+  // tile cache and publish it only after commit; an aborted transaction therefore cannot leave
+  // this isolate serving uncommitted pixels from RAM.
+  return pixelStorageTransaction(hub, function (txHub) {
+    return applyPixelChanges(txHub, account, changed);
+  }, tiles);
+}
+
+async function pixelStorageTransaction(hub, work, sourceTiles) {
+  if (typeof hub.storage.transaction !== "function") {
+    const fallbackResult = await work(hub);
+    await bestEffortPixelAuditPrune(hub);
+    return fallbackResult;
+  }
+  const tiles = sourceTiles || await pixelTiles(hub);
+  const txTiles = new Map();
+  for (const [index, tile] of tiles) txTiles.set(index, new Uint8Array(tile));
+  const result = await hub.storage.transaction(async function (txn) {
+    const txHub = Object.create(hub);
+    txHub.storage = txn;
+    txHub.pxTiles = txTiles;
+    txHub.pxViewCache = new Map();
+    txHub.pxCanvasCache = null;
+    return work(txHub);
+  });
+  hub.pxTiles = txTiles;
+  hub.pxViewCache.clear();
+  hub.pxCanvasCache = null;
+  await bestEffortPixelAuditPrune(hub);
+  return result;
+}
+
+async function applyPixelChanges(hub, account, changed) {
   const bank = await pixelBank(hub, account, changed.length);
   if (!bank.ok) return { ok: false, reason: 3, balance: bank.balance };
   if (changed.length === 0) return { ok: true, balance: bank.balance };
@@ -4585,6 +4743,7 @@ async function persistPixelDeltas(hub, changed) {
   const version = ((await pixelVersion(hub)) + 1) % PX_VERSION_MOD;   // stays clear of the h=63 error band
   await hub.storage.put("px:version", version);
   hub.pxViewCache.clear();
+  hub.pxCanvasCache = null;
   return version;
 }
 
@@ -4631,6 +4790,51 @@ async function logPixelAction(hub, input) {
   await hub.storage.put("px:a:" + id, action);
   if (action.steamid) await hub.storage.put("px:ua:" + action.steamid + ":" + id, true);
   return action;
+}
+
+// Retention is housekeeping, not part of accepting an action. It runs after the paint/undo
+// transaction commits, so a large catch-up batch neither lengthens nor rolls back that mutation.
+async function bestEffortPixelAuditPrune(hub) {
+  try {
+    await maybePrunePixelAudit(hub, Date.now());
+  } catch (error) {
+    // Best-effort only; the next daily action retries cleanup.
+  }
+}
+
+// Audit entries are append-only while retained, but cannot grow forever in the single public
+// Durable Object. Once per day remove at most the oldest 512 actions past 180 days plus their
+// per-user indexes. Current pixel colours remain intact; an ownership pointer to an expired
+// action simply becomes unattributed in the admin inspector.
+async function maybePrunePixelAudit(hub, now) {
+  const lastKey = "px:audit:lastPrune";
+  const last = (await hub.storage.get(lastKey)) || 0;
+  if (now - last < PX_AUDIT_PRUNE_INTERVAL_MS) return;
+  const cutoff = now - PX_AUDIT_RETENTION_MS;
+  let removed = 0;
+  let caughtUp = false;
+  while (removed < PX_AUDIT_PRUNE_LIMIT) {
+    const page = await hub.storage.list({
+      prefix: "px:a:",
+      limit: Math.min(128, PX_AUDIT_PRUNE_LIMIT - removed)
+    });
+    if (!page.size) { caughtUp = true; break; }
+    let pageRemoved = 0;
+    for (const [key, action] of page) {
+      if (!action || !Number.isFinite(action.at) || action.at >= cutoff) {
+        caughtUp = true;
+        break;
+      }
+      await hub.storage.delete(key);
+      if (action.steamid) await hub.storage.delete("px:ua:" + action.steamid + ":" + action.id);
+      removed++;
+      pageRemoved++;
+    }
+    if (caughtUp || pageRemoved < page.size) break;
+  }
+  // If the cap was exhausted while old records remain, leave lastPrune stale: the very next
+  // action immediately removes another batch. Once caught up, return to the cheap daily cadence.
+  if (caughtUp) await hub.storage.put(lastKey, now);
 }
 
 function pixelActionSummary(action) {
@@ -4835,13 +5039,15 @@ async function adminPixelPaint(hub, request, login) {
   if (!changed.length) {
     return adminJson({ changed: 0, version: await pixelVersion(hub) });
   }
-  const ownership = await attachPixelOwners(hub, changed);
-  const version = await persistPixelDeltas(hub, changed);
-  const action = await logPixelAction(hub, {
-    actor: "admin", admin: login, kind: "paint", deltas: changed
-  });
-  await persistPixelOwnership(hub, changed, action.id, ownership);
-  return adminJson({ changed: changed.length, version: version, actionId: action.id });
+  return pixelStorageTransaction(hub, async function (txHub) {
+    const ownership = await attachPixelOwners(txHub, changed);
+    const version = await persistPixelDeltas(txHub, changed);
+    const action = await logPixelAction(txHub, {
+      actor: "admin", admin: login, kind: "paint", deltas: changed
+    });
+    await persistPixelOwnership(txHub, changed, action.id, ownership);
+    return adminJson({ changed: changed.length, version: version, actionId: action.id });
+  }, tiles);
 }
 
 async function adminPixelUndo(hub, request, login) {
@@ -4850,52 +5056,54 @@ async function adminPixelUndo(hub, request, login) {
   const actionId = validPixelActionId(body && body.actionId);
   const force = !!(body && body.force);
   if (!actionId) return adminError("Invalid action ID.", 400);
-  const actionKey = "px:a:" + actionId;
-  const action = await hub.storage.get(actionKey);
-  if (!action || action.kind !== "paint" || !Array.isArray(action.deltas)) {
-    return adminError("Action not found or cannot be undone.", 404);
-  }
-  if (action.undoneAt) return adminError("Action was already undone.", 409);
-
-  const tiles = await pixelTiles(hub);
-  const changed = [];
-  let skipped = 0;
-  for (let i = 0; i < action.deltas.length; i++) {
-    const dlt = action.deltas[i];
-    if (!Array.isArray(dlt) || dlt.length < 4) continue;
-    const current = pixelAt(tiles, dlt[0], dlt[1]);
-    if (!force && current !== dlt[3]) { skipped++; continue; }
-    if (current !== dlt[2]) {
-      changed.push({
-        x: dlt[0], y: dlt[1], before: current, after: dlt[2],
-        ownerActionId: validPixelActionId(dlt[4]) || ""
-      });
+  return pixelStorageTransaction(hub, async function (txHub) {
+    const actionKey = "px:a:" + actionId;
+    const action = await txHub.storage.get(actionKey);
+    if (!action || action.kind !== "paint" || !Array.isArray(action.deltas)) {
+      return adminError("Action not found or cannot be undone.", 404);
     }
-  }
+    if (action.undoneAt) return adminError("Action was already undone.", 409);
 
-  let version = await pixelVersion(hub), undoAction = null;
-  if (changed.length) {
-    const ownership = await attachPixelOwners(hub, changed);
-    version = await persistPixelDeltas(hub, changed);
-    undoAction = await logPixelAction(hub, {
-      actor: "admin",
-      admin: login,
-      kind: "undo",
-      targetActionId: actionId,
-      deltas: changed
+    const tiles = await pixelTiles(txHub);
+    const changed = [];
+    let skipped = 0;
+    for (let i = 0; i < action.deltas.length; i++) {
+      const dlt = action.deltas[i];
+      if (!Array.isArray(dlt) || dlt.length < 4) continue;
+      const current = pixelAt(tiles, dlt[0], dlt[1]);
+      if (!force && current !== dlt[3]) { skipped++; continue; }
+      if (current !== dlt[2]) {
+        changed.push({
+          x: dlt[0], y: dlt[1], before: current, after: dlt[2],
+          ownerActionId: validPixelActionId(dlt[4]) || ""
+        });
+      }
+    }
+
+    let version = await pixelVersion(txHub), undoAction = null;
+    if (changed.length) {
+      const ownership = await attachPixelOwners(txHub, changed);
+      version = await persistPixelDeltas(txHub, changed);
+      undoAction = await logPixelAction(txHub, {
+        actor: "admin",
+        admin: login,
+        kind: "undo",
+        targetActionId: actionId,
+        deltas: changed
+      });
+      await persistPixelOwnership(txHub, changed, undoAction.id, ownership);
+    }
+    action.undoneAt = Date.now();
+    action.undoneBy = login;
+    action.undoSkipped = skipped;
+    action.undoActionId = undoAction ? undoAction.id : "";
+    await txHub.storage.put(actionKey, action);
+    return adminJson({
+      changed: changed.length,
+      skipped: skipped,
+      version: version,
+      undoActionId: action.undoActionId
     });
-    await persistPixelOwnership(hub, changed, undoAction.id, ownership);
-  }
-  action.undoneAt = Date.now();
-  action.undoneBy = login;
-  action.undoSkipped = skipped;
-  action.undoActionId = undoAction ? undoAction.id : "";
-  await hub.storage.put(actionKey, action);
-  return adminJson({
-    changed: changed.length,
-    skipped: skipped,
-    version: version,
-    undoActionId: action.undoActionId
   });
 }
 
@@ -5057,10 +5265,16 @@ async function handlePixelAdmin(hub, request, url) {
 }
 
 async function pixelCanvasPng(hub) {
+  const version = await pixelVersion(hub);
+  if (hub.pxCanvasCache && hub.pxCanvasCache.version === version) {
+    return pngResponse(hub.pxCanvasCache.bytes);
+  }
   const tiles = await pixelTiles(hub);
-  return pngResponse(await indexedPngBytes(PX_W, PX_H, PX_PALETTE, function (x, y) {
+  const bytes = await indexedPngBytes(PX_W, PX_H, PX_PALETTE, function (x, y) {
     return pixelAt(tiles, x, y);
-  }, PX_ALPHA));
+  }, PX_ALPHA);
+  hub.pxCanvasCache = { version: version, bytes: bytes };
+  return pngResponse(bytes);
 }
 
 function pixelLandAt(x, y) {
@@ -5080,11 +5294,12 @@ async function pixelAdminCanvasPng(hub) {
   }));
 }
 
-async function pixelViewPng(hub, originX, originY, zoom) {
+async function pixelViewPng(hub, originX, originY, zoom, ip) {
   const version = await pixelVersion(hub);
   const cacheKey = version + ":" + zoom + ":" + originX + ":" + originY;
   const cached = hub.pxViewCache.get(cacheKey);
   if (cached) return pngResponse(cached);
+  if (!hub.pixelViewOk(ip)) return d(6, 63); // retryable busy sentinel; client validates aspect
 
   const tiles = await pixelTiles(hub);
   const viewCols = PX_W / zoom, viewRows = PX_H / zoom;

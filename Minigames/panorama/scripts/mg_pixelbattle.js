@@ -180,8 +180,10 @@
         var knownVersion = -1;
         var versionMisses = 0;
         var pollGeneration = 0;
+        var lastOuterStatus = "";
 
         function outerStatus(text) {
+            lastOuterStatus = text;
             if (!destroyed && session.onStatus) session.onStatus(text);
         }
 
@@ -619,10 +621,28 @@
             var url = MG.Net.getBaseUrl() + "/api/pxview.png?x=" + viewX +
                 "&y=" + viewY + "&z=" + zoom + "&id=" + accountId +
                 "&v=" + version;
-            MG.Net.loadImage(url, function (loaded) {
+            MG.Net.loadImage(url, function (loaded, loadedW, loadedH) {
                 if (destroyed || banned || myGen !== crispGen) {
                     try { loaded.SetImage(""); } catch (e0) {}
                     try { loaded.DeleteAsync(0); } catch (e1) {}
+                    return;
+                }
+                // A real viewport is 800x400 multiplied by one uniform UI scale (and some setups
+                // swap the axes), so its orientation-independent aspect stays near 2:1. Allow a
+                // broad band because the invisible 640px net host may clamp the 800px source width.
+                // The Worker uses a deliberately distant image sentinel when one IP is churning uncached
+                // viewports. Reject it before crispReady becomes true: stretching that sentinel and
+                // accepting clicks would map the visible image to the wrong logical coordinates.
+                var shortSide = Math.min(Number(loadedW), Number(loadedH));
+                var longSide = Math.max(Number(loadedW), Number(loadedH));
+                var aspect = shortSide > 0 ? longSide / shortSide : 0;
+                if (!(aspect >= 1.4 && aspect <= 2.5)) {
+                    try { loaded.SetImage(""); } catch (e2) {}
+                    try { loaded.DeleteAsync(0); } catch (e3) {}
+                    outerStatus("Map server is busy. Retrying…");
+                    $.Schedule(1.2, function () {
+                        if (!destroyed && !banned && myGen === crispGen) refreshCrispView();
+                    });
                     return;
                 }
                 try {
@@ -631,17 +651,20 @@
                     loaded.style.width = "800px";
                     loaded.style.height = "400px";
                     loaded.style.visibility = "visible";
-                    try { loaded.SetAttributeString("hittest", "false"); } catch (e2) {}
+                    try { loaded.SetAttributeString("hittest", "false"); } catch (e4) {}
                     var old = crispImage;
                     crispImage = loaded;
                     if (old && old !== loaded) {
-                        try { old.SetImage(""); } catch (e3) {}
-                        try { old.DeleteAsync(0); } catch (e4) {}
+                        try { old.SetImage(""); } catch (e5) {}
+                        try { old.DeleteAsync(0); } catch (e6) {}
                     }
                     crispReady = true;
-                } catch (e5) {
-                    try { loaded.SetImage(""); } catch (e6) {}
-                    try { loaded.DeleteAsync(0); } catch (e7) {}
+                    if (lastOuterStatus === "Map server is busy. Retrying…") {
+                        outerStatus("Shared world loaded.");
+                    }
+                } catch (e7) {
+                    try { loaded.SetImage(""); } catch (e8) {}
+                    try { loaded.DeleteAsync(0); } catch (e9) {}
                     outerStatus("Couldn't display the pixel-perfect map viewport.");
                 }
             }, function () {

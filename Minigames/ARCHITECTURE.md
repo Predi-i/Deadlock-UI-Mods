@@ -213,7 +213,7 @@ dim. Only `/api/probe` stays **literal pixels** — it's the calibration referen
 | `/api/cancel?code=C` | `(1,1)` |
 | `/api/join?code=C&tok=T` | `(G, tcIndex+1)` ok · `(20,1)` missing · `(21,1)` full · `(9,3)` bad-token |
 | `/api/match?code=C` | `(game, tcIndex*2+variantBit+1)` — resolved game/bank/checkers-variant · `(9,1)` gone/undecided |
-| `/api/status?code=C` | `(players, game+1)` · `(9,1)` gone |
+| `/api/status?code=C&tok=T` | `(players, game+1)` · `(9,1)` gone |
 | `/api/move?code=C&from=F&to=T&end=E&tok=T` | `(1,1)` ok · `(9,1)` not-your-turn · `(9,2)` illegal · `(9,3)` bad-token · `(9,9)` gone |
 | `/api/poll?code=C&since=S` | `(from, to)` RAW squares 0..63 · `(1,1)` nothing new |
 | `/api/reset?code=C&game=G&tok=T` | `(1,1)` · `(9,3)` bad-token |
@@ -255,12 +255,23 @@ Key encoding tricks and **why** (current codec is STEP=9 level-quantisation, 202
 - **`from != to` always** in a real move, so `(1,1)` is a safe "nothing new" marker.
 - **Sentinel widths** `{1 ok · 9 err · 20 missing · 21 full · 22 started}` are kept clear of
   every band (codes 24..55, clocks 30..39, rooms 1..4/51..54) so a live reply is never misread
-  as a sentinel. The in-game hot loop (move/poll/log/draw/clocks) is NEVER rate-limited — a
-  `(9,x)` throttle sentinel there would decode as a bogus move and corrupt the board.
+  as a sentinel. Hot game loops skip the generic request-frequency limiter because `(9,4)`
+  could decode as a bogus move; the distinct-code scan guard returns route-specific non-terminal
+  empty/retry/bad-token responses instead of a false lobby-gone.
 - **Clocks are per-seat** (a bank is 0..600 = 10 bits, needs both dims): width `30 + (sec>>6)`,
   height `sec&63`; caller passes `&seat=0|1` and reads both. Both clients read the SAME server
   clock, so flag-fall is server-decided with no drift.
 - **State is one Durable Object** ("hub") → strongly consistent, no KV lag between players.
+
+### Soft abuse controls and lobby lifetime
+
+- There are no automatic IP bans. One IP may touch sixteen distinct lobby codes per minute;
+  repeated reads of the same real code remain free. Formation floods retain the wider
+  60-requests/10-second burst. On the distinct-code abuse path, hot poll/log routes return
+  non-terminal “nothing new”, clocks retry, and cancel/leave remain available for cleanup.
+- `status`, `room`, `droom`, and `proom` include the caller's seat token. A valid seated client
+  refreshes a waiting lobby timestamp at most once per five minutes, so a real room can wait
+  beyond the 30-minute sweep while anonymous code probes cannot pin guessed lobbies.
 
 ### Calibration (the subtle part)
 
@@ -558,13 +569,13 @@ These are the mistakes to NOT repeat. Every one was confirmed against the game's
      in the full-screen overlay, so once `natural_height × scale` exceeds the viewport height the top
      AND bottom clip off-screen. Width never overflows (900px even ×2 is < the 1920 canvas), so only
      height is at risk.
-     **There are TWO ceilings, and they must be ordered correctly.** `.mg-modal`'s own `max-height`
-     is a percentage, and a percentage resolves in the SCALED space — the real ceiling is
-     `maxHeight × viewport / scale`. At 92% that meant `0.92·1080/1.25 = 795px` at 125%, against a
-     poker view needing ~838px, and the engine simply **truncated** the modal: no scrollbar, no
-     warning, just a missing footer. So the CSS cap is now the LOOSER of the two (99%) and acts only
-     as a backstop for the frames before the first measurement; the JS clamp (`FIT_MARGIN` 0.98)
-     decides. Getting this backwards is silent — nothing logs, the content is just gone.
+     **There must be only ONE ceiling.** A percentage CSS `max-height` resolves in the SCALED
+     space — the real ceiling is `maxHeight × viewport / scale`. At 92% that meant
+     `0.92·1080/1.25 = 795px` at 125%, against a poker view needing ~838px, and the engine simply
+     **truncated** the modal: no scrollbar, no warning, just a missing footer. Even a 99% backstop
+     clipped the first menu→Poker switch at 150–200% before JS could observe Poker's full natural
+     height. `.mg-modal` therefore has no CSS `max-height`; the JS clamp (`FIT_MARGIN` 0.98) is the
+     sole authority. `mg_uiscale_test.js` reads production CSS and fails if that cap returns.
      `measureNaturalH` reads `modalPanel.actuallayoutheight` (window px) and divides the applied
      scale back out, so it works at ANY current scale — the old version only read at exactly 100%,
      so a player whose saved scale was already >100% never got a measurement and never got a clamp.
@@ -924,6 +935,16 @@ is built but **not yet in-game verified**.
 
 ## 8.9 Pixel Battle (mg_pixelbattle.js)
 
+- Anti-abuse is deliberately tolerant of households/NATs: one IP can spend six fresh 100-pixel
+  banks immediately, then refills 120 changed pixels/minute. This keeps rotating the
+  client-reported Steam32 from resetting the economy without banning the address. Expensive
+  uncached 800x400 viewport renders allow a burst of twelve and one new frame/second; cache hits
+  are free and the client retries the busy-image sentinel.
+- Audit actions are append-only for 180 days. Cleanup removes expired action and per-user-index
+  records in bounded 512-action batches; while catching up, every new action runs another batch,
+  then it returns to a daily cadence. **512 is cleanup batch size, not a player/game/action quota.**
+  Pixel colours remain; pixels whose ownership action expired become unattributed in the admin inspector.
+
 - Pixel Battle is one public 512×256 canvas on a real two-colour Natural Earth world-map PNG,
   with no room creation, join code, or matchmaking.
 - The immutable `panorama/images/pixelbattle/world_map.png` base is generated from the public-domain
@@ -948,11 +969,14 @@ is built but **not yet in-game verified**.
   returning its reserved pixel. Navigation uses a fixed two-row zoom group plus keyboard-style
   arrow D-pad so adding controls cannot push a direction button onto a third row.
 - Uploads contain 10–128 unique pixels. The client checks and batches first; the Worker deduplicates,
-  validates the bank again, rate-limits uploads, and persists modified 32×32 tiles.
+  validates the bank again, rate-limits uploads, and persists modified 32×32 tiles. The shared
+  per-IP budget described above prevents Steam32 rotation from resetting this protection. Player
+  uploads and admin paint/undo commit tiles/version, audit, and ownership in one storage transaction
+  (player uploads include the bank debit in that same transaction).
 - Clients poll only the 12-bit canvas version, backing off from 8 to 30 seconds while idle, and
   download the 512×256 shared PNG only when that version changes.
-- Every accepted player batch is also stored as an immutable audit action containing Steam32,
-  timestamp, and exact per-pixel `before → after` deltas. The browser admin at `/admin` can search
+- Every accepted player batch is also stored as an append-only retained audit action containing
+  Steam32, timestamp, and exact per-pixel `before → after` deltas. The browser admin at `/admin` can search
   this log by Steam32, paint without using a player's bank, and undo an action. Safe undo skips
   coordinates changed by somebody later; force undo is explicit and overwrites those conflicts.
 - `/admin*` fails closed unless GitHub OAuth is configured with `GITHUB_CLIENT_ID`,
@@ -980,7 +1004,7 @@ is built but **not yet in-game verified**.
   accepted paint reuses the ownership read that captures its previous owners, then performs
   one ownership write per touched tile; it creates no additional client request. Undo restores
   both the previous colour and previous owner. For pre-index actions, Inspect scans the existing
-  immutable audit log once for that coordinate and caches the answer in the ownership tile.
+  retained audit log once for that coordinate and caches the answer in the ownership tile.
 - Action lists contain summaries only. Preview fetches one full action on demand, computes each
   pixel's current colour and whether safe undo would still apply, renders the exact post-undo
   colours, marks conflicts red, and zooms to the action bounds. Inspect makes one on-demand admin

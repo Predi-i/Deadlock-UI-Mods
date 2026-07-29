@@ -163,6 +163,17 @@ Two things worth knowing before poking at routes by hand:
 - Lobbies live in one Durable Object, keyed `l:<code>` over the 0..1023 code space. An
   opportunistic sweep (at most once a minute, and only off the lobby-creation paths) drops
   anything idle for over 30 minutes and clears its public matchmaking-queue slots.
+- Authenticated `status`/`room` polling refreshes a waiting lobby at most once per five minutes;
+  anonymous code probes cannot keep a guessed lobby alive.
+- Abuse controls are temporary throttles, never IP bans. One IP may touch sixteen distinct lobby
+  codes per minute while retrying the same real code is free. Pixel Battle permits six complete
+  fresh 100-pixel banks per IP in a burst and then refills 120 pixels/minute. Expensive uncached
+  map views allow a burst of twelve and one new frame/second; cache hits remain free.
+- Pixel Battle audit actions are append-only for 180 days. Cleanup removes expired action and
+  per-user index records in bounded 512-action batches; every new action runs another batch until
+  caught up, then cleanup returns to a daily cadence. This is an internal deletion batch size,
+  **not** a player/game/action limit. Player/admin paint and undo commit their tiles/version,
+  audit, and ownership in one storage transaction.
 - A lobby's move/event log is capped (`MOVE_CAP`) well below the Durable Object's 128 KiB
   per-value limit. No honest game comes close; the cap exists so deliberate bloating can't push
   a lobby past that limit, which would wedge it permanently.
