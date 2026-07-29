@@ -730,7 +730,7 @@
                     if (!D.attackSeatSettled(st, os)) { othersPending = true; break; }
                 }
                 var lastToSettle = !othersPending && pendingThrowers(st).filter(function (s) { return s !== mySeat; }).length === 0;
-                mkButton(controlsZone, lastToSettle ? "Bito" : "Pass", function () {
+                mkButton(controlsZone, lastToSettle ? "Beaten" : "Pass", function () {
                     if (pendingAct || st.passed[mySeat]) return;
                     if (online) { sendAct(4, 0, 0); return; }         // 4 = pass/knock (server tallies)
                     myPass();
@@ -805,8 +805,8 @@
             if (st.table.length === 0 && st.attacker === mySeat) return "Your turn. Attack.";
             // Covered table, my confirm window: I may throw in a matching-rank card or press Bito.
             return legalAttacks(st, mySeat).length > 0
-                ? "Throw in a matching card, or press Bito."
-                : "Press Bito to beat the table.";
+                ? "Throw in a matching card, or press Beaten."
+                : "Press Beaten to beat the table.";
         }
 
         // I knock: "done adding to this table". Records my pass; if that settles the bout it's
