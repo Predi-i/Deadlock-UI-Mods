@@ -235,15 +235,19 @@
         // Snap the fill FULL (no transition) so a fresh turn starts from a full bar; the arm()
         // below then flips on the animated class and pushes it to empty, tweening over TURN_SECS.
         function snapFull() {
+            // Kill the transition duration FIRST, then drop the classes. arm() leaves an inline
+            // "<secs>s, 0.3s" list behind, and once .mg-tt-anim is off, the effective
+            // transition-property is the base rule's single `background-color` — which consumes that
+            // list's FIRST entry. So removing the red class with the stale list still in place gave
+            // the colour 25 SECONDS: it crawled from red back to green, and the next turn opened red
+            // (maintainer, in-game: "wait for red, move, and the new turn is red too").
+            // "0s" rather than "0.3s" because this is a SNAP — a fresh turn must start green with no
+            // visible fade, and a zero duration cannot crawl no matter how the lists line up.
+            // (transition-duration: 0s is standard in the game's own CSS.)
+            fill.style.transitionDuration = "0s";
             fill.RemoveClass("mg-tt-anim");
             fill.RemoveClass("mg-tt-low");
             fill.RemoveClass("mg-tt-crit");
-            // Drop arm()'s inline override back to the base timing. Removing .mg-tt-anim takes the
-            // 25s value out of the CSS cascade but NOT out of the inline style, and the base rule
-            // lists a single property (background-color) — so the leftover "25s, 0.3s" list applied
-            // its FIRST entry to the colour, and a fresh turn crawled from red back to green over
-            // 25 seconds instead of snapping.
-            fill.style.transitionDuration = "0.3s";
             fill.style.transform = "translate3d(0px, 0px, 0px)";
             fill.style.opacity = "1.0";       // reveal the drain for my turn
         }
@@ -251,8 +255,9 @@
             fill.AddClass("mg-tt-anim");
             // The drain duration lives in CSS (.mg-tt-fill.mg-tt-anim = 25s) but callers may pass a
             // shorter budget (durak's 10s Bito window). Override the transform leg inline so the slide
-            // matches curSecs; the colour leg keeps its CSS timing. Order MUST match the CSS
-            // transition-property list (transform, background-color).
+            // matches curSecs; the colour leg keeps its quick cross-fade. Order MUST match the CSS
+            // transition-property list (transform, background-color). This also restores a real
+            // duration after snapFull zeroed it, so the low/crit recolours during the turn still fade.
             fill.style.transitionDuration = curSecs + "s, 0.3s";
             fill.style.transform = "translate3d(0px, " + TRACK_H + "px, 0px)";   // drain top→bottom over curSecs
         }
@@ -308,10 +313,10 @@
                 gen++;                     // invalidate any in-flight tick + arm
                 running = false;
                 expireCb = null;
+                fill.style.transitionDuration = "0s";      // BEFORE the classes — see snapFull
                 fill.RemoveClass("mg-tt-anim");
                 fill.RemoveClass("mg-tt-low");
                 fill.RemoveClass("mg-tt-crit");
-                fill.style.transitionDuration = "0.3s";   // clear arm()'s override (see snapFull)
                 fill.style.transform = "translate3d(0px, 0px, 0px)";
                 fill.style.opacity = "0.0";   // idle: only the empty channel shows
                 if (num.IsValid()) num.text = "";

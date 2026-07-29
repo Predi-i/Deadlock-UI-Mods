@@ -210,15 +210,15 @@
 }
 
 /* ── game picker — 3 per row ─────────────────────────────────────────────── */
-/* max-height matches the right column's .mg-detail height, so the divider spans the same
-   height as the grid AND all 9 square cards (3 rows × 142px = 426) show without a scroll — the
-   old 380 clipped the 3rd row into a dead "unused space" strip. Card row = 132 + 2*5 margin = 142px. */
+/* max-height matches the right column's .mg-detail height so the divider spans the same height as
+   the grid. Card row = 132 + 2*5 margin = 142px, so 500px shows 3 full rows plus ~74px of the 4th.
+   That half-row is DELIBERATE: it is the scroll affordance — with 12 cards the grid is 568px tall,
+   and a peeking row is what tells you the list continues. Do NOT "fix" it by growing the panel;
+   .mg-detail would have to grow with it (the divider must stay symmetric) and the modal is already
+   at the 1080p ui-scale ceiling. */
 .mg-picker {
     width: 100%;
-    max-height: 500px;                  /* matches .mg-detail height so the column divider spans the
-                                           same height on both sides (was 430; detail grew to 500 for
-                                           the time-control block). 9 cards (3×142) still show without
-                                           a scroll; extra space sits below them. */
+    max-height: 500px;                  /* see above: 3 rows + a peeking 4th = scroll affordance */
     flow-children: right-wrap;
     overflow: clip scroll;              /* NATIVE Panorama vertical-scroll idiom */
 }
