@@ -179,7 +179,9 @@
         }
         function onTimerExpire() {
             timerOn = false;
-            if (destroyed || !st || !myTurn()) return;
+            // stop() invalidates the widget callback, but an expiry tick that was already
+            // dispatched must still be harmless while an authoritative action is in flight.
+            if (destroyed || pendingAct || !st || !myTurn()) return;
             var la = P.legalActions(st, mySeat);
             var action = la.canCheck ? { type: "check" } : { type: "fold" };
             doAction(action);
@@ -579,6 +581,7 @@
             var a = action.type === "fold" ? 0 : action.type === "check" ? 1 : action.type === "call" ? 2 : 3;
             var to = (a === 3) ? (action.to | 0) : 0;
             pendingAct = true;
+            refreshTimer();                                             // park immediately, before the request starts
             status("Sending…");
             MG.Api.pact(session.code, session.tok, a, to, function (r) {
                 pendingAct = false;
@@ -587,7 +590,12 @@
                 else if (r && r.reason === "illegal") status("That move isn't legal.");
                 else if (r && r.reason === "gone") { if (MG.UI && MG.UI.kickToMenu) MG.UI.kickToMenu("Lobby closed."); }
                 else status("Move rejected.");
-            }, function () { pendingAct = false; status("Server unavailable."); });
+                refreshTimer();                                      // rejected: re-arm the unchanged local turn
+            }, function () {
+                pendingAct = false;
+                status("Server unavailable.");
+                refreshTimer();                                      // transport failed: permit a retry with a fresh clock
+            });
         }
 
         function requestNextHand() {

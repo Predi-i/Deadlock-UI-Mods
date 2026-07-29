@@ -206,9 +206,13 @@
         // panel nobody could see. Removed with its CSS (.mg-px-stage/.mg-px-map-image).
 
         // At 16x the Worker returns this viewport already expanded to 800x400.
-        // It is drawn 1:1, bypassing Panorama's blurry texture interpolation.
-        var crispImage = $.CreatePanel("Image", viewport, "", { scaling: "none" });
-        crispImage.AddClass("mg-px-crisp-view");
+        // Keep a stable first-child layer so newly loaded image panels can be swapped
+        // underneath the pending-pixel/grid overlays without changing their z-order.
+        var crispLayer = $.CreatePanel("Panel", viewport, "");
+        crispLayer.AddClass("mg-px-crisp-view");
+        var crispImage = $.CreatePanel("Image", crispLayer, "", { scaling: "none" });
+        crispImage.style.width = "800px";
+        crispImage.style.height = "400px";
         try { crispImage.SetAttributeString("hittest", "false"); } catch (e2) {}
 
         // Pending pixels are initially hosted here, then re-parented into the exact
@@ -589,8 +593,11 @@
         // frame-and-a-bit collapses a burst of presses into ONE fetch of the final position; a
         // single press still lands well inside the eye's tolerance.
         var crispGen = 0;
+        var crispReady = false;
         function scheduleCrispView() {
             if (destroyed) return;
+            crispReady = false;
+            crispImage.style.visibility = "collapse";
             crispGen++;
             var myGen = crispGen;
             $.Schedule(0.12, function () { if (!destroyed && myGen === crispGen) refreshCrispView(); });
@@ -603,17 +610,44 @@
 
         function refreshCrispView() {
             if (destroyed || banned || !accountId) return;
-            crispGen++;                 // a direct call supersedes any pending scheduled one
+            crispReady = false;
+            crispImage.style.visibility = "collapse";
+            var myGen = ++crispGen;     // a direct call supersedes pending/superseded frames
             var version = knownVersion < 0 ? 0 : knownVersion;
-            try {
-                // No cache-buster: `v` IS the cache key (the server bumps the canvas version on
-                // every accepted batch), so a random suffix only guaranteed a miss on every request.
-                crispImage.SetImage(MG.Net.getBaseUrl() + "/api/pxview.png?x=" + viewX +
-                    "&y=" + viewY + "&z=" + zoom + "&id=" + accountId +
-                    "&v=" + version);
-            } catch (e) {
-                outerStatus("Couldn't load the pixel-perfect map viewport.");
-            }
+            // No cache-buster: `v` IS the cache key (the server bumps the canvas version on
+            // every accepted batch), so a random suffix only guaranteed a miss on every request.
+            var url = MG.Net.getBaseUrl() + "/api/pxview.png?x=" + viewX +
+                "&y=" + viewY + "&z=" + zoom + "&id=" + accountId +
+                "&v=" + version;
+            MG.Net.loadImage(url, function (loaded) {
+                if (destroyed || banned || myGen !== crispGen) {
+                    try { loaded.SetImage(""); } catch (e0) {}
+                    try { loaded.DeleteAsync(0); } catch (e1) {}
+                    return;
+                }
+                try {
+                    loaded.SetParent(crispLayer);
+                    loaded.style.position = "0px 0px 0px";
+                    loaded.style.width = "800px";
+                    loaded.style.height = "400px";
+                    loaded.style.visibility = "visible";
+                    try { loaded.SetAttributeString("hittest", "false"); } catch (e2) {}
+                    var old = crispImage;
+                    crispImage = loaded;
+                    if (old && old !== loaded) {
+                        try { old.SetImage(""); } catch (e3) {}
+                        try { old.DeleteAsync(0); } catch (e4) {}
+                    }
+                    crispReady = true;
+                } catch (e5) {
+                    try { loaded.SetImage(""); } catch (e6) {}
+                    try { loaded.DeleteAsync(0); } catch (e7) {}
+                    outerStatus("Couldn't display the pixel-perfect map viewport.");
+                }
+            }, function () {
+                if (!destroyed && !banned && myGen === crispGen)
+                    outerStatus("Couldn't load the pixel-perfect map viewport.");
+            }, { scaling: "none" });
         }
 
         function pollVersion() {
@@ -671,6 +705,13 @@
                             : ("REGION  " + point.x + ", " + point.y + "   ·   CLICK TO ZOOM");
                     });
                     cell.SetPanelEvent("onactivate", function () {
+                        // Grid geometry changes immediately on pan/zoom, while its matching
+                        // server-rasterised frame arrives asynchronously. Never let a click
+                        // target a blank or stale map while that frame is still in the FIFO.
+                        if (!crispReady) {
+                            outerStatus("Map view is still loading.");
+                            return;
+                        }
                         if (zoom < MAX_ZOOM) drillInto(cellCol, cellRow);
                         else {
                             var point = mapPoint(cellCol, cellRow);

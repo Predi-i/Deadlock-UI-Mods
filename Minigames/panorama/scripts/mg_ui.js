@@ -21,11 +21,6 @@
     // the release is still relevant; changing that marker to a wide image marks it outdated.
     // Aspect ratio is intentional: Panorama may UI-scale or swap the reported dimensions.
     var UPDATE_MARKER_BASE = "https://raw.githubusercontent.com/Predi-i/Deadlock-UI-Mods/main/Minigames/update-markers/";
-    var UPDATE_CHECK_TIMEOUT_MS = 8000;
-    // Poll interval while waiting for the marker image's dimensions to resolve. 0.05s scheduled up
-    // to 160 callbacks per check for a network load that takes far longer than a frame; 0.15s reads
-    // the same to the user at a third of the churn.
-    var UPDATE_CHECK_POLL_S = 0.15;
     // Accept only the two deliberately distant marker shapes. A square is current and the 8:1
     // template is outdated; anything in the large gap between them is malformed/ambiguous, not an
     // update. This avoids turning an unexpected image placeholder into a false update notice.
@@ -39,7 +34,6 @@
 
     var overlay = null, modalBody = null, statusLabel = null, titleLabel = null;
     var headerCredit = null, updatePopup = null, updatePopupBody = null;
-    var updateProbeHost = null;
     // UI-scale control (dropdown left of the close X): scales the WHOLE modal - picker,
     // boards, Durak felt & cards - via the `ui-scale` LAYOUT-scale on .mg-modal (crisp re-layout,
     // NOT the blurry pre-transform raster; see applyUiScale). Kept for the session; the drag maths
@@ -124,11 +118,10 @@
     var selectedVariant = "any";                    // host's pick (persists while browsing); default "Any"
     function hasVariant(id) { return !!CV_GAMES[id]; }
     function concreteVariant(v) { return v === "any" ? CV_ANY_DEFAULT : v; }
-    // Games that can be TICKED in Select-Multiple. Durak (3) is included so it can be picked
-    // too (maintainer). Public mquick still can't pair durak - its online path is a room - so
-    // ticking durak alone falls back to its Create/room flow; ticked alongside others it's just
-    // highlighted and the server matches the non-durak games.
-    var MULTI_GAME_IDS = [1, 2, 3, 4, 5];
+    // Games supported by the public multi-quick endpoint. Durak (3) deliberately stays out:
+    // its online path is a private room rather than public matchmaking. It remains available
+    // through the normal single-game Create flow.
+    var MULTI_GAME_IDS = [1, 2, 4, 5];
 
     function isMultiGame(id) { for (var i = 0; i < MULTI_GAME_IDS.length; i++) if (MULTI_GAME_IDS[i] === id) return true; return false; }
 
@@ -256,7 +249,6 @@
         var dim = $.CreatePanel("Panel", overlay, "MG_Dim");
         dim.AddClass("mg-dim");
         dim.SetPanelEvent("onactivate", function () { });
-        updateProbeHost = dim;
 
         var modal = $.CreatePanel("Panel", overlay, "MG_Modal");
         modal.AddClass("mg-modal");
@@ -836,8 +828,7 @@
             return;
         }
 
-        // Durak online is wired for 2 players only for now. 3–4-player seating/throw-in UI is
-        // deliberately deferred; the normal Create/Join/Quick buttons enter a 2-seat room.
+        // Durak public Quick is heads-up; private Create/Join uses the dedicated 2–4-seat room.
         var onlineReady = true;
 
         // "Select multiple games" toggle - ALWAYS visible (even on durak), a single check.
@@ -1139,12 +1130,12 @@
     // worker or a decode regression is caught in-game, not just offline. Steps run sequentially
     // (a small runner, not nested callbacks); any failure aborts and cleans the lobby up.
     // (Full rules coverage lives offline in tools/mg_*_test.js + Play-vs-Bot.)
-    // The update check deliberately bypasses the Workers transport. Panorama loads a tiny PNG
-    // straight from GitHub and exposes only its layout dimensions. A square means this version is
-    // current; a deliberately wide marker means a newer release superseded it. We compare aspect
-    // ratio instead of literal dimensions because UI scale multiplies both dimensions and some
-    // setups report them swapped. Ratios between the two intentional shapes are rejected instead
-    // of being reported as an update.
+    // The marker comes straight from GitHub, but its image load still goes through MG.Net's
+    // global image FIFO. Panorama wedges when that load overlaps a Worker response image, so
+    // first-open update checking, matchmaking and game polling must share one lane. A square
+    // means this version is current; a deliberately wide marker means a newer release superseded
+    // it. We compare aspect ratio because UI scale multiplies both dimensions and some setups
+    // report them swapped. Ratios between the two intentional shapes are rejected.
     function classifyUpdateMarker(w, h) {
         if (!(isFinite(w) && isFinite(h) && w > 0 && h > 0)) return "invalid";
         var ratio = Math.max(w, h) / Math.min(w, h);
@@ -1160,61 +1151,41 @@
         updatePopup.AddClass("mg-open");
     }
     function checkUpdates(automatic) {
-        if (!(updateProbeHost && updateProbeHost.IsValid && updateProbeHost.IsValid())) {
+        if (!(MG.Net && MG.Net.loadImage)) {
             if (!automatic) setStatus("Couldn't check for updates.");
             return;
         }
 
         var token = ++updateCheckToken;
-        var img = null;
-        var elapsed = 0;
         var versionSlug = MG_VERSION.replace(/\./g, "-");
         var url = UPDATE_MARKER_BASE + "is-" + versionSlug + "-relevant.png?rnd=" + Math.random();
 
         function alive() { return token === updateCheckToken; }
-        function cleanup() {
+        function cleanup(img) {
             if (!img) return;
             try { img.SetImage(""); } catch (e) {}
-            try { img.DeleteAsync(0); } catch (e) {}
-            img = null;
+            try { img.DeleteAsync(0); } catch (e2) {}
         }
         function fail() {
-            cleanup();
             if (alive() && !automatic && view === "menu") setStatus("Couldn't check for updates.");
-        }
-        function poll() {
-            if (!alive()) { cleanup(); return; }
-            var w = Number(img.actuallayoutwidth), h = Number(img.actuallayoutheight);
-            if (w > 0 && h > 0) {
-                cleanup();
-                var marker = classifyUpdateMarker(w, h);
-                if (marker === "outdated") {
-                    showUpdatePopup();
-                    if (!automatic && view === "menu")
-                        setStatus("An update is available for v" + MG_VERSION + ".");
-                } else if (marker === "current") {
-                    if (!automatic && view === "menu")
-                        setStatus("v" + MG_VERSION + " is up to date.");
-                } else if (!automatic && view === "menu") {
-                    setStatus("Couldn't verify the update marker.");
-                }
-                return;
-            }
-            elapsed += UPDATE_CHECK_POLL_S * 1000;
-            if (elapsed >= UPDATE_CHECK_TIMEOUT_MS) { fail(); return; }
-            $.Schedule(UPDATE_CHECK_POLL_S, poll);
         }
 
         if (!automatic) setStatus("Checking for updates...");
-        try {
-            img = $.CreatePanel("Image", updateProbeHost, "MG_UpdateProbe_" + token);
-            try { img.SetAttributeString("hittest", "false"); } catch (e) {}
-            img.style.opacity = "0.01";
-            img.SetImage(url);
-            $.Schedule(UPDATE_CHECK_POLL_S, poll);
-        } catch (e) {
-            fail();
-        }
+        MG.Net.loadImage(url, function (img, w, h) {
+            cleanup(img);
+            if (!alive()) return;
+            var marker = classifyUpdateMarker(w, h);
+            if (marker === "outdated") {
+                showUpdatePopup();
+                if (!automatic && view === "menu")
+                    setStatus("An update is available for v" + MG_VERSION + ".");
+            } else if (marker === "current") {
+                if (!automatic && view === "menu")
+                    setStatus("v" + MG_VERSION + " is up to date.");
+            } else if (!automatic && view === "menu") {
+                setStatus("Couldn't verify the update marker.");
+            }
+        }, fail);
     }
 
     // Legacy dev-only self-test, intentionally not linked from the footer.
@@ -1443,7 +1414,7 @@
         row.AddClass("mg-actions");
 
         // Play Again: hidden until the game ends. Bot = instant restart with sides flipped;
-        // online = a server rematch handshake (both players must ask; see startRematch).
+        // online = a server rematch handshake (every present player must ask; see startRematch).
         playAgainBtn = $.CreatePanel("Button", row, "");
         playAgainBtn.AddClass("mg-btn"); playAgainBtn.AddClass("mg-btn-primary");
         playAgainBtn.style.visibility = "collapse";
@@ -1484,18 +1455,18 @@
         });
     }
 
-    // Online rematch: both seats poll /api/rematch from the game-over screen. The server bumps
-    // its `gen` and resets the board once BOTH have asked (mg_net Api.rematch, worker.core.js).
+    // Online rematch: every present seat polls /api/rematch from the game-over screen. The server
+    // bumps its `gen` and resets/redeals once all present seats have asked.
     // We pass our current gen up so a stale poll from before a restart can't re-arm the next
-    // rematch. When state==2 (we completed the pair) OR the server's gen outran ours (the
-    // opponent completed it), the lobby state is already fresh - re-mount the SAME game, same
+    // rematch. When state==2 (our poll completed consensus) OR the server's gen outran ours
+    // (another player completed it), the lobby state is already fresh - re-mount the SAME game, same
     // seat/side; the sides never swap online (host stays seat 0).
     function startRematch(gameId, code, isHost, opts, btn) {
         rematchPollToken++;
         var token = rematchPollToken;
         var baseGen = rematchGen;
         if (btn && btn.IsValid && btn.IsValid()) btn.style.visibility = "collapse"; // one press
-        setStatus("Rematch: waiting for opponent…");
+        setStatus("Rematch: waiting for the other players…");
 
         function restart() {
             if (token !== rematchPollToken || view !== "game") return;
@@ -1509,7 +1480,7 @@
                 if (token !== rematchPollToken || view !== "game") return;
                 if (r.state === 9) { kickToMenu("Opponent left."); return; } // (9,9) gone / (9,3) bad token
                 if (r.state === 2 || r.gen > baseGen) { rematchGen = r.gen; restart(); return; }
-                $.Schedule(MG.Net.waitDelay(misses++), tick);   // still waiting for the opponent
+                $.Schedule(MG.Net.waitDelay(misses++), tick);   // still waiting for consensus
             }, function () {
                 $.Schedule(MG.Net.waitDelay(misses++), tick);   // transport hiccup: retry
             });

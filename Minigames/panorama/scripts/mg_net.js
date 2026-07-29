@@ -15,6 +15,7 @@
  * Public API:
  *   $.MG.Net.isConfigured()                     -> false until BASE_URL is set
  *   $.MG.Net.request(path, params, onDone, onErr)  raw (w,h) after swap+scale decode
+ *   $.MG.Net.loadImage(url, onDone, onErr, attrs)  ordinary image through the same FIFO
  *   $.MG.Session.newToken()                     -> a fresh high-entropy seat token
  *   $.MG.Api.create(game, tok, cb(code), err)
  *   $.MG.Api.quick(game, tok, cb({role,code}), err)   role = "host" | "joiner"
@@ -181,7 +182,21 @@
     var reqActive = false;
 
     function rawRequest(path, params, onDone, onError) {
-        reqQueue.push({ path: path, params: params, onDone: onDone, onError: onError });
+        reqQueue.push({ kind: "protocol", path: path, params: params, onDone: onDone, onError: onError });
+        drainQueue();
+    }
+
+    // Load a normal image through the SAME FIFO as the dimension-encoded API. On
+    // success ownership of the already-loaded <Image> passes to the caller, which
+    // may re-parent it into the visible UI or delete it after inspecting its
+    // intrinsic dimensions. This is the only safe way for update markers and
+    // Pixel Battle frames to coexist with protocol traffic: Panorama can wedge
+    // every image when two independent SetImage loads overlap.
+    function loadImage(url, onDone, onError, attributes) {
+        reqQueue.push({
+            kind: "image", url: url, onDone: onDone, onError: onError,
+            attributes: attributes || null
+        });
         drainQueue();
     }
     function drainQueue() {
@@ -189,25 +204,89 @@
         var job = reqQueue.shift();
         if (!job) { releaseHost(); return; } // idle: drop the host so it stops covering the menu
         reqActive = true;
-        rawRequestNow(job.path, job.params, function (w, h) {
-            reqActive = false;
-            // Schedule gives the engine 1 frame to release memory before the next load
-            try { if (job.onDone) job.onDone(w, h); } finally { $.Schedule(0.05, drainQueue); }
-        }, function (e) {
-            reqActive = false;
+        var success = function (a, b, c) {
+            // Keep reqActive latched through the callback and release frame. Callbacks
+            // commonly enqueue their next poll synchronously; clearing it here would let
+            // that request bypass the intended gap and start inside this callback.
+            try {
+                if (job.onDone) {
+                    if (job.kind === "image") job.onDone(a, b, c);
+                    else job.onDone(a, b);
+                }
+            } finally {
+                $.Schedule(0.05, function () { reqActive = false; drainQueue(); });
+            }
+        };
+        var failure = function (e) {
             // The Panorama image loader is intermittently flaky (a URL that loads
             // instantly in a browser sometimes stalls to a timeout here). One silent
             // re-queue at the front of the line recovers most of those. This is a
             // mitigation, not a proven fix - it can't be verified without in-game runs.
             job.tries = (job.tries || 0) + 1;
             if (job.tries < 2) {
-                log("↻ retry " + job.path + " (attempt " + (job.tries + 1) + ")");
+                log("↻ retry " + (job.path || job.url) + " (attempt " + (job.tries + 1) + ")");
                 reqQueue.unshift(job);
-                $.Schedule(0.05, drainQueue);
+                $.Schedule(0.05, function () { reqActive = false; drainQueue(); });
                 return;
             }
-            try { if (job.onError) job.onError(e); } finally { $.Schedule(0.05, drainQueue); }
-        });
+            try {
+                if (job.onError) job.onError(e);
+            } finally {
+                $.Schedule(0.05, function () { reqActive = false; drainQueue(); });
+            }
+        };
+        if (job.kind === "image") imageRequestNow(job.url, job.attributes, success, failure);
+        else rawRequestNow(job.path, job.params, success, failure);
+    }
+
+    // Load an ordinary PNG into an intrinsic-size panel. Unlike rawRequestNow,
+    // success does NOT clear/delete the image: the caller receives the loaded
+    // panel and owns its remaining lifetime.
+    function imageRequestNow(url, attributes, onDone, onError) {
+        var img;
+        try {
+            var h = ensureHost();
+            img = $.CreatePanel("Image", h, "mgimg_" + (reqCounter++), attributes || {});
+            img.style.position = "0px 0px 0px";
+            log("→ IMG " + url);
+            img.SetImage(url);
+        } catch (e) {
+            log("✗ EXC loading image: " + (e && e.message ? e.message : e));
+            if (img) {
+                try { img.SetImage(""); } catch (e2) {}
+                try { img.DeleteAsync(0); } catch (e3) {}
+            }
+            if (onError) onError("exception");
+            return;
+        }
+
+        var elapsed = 0;
+        var finished = false;
+        function discard() {
+            try { img.SetImage(""); } catch (e) {}
+            try { img.DeleteAsync(0); } catch (e2) {}
+        }
+        function check() {
+            if (finished) return;
+            var w = Number(img.actuallayoutwidth);
+            var hh = Number(img.actuallayoutheight);
+            if (w > 0 && hh > 0) {
+                finished = true;
+                log("← IMG = " + w + "x" + hh + " (" + Math.round(elapsed) + "ms)");
+                onDone(img, w, hh);
+                return;
+            }
+            elapsed += POLL_STEP * 1000;
+            if (elapsed >= REQ_TIMEOUT_MS) {
+                finished = true;
+                discard();
+                log("✗ IMAGE TIMEOUT (dims stayed 0 for " + REQ_TIMEOUT_MS + "ms)");
+                if (onError) onError("timeout");
+                return;
+            }
+            $.Schedule(POLL_STEP, check);
+        }
+        $.Schedule(POLL_STEP, check);
     }
 
     // Fire one request; call onDone(rawW, rawH) with the image's pixel dimensions.
@@ -391,6 +470,7 @@
 
     MG.Net = {
         request: request,
+        loadImage: loadImage,
         clearQueue: function () {
             // Drop pending UI traffic (stale status/poll ticks from a view we just
             // left) - their callers are token-guarded, so silence is fine. Two things
@@ -711,8 +791,8 @@
         // Rematch handshake. Poll this from the game-over screen with your CURRENT gen
         // (0 for a fresh lobby, then the last gen the server reported). The server arms this
         // seat's rematch flag only when gen matches (so a stale detect-poll can't re-arm after
-        // a restart), and once BOTH seats are armed it resets the board and bumps gen.
-        //   cb({ state, gen }): state 1 = armed, waiting for opponent · 2 = both ready (reset done)
+        // a restart), and once every present seat is armed it resets/redeals and bumps gen.
+        //   cb({ state, gen }): state 1 = armed, waiting · 2 = consensus reached (reset done)
         //                       9 = lobby gone / bad token (gen carries 3=bad-token, 9=gone)
         //   gen = the lobby's current generation (grows by 1 each rematch).
         rematch: function (code, tok, gen, cb, err) {
@@ -720,7 +800,7 @@
                 function (w, h) { if (cb) cb({ state: w, gen: h - 1 }); }, err);
         },
 
-        // ── Durak online (authoritative 2-player dealer) ────────────────────
+        // ── Durak online (authoritative dealer, 2–4 seats) ──────────────────
         // These routes use the same image side-channel but a separate indexed public
         // event log (`dlog`) plus a private per-seat draw stream (`ddraw`). All writes and
         // private reads are authorised by the seat token. Event dimensions deliberately stay
@@ -816,9 +896,9 @@
         },
 
         // ── Durak N-seat private lobby (2–4 seats) ──────────────────────────────
-        // The 2-player room rides the generic create/join; a 3–4-seat table needs its own
-        // create/join/room (same shape as poker's pcreate/pjoin/proom). Once the host deals
-        // via /api/start, play runs through dact/dlog/ddraw above - seat-count agnostic.
+        // Private tables of every size use this create/join/room set (same shape as poker's
+        // pcreate/pjoin/proom); only public heads-up Quick uses the generic room. Once the host
+        // deals via /api/start, play runs through dact/dlog/ddraw above - seat-count agnostic.
         dcreate: function (cap, tok, cb, err) {
             request("/api/dcreate", { n: cap, tok: tok }, function (w, h) {
                 if (w === 9 && h === 4) { if (err) err("busy"); return; }   // rate-limited

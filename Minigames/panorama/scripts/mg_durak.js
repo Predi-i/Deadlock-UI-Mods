@@ -263,7 +263,9 @@
         // The bar emptied. Mandatory → forfeit (2p: I lose; online 3–4: I leave the table, which
         // the server turns into a fold-out). Optional → I simply pass (auto-Bito for my seat).
         function onTimerExpire(mode) {
-            if (destroyed || gameOver || st.phase === "over") return;
+            // stop() invalidates the widget callback, but keep this guard too: an expiry tick
+            // already on Panorama's callback stack must never punish an action in flight.
+            if (destroyed || gameOver || pendingAct || st.phase === "over") return;
             timerActiveMode = "";
             if (mode === "optional") {
                 // Decline to throw in: pass. Online the server tallies it; offline record my knock.
@@ -975,6 +977,7 @@
         function sendAct(a, pair, card) {
             if (destroyed || pendingAct) return;
             pendingAct = true;
+            refreshTimer();                                             // park immediately, before the request starts
             MG.Api.dact(session.code, session.tok, a, pair || 0, card || 0, function (r) {
                 pendingAct = false;
                 if (r && r.ok) { startPolling(); return; }           // pull the echo promptly (single chain)
@@ -983,7 +986,12 @@
                 else if (why === "illegal") status("That move isn't legal.");
                 else if (why === "gone") { if (MG.UI && MG.UI.kickToMenu) MG.UI.kickToMenu("Lobby closed."); }
                 else status("Move rejected.");
-            }, function () { pendingAct = false; status("Server unavailable."); });
+                refreshTimer();                                      // rejected: the same obligation still needs a clock
+            }, function () {
+                pendingAct = false;
+                status("Server unavailable.");
+                refreshTimer();                                      // transport failed: let the player retry on a fresh clock
+            });
         }
 
         // ── deal watchdog ─────────────────────────────────────────────────────────────
