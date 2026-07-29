@@ -6,8 +6,8 @@ debugging time. Read this before touching the code — several "obvious" fixes h
 wrong and are documented as traps below.
 
 Nothing in this mod can be verified by rendering from a shell. Panorama only runs inside
-Deadlock, and testing requires a **VPK repack + launch**. So: `node --check` + the two
-test harnesses (`tools/`) are the only automated safety net; everything visual is
+Deadlock, and testing requires a **VPK repack + launch**. So `npm run lint` + `npm test`
+(`tools/`) are the only automated safety net; everything visual is
 "confirmed in-game by the maintainer" or "unverified, reasoned from the game's own CSS".
 When you change layout/animation/input, say honestly which of the two it is.
 
@@ -557,7 +557,7 @@ These are the mistakes to NOT repeat. Every one was confirmed against the game's
 
 ---
 
-## 7. Checkers internals (mg_games.js)
+## 7. Checkers internals (mg_checkers.js)
 
 - **Board model**: flat `Array(64)`, canonical orientation. Values: `0` empty, `1` white
   man, `2` white king, `3` black man, `4` black king. **White = host = player 0**, starts
@@ -565,7 +565,8 @@ These are the mistakes to NOT repeat. Every one was confirmed against the game's
 - **Rules** (Russian draughts): men move forward only but **capture in any diagonal
   direction**; **flying kings** slide any distance; **forced capture**; **multi-jump
   chains**. Pure helpers (`simpleMoves`, `captureMoves`, `applyHop`, `legalSequences`) are
-  UI-free so `tools/mg_rules_test.js` can slice them.
+  UI-free, and since the split into `rules/*.js` the tests `require`/eval the module directly —
+  `tools/mg_rules_test.js` reads the file, no source slicing.
 - **Two variants** (2026-07-23). `rules/checkers.js` builds both engines from one
   `makeRules(simpleMovesFor, captureMovesFor, promotionEndsTurn)` factory: `R.checkers`
   (Russian — flying kings, men capture any direction) and `R.checkersEnglish` (English
@@ -673,15 +674,14 @@ strong but deliberately beatable (not full minimax). Marks are panel-drawn (trap
 
 ---
 
-## 8.5 Chess internals (mg_games.js)
+## 8.5 Chess internals (mg_chess.js)
 
 Chess deliberately mirrors checkers so the two share the board geometry, the click+drag
 input recipe, and the move/poll transport.
 
 - **Self-contained engine.** The `// ── chess: pure rules` … `// ── chess controller`
   section has NO dependency on the checkers helpers (it defines its own `cSq/cRow/cCol/
-  cSign/cType`), so `tools/mg_chess_test.js` can slice and run it standalone — same trick as
-  `mg_rules_test.js`. Perft from the start position (20 / 400 / 8902) is the correctness
+  cSign/cType`), so `tools/mg_chess_test.js` loads `rules/chess.js` and runs it standalone. Perft from the start position (20 / 400 / 8902) is the correctness
   anchor; targeted tests cover castling, en passant, promotion, checkmate, stalemate.
 - **Board model** differs from checkers: `Array(64)`, `0` empty, **sign = colour** (white
   `> 0`, black `< 0`), **abs = type** (1 P, 2 N, 3 B, 4 R, 5 Q, 6 K). "Colour" in chess code
@@ -725,9 +725,10 @@ written once and reused by both.
 
 - **Two-section file, like chess.** `// ── durak: pure rules ──` … `// ── durak
   controller ──`. The pure section is self-contained (no `$`, no `MG`) so
-  `tools/mg_durak_test.js` slices and runs it under Node — same trick as `mg_rules_test.js`.
-  ⚠ The banner strings are the slice markers, so prose comments must NOT contain the literal
-  `// ── durak controller` (an early draft did and the test sliced an empty body).
+  `tools/mg_durak_test.js` loads `rules/durak.js` and runs it under Node. (Historic note: the tests
+  used to SLICE the pure section out of one combined file by banner comment, which made those
+  banners load-bearing. Since the rules moved into their own modules that is gone — mg_wordle_test
+  is the last slicer, because Wordle has no separate rules module.)
 - **Card model.** id `0..35` = `suit*9 + rank`. suit `0..3` = S,H,D,C; rank `0..8` =
   6,7,8,9,T,J,Q,K,A (**higher rank index = stronger**). Trump = suit of the deck's bottom
   card. Art is a compiled `.vtex` per card, `deck/<S><R>.vtex` (e.g. `SA.vtex`), backs via
@@ -835,12 +836,14 @@ with the worker (`initialBoard/dropRow/drop/winner/winningLine/isFull/legalCols/
 No-Limit Texas Hold'em, 2–4 players. Like durak it does NOT fit the 2-int transport, so online
 uses the **worker-as-dealer** model (§8.6): the worker owns the deck/hole cards/seed and relays
 public actions; each seat pulls only its OWN hole cards through a token-gated private channel.
-Registers **game id 6** (`enabled:true`). Offline vs bot is proven in Node; online is built but
-**not yet in-game verified**.
+Registers **game id 6** (`enabled:true`). Offline vs bot runs in Node — though note the test
+played only 40 hands per table, which is why a hand that froze whenever a blind put the opening
+seat all-in survived it (fixed 2026-07-29; the suite now stresses 400 hands × 1200 tables). Online
+is built but **not yet in-game verified**.
 
 - **Two-section file** like chess/durak: `// ── poker: pure rules ──` … `// ── poker controller
   ──`. The pure section (`rules/poker.js`, shared byte-for-byte with the worker) is self-contained
-  so `tools/mg_poker_test.js` slices and runs it under Node.
+  so `tools/mg_poker_test.js` loads it and runs it under Node.
 - **Card model.** id `0..51`; `suitOf = id/13`, `rankOf = id%13`, `cardVal = rank+2` (2..14, ace
   high). Note this is a DIFFERENT encoding from durak's `suit*9+rank` — poker uses the full
   52-card deck. Art: `deck/<S><R>.vtex` (reuses the durak deck), faces/backs drawn by a child
@@ -963,8 +966,9 @@ Registers **game id 6** (`enabled:true`). Offline vs bot is proven in Node; onli
 - The controller self-registers game id 8 and is mounted directly from its picker detail view.
   The existing local Play Again path remounts it with another answer.
 - Six explicit rows of five tiles and three explicit keyboard rows avoid Panorama wrap/layout
-  ambiguity. Input comes from the on-screen keyboard, so it does not depend on an undocumented
-  Deadlock key event bridge.
+  ambiguity. Input arrives BOTH ways: a hidden `TextEntry` overlapping the board captures the
+  physical keyboard (`ontextentrychange` per keystroke, `oninputsubmit` on Enter — the game's own
+  idiom), and the on-screen keyboard rows remain clickable. The physical path is the primary one.
 - `scoreGuess(answer, guess)` uses two passes: exact matches consume first, then remaining answer
   letter counts are consumed by present matches. This prevents duplicate letters in a guess from
   receiving more yellow/green marks than the answer actually contains; `mg_wordle_test.js` covers it.
@@ -1079,34 +1083,28 @@ games: `MoveSelf`/`MoveOpp`, `Check`, `Promote`, `Illegal`, `Premove`, `GameStar
 
 Before committing, always:
 ```
-npm run lint                                   # ESLint no-undef net — catches a call to a name
-                                               # not defined in scope (the class of bug that ships
-                                               # green past node --check: `sfx`/`Net` used where the
-                                               # controller never declared them). See §10.1.
-node tools/build_worker.js                     # regenerate server/worker.js from core + rules
-node --check panorama/scripts/rules/checkers.js
-node --check panorama/scripts/rules/ttt.js
-node --check panorama/scripts/rules/chess.js
-node --check panorama/scripts/rules/connectfour.js
-node --check panorama/scripts/rules/durak.js
-node --check panorama/scripts/rules/poker.js
-node --check panorama/scripts/mg_games.js
-node --check panorama/scripts/mg_connectfour.js
-node --check panorama/scripts/mg_durak.js
-node --check panorama/scripts/mg_poker.js
-node --check panorama/scripts/mg_sound.js
-node --check panorama/scripts/mg_ui.js
-node --check panorama/scripts/mg_net.js
-node --check server/worker.js
-node tools/mg_rules_test.js
-node tools/mg_chess_test.js
-node tools/mg_connectfour_test.js
-node tools/mg_durak_test.js
-node tools/mg_poker_test.js
-node tools/mg_server_test.js
-node tools/mg_parity_test.js                    # client predictor == server authority
-
+npm run lint                                   # ESLint net: no-undef catches a call to a name not
+                                               # defined in scope (the class of bug that ships green
+                                               # past node --check: `sfx`/`Net` used where the
+                                               # controller never declared them), plus
+                                               # operator-linebreak, which keeps a shipped line from
+                                               # starting with a binary operator (the Valve minifier
+                                               # inserts a `;` there). See §10.1.
+npm test                                       # the whole harness suite, in one command:
+                                               #   build_worker --check   committed worker.js is in
+                                               #                          sync with rules + core
+                                               #   chess / rules / c4 / durak / poker  pure engines
+                                               #   wordle / pixelbattle palette / widgets
+                                               #   server                 worker protocol + lobbies
+                                               #   parity                 client predictor ==
+                                               #                          server authority
+                                               #   update marker          release-marker decoding
 ```
+If `build_worker --check` reports the worker is stale, run `npm run build:worker` and commit the
+regenerated `server/worker.js` with your change — it is the deploy artifact.
+
+A Public build additionally goes through `../tools/build_mod_strip_comments.ps1` (see §3), which
+strips comments from a throwaway copy and refuses to build if stripping broke any script.
 
 Then say plainly what is **verified** (syntax, pure rules, server protocol) vs what is
 **only reasoned** (anything visual/animated/drag/hover — needs a VPK repack + in-game run
@@ -1114,13 +1112,20 @@ by the maintainer). Don't present unrendered layout or input behavior as confirm
 
 ### 10.1 The lint net (why it exists, what it does NOT cover)
 
-The Panorama **controllers** (`mg_games.js`, `mg_connectfour.js`, `mg_durak.js`, `mg_poker.js`,
-`mg_ui.js`) have **0% automated coverage**: they call `$.CreatePanel` / `$.Schedule` /
+The Panorama **controllers** (`mg_checkers`, `mg_ttt`, `mg_chess`, `mg_connectfour`, `mg_durak`,
+`mg_poker`, `mg_pixelbattle`, `mg_wordle`, `mg_ui`) have **almost no automated coverage**: they call
+`$.CreatePanel` / `$.Schedule` /
 `$.RegisterEventHandler`, so they can't run outside the game. `node --check` only parses
 syntax; the `tools/*_test.js` harnesses exercise the pure engines (`rules/*.js`) + the worker,
 never the controllers. That gap shipped two live `ReferenceError`s in one week (`sfx` used in the
 TTT controller that never declared one; a bare `Net.pollDelay` where no `Net` alias exists) — both
 crash only when their branch runs in-game, both invisible to every check we had.
+
+The one exception: state-free helpers hoisted onto `MG.Widgets` (mg_games.js) CAN be tested, and
+`tools/mg_widgets_test.js` does that for `winPos` / `parsePx` / `squareFromPanel` / `makeNavBtn` /
+`setNavState`. Anything that reads a controller's closure (board, cells, history) still can't be.
+It is also possible to drive a whole view under a fake `$` — the lobby-room refactor was verified
+that way — but that is a per-change harness, not standing coverage.
 
 `npm run lint` (ESLint 9 flat config, `eslint.config.js`) is the cheap guard for exactly that
 class. It is deliberately **narrow — a bug net, not a style linter**: `no-undef` (the one that

@@ -57,11 +57,16 @@ panorama/
 ## Tests
 
 ```
-node tools/mg_rules_test.js     # checkers rules (captures, flying kings, full bot game)
-node tools/mg_server_test.js    # worker: matchmaking, code round-trip, concurrent lobbies
+npm install       # once — ESLint only
+npm run lint      # no-undef net over every shipped script + the worker source
+npm test          # the whole harness suite: pure rules for all six games, the worker
+                  # protocol, client/server rule parity, and a staleness check on the
+                  # generated server/worker.js
 ```
 
-`tools/` and `server/` are dev-only — only `panorama/` is packed into the VPK.
+`tools/` and `server/` are dev-only — only `panorama/` is packed into the VPK. A Public build
+goes through `../tools/build_mod_strip_comments.ps1`, which ships the VPK without comments
+(the working tree keeps them).
 
 ## Networking note
 
