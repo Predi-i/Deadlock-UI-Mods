@@ -9,9 +9,8 @@
  * determines a deal (mulberry32), and online the SERVER owns that seed - so the client never
  * sees the deck, it rebuilds its view from the public event log + its own private cards.
  *
- * Scope note: the mod ships 2-player online Durak for now; 3–4-player online seating/plumbing
- * is deferred (see mg_ui.js). These rules already generalise to numPlayers 2..4 and the
- * offline bot exercises 2/3/4, so nothing here blocks a later expansion.
+ * Scope note: public matchmaking is heads-up, while private online tables and offline bot
+ * games support 2–4 players. The same rules engine drives every seat count.
  */
 
 (function () {

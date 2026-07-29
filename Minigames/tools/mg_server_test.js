@@ -124,8 +124,8 @@ async function main() {
     ok(d.w === 600 && d.h === 1000, "probe = (600,1000)");
 
     // The probe is state-independent and identical for every caller, so the top-level Worker now
-    // answers it from a cached buffer WITHOUT touching the Durable Object - it used to bill a DO
-    // request and re-encode 601 KB per call, on the same free-tier bucket the games spend.
+    // answers it from a cached, compressed buffer WITHOUT touching the Durable Object - it used
+    // to bill a DO request and send 601 KB per call, on the same free-tier bucket the games spend.
     (async function () {
         var reachedDO = 0;
         var fakeEnv = { HUB: { idFromName: function () { return 1; },
@@ -133,6 +133,7 @@ async function main() {
         var pr = await Worker.fetch(new Request("https://mg.test/api/probe.png"), fakeEnv);
         var pb = new Uint8Array(await pr.arrayBuffer());
         ok(readU32(pb, 16) === 600 && readU32(pb, 20) === 1000, "probe via the Worker is still (600,1000)");
+        ok(pb.length < 2048, "probe response is compressed below 2 KiB");
         ok(reachedDO === 0, "probe never reaches the Durable Object");
         var pr2 = await Worker.fetch(new Request("https://mg.test/api/probe.png"), fakeEnv);
         var pb2 = new Uint8Array(await pr2.arrayBuffer());
@@ -592,6 +593,28 @@ async function main() {
         ok(s0.w === 1 && s0.h === 3, "code 0000: status finds the lobby");
         var j0 = await req(h0, "/api/join.png?code=0000&tok=ZEROJOIN");
         ok(j0.w === 2, "code 0000: join reaches the lobby");
+    })();
+
+    // Queue values are stored as numeric codes, so code 0 must not be mistaken for a missing
+    // storage key by either public-matchmaking lookup.
+    await (async function () {
+        var q0 = new Hub({ storage: new FakeStorage() });
+        q0.freshCode = async function () { return 0; };
+        var qh = await req(q0, "/api/quick.png?game=2&tok=ZEROQHST");
+        var qj = await req(q0, "/api/quick.png?game=2&tok=ZEROQJON");
+        ok(codeHost(qh) && decCode(qh) === 0, "code 0000: quick host publishes queue value 0");
+        ok(!codeHost(qj) && decCode(qj) === 0, "code 0000: quick seeker joins queue value 0");
+        ok((await req(q0, "/api/status.png?code=0000")).w === 2,
+            "code 0000: quick lobby has both players");
+
+        var m0 = new Hub({ storage: new FakeStorage() });
+        m0.freshCode = async function () { return 0; };
+        var mh = await req(m0, "/api/mquick.png?games=2,4&tok=ZEROMHST");
+        var mj = await req(m0, "/api/mquick.png?games=2&tok=ZEROMJON");
+        ok(codeHost(mh) && decCode(mh) === 0, "code 0000: mquick host publishes queue value 0");
+        ok(!codeHost(mj) && decCode(mj) === 0, "code 0000: mquick seeker joins queue value 0");
+        ok((await req(m0, "/api/status.png?code=0000")).w === 2,
+            "code 0000: mquick lobby has both players");
     })();
 
     // The 10-bit code space is finite. A saturated allocator must fail cleanly instead of
@@ -1389,6 +1412,29 @@ async function main() {
             if (pev.w === 52 && pev.h === 1) sawPLeft = true;
         }
         ok(sawPLeft, "leave(poker-3): LEFT(52) event logged for the departed seat");
+        var afterFirstPokerLeave = (await phub.storage.get("l:" + pcode)).state.log.length;
+        for (var repeatLeave = 0; repeatLeave < 20; repeatLeave++) {
+            await req(phub, "/api/leave.png?code=" + pcode + "&tok=PLPLR301");
+        }
+        var afterRepeatedPokerLeave = (await phub.storage.get("l:" + pcode)).state.log.length;
+        ok(afterRepeatedPokerLeave === afterFirstPokerLeave,
+            "leave(poker-3): repeated leave is idempotent and appends no duplicate LEFT events");
+
+        // Even a first-time departure at the hard log ceiling must not push the persisted lobby
+        // past MOVE_CAP. Tearing the abuse-only table down is safer than an unlogged fold.
+        var capHub = new Hub({ storage: new FakeStorage() });
+        var capCreate = await req(capHub, "/api/pcreate.png?n=4&tok=CAPLHOST");
+        var capCode = decCode(capCreate);
+        await req(capHub, "/api/pjoin.png?code=" + capCode + "&tok=CAPLPLR1");
+        await req(capHub, "/api/pjoin.png?code=" + capCode + "&tok=CAPLPLR2");
+        await req(capHub, "/api/pjoin.png?code=" + capCode + "&tok=CAPLPLR3");
+        await req(capHub, "/api/pstart.png?code=" + capCode + "&tok=CAPLHOST");
+        var cappedLobby = await capHub.storage.get("l:" + capCode);
+        cappedLobby.state.log = new Array(1200).fill({ w: 2, h: 1 });
+        await capHub.storage.put("l:" + capCode, cappedLobby);
+        await req(capHub, "/api/leave.png?code=" + capCode + "&tok=CAPLPLR3");
+        ok((await req(capHub, "/api/plog.png?code=" + capCode + "&since=0")).w === 9,
+            "leave(poker-4): MOVE_CAP departure tears down instead of growing the log");
 
         // D) Pre-start lobby: leave behaves like cancel (tears down a waiting lobby).
         var whub = new Hub({ storage: new FakeStorage() });
@@ -1420,9 +1466,25 @@ async function main() {
         var hj3 = await req(hhub, "/api/djoin.png?code=" + hcode + "&tok=HOLEJ003");
         ok(hj3.h === 2, "hole: a new joiner is seated INTO the vacated index 1");
         ok((await req(hhub, "/api/droom.png?code=" + hcode)).w === 3, "hole: droom back to 3 present");
-        // Host leaving pre-start still ends it - nobody else can press Start.
-        await req(hhub, "/api/leave.png?code=" + hcode + "&tok=HOLEHOST");
-        ok((await req(hhub, "/api/droom.png?code=" + hcode)).w === 9, "hole: pre-start HOST leave still tears the table down");
+        var refilledDurak = await hhub.storage.get("l:" + hcode);
+        ok(!refilledDurak.left || refilledDurak.left.indexOf(1) < 0,
+            "hole: djoin clears the replacement seat's stale left marker");
+        // Start, then let the other original joiner leave. Host + replacement are still live, so
+        // stale departure bookkeeping must not tear their table down.
+        await req(hhub, "/api/start.png?code=" + hcode + "&tok=HOLEHOST");
+        await req(hhub, "/api/leave.png?code=" + hcode + "&tok=HOLEJ002");
+        var refilledDurakRoom = await req(hhub, "/api/droom.png?code=" + hcode);
+        ok(refilledDurakRoom.w === 52,
+            "hole: later leave keeps the started Durak table alive with host + replacement");
+
+        // Host leaving PRE-start still ends a separate room - nobody else can press Start.
+        var hostLeaveHub = new Hub({ storage: new FakeStorage() });
+        var hostLeaveCreate = await req(hostLeaveHub, "/api/dcreate.png?n=3&tok=HLHOST01");
+        var hostLeaveCode = decCode(hostLeaveCreate);
+        await req(hostLeaveHub, "/api/djoin.png?code=" + hostLeaveCode + "&tok=HLJOIN01");
+        await req(hostLeaveHub, "/api/leave.png?code=" + hostLeaveCode + "&tok=HLHOST01");
+        ok((await req(hostLeaveHub, "/api/droom.png?code=" + hostLeaveCode)).w === 9,
+            "hole: pre-start HOST leave still tears the table down");
 
         // F) Start with an unfilled hole: the deal must run and fold the empty seat out, so the
         // remaining players get a live game instead of a table that waits on a ghost.
@@ -1453,6 +1515,31 @@ async function main() {
         var qst = await req(qhub, "/api/pstart.png?code=" + qcode + "&tok=GAPPHST1");
         ok(qst.w === 1 && qst.h === 1, "gap: host can deal a poker table with a hole in it");
         ok((await req(qhub, "/api/proom.png?code=" + qcode)).w >= 50, "gap: poker table reports started");
+        var sawPokerGapLeft = false;
+        for (var qgi = 0; qgi < 20; qgi++) {
+            var qgev = await req(qhub, "/api/plog.png?code=" + qcode + "&since=" + qgi);
+            if (qgev.w === 1 && qgev.h === 1) break;
+            if (qgev.w === 51) sawPokerGapLeft = true;              // LEFT(seat 1) = 50 + 1
+        }
+        ok(sawPokerGapLeft, "gap: poker clients are told that the empty seat is out");
+
+        // Poker reuses and restores a pre-start hole exactly like Durak. A later leave must count
+        // the replacement as live rather than deleting the table out from under it.
+        var pHoleHub = new Hub({ storage: new FakeStorage() });
+        var pHoleCreate = await req(pHoleHub, "/api/pcreate.png?n=3&tok=PHOLHOST");
+        var pHoleCode = decCode(pHoleCreate);
+        await req(pHoleHub, "/api/pjoin.png?code=" + pHoleCode + "&tok=PHOLPLR1");
+        await req(pHoleHub, "/api/pjoin.png?code=" + pHoleCode + "&tok=PHOLPLR2");
+        await req(pHoleHub, "/api/leave.png?code=" + pHoleCode + "&tok=PHOLPLR1");
+        var pHoleJoin = await req(pHoleHub, "/api/pjoin.png?code=" + pHoleCode + "&tok=PHOLREPL");
+        ok(pHoleJoin.h === 2, "hole: pjoin reuses the vacated seat index");
+        var refilledPoker = await pHoleHub.storage.get("l:" + pHoleCode);
+        ok(!refilledPoker.left || refilledPoker.left.indexOf(1) < 0,
+            "hole: pjoin clears the replacement seat's stale left marker");
+        await req(pHoleHub, "/api/pstart.png?code=" + pHoleCode + "&tok=PHOLHOST");
+        await req(pHoleHub, "/api/leave.png?code=" + pHoleCode + "&tok=PHOLPLR2");
+        ok((await req(pHoleHub, "/api/proom.png?code=" + pHoleCode)).w === 52,
+            "hole: later leave keeps the started Poker table alive with host + replacement");
 
         // G) /api/join must REFUSE an mquick lobby. It sits at game 0 until a seeker resolves it
         // through finalizeJoin; the generic join hard-set players=2 with game 0 and state null,
@@ -1514,7 +1601,10 @@ async function main() {
         ok(!(stillThere.w === 1 && stillThere.h === 1), "rematch: seat 2's log cursor is still valid");
         var rm2 = await req(rhub, "/api/rematch.png?code=" + rcode + "&tok=RMPLR002&gen=0");
         ok(rm2.w === 2, "rematch: the LAST seat agreeing performs the reset");
-        ok((await req(rhub, "/api/droom.png?code=" + rcode)).w === 3, "rematch: all 3 seats still seated after the reset");
+        ok((await req(rhub, "/api/droom.png?code=" + rcode)).w === 53,
+            "rematch: all 3 seats are automatically dealt a fresh Durak game");
+        var freshDurakLog = await req(rhub, "/api/dlog.png?code=" + rcode + "&since=0");
+        ok(freshDurakLog.w === 2, "rematch: fresh Durak log begins with TRUMP, not an empty poll");
         // An empty seat can never answer, so it must not hold the rematch hostage.
         var ehub = new Hub({ storage: new FakeStorage() });
         var ec = await req(ehub, "/api/dcreate.png?n=3&tok=RMEHOST1");
@@ -1526,6 +1616,28 @@ async function main() {
         await req(ehub, "/api/rematch.png?code=" + ecode + "&tok=RMEHOST1&gen=0");
         var erm = await req(ehub, "/api/rematch.png?code=" + ecode + "&tok=RMEPLR01&gen=0");
         ok(erm.w === 2, "rematch: a departed seat does not block the remaining players");
+        ok((await req(ehub, "/api/droom.png?code=" + ecode)).w === 52,
+            "rematch: remaining Durak seats are automatically redealt");
+        var departedFreshLog = await req(ehub, "/api/dlog.png?code=" + ecode + "&since=0");
+        ok(departedFreshLog.w === 2,
+            "rematch: Durak redeal with a departed seat still begins with TRUMP");
+
+        // Poker uses the same generic Play Again handshake, but its controller also only polls:
+        // a successful rematch must append a fresh HAND event server-side.
+        var pokerRematchHub = new Hub({ storage: new FakeStorage() });
+        var pokerRematchCreate = await req(pokerRematchHub, "/api/pcreate.png?n=2&tok=PRMHOST1");
+        var pokerRematchCode = decCode(pokerRematchCreate);
+        await req(pokerRematchHub, "/api/pjoin.png?code=" + pokerRematchCode + "&tok=PRMJOIN1");
+        await req(pokerRematchHub, "/api/pstart.png?code=" + pokerRematchCode + "&tok=PRMHOST1");
+        await req(pokerRematchHub, "/api/rematch.png?code=" + pokerRematchCode + "&tok=PRMHOST1&gen=0");
+        var pokerRematchDone = await req(pokerRematchHub,
+            "/api/rematch.png?code=" + pokerRematchCode + "&tok=PRMJOIN1&gen=0");
+        ok(pokerRematchDone.w === 2, "rematch: both Poker seats complete the handshake");
+        ok((await req(pokerRematchHub, "/api/proom.png?code=" + pokerRematchCode)).w === 52,
+            "rematch: Poker table is automatically dealt again");
+        var freshPokerLog = await req(pokerRematchHub,
+            "/api/plog.png?code=" + pokerRematchCode + "&since=0");
+        ok(freshPokerLog.w === 2, "rematch: fresh Poker log begins with HAND, not an empty poll");
 
         // I) Durak PASS is idempotent. applyPass always was, but the event push was not, so a seat
         // spamming /api/dact?a=4 appended a PASS event every time. st.pub was the one monotonic log

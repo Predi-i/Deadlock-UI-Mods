@@ -119,7 +119,8 @@ write server-side and makes the normal client stop after its single access prefl
 ## Verify it works (in a normal browser)
 
 - `<URL>/api/probe` → a **600×1000** PNG. This one is LITERAL pixels: it is the calibration
-  reference the client measures the UI scale against.
+  reference the client measures the UI scale against. Its all-zero payload is pre-compressed
+  to well under 2 KiB; the large dimensions do not imply a large download.
 - `<URL>/api/ping` → the encoding of `(1, 1)`, i.e. **24×24** (see below). If you get that, the
   Worker is up.
 

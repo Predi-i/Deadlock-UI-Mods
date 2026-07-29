@@ -1,4 +1,4 @@
-/* global CompressionStream, PX_ALPHA, PX_LAND_SPANS, PX_PALETTE, PX_VIEW_PALETTE, adminAssetResponse */
+/* global CompressionStream, PX_ALPHA, PX_LAND_SPANS, PX_PALETTE, PX_VIEW_PALETTE, adminAssetResponse, atob */
 /**
  * Deadlock Minigames relay - Cloudflare Worker CORE (authored source).
  *
@@ -102,7 +102,7 @@ export default {
     // caller and independent of ALL state. It was going through the Durable Object like every other
     // route, which billed a DO request on top of the Worker request and re-encoded 601 KB from
     // scratch each time (the shared free-tier bucket covers both). Serve it here from a cached
-    // buffer instead. /api/ping is a fixed (1,1) for the same reason.
+    // compact pre-compressed buffer instead. /api/ping is a fixed (1,1) for the same reason.
     if (url.pathname === "/api/probe" || url.pathname === "/api/probe.png") return probeResponse();
     if (url.pathname === "/api/ping" || url.pathname === "/api/ping.png") return d(1, 1);
     // All game state lives in a single strongly-consistent Durable Object.
@@ -112,11 +112,18 @@ export default {
   },
 };
 
-// The probe PNG never changes, so encode it once per isolate. It is the single largest response
-// the relay emits (601113 bytes), and it used to be rebuilt byte by byte on every call.
+// The probe PNG never changes. This is a zlib-compressed 600x1000 all-zero grayscale image:
+// 662 bytes instead of the generic stored-deflate encoder's 601113-byte response. The client
+// reads only its intrinsic dimensions, so shipping hundreds of kilobytes of zeroes was pure
+// latency/bandwidth. Decode the constant once per isolate.
+const PROBE_PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAlgAAAPoCAAAAAAnsN/BAAACXUlEQVR42u3BMQEAAADCoPVPbQwfoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHgYLC8AAXJRhA8AAAAASUVORK5CYII=";
 let PROBE_BYTES = null;
 function probeResponse() {
-  if (!PROBE_BYTES) PROBE_BYTES = pngBytes(600, 1000);
+  if (!PROBE_BYTES) {
+    const binary = atob(PROBE_PNG_BASE64);
+    PROBE_BYTES = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) PROBE_BYTES[i] = binary.charCodeAt(i);
+  }
   return pngResponse(PROBE_BYTES);
 }
 
@@ -414,7 +421,7 @@ export class Hub {
 
     try {
       if (p.startsWith("/admin/api/")) return await handlePixelAdmin(this, request, url);
-      if (p === "/api/probe") return png(600, 1000);
+      if (p === "/api/probe") return probeResponse();
       if (p === "/api/ping") return d(1, 1);
       if (p === "/api/pxcanvas") return await pixelCanvasPng(this);
       if (p === "/api/pxview") {
@@ -496,7 +503,9 @@ export class Hub {
 
         for (let i = 0; i < queues.length; i++) {
           const waitCode = await this.storage.get(queues[i]);
-          if (!waitCode) continue;
+          // Code 0 is a real lobby code. Durable Object storage returns undefined for a
+          // missing queue key, so use a nullish check rather than treating numeric 0 as empty.
+          if (waitCode == null) continue;
           const w = await this.storage.get("l:" + waitCode);
           // Never seat a token into a lobby it already holds a seat in. Two /api/quick calls with
           // the same token used to seat the caller as its own opponent: seatOf returns the FIRST
@@ -556,7 +565,7 @@ export class Hub {
                 if (seenQueues[key]) continue;
                 seenQueues[key] = 1;
                 const waitCode = await this.storage.get(key);
-                if (!waitCode) continue;
+                if (waitCode == null) continue;             // code 0 is valid (see /api/quick)
                 const w = await this.storage.get("l:" + waitCode);
                 if (w && seatOf(w, q.get("tok")) >= 0) continue;   // never match a token to itself (see /api/quick)
                 const isMulti = w && w.game === 0 && w.games && w.games.indexOf(g) >= 0;
@@ -618,11 +627,24 @@ export class Hub {
         const seat = seatOf(lobby, q.get("tok"));
         if (seat < 0) return d(1, 1);                     // not a seated player: ignore, don't leak
         lobby.left = lobby.left || [];
-        if (lobby.left.indexOf(seat) < 0) lobby.left.push(seat);
+        // A live multi-seat lobby keeps the departed seat object so old public events can still
+        // resolve its stable index. That also means seatOf() continues to recognise its token:
+        // make repeated leave requests a true no-op before they can append another LEFT event.
+        if (lobby.left.indexOf(seat) >= 0) return d(1, 1);
+        lobby.left.push(seat);
         const started = !!(lobby.state && lobby.state.started);
-        const present = lobby.players - lobby.left.length;  // still-seated players after this leave
+        const present = liveSeatCount(lobby);              // non-null seats not recorded as departed
         const isMultiSeat = !!lobby.cap && (lobby.game === 3 || lobby.game === 6);
         if (started && isMultiSeat && present >= 2) {
+          // At the abuse-only log ceiling, folding one more poker seat without a matching LEFT
+          // event would desynchronise every client. End the lobby cleanly instead of growing the
+          // Durable Object value past MOVE_CAP or persisting an invisible state transition.
+          if (lobby.game === 6 && lobby.state && lobby.state.log &&
+              lobby.state.log.length >= MOVE_CAP) {
+            await this.storage.delete("l:" + code);
+            await this.clearQueuesFor(lobby, code);
+            return d(1, 1);
+          }
           // Table plays on without the leaver: fold them out and log it.
           if (lobby.game === 3) durakLeave(lobby, seat);
           else pokerLeave(lobby, seat);
@@ -784,16 +806,16 @@ export class Hub {
       }
 
       if (p === "/api/reset") {
-        // Deprecated unsafe endpoint. A unilateral reset desynchronises the opponent and used to
-        // lose the English-checkers variant. Rematches must use the two-seat /api/rematch handshake.
+        // Deprecated unsafe endpoint. A unilateral reset desynchronises the other players and used
+        // to lose the English-checkers variant. Rematches must use the consensus handshake below.
         return d(9, 8);
       }
 
-      // Rematch handshake. Both seats poll this from the game-over screen; when BOTH have
-      // asked, the server performs the same reset as /api/reset, bumps `gen`, clears the
+      // Rematch handshake. Every present seat polls this from the game-over screen; when all have
+      // asked, the server resets/redeals, bumps `gen`, clears the
       // ready flags, and reports (2, gen+1). Until then it reports (1, gen+1) = "waiting".
-      //   -> (1, gen+1) I'm marked, waiting for the opponent
-      //   -> (2, gen+1) both ready: state was reset THIS call, restart now
+      //   -> (1, gen+1) I'm marked, waiting for the other players
+      //   -> (2, gen+1) consensus reached: state was reset THIS call, restart now
       //   -> (9,3) bad/foreign token · (9,9) no lobby
       // The caller passes &gen=<its current generation>. We only ARM a seat's flag when that
       // matches the lobby's live `gen`; a stale poll from BEFORE a restart (old gen) can't
@@ -832,8 +854,24 @@ export class Hub {
         if (allReady) {
           lobby.moves = [];
           lobby.turn = 0;
+          // Mid-game departures retain their seat objects so their old log events keep stable
+          // indices. A fresh dealer game must treat those seats as holes; otherwise Durak deals
+          // them a hand again and Poker gives them a fresh stack despite nobody being there.
+          if (lobby.seats && lobby.left) {
+            for (let i = 0; i < lobby.left.length; i++) {
+              const departed = lobby.left[i];
+              if (departed >= 0 && departed < lobby.seats.length) lobby.seats[departed] = null;
+            }
+          }
           lobby.state = initState(lobby.game, lobby.cv, lobby.seats ? lobby.seats.length : 2);
           initClock(lobby);                        // fresh banks for the rematch
+          // Board games are ready immediately after initState. Dealer games are not: their
+          // remounted controllers only poll dlog/plog and never call Start again, so deal the
+          // fresh game atomically with the successful rematch handshake.
+          let redeal = null;
+          if (lobby.game === 3) redeal = durakStart(lobby, 0);
+          else if (lobby.game === 6) redeal = pokerStart(lobby, 0);
+          if (redeal && !redeal.ok) return d(9, redeal.code || 2);
           // Wrap the generation into 6 bits so gen+1 stays a valid level (<=63) on the
           // downlink. gen is only used for equality / "did a restart happen" detection, and
           // 63 rematches can't elapse between two of a client's polls, so wrapping is safe.
@@ -849,13 +887,13 @@ export class Hub {
       }
 
 
-      // ── Durak (authoritative dealer, 2 players) ────────────────────────────
+      // ── Durak (authoritative dealer, 2–4 players) ──────────────────────────
       // Separate route set from the 2-int move/poll games: the worker OWNS the deck,
       // hands and seed, deals PRIVATELY per seat via /api/ddraw, and relays PUBLIC events
       // via an indexed /api/dlog. Clients rebuild table/trump/turn/roles/counts from the
       // public log and learn only their OWN card identities privately. All actions require
       // a seat token (tok → seat), which also gates ddraw so a cheat can't read a foreign
-      // seat's private cards. Only 2 players are wired for now (3–4 seating is deferred).
+      // seat's private cards. Public Quick is heads-up; private tables use 2–4 seats.
       if (p === "/api/room") {
         const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
         if (!lobby) return d(9, 1);                        // gone
@@ -947,7 +985,10 @@ export class Hub {
         // Reuse a hole a pre-start leave left behind before growing the table, so a 3-seat lobby
         // whose seat 1 walked away can be refilled instead of overflowing past `cap`.
         const holeD = seatHole(lobby);
-        if (holeD >= 0) lobby.seats[holeD] = { tok: q.get("tok") || "" };
+        if (holeD >= 0) {
+          lobby.seats[holeD] = { tok: q.get("tok") || "" };
+          restoreLeftSeat(lobby, holeD);
+        }
         else { lobby.seats.push({ tok: q.get("tok") || "" }); lobby.players++; }
         lobby.t = nowSeq();
         await this.storage.put("l:" + code, lobby);
@@ -959,9 +1000,9 @@ export class Hub {
         if (!lobby || lobby.game !== 3 || !lobby.cap) return d(9, 1); // gone / not an N-seat durak lobby
         const started = lobby.state && lobby.state.started ? ROOM_STARTED : 0;
         // width = players PRESENT (+ROOM_STARTED band once dealt) · height = seat cap.
-        // presentCount, not `players`: a pre-start leave leaves a hole and `players` never drops,
-        // so the room UI used to keep showing a seat that nobody was sitting in.
-        return d(presentCount(lobby) + started, lobby.cap);
+        // liveSeatCount, not `players`: pre-start leaves create holes, while started games retain
+        // departed seat objects for stable event indices. Neither should appear as present.
+        return d(liveSeatCount(lobby) + started, lobby.cap);
       }
 
       // ── Poker (authoritative dealer, 2–4 players; its own multi-seat lobby) ──────
@@ -994,7 +1035,10 @@ export class Hub {
         if (presentCount(lobby) >= (lobby.cap || 4)) return d(21, 1); // full
         // Reuse a hole a pre-start leave left behind before growing the table (see /api/djoin).
         const holeP = seatHole(lobby);
-        if (holeP >= 0) lobby.seats[holeP] = { tok: q.get("tok") || "" };
+        if (holeP >= 0) {
+          lobby.seats[holeP] = { tok: q.get("tok") || "" };
+          restoreLeftSeat(lobby, holeP);
+        }
         else { lobby.seats.push({ tok: q.get("tok") || "" }); lobby.players++; }
         lobby.t = nowSeq();
         await this.storage.put("l:" + code, lobby);
@@ -1006,8 +1050,8 @@ export class Hub {
         if (!lobby || lobby.game !== 6) return d(9, 1);    // gone
         const started = lobby.state && lobby.state.started ? ROOM_STARTED : 0;
         // width = players PRESENT (+ROOM_STARTED band once started) · height = seat cap.
-        // presentCount, not `players` - see /api/droom.
-        return d(presentCount(lobby) + started, lobby.cap || 4);
+        // liveSeatCount, not `players` - see /api/droom.
+        return d(liveSeatCount(lobby) + started, lobby.cap || 4);
       }
       if (p === "/api/pstart") {
         const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
@@ -1418,6 +1462,27 @@ function presentCount(lobby) {
   return n;
 }
 
+// Count seats that are both occupied and still participating. Started multi-seat games retain
+// a departed seat object for stable event indices, while pre-start departures leave a null hole.
+// Checking both representations keeps leave decisions correct across either state.
+function liveSeatCount(lobby) {
+  if (!lobby.seats) return Math.max(0, (lobby.players | 0) - ((lobby.left && lobby.left.length) || 0));
+  let n = 0;
+  for (let i = 0; i < lobby.seats.length; i++) {
+    if (!lobby.seats[i]) continue;
+    if (lobby.left && lobby.left.indexOf(i) >= 0) continue;
+    n++;
+  }
+  return n;
+}
+
+// A pre-start replacement inherits a vacated index, not the previous occupant's departure.
+// Remove every stale copy defensively so rematch consensus and later leave counts see it as live.
+function restoreLeftSeat(lobby, seat) {
+  if (!lobby.left || !lobby.left.length) return;
+  lobby.left = lobby.left.filter(function (leftSeat) { return leftSeat !== seat; });
+}
+
 // Index of the first seat a pre-start leave vacated, or -1 if the table is dense. Seat 0 (the
 // host) is never a hole - a host leaving pre-start tears the lobby down instead.
 function seatHole(lobby) {
@@ -1671,6 +1736,10 @@ function pokerLeave(lobby, seat) {
   const s = lobby.state;
   if (!s || !s.started) return;
   s.log = s.log || [];
+  s.leftLogged = s.leftLogged || [];
+  if (s.leftLogged[seat]) return;                            // repeated leave is a true no-op
+  if (s.log.length >= MOVE_CAP) return;                      // never grow the persisted value past its cap
+  s.leftLogged[seat] = 1;
   if (s.st) R.leaveSeat(s.st, seat);
   else if (s.stacks) s.stacks[seat] = 0;                   // between hands: just forfeit the stack
   s.log.push({ w: 50 + seat, h: 1 });                      // LEFT(seat)
@@ -1879,6 +1948,11 @@ function pokerStart(lobby, seat) {
   for (let i = 0; i < n; i++) s.stacks.push(lobby.seats && !lobby.seats[i] ? 0 : PK_START);
   s.started = 1;
   pokerNewHand(lobby);
+  // HAND makes every remounted client build the same N-seat shell. Follow it with LEFT for each
+  // hole so clients also zero those stacks and never wait for an absent seat to act.
+  if (lobby.seats) {
+    for (let i = 0; i < n; i++) if (!lobby.seats[i]) pokerLeave(lobby, i);
+  }
   return { ok: true };
 }
 
