@@ -1,7 +1,7 @@
 "use strict";
 
 /*
- * mg_chess.js — Chess CONTROLLER for the Deadlock Minigames mod.
+ * mg_chess.js - Chess CONTROLLER for the Deadlock Minigames mod.
  *
  * Split out of mg_games.js (2026-07-24). Pure rules live in rules/chess.js (shared
  * byte-for-byte with the authoritative worker). The RX alias block (RC.idx re-export
@@ -17,20 +17,23 @@
     if (MG._chessLoaded) return;
     MG._chessLoaded = true;
 
-    // idx (from the checkers engine) is the only checkers-rules export needed here — the
-    // board index helper reused by chess for square addressing. The full RX chess alias
-    // block follows inside the body (moved verbatim from the old mg_games.js).
-    var idx = MG.Rules.checkers.idx;
-
-    // The two-side game clock lives in mg_games.js and is shared via MG.Widgets.
+    // The two-side game clock and the shared <Image> face-setter live in mg_games.js
+    // (this file can't see that closure), exposed via MG.Widgets.
     var createClock = MG.Widgets.createClock;
+    // State-free board/nav helpers, likewise shared with mg_checkers.js. The rest of the drag and
+    // review stacks stay local: they read this controller's own closure, and a few that LOOK
+    // identical to the checkers copies are not (sqName uses cCol vs colOf, clockNames compares
+    // myColor against 1 vs WHITE).
+    var winPos = MG.Widgets.winPos, parsePx = MG.Widgets.parsePx;
+    var squareFromPanel = MG.Widgets.squareFromPanel;
+    var makeNavBtn = MG.Widgets.makeNavBtn, setNavState = MG.Widgets.setNavState;
 
     // ══ CHESS ═══════════════════════════════════════════════════════════════════
     // ── chess: shared pure rules (single source of truth: rules/chess.js) ──────────
     // Same alias idiom as checkers/ttt above: the engine lives in rules/chess.js (loaded
     // before this file and shared byte-for-byte with the authoritative server); here we
     // just bind local names identical to the old inline copies so the controller is
-    // untouched. Colour is +1 (white) / -1 (black) — the sign of the piece.
+    // untouched. Colour is +1 (white) / -1 (black) - the sign of the piece.
     var RX = MG.Rules.chess;
     var C_PAWN = RX.C_PAWN, C_KNIGHT = RX.C_KNIGHT, C_BISHOP = RX.C_BISHOP;
     var C_ROOK = RX.C_ROOK, C_QUEEN = RX.C_QUEEN, C_KING = RX.C_KING;
@@ -38,6 +41,7 @@
     var initialChessBoard = RX.initialChessBoard, initialChessState = RX.initialChessState;
     var makeMove = RX.makeMove, legalMoves = RX.legalMoves, inCheck = RX.inCheck;
     var findKing = RX.findKing, chessResult = RX.chessResult, chessBotMove = RX.chessBotMove;
+    var positionKey = RX.positionKey;
     var chessBotMovePrep = RX.chessBotMovePrep;
 
     // ── chess controller ─────────────────────────────────────────────────────────
@@ -55,7 +59,7 @@
         var appliedSeq = 0;            // moves consumed from the shared server list
         var pollMisses = 0;            // consecutive empty polls this turn (drives the adaptive cadence)
         var selected = -1;
-        var legalTargets = [];         // [{to}] — shape kept identical to checkers so the drag code is shared
+        var legalTargets = [];         // [{to}] - shape kept identical to checkers so the drag code is shared
         var pollToken = 0;
         var destroyed = false;
         var gameOver = false;
@@ -76,7 +80,7 @@
 
         // Time control (§8 commit 2.3), mirrors createCheckers. session.timeControl = seconds per
         // side (0 = untimed). Authoritative on the SERVER online; offline (bot) it ticks locally.
-        // seat 0 = white/host, seat 1 = black/joiner — the clock indexes by seat.
+        // seat 0 = white/host, seat 1 = black/joiner - the clock indexes by seat.
         var timeControl = session.timeControl || 0;
         var clock = null;              // createClock handle, built in buildSidePanel
 
@@ -111,11 +115,8 @@
             if (fx.captured) return "Capture";
             return self ? "MoveSelf" : "MoveOpp";
         }
-        function parsePx(v) {
-            if (typeof v !== "string" || !v.length) return null;
-            var m = v.match(/-?\d+(\.\d+)?/);
-            return m ? parseFloat(m[0]) : null;
-        }
+                // parsePx: shared, see MG.Widgets in mg_games.js
+
 
         // Black sees the board rotated 180° so its own pieces sit at the bottom.
         function toDisplay(i) { return myColor === 1 ? i : 63 - i; }
@@ -125,22 +126,11 @@
             var name = (v > 0 ? "White" : "Black") + ["", "Pawn", "Knight", "Bishop", "Rook", "Queen", "King"][cType(v)];
             return "s2r://panorama/images/" + name + ".vtex";
         }
-        // Draw a piece sprite with a CHILD <Image> (SetImage + scaling), NOT the container's
-        // style.backgroundImage. A Panel background paints the .vtex at its NATIVE pixel size
-        // (250²) until the panel is re-laid-out, the same first-frame zoom the cards hit. An
-        // <Image> fills its CSS box from frame 1 (game idiom: hud_ability_icon.xml). The piece
-        // panel keeps its transform/anim/drag-source state; the Image just fills it and is
-        // transparent to input. SetImage takes the BARE s2r:// url.
-        function setFace(container, url) {
-            var img = container._faceImg;
-            if (!img) {
-                img = $.CreatePanel("Image", container, "", { scaling: "stretch-to-fit-preserve-aspect" });
-                img.AddClass("mg-face-img");
-                try { img.SetAttributeString("hittest", "false"); } catch (e) {}
-                container._faceImg = img;
-            }
-            img.SetImage(url);
-        }
+        // Piece sprites are drawn by a CHILD <Image>, not the container's background: a Panel
+        // background paints the .vtex at its NATIVE size (250²) until the panel is re-laid-out.
+        // The piece panel keeps its transform/anim/drag-source state; the Image just fills it and
+        // is transparent to input. Shared implementation: MG.Widgets.setFace (mg_games.js).
+        var setFace = MG.Widgets.setFace;
 
         var root = $.CreatePanel("Panel", container, "MG_ChessRoot");
         root.AddClass("mg-chess");
@@ -171,13 +161,8 @@
             navNextBtn = makeNavBtn(nav, "Next >", function () { navNext(); });
             renderMoveList();
         })();
-        function makeNavBtn(parent, text, onClick) {
-            var b = $.CreatePanel("Button", parent, "");
-            b.AddClass("mg-nav-btn");
-            var l = $.CreatePanel("Label", b, ""); l.text = text;
-            b.SetPanelEvent("onactivate", onClick);
-            return b;
-        }
+                // makeNavBtn: shared, see MG.Widgets in mg_games.js
+
         // Clock rows are indexed by SERVER seat (0 = host = white, 1 = joiner = black).
         function clockNames() {
             return session.bot
@@ -262,7 +247,7 @@
             lbl.text = text;
             // Shoved into the bottom-right corner so the letter clears the piece. Chess sprites are
             // 56px (nearly the whole 60px cell) but transparent in the corners, so (51,46) tucks the
-            // glyph past the visible figure — knights/rooks/bishops no longer cover it (maintainer
+            // glyph past the visible figure - knights/rooks/bishops no longer cover it (maintainer
             // 2026-07-16). Matches createCheckers.addCoord.
             var ox = kind === "file" ? (SQ - 9) : 3;       // rank → top-left; file → bottom-right
             var oy = kind === "file" ? (SQ - 14) : 2;
@@ -329,8 +314,8 @@
                     // Dragged during the opponent's turn → queue a PREMOVE to the dropped square.
                     var pmTo = dropSquare(droppedPanel);
                     if (pmTo >= 0 && pmTo !== dragFromSq) {
-                        if (premoveGeometryOk(dragFromSq, pmTo)) { premove = { from: dragFromSq, to: pmTo }; preSelected = -1; }
-                        else sfx("Illegal");   // impossible shape for this piece — don't queue it
+                        if (premoveGeometryOk(dragFromSq, pmTo)) { premove = { from: dragFromSq, to: pmTo }; preSelected = -1; sfx("Premove"); }
+                        else sfx("Illegal");   // impossible shape for this piece - don't queue it
                     }
                     clearDrag();
                     refreshHighlights();
@@ -339,7 +324,7 @@
                 // The turn flipped to me WHILE this piece was held: the drag began during the
                 // opponent's turn (a premove-grab, so DragStart set no selection), but the polled
                 // move landed before I released. Without this, DragEnd falls through to
-                // commitDropMultimethod, which bails on `selected < 0` and snaps the piece back —
+                // commitDropMultimethod, which bails on `selected < 0` and snaps the piece back -
                 // the "premove teleports back instead of moving" bug. Promote the grab to a live
                 // move: select dragFromSq and let the normal drop path validate + play it.
                 if (selected < 0 && dragFromSq >= 0 && cSign(board[dragFromSq]) === myColor) {
@@ -356,30 +341,11 @@
             for (var t = 0; t < legalTargets.length; t++) if (legalTargets[t].to === sq) return true;
             return false;
         }
-        function squareFromPanel(p) {
-            for (var hops = 0; p && hops < 6; hops++) {
-                var id = null;
-                try { id = p.id; } catch (e) {}
-                if (id && id.indexOf("cell_") === 0) {
-                    var n = parseInt(id.substring(5), 10);
-                    if (isFinite(n) && n >= 0 && n < 64) return n;
-                }
-                try { p = p.GetParent ? p.GetParent() : null; } catch (e2) { p = null; }
-            }
-            return -1;
-        }
-        function winPos(panel) {
-            if (!panel || !panel.GetPositionWithinWindow) return null;
-            var r;
-            try { r = panel.GetPositionWithinWindow(); } catch (e) { return null; }
-            if (!r) return null;
-            var x = (typeof r.x === "number") ? r.x : (typeof r[0] === "number" ? r[0] : null);
-            var y = (typeof r.y === "number") ? r.y : (typeof r[1] === "number" ? r[1] : null);
-            if (x === null || y === null || !isFinite(x) || !isFinite(y)) return null;
-            if (Math.abs(x) > 100000 || Math.abs(y) > 100000) return null;
-            return { x: x, y: y };
-        }
-        // Render scale = WINDOW px per LAYOUT px — see the checkers copy for the full rationale.
+                // squareFromPanel: shared, see MG.Widgets in mg_games.js
+
+                // winPos: shared, see MG.Widgets in mg_games.js
+
+        // Render scale = WINDOW px per LAYOUT px - see the checkers copy for the full rationale.
         // GetPositionWithinWindow is window px; actuallayoutwidth is layout px; dividing one by the
         // other only agreed at 100% UI scale, so drops landed off at 125%. Derive scale from two
         // board cells a known layout distance apart, via the proven GetPositionWithinWindow only.
@@ -443,7 +409,7 @@
             if (DRAG_DEBUG) status("DROP MISS win=" + wSq + " panel=" + aPanel + " over=" + bOver + " ghost=" + cGhost);
         }
 
-        // Raw dropped square (any of 0..63) with NO legal-target filter — used to queue a premove
+        // Raw dropped square (any of 0..63) with NO legal-target filter - used to queue a premove
         // while it's the opponent's turn (validated later by tryPremove). Same channels as
         // commitDropMultimethod, first valid one wins.
         function dropSquare(droppedPanel) {
@@ -503,8 +469,20 @@
             if (cType(board[from]) === C_PAWN && cCol(from) !== cCol(to) && board[to] === 0) return true;
             return false;
         }
+        // Threefold repetition needs the whole game's position list, which rules/chess.js
+        // deliberately does NOT carry (it would copy an array into every search node). Count the
+        // keys here instead: pushHistory runs in all three live move paths (local, bot, polled)
+        // AFTER board/cst/turn are updated, so the key always describes the position that the side
+        // to move now faces. rejectAndResync drops the counts along with history.
+        var posCounts = {};
+        function notePosition() {
+            var k = positionKey(board, cst, turn);
+            posCounts[k] = (posCounts[k] || 0) + 1;
+        }
+        function countRepeat() { return posCounts[positionKey(board, cst, turn)] || 0; }
         function pushHistory(from, to, cap) {
             history.push({ from: from, to: to, boardAfter: board.slice(), label: moveLabel(from, to, cap) });
+            notePosition();
             renderMoveList();
         }
         function renderMoveList() {
@@ -529,10 +507,8 @@
             updateNav();
             if (reviewIndex === null) { try { moveListRows.ScrollToBottom(); } catch (e2) {} }
         }
-        function setNavState(btn, enabled) {
-            if (!btn) return;
-            if (enabled) btn.RemoveClass("mg-nav-disabled"); else btn.AddClass("mg-nav-disabled");
-        }
+                // setNavState: shared, see MG.Widgets in mg_games.js
+
         function updateNav() {
             var shown = (history.length === 0) ? -2 : (reviewIndex === null ? history.length - 1 : reviewIndex);
             setNavState(navPrevBtn, shown > -1);
@@ -590,7 +566,7 @@
         // Apply from→to to the model and mirror it visually: slide the mover, fade any capture
         // (incl. en passant), swap the sprite on promotion, and slide the rook on a castle.
         function applyChessMove(from, to) {
-            // While reviewing, the pieces layer shows a past snapshot — advance the MODEL only and
+            // While reviewing, the pieces layer shows a past snapshot - advance the MODEL only and
             // skip all visuals; navLive() rebuilds the current position from the model on return.
             if (reviewIndex !== null) {
                 var wasPawnEdge = cType(board[from]) === C_PAWN && (cRow(to) === 0 || cRow(to) === 7);
@@ -607,7 +583,7 @@
             else if (board[to] !== 0) capSq = to;
             var castled = (t === C_KING && Math.abs(tc - fc) === 2);
             // A move arriving mid-drag (you're queuing a premove during the opponent's turn) must
-            // NOT yank your held piece back — that was the "premove teleports back" bug. Only tear
+            // NOT yank your held piece back - that was the "premove teleports back" bug. Only tear
             // the drag down when this move actually DELETES the piece you're holding (it captures
             // on dragFromSq): its panel + DragEnd handler vanish, which would otherwise leak the
             // ghost, and the premove is impossible anyway. Any other move leaves the drag intact so
@@ -652,14 +628,14 @@
         // Premove (online only): pick a piece then a destination while it's the opponent's turn.
         // Occupancy isn't validated now (the position changes after the opponent moves); tryPremove
         // replays it when it's actually my turn and drops it if illegal on the new board. But we DO
-        // gate on the piece's MOVEMENT GEOMETRY up-front — a knight's L, a bishop's diagonal etc. —
+        // gate on the piece's MOVEMENT GEOMETRY up-front - a knight's L, a bishop's diagonal etc. -
         // so you can't queue a shape the piece can never make (the "premove anywhere" complaint).
         // Mirrors createCheckers.
         function canPremove() { return !gameOver && !destroyed && reviewIndex === null && !myTurn(); }
         function clearPremove() { premove = null; preSelected = -1; refreshHighlights(); }
         // True if `to` is a geometrically reachable square for whatever of my pieces sits on `from`
         // RIGHT NOW, ignoring occupancy/pins/check (those depend on the post-opponent board and are
-        // re-checked by tryPremove). Sliding pieces pass on direction alone — blockers may clear.
+        // re-checked by tryPremove). Sliding pieces pass on direction alone - blockers may clear.
         function premoveGeometryOk(from, to) {
             var v = board[from];
             if (cSign(v) !== myColor || from === to) return false;
@@ -681,7 +657,7 @@
             if (cSign(board[i]) === myColor) { preSelected = i; premove = null; refreshHighlights(); return; }
             if (preSelected >= 0 && i !== preSelected) {
                 if (!premoveGeometryOk(preSelected, i)) { sfx("Illegal"); return; }   // keep the piece picked; let them retry
-                premove = { from: preSelected, to: i }; preSelected = -1; refreshHighlights(); return;
+                premove = { from: preSelected, to: i }; preSelected = -1; sfx("Premove"); refreshHighlights(); return;
             }
             clearPremove();
         }
@@ -699,7 +675,7 @@
                     return;
                 }
             }
-            refreshHighlights();   // premove no longer legal — just drop it
+            refreshHighlights();   // premove no longer legal - just drop it
         }
 
         function onCellClick(i) {
@@ -710,7 +686,7 @@
                     if (legalTargets[t].to === i) { doLocalMove(selected, i); return; }
                 }
                 // A selection is up and this isn't one of its targets: if it's not a re-select
-                // of another of my pieces, it's an illegal attempt — sound feedback (no forced
+                // of another of my pieces, it's an illegal attempt - sound feedback (no forced
                 // capture in chess, so no flash).
                 if (cSign(board[i]) !== myColor) { sfx("Illegal"); return; }
             }
@@ -748,14 +724,14 @@
             }
             status("Move sent. Waiting for opponent…");
             checkEnd();                    // may end the game (and set the win/draw status)
-            sendChessMove(from, to);       // always relay — the opponent must see even a mating move
+            sendChessMove(from, to);       // always relay - the opponent must see even a mating move
         }
 
         // ── bot (offline) ─────────────────────────────────────────────────────────────
         function scheduleBotTurn() { $.Schedule(0.45, botTurn); }
         // Drive the resumable search ONE root move per frame so the HUD never freezes (the
         // "лаги при ходе бота") and a premove can be grabbed while the bot thinks. Same depth-3
-        // alpha-beta, same strength — only the scheduling changed. Falls back to the one-shot
+        // alpha-beta, same strength - only the scheduling changed. Falls back to the one-shot
         // chessBotMove if the prep driver isn't present (older rules bundle).
         function botTurn() {
             if (destroyed || gameOver) return;
@@ -798,7 +774,7 @@
             });
         }
 
-        // Server rejected our move — rebuild the position from the accepted log (which
+        // Server rejected our move - rebuild the position from the accepted log (which
         // encodes castling / en passant / promotion via makeMove) and resume polling.
         function rejectAndResync(reason) {
             sfx("Illegal");
@@ -807,6 +783,13 @@
             board = initialChessBoard();
             cst = initialChessState();
             turn = 1;
+            // The rejected move was optimistically pushed to history (doLocalMove pushes BEFORE
+            // sendChessMove), so the rebuilt board no longer matches those entries - reviewing one
+            // would render an impossible position. createCheckers already drops the list here;
+            // this copy had drifted and kept the stale rows.
+            history = []; reviewIndex = null;
+            posCounts = {};
+            notePosition();          // rebuilt from the initial position → that is occurrence #1 again
             replayAccepted(0);
         }
         function replayAccepted(seq) {
@@ -825,6 +808,7 @@
                     var r = makeMove(board, cst, mv.from, mv.to);
                     board = r[0]; cst = r[1];
                     turn = -turn;
+                    notePosition();          // resync path bypasses pushHistory; keep the repeat count honest
                     replayAccepted(seq + 1);
                 } else { appliedSeq = seq; replayAccepted(seq); }
             }, function () { $.Schedule(0.4, function () { replayAccepted(seq); }); },
@@ -869,9 +853,12 @@
         // ── end of game ─────────────────────────────────────────────────────────────────
         // Evaluates the side whose turn it now is. Returns true if the game ended.
         function checkEnd() {
-            var res = chessResult(board, cst, turn);
+            var res = chessResult(board, cst, turn, countRepeat());
             if (res === "checkmate") { finish(-turn); return true; }
-            if (res === "stalemate") { finishDraw(); return true; }
+            if (res === "stalemate") { finishDraw("Stalemate. It's a draw."); return true; }
+            if (res === "draw50") { finishDraw("Draw by the fifty-move rule."); return true; }
+            if (res === "repetition") { finishDraw("Draw by threefold repetition."); return true; }
+            if (res === "insufficient") { finishDraw("Draw: insufficient material."); return true; }
             return false;
         }
         // `reason` is optional: "time" when the game ended on a flag-fall (shown in the status).
@@ -888,13 +875,13 @@
             sfx("GameEnd");
             if (session.onGameOver) session.onGameOver(win ? "win" : "lose");
         }
-        function finishDraw() {
+        function finishDraw(text) {
             if (gameOver) return;
             gameOver = true;
             clearSelection();
             refreshHighlights();
             if (clock) clock.stop();
-            status("Stalemate. It's a draw.");
+            status(text || "It's a draw.");
             sfx("GameEnd");
             if (session.onGameOver) session.onGameOver("draw");
         }
@@ -903,6 +890,7 @@
         buildCells();
         layoutPieces();
         refreshHighlights();
+        notePosition();           // the starting position is occurrence #1 for repetition counting
         syncClockTurn();          // white (seat 0) is on the move at the start
         sfx("GameStart");
         if (myTurn()) {

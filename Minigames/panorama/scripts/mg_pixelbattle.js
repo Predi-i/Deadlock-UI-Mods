@@ -1,5 +1,5 @@
 /*
- * Pixel Battle — one persistent public canvas.
+ * Pixel Battle - one persistent public canvas.
  *
  * Deadlock does not expose GameUI.GetCursorPosition, so the editor uses a fixed
  * 32x16 hit grid. At overview zoom a click drills into that region; at 16x every
@@ -21,7 +21,9 @@
     var MIN_BATCH = 10;
     var MAX_BATCH = 128;
     var POLL_ACTIVE_S = 8, POLL_WARM_S = 15, POLL_IDLE_S = 30;
-    var MAP_URL = "s2r://panorama/images/pixelbattle/world_map.vtex";
+    // (world_map.vtex is no longer referenced from the client: the map is baked into the
+    // server-rendered /api/pxview frame. tools/build_pixelbattle_map.js still reads the source
+    // image to generate the land mask.)
     var PALETTE = MG.PixelBattlePalette || [];
     var PALETTE_NAMES = MG.PixelBattlePaletteNames || [];
     var accessCache = { accountId: "", status: "unknown", balance: BANK_CAP, callbacks: [] };
@@ -86,11 +88,19 @@
         attempt = attempt || 0;
         var accountId = findAccountId();
         if (!accountId) {
-            if (attempt < 10) {
-                $.Schedule(1, function () { checkAccess(callback, attempt + 1); });
-            } else {
-                callback({ status: "error", accountId: "", balance: BANK_CAP });
-            }
+            // The party avatar (where the Steam32 id is read from) may not be mounted yet, so we
+            // retry for ~10s. Queue the callers on the SHARED cache instead of giving each its own
+            // retry loop: renderDetail re-runs on every card pick and every multi-select toggle, so
+            // N picks during that window used to spawn N independent 10-second chains, each with
+            // its own $.Schedule per second. The dedupe below only covered the has-id path.
+            accessCache.callbacks.push(callback);
+            if (accessCache.status === "waiting-id") return;   // a retry chain is already running
+            accessCache.status = "waiting-id";
+            (function retry(n) {
+                if (findAccountId()) { accessCache.status = "unknown"; checkAccess(function () {}); return; }
+                if (n >= 10) { accessCache.status = "unknown"; finishAccess("error", "", BANK_CAP); return; }
+                $.Schedule(1, function () { retry(n + 1); });
+            })(attempt);
             return;
         }
         if (accessCache.accountId && accessCache.accountId !== accountId) {
@@ -170,8 +180,10 @@
         var knownVersion = -1;
         var versionMisses = 0;
         var pollGeneration = 0;
+        var lastOuterStatus = "";
 
         function outerStatus(text) {
+            lastOuterStatus = text;
             if (!destroyed && session.onStatus) session.onStatus(text);
         }
 
@@ -188,22 +200,21 @@
         var viewport = $.CreatePanel("Panel", root, "");
         viewport.AddClass("mg-px-viewport");
 
-        var stage = $.CreatePanel("Panel", viewport, "");
-        stage.AddClass("mg-px-stage");
-
-        var baseImage = $.CreatePanel("Image", stage, "", { scaling: "stretch-to-fit-preserve-aspect" });
-        baseImage.AddClass("mg-px-map-image");
-        try { baseImage.SetAttributeString("hittest", "false"); } catch (e0) {}
-        baseImage.SetImage(MAP_URL);
-
-        var remoteImage = $.CreatePanel("Image", stage, "", { scaling: "stretch-to-fit-preserve-aspect" });
-        remoteImage.AddClass("mg-px-map-image");
-        try { remoteImage.SetAttributeString("hittest", "false"); } catch (e1) {}
+        // NOTE: there used to be a `stage` subtree here (a scaled/translated Panel holding a
+        // base-map <Image> and a remote-overlay <Image>) for compositing the map locally. Rendering
+        // moved entirely server-side - updateView set stage.visibility = "collapse" on every call
+        // and nothing ever set it back, so the subtree was permanently invisible, remoteImage never
+        // received a non-empty url, and baseImage still decoded world_map.vtex into memory for a
+        // panel nobody could see. Removed with its CSS (.mg-px-stage/.mg-px-map-image).
 
         // At 16x the Worker returns this viewport already expanded to 800x400.
-        // It is drawn 1:1, bypassing Panorama's blurry texture interpolation.
-        var crispImage = $.CreatePanel("Image", viewport, "", { scaling: "none" });
-        crispImage.AddClass("mg-px-crisp-view");
+        // Keep a stable first-child layer so newly loaded image panels can be swapped
+        // underneath the pending-pixel/grid overlays without changing their z-order.
+        var crispLayer = $.CreatePanel("Panel", viewport, "");
+        crispLayer.AddClass("mg-px-crisp-view");
+        var crispImage = $.CreatePanel("Image", crispLayer, "", { scaling: "none" });
+        crispImage.style.width = "800px";
+        crispImage.style.height = "400px";
         try { crispImage.SetAttributeString("hittest", "false"); } catch (e2) {}
 
         // Pending pixels are initially hosted here, then re-parented into the exact
@@ -322,18 +333,8 @@
         function updateView() {
             if (!accessReady || banned) return;
             clampOrigin();
-            var stageW = 800 * zoom;
-            var stageH = 400 * zoom;
-            var pixelW = stageW / MAP_W;
-            var pixelH = stageH / MAP_H;
-            var tx = -viewX * pixelW;
-            var ty = -viewY * pixelH;
-            stage.style.width = stageW + "px";
-            stage.style.height = stageH + "px";
-            stage.style.transform = "translate3d(" + tx + "px, " + ty + "px, 0px)";
             // Every zoom uses a server-rasterised 800x400 frame. This avoids
             // Panorama's bilinear filtering in previews as well as in the editor.
-            stage.style.visibility = "collapse";
             crispImage.style.visibility = "visible";
             grid.SetHasClass("mg-px-grid-edit", zoom === MAX_ZOOM);
             zoomLabel.text = zoom + "×";
@@ -341,7 +342,7 @@
                 ? "Pick a colour, then paint. Changes stay local until at least 10 unique pixels are queued."
                 : "Click a region to zoom in. At 16× each square is one canvas pixel.";
             refreshPendingGeometry();
-            refreshCrispView();
+            scheduleCrispView();      // coalesced: a burst of pan/zoom presses costs ONE fetch
         }
 
         function setZoom(value) {
@@ -587,6 +588,23 @@
             });
         }
 
+        // Coalesce viewport fetches. Every D-pad press, zoom step and RESET calls updateView, and
+        // each one used to fire its own /api/pxview.png - a full 800x400 render, straight through
+        // SetImage so it bypasses mg_net's request queue entirely. At 16x a pan step is 8 canvas
+        // pixels, so crossing the map is dozens of presses and dozens of full frames. Waiting a
+        // frame-and-a-bit collapses a burst of presses into ONE fetch of the final position; a
+        // single press still lands well inside the eye's tolerance.
+        var crispGen = 0;
+        var crispReady = false;
+        function scheduleCrispView() {
+            if (destroyed) return;
+            crispReady = false;
+            crispImage.style.visibility = "collapse";
+            crispGen++;
+            var myGen = crispGen;
+            $.Schedule(0.12, function () { if (!destroyed && myGen === crispGen) refreshCrispView(); });
+        }
+
         function refreshRemote() {
             if (destroyed) return;
             refreshCrispView();
@@ -594,14 +612,65 @@
 
         function refreshCrispView() {
             if (destroyed || banned || !accountId) return;
+            crispReady = false;
+            crispImage.style.visibility = "collapse";
+            var myGen = ++crispGen;     // a direct call supersedes pending/superseded frames
             var version = knownVersion < 0 ? 0 : knownVersion;
-            try {
-                crispImage.SetImage(MG.Net.getBaseUrl() + "/api/pxview.png?x=" + viewX +
-                    "&y=" + viewY + "&z=" + zoom + "&id=" + accountId +
-                    "&v=" + version + "&rnd=" + Math.random());
-            } catch (e) {
-                outerStatus("Couldn't load the pixel-perfect map viewport.");
-            }
+            // No cache-buster: `v` IS the cache key (the server bumps the canvas version on
+            // every accepted batch), so a random suffix only guaranteed a miss on every request.
+            var url = MG.Net.getBaseUrl() + "/api/pxview.png?x=" + viewX +
+                "&y=" + viewY + "&z=" + zoom + "&id=" + accountId +
+                "&v=" + version;
+            MG.Net.loadImage(url, function (loaded, loadedW, loadedH) {
+                if (destroyed || banned || myGen !== crispGen) {
+                    try { loaded.SetImage(""); } catch (e0) {}
+                    try { loaded.DeleteAsync(0); } catch (e1) {}
+                    return;
+                }
+                // A real viewport is 800x400 multiplied by one uniform UI scale (and some setups
+                // swap the axes), so its orientation-independent aspect stays near 2:1. Allow a
+                // broad band because the invisible 640px net host may clamp the 800px source width.
+                // The Worker uses a deliberately distant image sentinel when one IP is churning uncached
+                // viewports. Reject it before crispReady becomes true: stretching that sentinel and
+                // accepting clicks would map the visible image to the wrong logical coordinates.
+                var shortSide = Math.min(Number(loadedW), Number(loadedH));
+                var longSide = Math.max(Number(loadedW), Number(loadedH));
+                var aspect = shortSide > 0 ? longSide / shortSide : 0;
+                if (!(aspect >= 1.4 && aspect <= 2.5)) {
+                    try { loaded.SetImage(""); } catch (e2) {}
+                    try { loaded.DeleteAsync(0); } catch (e3) {}
+                    outerStatus("Map server is busy. Retrying…");
+                    $.Schedule(1.2, function () {
+                        if (!destroyed && !banned && myGen === crispGen) refreshCrispView();
+                    });
+                    return;
+                }
+                try {
+                    loaded.SetParent(crispLayer);
+                    loaded.style.position = "0px 0px 0px";
+                    loaded.style.width = "800px";
+                    loaded.style.height = "400px";
+                    loaded.style.visibility = "visible";
+                    try { loaded.SetAttributeString("hittest", "false"); } catch (e4) {}
+                    var old = crispImage;
+                    crispImage = loaded;
+                    if (old && old !== loaded) {
+                        try { old.SetImage(""); } catch (e5) {}
+                        try { old.DeleteAsync(0); } catch (e6) {}
+                    }
+                    crispReady = true;
+                    if (lastOuterStatus === "Map server is busy. Retrying…") {
+                        outerStatus("Shared world loaded.");
+                    }
+                } catch (e7) {
+                    try { loaded.SetImage(""); } catch (e8) {}
+                    try { loaded.DeleteAsync(0); } catch (e9) {}
+                    outerStatus("Couldn't display the pixel-perfect map viewport.");
+                }
+            }, function () {
+                if (!destroyed && !banned && myGen === crispGen)
+                    outerStatus("Couldn't load the pixel-perfect map viewport.");
+            }, { scaling: "none" });
         }
 
         function pollVersion() {
@@ -659,6 +728,13 @@
                             : ("REGION  " + point.x + ", " + point.y + "   ·   CLICK TO ZOOM");
                     });
                     cell.SetPanelEvent("onactivate", function () {
+                        // Grid geometry changes immediately on pan/zoom, while its matching
+                        // server-rasterised frame arrives asynchronously. Never let a click
+                        // target a blank or stale map while that frame is still in the FIFO.
+                        if (!crispReady) {
+                            outerStatus("Map view is still loading.");
+                            return;
+                        }
                         if (zoom < MAX_ZOOM) drillInto(cellCol, cellRow);
                         else {
                             var point = mapPoint(cellCol, cellRow);
@@ -676,7 +752,6 @@
             sending = false;
             pollGeneration++;
             markBanned(accountId);
-            try { remoteImage.SetImage(""); } catch (e0) {}
             try { crispImage.SetImage(""); } catch (e1) {}
             try { root.RemoveAndDeleteChildren(); } catch (e2) {}
             root.AddClass("mg-px-banned");
@@ -717,8 +792,6 @@
             destroy: function () {
                 destroyed = true;
                 pollGeneration++;
-                try { remoteImage.SetImage(""); } catch (e) {}
-                try { baseImage.SetImage(""); } catch (e2) {}
                 try { crispImage.SetImage(""); } catch (e3) {}
                 try { root.DeleteAsync(0); } catch (e4) {}
             }

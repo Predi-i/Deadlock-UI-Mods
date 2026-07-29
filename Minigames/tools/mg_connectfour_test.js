@@ -1,6 +1,6 @@
 "use strict";
 // Rules test for the shared Connect Four engine. Run: node tools/mg_connectfour_test.js
-// Loads panorama/scripts/rules/connectfour.js exactly like mg_rules_test.js — the IIFE sees
+// Loads panorama/scripts/rules/connectfour.js exactly like mg_rules_test.js - the IIFE sees
 // no `$` in Node, so it attaches to globalThis.MGRules.connectfour, the same bytes the
 // authoritative server validates with.
 const fs = require("fs");
@@ -69,7 +69,7 @@ function playCols(cols, first) {
     // A known drawing fill pattern: per column, a repeating colour block that avoids 4-in-a-row.
     // Columns pattern (bottom->top). Two colour "stripes" of height 3 per column, phase-shifted
     // across columns so no line of 4 forms. 1,1,1 then 2,2,2 vertically would give a vertical 4? No,
-    // only 3 of each — safe. Horizontally the phase shift breaks runs.
+    // only 3 of each - safe. Horizontally the phase shift breaks runs.
     let b = C.initialBoard();
     // For each column c, fill bottom 3 with colour A(c), top 3 with colour B(c), where the base
     // colour alternates every column so no horizontal/vertical/diagonal run reaches 4.
@@ -81,7 +81,7 @@ function playCols(cols, first) {
     }
     ok(C.isFull(b), "draw board is full");
     // This particular pattern DOES contain vertical triples only (max 3), and horizontal runs are
-    // broken by the alternating base — but verify there's truly no winner; if the engine disagrees
+    // broken by the alternating base - but verify there's truly no winner; if the engine disagrees
     // the assertion below documents it (and the test is still exercising winner()).
     ok(C.winner(b) === 0 ? C.isDraw(b) : true, "full board resolves to draw-or-win consistently");
 })();

@@ -1,6 +1,6 @@
 "use strict";
 // Ad-hoc rules test for the shared checkers + ttt engines. Run: node tools/mg_rules_test.js
-// Since the trust refactor the pure rules live in panorama/scripts/rules/*.js — the exact
+// Since the trust refactor the pure rules live in panorama/scripts/rules/*.js - the exact
 // same files the authoritative server runs. We load them here: each file's IIFE sees no `$`
 // (Node), so it attaches to globalThis.MGRules, which we then read.
 const fs = require("fs");
@@ -45,7 +45,7 @@ function empty() { return new Array(64).fill(0); }
     ok(caps.some(function (c) { return c.to === E.idx(2, 2); }), "English king captures forward");
     ok(caps.some(function (c) { return c.to === E.idx(6, 6); }), "English king captures backward");
     b = empty();
-    b[E.idx(7, 0)] = 2; b[E.idx(5, 2)] = 3; // enemy 2 squares away — no gap to land
+    b[E.idx(7, 0)] = 2; b[E.idx(5, 2)] = 3; // enemy 2 squares away - no gap to land
     ok(E.captureMoves(b, E.idx(7, 0)).length === 0, "English king cannot capture at range");
 
     // English: promotion ends the turn even when further captures exist.
@@ -55,7 +55,7 @@ function empty() { return new Array(64).fill(0); }
     ok(seqs.length === 1 && seqs[0].length === 1, "English promotion ends turn (no continue-as-king)");
 })();
 
-// Russian: promotion during capture — man becomes king and MUST continue as flying king.
+// Russian: promotion during capture - man becomes king and MUST continue as flying king.
 (function () {
     // White man at (2,1), black at (1,2) and (1,4). After capturing (1,2) and landing on (0,3)
     // the man is crowned; as a flying king it can now capture (1,4) and land on (2,5) or (3,6).
@@ -121,19 +121,28 @@ function empty() { return new Array(64).fill(0); }
 })();
 
 // 6) Full bot-vs-bot game terminates cleanly with only legal moves.
+// The loop mirrors the controller: it applies the SAME draw rules the real game does. Without
+// them a king-vs-king endgame shuffles forever and this test hit the 300-move safety cap ~15%
+// of the time (the bot's tie-break is an unseeded Math.random, so it was a genuine flake and
+// not a fixed-seed failure).
 (function () {
     let b = M.initialBoard();
-    let color = M.WHITE, moves = 0, allLegal = true;
+    let color = M.WHITE, moves = 0, allLegal = true, idleTurns = 0, ended = "";
     const t0 = Date.now();
     while (moves < 300) {
+        const dr = M.drawReason(b, idleTurns);
+        if (dr) { ended = "draw:" + dr; break; }
         const seqs = M.legalSequences(b, color);
-        if (seqs.length === 0) break;
+        if (seqs.length === 0) { ended = "no-move"; break; }
         const seq = M.chooseBotMove(b, color);
-        if (!seq) break;
+        if (!seq) { ended = "no-move"; break; }
         // verify the chosen sequence is among the legal ones (by from/to of first hop)
         const legalFirst = seqs.some(s => s[0].from === seq[0].from && s[0].to === seq[0].to);
         if (!legalFirst) allLegal = false;
+        const mover = b[seq[0].from];
+        const captured = M.anyCaptureFor(b, color);      // captures are forced, so this IS a capture
         for (const h of seq) M.applyHop(b, h.from, h.to);
+        idleTurns = (captured || mover === 1 || mover === 3) ? 0 : idleTurns + 1;
         color = color === M.WHITE ? M.BLACK : M.WHITE;
         moves++;
     }
@@ -141,8 +150,8 @@ function empty() { return new Array(64).fill(0); }
     let wc = 0, bc = 0;
     for (let i = 0; i < 64; i++) { if (M.colorOf(b[i]) === M.WHITE) wc++; else if (M.colorOf(b[i]) === M.BLACK) bc++; }
     ok(allLegal, "bot only played legal moves");
-    ok(moves < 300, "game terminated in " + moves + " moves (not the safety cap)");
-    console.log("    (white=" + wc + " black=" + bc + " moves=" + moves + " time=" + ms + "ms)");
+    ok(moves < 300, "game terminated in " + moves + " moves via " + (ended || "cap") + " (not the safety cap)");
+    console.log("    (white=" + wc + " black=" + bc + " moves=" + moves + " end=" + ended + " time=" + ms + "ms)");
 })();
 
 // ── tic-tac-toe ──────────────────────────────────────────────────────────────

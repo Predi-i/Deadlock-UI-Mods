@@ -1,6 +1,6 @@
 "use strict";
 // Rules test for the shared No-Limit Hold'em engine. Run: node tools/mg_poker_test.js
-// The pure rules live in panorama/scripts/rules/poker.js — the exact file the authoritative
+// The pure rules live in panorama/scripts/rules/poker.js - the exact file the authoritative
 // server dealer runs. Loaded like the other rules tests: the IIFE sees no `$` in Node, so it
 // attaches to globalThis.MGRules.poker.
 const fs = require("fs");
@@ -162,7 +162,7 @@ console.log("full bot games (chip conservation + termination)");
                 if (seat < 0) break;
                 const act = M.botAction(st, seat, rng);
                 if (!M.applyAction(st, seat, act)) {
-                    // illegal bot action — should never happen; force a fold to avoid a hang
+                    // illegal bot action - should never happen; force a fold to avoid a hang
                     allTerminated = false;
                     M.applyAction(st, seat, { type: M.legalActions(st, seat).canCheck ? "check" : "fold" });
                 }

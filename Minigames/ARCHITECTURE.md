@@ -6,8 +6,8 @@ debugging time. Read this before touching the code — several "obvious" fixes h
 wrong and are documented as traps below.
 
 Nothing in this mod can be verified by rendering from a shell. Panorama only runs inside
-Deadlock, and testing requires a **VPK repack + launch**. So: `node --check` + the two
-test harnesses (`tools/`) are the only automated safety net; everything visual is
+Deadlock, and testing requires a **VPK repack + launch**. So `npm run lint` + `npm test`
+(`tools/`) are the only automated safety net; everything visual is
 "confirmed in-game by the maintainer" or "unverified, reasoned from the game's own CSS".
 When you change layout/animation/input, say honestly which of the two it is.
 
@@ -16,13 +16,13 @@ When you change layout/animation/input, say honestly which of the two it is.
 ## 1. What this mod is
 
 Online mini-games played **inside Deadlock's pause (Esc) menu**, without leaving the
-match. Shipping games (all online + vs bot): **Checkers** (Russian draughts),
-**Tic-Tac-Toe**, **Chess** and **Connect Four**. **Durak** plays vs bot for 2–4 players
-and **online for 2 players** (worker-as-dealer, §8.6); 3–4-seat online is deferred. **Poker**
-(No-Limit Texas Hold'em, §8.8) plays vs bot and **online for 2–4 players** (worker-as-dealer,
-same private-deal channel as durak) — the online path is built + Node-tested but not yet
-in-game verified. **Pixel Battle** is one persistent public canvas backed by the Worker
-(§8.9). **Wordle** is a fully offline single-player game (§8.10).
+match. **Checkers** (Russian draughts), **Tic-Tac-Toe**, **Chess** and **Connect Four**
+support online play and bots. **Durak** (§8.6) and **Poker** (No-Limit Texas Hold'em,
+§8.8) support 2–4-player bot games and private 2–4-seat online tables through the
+worker-as-dealer transport; public Durak matchmaking remains heads-up. Those online
+dealer paths are built + Node-tested but not yet in-game verified. **Pixel Battle** is
+one persistent public canvas backed by the Worker (§8.9). **Wordle** is a fully offline
+single-player game (§8.10).
 
 Shared UI features across the games: a **per-turn countdown timer** (§9.1) in durak / poker /
 TTT / Connect Four, **server-authoritative side clocks** (time-control matchmaking) in chess /
@@ -34,8 +34,10 @@ Picker cards show a custom **`.vtex` image** (drawn by the maintainer, compiled 
 drawn by a child `<Image>` via `setFace()` in `renderMenu` (trap 14) — `s2r://panorama/
 images/cards/<key>.vtex`. Missing art falls back to a plain dark card.
 
-Three ways to play (see `mg_ui.js`):
+Four ways to play (see `mg_ui.js`):
 - **Quick Match** — public matchmaking; server pairs you with anyone else who pressed it.
+- **Quick Match → Select Multiple** — one search may offer game ids 1–5 and pairs on set
+  intersection. A Durak result always resolves to a two-seat dealer room and auto-starts.
 - **Create / Join** — private match via a shared 4-digit code.
 - **Play vs Bot** — fully offline, no server, no network calls at all.
 
@@ -117,10 +119,12 @@ server/                    Cloudflare Worker (dev-only, NOT packed into the VPK)
   wrangler.jsonc, README.md
 tools/                     dev-only Node test harnesses + build helpers (NOT packed)
   build_worker.js          concatenate the 6 rules/*.js + worker.core.js → server/worker.js
+                           (`--check` verifies the committed worker.js is in sync; first step of `npm test`)
+  build_pixelbattle_map.js generate the Pixel Battle land mask from the source map image
+  build_wordle_words.js    generate the Wordle answer + guess word lists
   gen_soundevents.js       generate the soundevents manifest consumed by mg_sound.js
-  strip_comments.js        strip comments from scripts for a Public (non-dev) build
   svg_to_deck.py           compile card SVGs → the deck/<S><R> art
-  mg_rules_test.js         checkers rules: captures, flying kings, full bot game
+  mg_rules_test.js         checkers rules: captures, flying kings, draws, full bot game
   mg_wordle_test.js        Wordle duplicate-letter scoring.
   mg_chess_test.js         chess rules: perft, castling, en passant, promotion, mate/stalemate
   mg_connectfour_test.js   connect-four rules + bot
@@ -128,7 +132,17 @@ tools/                     dev-only Node test harnesses + build helpers (NOT pac
   mg_poker_test.js         poker rules: hand ranking, betting rounds, showdown, bot
   mg_server_test.js        worker: matchmaking, seat tokens, per-move validation, concurrent lobbies
   mg_parity_test.js        client predictor vs server authority give identical legal moves
+  mg_pixelbattle_palette_test.js  palette distance sanity
+  mg_update_marker_test.js        update-marker image decoding
+  mg_simulate_resolutions.js      side-channel decode across 720p–8K
 ```
+
+A Public (non-dev) build ships without comments. That is NOT a step in this repo: run
+`tools/build_mod_strip_comments.ps1` (or the .bat) from the **Deadlock-UI-Mods** root — it copies
+the mod to a `<Mod>-stripped` staging folder, strips comments from the copy, re-parses every
+stripped .js and aborts if any of them broke, then hands the copy to `build_mod.ps1`. The working
+tree is never modified. It replaced `Minigames/tools/strip_comments.js`, which had to be pointed
+at an already-built tree by hand and silently corrupted a regex literal following a keyword.
 
 The `<include>` order in `base_hud.xml` is net → **rules/checkers, rules/ttt, rules/chess**
 → games → durak → ui: the shared engines must populate `$.MG.Rules` before the controllers
@@ -199,7 +213,7 @@ dim. Only `/api/probe` stays **literal pixels** — it's the calibration referen
 | `/api/cancel?code=C` | `(1,1)` |
 | `/api/join?code=C&tok=T` | `(G, tcIndex+1)` ok · `(20,1)` missing · `(21,1)` full · `(9,3)` bad-token |
 | `/api/match?code=C` | `(game, tcIndex*2+variantBit+1)` — resolved game/bank/checkers-variant · `(9,1)` gone/undecided |
-| `/api/status?code=C` | `(players, game+1)` · `(9,1)` gone |
+| `/api/status?code=C&tok=T` | `(players, game+1)` · `(9,1)` gone |
 | `/api/move?code=C&from=F&to=T&end=E&tok=T` | `(1,1)` ok · `(9,1)` not-your-turn · `(9,2)` illegal · `(9,3)` bad-token · `(9,9)` gone |
 | `/api/poll?code=C&since=S` | `(from, to)` RAW squares 0..63 · `(1,1)` nothing new |
 | `/api/reset?code=C&game=G&tok=T` | `(1,1)` · `(9,3)` bad-token |
@@ -241,12 +255,23 @@ Key encoding tricks and **why** (current codec is STEP=9 level-quantisation, 202
 - **`from != to` always** in a real move, so `(1,1)` is a safe "nothing new" marker.
 - **Sentinel widths** `{1 ok · 9 err · 20 missing · 21 full · 22 started}` are kept clear of
   every band (codes 24..55, clocks 30..39, rooms 1..4/51..54) so a live reply is never misread
-  as a sentinel. The in-game hot loop (move/poll/log/draw/clocks) is NEVER rate-limited — a
-  `(9,x)` throttle sentinel there would decode as a bogus move and corrupt the board.
+  as a sentinel. Hot game loops skip the generic request-frequency limiter because `(9,4)`
+  could decode as a bogus move; the distinct-code scan guard returns route-specific non-terminal
+  empty/retry/bad-token responses instead of a false lobby-gone.
 - **Clocks are per-seat** (a bank is 0..600 = 10 bits, needs both dims): width `30 + (sec>>6)`,
   height `sec&63`; caller passes `&seat=0|1` and reads both. Both clients read the SAME server
   clock, so flag-fall is server-decided with no drift.
 - **State is one Durable Object** ("hub") → strongly consistent, no KV lag between players.
+
+### Soft abuse controls and lobby lifetime
+
+- There are no automatic IP bans. One IP may touch sixteen distinct lobby codes per minute;
+  repeated reads of the same real code remain free. Formation floods retain the wider
+  60-requests/10-second burst. On the distinct-code abuse path, hot poll/log routes return
+  non-terminal “nothing new”, clocks retry, and cancel/leave remain available for cleanup.
+- `status`, `room`, `droom`, and `proom` include the caller's seat token. A valid seated client
+  refreshes a waiting lobby timestamp at most once per five minutes, so a real room can wait
+  beyond the 30-minute sweep while anonymous code probes cannot pin guessed lobbies.
 
 ### Calibration (the subtle part)
 
@@ -268,9 +293,11 @@ swapped**. So on boot-ish (lazily; see trap below) the client fetches `/api/prob
 
 ### Request discipline (learned the hard way)
 
-- **One request at a time.** Panorama's image loader wedges if several `<Image>` loads are
-  in flight — pending loads stall at dims 0 until timeout. So requests run through a strict
-  FIFO queue (`reqQueue`, `reqActive`); the poll loop and user actions never overlap.
+- **One image load at a time.** Panorama's image loader wedges if several `<Image>` loads are
+  in flight — pending loads stall at dims 0 until timeout. Dimension-encoded API traffic and
+  ordinary remote images (the update marker and Pixel Battle viewport) therefore share the same
+  strict FIFO (`reqQueue`, `reqActive`, `MG.Net.loadImage`); polls, actions and asset loads never
+  overlap. A successful ordinary load transfers its already-loaded `<Image>` to the caller.
 - **A started request always runs to completion** (response or 8s timeout). There is
   deliberately **no abort**: a silent abort once left `calibrating` latched true forever,
   deadlocking all networking.
@@ -305,12 +332,16 @@ These are the mistakes to NOT repeat. Every one was confirmed against the game's
    `transform`. Initial deal doesn't animate because a panel's first committed value is its
    baseline (no slide-in from the corner).
 
-4. **`hittest` / `hittestchildren` are XML-construction attributes, NOT live styles.**
-   Setting them at runtime with `SetAttributeString` does **not** reliably pass input
-   through. This is why the net host, sitting invisibly over the bare Esc menu, **ate hover
-   on every native setting** (Bug #1). The real fix was structural: **don't have the panel
-   exist over the menu** — calibration is now lazy (see trap 7), and the host is torn down
-   the moment the request queue drains (`releaseHost`).
+4. **`hittest` / `hittestchildren` set at runtime: works for DISABLING input, don't rely on it to
+   RE-ENABLE.** Confirmed in-game 2026-07-29: `setEscapeBackgroundActive` turns `hittest` off on
+   the native `#EscapeBackground` while our modal is open, and closing the mod via Esc **and** via
+   the X both work — so a runtime `SetAttributeString("hittest", "false")` does take effect. What it
+   does **not** fix is a panel of ours sitting over the menu and eating hover: the net host still
+   swallowed hover on every native setting with `hittest`/`hittestchildren` false at construction
+   (Bug #1). That fix had to be structural — **don't have the panel exist over the menu**:
+   calibration is lazy (trap 7) and the host is torn down as soon as the request queue drains
+   (`releaseHost`). Treat runtime hit-test writes as a blunt on/off for a panel you own, not as a
+   way to make an overlapping panel input-transparent.
 
 5. **Scaling a small effect IN PLACE: use `pre-transform-scale2d`, NOT `scale3d` inside
    `transform`.** `transform: translate3d(x,y) scale3d(0.2…)` multiplies the translate offset,
@@ -377,6 +408,9 @@ These are the mistakes to NOT repeat. Every one was confirmed against the game's
    left cluster `width: fit-children` and add a separate flexible `.mg-header-spacer`
    (`fill-parent-flow(1.0)`) between it and the right controls — exactly how the footer's
    status+spacer+tools row works. Then fixed-width right controls always stay on-screen.
+   The waiting-room title is the widest state, so `setTitle` additionally applies
+   `.mg-credit-hidden` to `by Predi_i` only while `view === "waiting"`; Support and Discord remain,
+   and every other view restores the credit.
 
 
 13. **A raw option/badge panel with no CSS parks at its parent's top-left and shows always.**
@@ -529,23 +563,46 @@ These are the mistakes to NOT repeat. Every one was confirmed against the game's
    - **Blur** (the reason for the switch, commit `d5a7433`): the earlier `pre-transform-scale2d` on the
      modal is a transform-family prop that runs AFTER layout and stretches the rendered texture → blurry
      bitmap above 100%. `ui-scale` re-lays-out instead. **Do not revert to a raster scale.**
-   - **Clipping** (2026-07-20, the maintainer's 200% screenshot with "PLAY WITH A FRIEND" cut off):
+   - **Clipping** (2026-07-20, the maintainer's 200% screenshot with "PLAY WITH A FRIEND" cut off;
+     revisited 2026-07-29 when 125% ate poker's LEAVE button):
      `ui-scale` grows the modal's LAYOUT box by the factor, and the modal is `vertical-align: center`
      in the full-screen overlay, so once `natural_height × scale` exceeds the viewport height the top
-     AND bottom clip off-screen. **`max-height: 92%` on `.mg-modal` can NOT stop this** — that cap is
-     in logical px, evaluated BEFORE `ui-scale` multiplies. Width never overflows (900px even ×2 is
-     < the 1920 canvas), so only height is at risk. Fix: `applyUiScale` measures the modal's natural
-     height (forcing `ui-scale:100%` for one frame first, so the reading is unambiguously unscaled and
-     the clamp can't spiral) against `overlay.actuallayoutheight` (the ui-scale-free full-screen
-     sibling = the viewport height, same layout units), and caps the applied scale to the largest whole
-     % that fits with a `FIT_MARGIN` (0.96) — **never below 100%** (the natural modal always fits under
-     the 92% cap). `clearBody` re-runs it on every view switch because a game board is taller than the
-     menu and fits a smaller max scale. ⚠ The clamp maths are reasoned + measured, not renderable from
-     a shell — needs a VPK repack to confirm the exact cap at 200% on 16:9 / ultrawide.
+     AND bottom clip off-screen. Width never overflows (900px even ×2 is < the 1920 canvas), so only
+     height is at risk.
+     **There must be only ONE ceiling.** A percentage CSS `max-height` resolves in the SCALED
+     space — the real ceiling is `maxHeight × viewport / scale`. At 92% that meant
+     `0.92·1080/1.25 = 795px` at 125%, against a poker view needing ~838px, and the engine simply
+     **truncated** the modal: no scrollbar, no warning, just a missing footer. Even a 99% backstop
+     clipped the first menu→Poker switch at 150–200% before JS could observe Poker's full natural
+     height. `.mg-modal` therefore has no CSS `max-height`; the JS clamp (`FIT_MARGIN` 0.98) is the
+     sole authority. `mg_uiscale_test.js` reads production CSS and fails if that cap returns.
+     `measureNaturalH` reads `modalPanel.actuallayoutheight` (window px) and divides the applied
+     scale back out, so it works at ANY current scale — the old version only read at exactly 100%,
+     so a player whose saved scale was already >100% never got a measurement and never got a clamp.
+     It runs on every view switch (`clearBody` schedules it a frame later, once the incoming view is
+     laid out) and keeps the **tallest** height seen: the poker felt is ~200px taller than the menu,
+     and clamping against the menu is precisely what let 125% clip. This is NOT the old per-view
+     re-fit that caused button jitter — that one forced the scale to 100% for a frame to take a clean
+     reading; this one just divides, so nothing moves unless a genuinely taller view appears.
+     It never clamps below 100%. Consequence, not a bug: on 1080p the poker view can't exceed ~126%,
+     so 150/175/200% all land there; the menu goes higher. On 1440p+ the steps open up.
+     ⚠ The clamp maths are covered by `tools/mg_uiscale_test.js` using heights measured off real
+     1080p screenshots, but the RENDERED result still needs a VPK repack to confirm on ultrawide.
+
+21. **The update check is one-shot on the first DL Arcade open, and marker shapes are
+    fail-closed.** Panorama cannot read a JSON/version response, so `mg_ui.js` loads the current
+    release's tiny PNG directly from the public `main` branch and reads only its rendered
+    dimensions. A square marker means current; the deliberately 8:1 marker means outdated.
+    Classification uses orientation-independent aspect ratio because UI scale multiplies both
+    axes and some setups swap them. Only two distant bands are accepted (`<=1.35` current,
+    `>=4.0` outdated); the gap is an error, never a false update. The automatic request runs once
+    per loaded HUD session when the player first presses DL Arcade. The footer button remains a
+    manual retry. An outdated result opens a same-class-state popup with no auto-close timer.
+    `tools/mg_update_marker_test.js` simulates 50–400% UI scale, swapped axes and ±2px errors.
 
 ---
 
-## 7. Checkers internals (mg_games.js)
+## 7. Checkers internals (mg_checkers.js)
 
 - **Board model**: flat `Array(64)`, canonical orientation. Values: `0` empty, `1` white
   man, `2` white king, `3` black man, `4` black king. **White = host = player 0**, starts
@@ -553,7 +610,8 @@ These are the mistakes to NOT repeat. Every one was confirmed against the game's
 - **Rules** (Russian draughts): men move forward only but **capture in any diagonal
   direction**; **flying kings** slide any distance; **forced capture**; **multi-jump
   chains**. Pure helpers (`simpleMoves`, `captureMoves`, `applyHop`, `legalSequences`) are
-  UI-free so `tools/mg_rules_test.js` can slice them.
+  UI-free, and since the split into `rules/*.js` the tests `require`/eval the module directly —
+  `tools/mg_rules_test.js` reads the file, no source slicing.
 - **Two variants** (2026-07-23). `rules/checkers.js` builds both engines from one
   `makeRules(simpleMovesFor, captureMovesFor, promotionEndsTurn)` factory: `R.checkers`
   (Russian — flying kings, men capture any direction) and `R.checkersEnglish` (English
@@ -661,15 +719,14 @@ strong but deliberately beatable (not full minimax). Marks are panel-drawn (trap
 
 ---
 
-## 8.5 Chess internals (mg_games.js)
+## 8.5 Chess internals (mg_chess.js)
 
 Chess deliberately mirrors checkers so the two share the board geometry, the click+drag
 input recipe, and the move/poll transport.
 
 - **Self-contained engine.** The `// ── chess: pure rules` … `// ── chess controller`
   section has NO dependency on the checkers helpers (it defines its own `cSq/cRow/cCol/
-  cSign/cType`), so `tools/mg_chess_test.js` can slice and run it standalone — same trick as
-  `mg_rules_test.js`. Perft from the start position (20 / 400 / 8902) is the correctness
+  cSign/cType`), so `tools/mg_chess_test.js` loads `rules/chess.js` and runs it standalone. Perft from the start position (20 / 400 / 8902) is the correctness
   anchor; targeted tests cover castling, en passant, promotion, checkmate, stalemate.
 - **Board model** differs from checkers: `Array(64)`, `0` empty, **sign = colour** (white
   `> 0`, black `< 0`), **abs = type** (1 P, 2 N, 3 B, 4 R, 5 Q, 6 K). "Colour" in chess code
@@ -706,16 +763,15 @@ the codec); the client derives it by replaying the shared rules on the same boar
 ## 8.6 Durak internals (mg_durak.js)
 
 Durak is the first game that does NOT fit the 2-player, "a move is two small ints"
-transport, so it is being built in **stages**. Stage 1 (shipping) is **offline vs bot
-only** — no server touched at all, exactly like the other games' bot mode. Online 2–4
-player play is Stage 2 and needs a different transport (see below); the pure rules are
-written once and reused by both.
+transport. It ships both offline-vs-bot and authoritative online play for 2–4 players;
+the pure rules are shared by both paths.
 
 - **Two-section file, like chess.** `// ── durak: pure rules ──` … `// ── durak
   controller ──`. The pure section is self-contained (no `$`, no `MG`) so
-  `tools/mg_durak_test.js` slices and runs it under Node — same trick as `mg_rules_test.js`.
-  ⚠ The banner strings are the slice markers, so prose comments must NOT contain the literal
-  `// ── durak controller` (an early draft did and the test sliced an empty body).
+  `tools/mg_durak_test.js` loads `rules/durak.js` and runs it under Node. (Historic note: the tests
+  used to SLICE the pure section out of one combined file by banner comment, which made those
+  banners load-bearing. Since the rules moved into their own modules that is gone — mg_wordle_test
+  is the last slicer, because Wordle has no separate rules module.)
 - **Card model.** id `0..35` = `suit*9 + rank`. suit `0..3` = S,H,D,C; rank `0..8` =
   6,7,8,9,T,J,Q,K,A (**higher rank index = stronger**). Trump = suit of the deck's bottom
   card. Art is a compiled `.vtex` per card, `deck/<S><R>.vtex` (e.g. `SA.vtex`), backs via
@@ -761,7 +817,7 @@ written once and reused by both.
   in during the attack phase (other attackers don't pile on — matters only at 3–4 players);
   throw-ins are allowed only while the table is fully covered. Full podkidnoy throw-in from
   all attackers is a Stage-2 concern.
-- **Stage 2 transport (BUILT — 2-player online).** The public move log can't hide hands, so the
+- **Stage 2 transport (BUILT — 2–4-player online).** The public move log can't hide hands, so the
   **worker is an authoritative dealer**: it owns the deck/hands/seed, deals privately per seat
   via an indexed `/api/ddraw` channel (gated by the seat token, so a caller can only read its
   OWN cards → a foreign token gets `(9,3)`, closing `trust_refactor_plan §1 T3`), and relays
@@ -773,10 +829,15 @@ written once and reused by both.
   the table is public), pulls its own card identities from `ddraw`, and sends its own actions
   via `dact` **without** optimistic local mutation (the echoed event is the single source of
   truth, so a rejected action simply never lands — no rollback). Roles rotate deterministically
-  after each bout (2-player: Bito swaps attacker/defender, Take keeps them). The online buttons
-  (Quick/Create/Join) are enabled in `mg_ui.js`, entering a 2-seat **room** view with a host
-  **Start**; the offline bot branch is unchanged. **⚠ 2 players only** — 3–4-seat online
-  seating/throw-in is deliberately deferred (the pure rules + offline bot already handle 2/3/4).
+  after each bout (2-player: Bito swaps attacker/defender, Take keeps them). Private 2–4-seat
+  rooms auto-start when their declared cap is filled; the host may still start early once at
+  least two live seats exist. Public quick/multi-quick is always heads-up and auto-starts as
+  soon as its second player is matched. The online buttons
+  are enabled in `mg_ui.js`: public Quick enters a 2-seat room, while private Create/Join uses
+  the dedicated `dcreate`/`djoin`/`droom` routes and a host-selected 2–4-seat room. The host
+  may start the dealer early once at least two seats are present; unfilled seats become
+  inactive holes.
+  The offline bot branch is unchanged.
   Verified in Node: server routes/privacy/encoding (`mg_server_test`), client↔server rule parity
   (`mg_parity_test`). Reasoned only (needs in-game repack): the online render/slide/sync itself.
 
@@ -823,12 +884,14 @@ with the worker (`initialBoard/dropRow/drop/winner/winningLine/isFull/legalCols/
 No-Limit Texas Hold'em, 2–4 players. Like durak it does NOT fit the 2-int transport, so online
 uses the **worker-as-dealer** model (§8.6): the worker owns the deck/hole cards/seed and relays
 public actions; each seat pulls only its OWN hole cards through a token-gated private channel.
-Registers **game id 6** (`enabled:true`). Offline vs bot is proven in Node; online is built but
-**not yet in-game verified**.
+Registers **game id 6** (`enabled:true`). Offline vs bot runs in Node — though note the test
+played only 40 hands per table, which is why a hand that froze whenever a blind put the opening
+seat all-in survived it (fixed 2026-07-29; the suite now stresses 400 hands × 1200 tables). Online
+is built but **not yet in-game verified**.
 
 - **Two-section file** like chess/durak: `// ── poker: pure rules ──` … `// ── poker controller
   ──`. The pure section (`rules/poker.js`, shared byte-for-byte with the worker) is self-contained
-  so `tools/mg_poker_test.js` slices and runs it under Node.
+  so `tools/mg_poker_test.js` loads it and runs it under Node.
 - **Card model.** id `0..51`; `suitOf = id/13`, `rankOf = id%13`, `cardVal = rank+2` (2..14, ace
   high). Note this is a DIFFERENT encoding from durak's `suit*9+rank` — poker uses the full
   52-card deck. Art: `deck/<S><R>.vtex` (reuses the durak deck), faces/backs drawn by a child
@@ -846,8 +909,9 @@ Registers **game id 6** (`enabled:true`). Offline vs bot is proven in Node; onli
   action row (Fold / Check / Call <amt> / Bet-or-Raise-to <target>).
 - **Online (worker-as-dealer).** Routes mirror durak: `pcreate/pjoin/proom/pstart/pact/plog` plus a
   token-gated private deal channel. A poker lobby carries `cap` (2–4, chosen at create), grows via
-  `pjoin` up to cap, and the host fires `pstart` (`pokerStart`) when ready; a mid-match leave folds
-  the seat out (`pokerLeave`). The client (`createPoker`, online branch) holds NO authority — it
+  `pjoin` up to cap, auto-deals when the declared cap is filled, and also lets the host fire
+  `pstart` (`pokerStart`) early once at least two live seats exist; a mid-match leave folds the
+  seat out (`pokerLeave`). The client (`createPoker`, online branch) holds NO authority — it
   rebuilds state from `plog` and pulls its own hole cards from the private channel, sending actions
   via `pact` without optimistic mutation (the echoed event is the single source of truth).
 - **Bot** (`rules/poker.js` `botAction`, driven from the controller): `preflopStrength` /
@@ -870,6 +934,16 @@ Registers **game id 6** (`enabled:true`). Offline vs bot is proven in Node; onli
 ---
 
 ## 8.9 Pixel Battle (mg_pixelbattle.js)
+
+- Anti-abuse is deliberately tolerant of households/NATs: one IP can spend six fresh 100-pixel
+  banks immediately, then refills 120 changed pixels/minute. This keeps rotating the
+  client-reported Steam32 from resetting the economy without banning the address. Expensive
+  uncached 800x400 viewport renders allow a burst of twelve and one new frame/second; cache hits
+  are free and the client retries the busy-image sentinel.
+- Audit actions are append-only for 180 days. Cleanup removes expired action and per-user-index
+  records in bounded 512-action batches; while catching up, every new action runs another batch,
+  then it returns to a daily cadence. **512 is cleanup batch size, not a player/game/action quota.**
+  Pixel colours remain; pixels whose ownership action expired become unattributed in the admin inspector.
 
 - Pixel Battle is one public 512×256 canvas on a real two-colour Natural Earth world-map PNG,
   with no room creation, join code, or matchmaking.
@@ -895,11 +969,14 @@ Registers **game id 6** (`enabled:true`). Offline vs bot is proven in Node; onli
   returning its reserved pixel. Navigation uses a fixed two-row zoom group plus keyboard-style
   arrow D-pad so adding controls cannot push a direction button onto a third row.
 - Uploads contain 10–128 unique pixels. The client checks and batches first; the Worker deduplicates,
-  validates the bank again, rate-limits uploads, and persists modified 32×32 tiles.
+  validates the bank again, rate-limits uploads, and persists modified 32×32 tiles. The shared
+  per-IP budget described above prevents Steam32 rotation from resetting this protection. Player
+  uploads and admin paint/undo commit tiles/version, audit, and ownership in one storage transaction
+  (player uploads include the bank debit in that same transaction).
 - Clients poll only the 12-bit canvas version, backing off from 8 to 30 seconds while idle, and
   download the 512×256 shared PNG only when that version changes.
-- Every accepted player batch is also stored as an immutable audit action containing Steam32,
-  timestamp, and exact per-pixel `before → after` deltas. The browser admin at `/admin` can search
+- Every accepted player batch is also stored as an append-only retained audit action containing
+  Steam32, timestamp, and exact per-pixel `before → after` deltas. The browser admin at `/admin` can search
   this log by Steam32, paint without using a player's bank, and undo an action. Safe undo skips
   coordinates changed by somebody later; force undo is explicit and overwrites those conflicts.
 - `/admin*` fails closed unless GitHub OAuth is configured with `GITHUB_CLIENT_ID`,
@@ -927,7 +1004,7 @@ Registers **game id 6** (`enabled:true`). Offline vs bot is proven in Node; onli
   accepted paint reuses the ownership read that captures its previous owners, then performs
   one ownership write per touched tile; it creates no additional client request. Undo restores
   both the previous colour and previous owner. For pre-index actions, Inspect scans the existing
-  immutable audit log once for that coordinate and caches the answer in the ownership tile.
+  retained audit log once for that coordinate and caches the answer in the ownership tile.
 - Action lists contain summaries only. Preview fetches one full action on demand, computes each
   pixel's current colour and whether safe undo would still apply, renders the exact post-undo
   colours, marks conflicts red, and zooms to the action bounds. Inspect makes one on-demand admin
@@ -951,8 +1028,9 @@ Registers **game id 6** (`enabled:true`). Offline vs bot is proven in Node; onli
 - The controller self-registers game id 8 and is mounted directly from its picker detail view.
   The existing local Play Again path remounts it with another answer.
 - Six explicit rows of five tiles and three explicit keyboard rows avoid Panorama wrap/layout
-  ambiguity. Input comes from the on-screen keyboard, so it does not depend on an undocumented
-  Deadlock key event bridge.
+  ambiguity. Input arrives BOTH ways: a hidden `TextEntry` overlapping the board captures the
+  physical keyboard (`ontextentrychange` per keystroke, `oninputsubmit` on Enter — the game's own
+  idiom), and the on-screen keyboard rows remain clickable. The physical path is the primary one.
 - `scoreGuess(answer, guess)` uses two passes: exact matches consume first, then remaining answer
   letter counts are consumed by present matches. This prevents duplicate letters in a guess from
   receiving more yellow/green marks than the answer actually contains; `mg_wordle_test.js` covers it.
@@ -997,8 +1075,8 @@ both defined ONCE in `mg_net.js`:
   pure waste that scaled with idle players, not games played. Ramps HARD and monotonically (a
   waiting room has no "real move" to reset on): steps `[1.5, 1.5, 3.0, 3.0, 4.0, 5.0]`s, clamped at
   5s. Each waiting loop keeps its own `var misses = 0` and passes `misses++` in both branches. The
-  six loops on it: `pollDurakRoom`, `pollPokerRoom`, `pollDurakTable`, `waitForJoiner`,
-  `waitForMultiMatch`, and the rematch `tick` (`mg_ui.js`).
+  four loops on it: shared `pollLobbyRoom`, `waitForJoiner`, `waitForMultiMatch`, and the rematch
+  `tick` (`mg_ui.js`).
 
 ⚠ There is **no `Net` alias** in the controllers — call both fully qualified as `MG.Net.pollDelay`
 / `MG.Net.waitDelay` (a bare `Net.pollDelay` throws `ReferenceError` and, like the TTT `sfx` crash,
@@ -1049,6 +1127,11 @@ Two DIFFERENT time widgets, both built in `mg_games.js` and exposed on `MG.Widge
     measures its height from the board, not the bar.
   - **`opts.boardW`** attaches the bar to that board's LEFT EDGE (TTT/C4 pass it — narrow centred
     boards; durak/poker omit it and keep the wide-felt gutter placement).
+  - **An authoritative action in flight parks the timer.** Durak/Poker set `pendingAct` and call
+    `refreshTimer()` before entering the network FIFO, so an expiry callback cannot forfeit a move
+    that the server is already processing. A rejection or transport failure clears `pendingAct`
+    and starts a fresh local countdown; an accepted action stays parked until its echoed event
+    changes the authoritative turn.
 
 ### 9.2 Sound (`MG.Sound`, mg_sound.js)
 
@@ -1067,34 +1150,28 @@ games: `MoveSelf`/`MoveOpp`, `Check`, `Promote`, `Illegal`, `Premove`, `GameStar
 
 Before committing, always:
 ```
-npm run lint                                   # ESLint no-undef net — catches a call to a name
-                                               # not defined in scope (the class of bug that ships
-                                               # green past node --check: `sfx`/`Net` used where the
-                                               # controller never declared them). See §10.1.
-node tools/build_worker.js                     # regenerate server/worker.js from core + rules
-node --check panorama/scripts/rules/checkers.js
-node --check panorama/scripts/rules/ttt.js
-node --check panorama/scripts/rules/chess.js
-node --check panorama/scripts/rules/connectfour.js
-node --check panorama/scripts/rules/durak.js
-node --check panorama/scripts/rules/poker.js
-node --check panorama/scripts/mg_games.js
-node --check panorama/scripts/mg_connectfour.js
-node --check panorama/scripts/mg_durak.js
-node --check panorama/scripts/mg_poker.js
-node --check panorama/scripts/mg_sound.js
-node --check panorama/scripts/mg_ui.js
-node --check panorama/scripts/mg_net.js
-node --check server/worker.js
-node tools/mg_rules_test.js
-node tools/mg_chess_test.js
-node tools/mg_connectfour_test.js
-node tools/mg_durak_test.js
-node tools/mg_poker_test.js
-node tools/mg_server_test.js
-node tools/mg_parity_test.js                    # client predictor == server authority
-
+npm run lint                                   # ESLint net: no-undef catches a call to a name not
+                                               # defined in scope (the class of bug that ships green
+                                               # past node --check: `sfx`/`Net` used where the
+                                               # controller never declared them), plus
+                                               # operator-linebreak, which keeps a shipped line from
+                                               # starting with a binary operator (the Valve minifier
+                                               # inserts a `;` there). See §10.1.
+npm test                                       # the whole harness suite, in one command:
+                                               #   build_worker --check   committed worker.js is in
+                                               #                          sync with rules + core
+                                               #   chess / rules / c4 / durak / poker  pure engines
+                                               #   wordle / pixelbattle palette / widgets
+                                               #   server                 worker protocol + lobbies
+                                               #   parity                 client predictor ==
+                                               #                          server authority
+                                               #   update marker          release-marker decoding
 ```
+If `build_worker --check` reports the worker is stale, run `npm run build:worker` and commit the
+regenerated `server/worker.js` with your change — it is the deploy artifact.
+
+A Public build additionally goes through `../tools/build_mod_strip_comments.ps1` (see §3), which
+strips comments from a throwaway copy and refuses to build if stripping broke any script.
 
 Then say plainly what is **verified** (syntax, pure rules, server protocol) vs what is
 **only reasoned** (anything visual/animated/drag/hover — needs a VPK repack + in-game run
@@ -1102,13 +1179,20 @@ by the maintainer). Don't present unrendered layout or input behavior as confirm
 
 ### 10.1 The lint net (why it exists, what it does NOT cover)
 
-The Panorama **controllers** (`mg_games.js`, `mg_connectfour.js`, `mg_durak.js`, `mg_poker.js`,
-`mg_ui.js`) have **0% automated coverage**: they call `$.CreatePanel` / `$.Schedule` /
+The Panorama **controllers** (`mg_checkers`, `mg_ttt`, `mg_chess`, `mg_connectfour`, `mg_durak`,
+`mg_poker`, `mg_pixelbattle`, `mg_wordle`, `mg_ui`) have **almost no automated coverage**: they call
+`$.CreatePanel` / `$.Schedule` /
 `$.RegisterEventHandler`, so they can't run outside the game. `node --check` only parses
 syntax; the `tools/*_test.js` harnesses exercise the pure engines (`rules/*.js`) + the worker,
 never the controllers. That gap shipped two live `ReferenceError`s in one week (`sfx` used in the
 TTT controller that never declared one; a bare `Net.pollDelay` where no `Net` alias exists) — both
 crash only when their branch runs in-game, both invisible to every check we had.
+
+The one exception: state-free helpers hoisted onto `MG.Widgets` (mg_games.js) CAN be tested, and
+`tools/mg_widgets_test.js` does that for `winPos` / `parsePx` / `squareFromPanel` / `makeNavBtn` /
+`setNavState`. Anything that reads a controller's closure (board, cells, history) still can't be.
+It is also possible to drive a whole view under a fake `$` — the lobby-room refactor was verified
+that way — but that is a per-change harness, not standing coverage.
 
 `npm run lint` (ESLint 9 flat config, `eslint.config.js`) is the cheap guard for exactly that
 class. It is deliberately **narrow — a bug net, not a style linter**: `no-undef` (the one that

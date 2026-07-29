@@ -1,18 +1,18 @@
 "use strict";
 
 /*
- * mg_durak.js — "Durak" (Podkidnoy durak) for the Deadlock Minigames mod.
+ * mg_durak.js - "Durak" (Podkidnoy durak) for the Deadlock Minigames mod.
  *
- * Stage 1 (this file, for now): OFFLINE play vs bot(s). No server calls at all — the
+ * Stage 1 (this file, for now): OFFLINE play vs bot(s). No server calls at all - the
  * whole deck/deal/rules run locally, exactly like the other games' bot mode. Online
  * 2-4 player play (worker as authoritative dealer + per-seat private deal channel) is
  * Stage 2 and will reuse the pure rules below unchanged.
  *
  * The file is split into two clearly marked sections (see the banner comments below):
- *   "pure rules"  — self-contained, UI-free, no $ / no MG. tools/mg_durak_test.js slices
+ *   "pure rules"  - self-contained, UI-free, no $ / no MG. tools/mg_durak_test.js slices
  *                   exactly this section and runs it under Node (same trick as the
  *                   chess/checkers pure sections in mg_games.js).
- *   "controller"  — Panorama rendering + input + bot loop. Not sliceable.
+ *   "controller"  - Panorama rendering + input + bot loop. Not sliceable.
  *
  * Card model: id 0..35 = suit*9 + rank. suit 0..3 = S,H,D,C. rank 0..8 = 6,7,8,9,T,J,Q,K,A
  * (higher rank index = stronger). Trump = suit of the deck's bottom card.
@@ -46,7 +46,7 @@
 
     // ── durak controller ───────────────────────────────────────────────────────────
     // Panorama rendering, input and the offline bot loop. NONE of this is verifiable from
-    // a shell — it only runs inside Deadlock after a VPK repack. Reasoned from the game's
+    // a shell - it only runs inside Deadlock after a VPK repack. Reasoned from the game's
     // CSS idioms + the other controllers in mg_games.js, not confirmed in-game.
 
     var DECK_DIR = "s2r://panorama/images/deck/";
@@ -60,16 +60,7 @@
     // The container keeps ALL of its state (transform slide, .mg-dk-anim, .mg-dk-trump
     // rotateZ, playable frame); the Image just fills it and is transparent to input, so drag
     // hit-testing still lands on the card panel.
-    function setFace(container, url) {
-        var img = container._faceImg;
-        if (!img) {
-            img = $.CreatePanel("Image", container, "", { scaling: "stretch-to-fit-preserve-aspect" });
-            img.AddClass("mg-face-img");
-            try { img.SetAttributeString("hittest", "false"); } catch (e) {}
-            container._faceImg = img;
-        }
-        img.SetImage(url);
-    }
+    var setFace = MG.Widgets.setFace;   // shared with poker / chess / the picker (see mg_games.js)
     function setBack(container) { setFace(container, BACK_URL); }
 
     // Where each opponent sits on MY screen, given their offset from me around the table.
@@ -78,7 +69,7 @@
     // online (Stage 2).
     // Which top-band zone an opponent occupies, given their seat offset from me (I'm always at the
     // bottom). Every opponent lives along the TOP so each gets the SAME cluster grammar (avatar +
-    // hidden-hand row beside it) — no more mixing a top layout with side layouts, and nothing lands
+    // hidden-hand row beside it) - no more mixing a top layout with side layouts, and nothing lands
     // on the deck (left-mid) or the table pile (centre). 1 opp → top-centre; 2 → top-left/right;
     // 3 → top-left/centre/right. rel walks 1..N-1 clockwise from me.
     function seatZone(rel, N) {
@@ -88,7 +79,7 @@
     }
 
     // Stage geometry (px, in the stage's own coordinate space). Cards are positioned by
-    // transform:translate3d — Panorama has no position:absolute — inside a flow-children:none
+    // transform:translate3d - Panorama has no position:absolute - inside a flow-children:none
     // stage, exactly like the checkers pieces overlay. Because a card PANEL persists across
     // refreshes (keyed by card id), reassigning its transform makes it SLIDE (the .mg-dk-anim
     // transition), so playing a card glides from hand → table and a draw glides from the deck.
@@ -117,7 +108,7 @@
         // Poll GENERATION guard (same idiom as checkers/chess pollToken). Every pollLoop chain
         // captures the current pollGen; a stale chain bails the moment pollGen moves. Without it
         // a `sendAct` success that kicks pollLoop() while a prior `$.Schedule(0.6, pollLoop)` is
-        // still pending gives TWO concurrent loops sharing logSeq — they double-apply one event
+        // still pending gives TWO concurrent loops sharing logSeq - they double-apply one event
         // and skip the next (an opponent's card silently vanishes; dealing corrupts the state).
         var pollGen = 0;
         var pollMisses = 0;              // consecutive empty event-log polls (drives the adaptive cadence)
@@ -142,7 +133,7 @@
             for (var i = 0; i < n; i++) arr.push(-1);
             st.deck = arr;
         }
-        // Placeholder id for a hidden opponent card (never rendered as a face — opponents only
+        // Placeholder id for a hidden opponent card (never rendered as a face - opponents only
         // show back-bunches + a count badge).
         var HIDDEN = -1;
 
@@ -157,8 +148,8 @@
         var root = $.CreatePanel("Panel", container, "MG_DurakRoot");
         root.AddClass("mg-durak");
 
-        // EVERYTHING — the opponents' avatar tiles, the deck+trump, the attack/defense pairs
-        // and MY hand — lives on ONE flow-children:none felt STAGE (fixed size), so a card can
+        // EVERYTHING - the opponents' avatar tiles, the deck+trump, the attack/defense pairs
+        // and MY hand - lives on ONE flow-children:none felt STAGE (fixed size), so a card can
         // slide anywhere across it and the players sit ON the felt. The stage never resizes, so
         // playing a card can't make the modal "jump".
         var stage = $.CreatePanel("Panel", root, "MG_DkStage"); stage.AddClass("mg-durak-stage");
@@ -178,10 +169,10 @@
         var cardEls = {}; // card id -> persistent face panel on the stage
 
         // One-shot hint for the NEXT render's animateOut: when a bout ends by TAKE, the table cards
-        // don't just leave — they go into the TAKER's hand. render() is a stateless reconcile, so
+        // don't just leave - they go into the TAKER's hand. render() is a stateless reconcile, so
         // without this it would fling every de-"wanted" card to the deck and delete it, and a bot's
         // (or online opponent's) taken cards LOOK like they vanish (they're actually in the hidden
-        // hand — the count badge grows). boutTakeSeat routes those cards to that seat's hand origin
+        // hand - the count badge grows). boutTakeSeat routes those cards to that seat's hand origin
         // instead. Cleared after each render. -1 = normal (fly to deck: draws leaving, Bito discard).
         var boutTakeSeat = -1;
 
@@ -197,7 +188,7 @@
             if (st.table.length === 0) return st.attacker;
             // Covered table: a seat that can still THROW IN gets first dibs (pile on a match), else
             // the first UNSETTLED seat is on the clock to confirm Bito (it holds cards but nothing to
-            // add). firstUnsettled walks turn order and returns -1 only once everyone has confirmed —
+            // add). firstUnsettled walks turn order and returns -1 only once everyone has confirmed -
             // then fall back to the attacker (afterAction's canBito path beats the table).
             var pt = pendingThrowers(st);
             if (pt.length) return pt[0];
@@ -206,12 +197,12 @@
         }
         function myTurn() { return !destroyed && st.phase !== "over" && actionActor() === mySeat; }
         // Can I initiate an ATTACK / THROW-IN via input right now? ANY in-play non-defender may
-        // throw in a legal card during an open bout (the defining podkidnoy mechanic) — but not
+        // throw in a legal card during an open bout (the defining podkidnoy mechanic) - but not
         // once I've passed on the current table (my knock stands until a fresh card reopens it).
         //  • online (2–4 seats): the server serialises simultaneous throw-ins and rejects a
         //    now-illegal one, which sendAct() surfaces gracefully.
         //  • offline: bots drive the other seats; the turn loop only lets input go live when it's
-        //    actually my window. legalAttacks() gates which cards qualify — for an empty table it's
+        //    actually my window. legalAttacks() gates which cards qualify - for an empty table it's
         //    empty for everyone but the opener, so a 2-player game keeps its old heads-up feel.
         function canAttackInput() {
             if (destroyed || pendingAct || st.phase === "over") return false;
@@ -229,9 +220,9 @@
         // ── per-turn countdown ───────────────────────────────────────────────────────
         // Two flavours of "on the clock", because durak has a MANDATORY action (defend, or open
         // an empty table as the primary attacker) and an OPTIONAL one (a throw-in window on a
-        // covered table — you MAY pile on a matching card or just pass). The maintainer's ruling:
+        // covered table - you MAY pile on a matching card or just pass). The maintainer's ruling:
         //   • MANDATORY timeout  → you lose the game (2-player) / you leave the table (online 3–4).
-        //   • OPTIONAL timeout   → auto-pass (Bito), no penalty — you just declined to throw in.
+        //   • OPTIONAL timeout   → auto-pass (Bito), no penalty - you just declined to throw in.
         // timerMode() classifies the current LOCAL obligation; refreshTimer() starts/stops the bar
         // to match; onTimerExpire() applies the ruling. pendingAct (a send in flight) parks the
         // clock so a slow round-trip can't fire a bogus timeout.
@@ -254,7 +245,7 @@
         // (re)starts the countdown when a NEW mandatory/optional window opens, stops it otherwise.
         // We don't restart a still-running bar of the same mode, so the 20s doesn't reset when the
         // felt changes but my SAME obligation persists (e.g. another attacker throws in while I'm
-        // still the one defending — I keep my original clock). A mode CHANGE (or a fresh window)
+        // still the one defending - I keep my original clock). A mode CHANGE (or a fresh window)
         // arms a new 20s.
         var timerActiveMode = "";
         function refreshTimer() {
@@ -272,7 +263,9 @@
         // The bar emptied. Mandatory → forfeit (2p: I lose; online 3–4: I leave the table, which
         // the server turns into a fold-out). Optional → I simply pass (auto-Bito for my seat).
         function onTimerExpire(mode) {
-            if (destroyed || gameOver || st.phase === "over") return;
+            // stop() invalidates the widget callback, but keep this guard too: an expiry tick
+            // already on Panorama's callback stack must never punish an action in flight.
+            if (destroyed || gameOver || pendingAct || st.phase === "over") return;
             timerActiveMode = "";
             if (mode === "optional") {
                 // Decline to throw in: pass. Online the server tallies it; offline record my knock.
@@ -311,7 +304,7 @@
         }
         // Deck stack on the LEFT, at the table row's height. The trump card lies UNDER the deck,
         // rotated 90° (see trumpSlot + .mg-dk-trump), with its right half poking clear so the suit
-        // reads. ⚠ The old "300% scale" trump glitch was NOT the rotation — it was a Panel
+        // reads. ⚠ The old "300% scale" trump glitch was NOT the rotation - it was a Panel
         // background painting the undecoded .vtex at native px on frame 1. Fixed by drawing the
         // face with a child <Image> (setFace) that sizes to its CSS box. The rotation is correct
         // and stays (it's on the container; the Image fills it).
@@ -327,7 +320,7 @@
         // A card an opponent PLAYS glides in from the top-centre (where they sit); a drawn HAND
         // card glides from the deck.
         function oppOriginSlot() { return { x: STAGE_W / 2 - CARD_W / 2, y: 60 }; }
-        // Where a given seat's HAND lives on the felt — the point taken cards should fly TO when
+        // Where a given seat's HAND lives on the felt - the point taken cards should fly TO when
         // that seat picks up the table. Mirrors buildOpponents' placement (me bottom-centre, top
         // opponent top-centre, side opponents at their avatar). Card-corner coords (top-left), so
         // it lines up with the card transforms in ensureCard/animateOut.
@@ -416,7 +409,7 @@
         // backs behind opponents. My own tile is bottom-LEFT (balancing the top opponent and
         // clear of my centred hand); opponents by relative seat.
         var AV = 64;
-        // Width of a seat's hidden-hand back row for a given card count — mirrors buildBackBunch's
+        // Width of a seat's hidden-hand back row for a given card count - mirrors buildBackBunch's
         // compressing step so callers can centre other things (taken-card target) on the row. The
         // cap TIGHTENS with 3 opponents (4-player) so three "avatar + fan" clusters tile the 680px
         // top band without overlapping (at 170 they'd need ~738px and collide in the middle).
@@ -432,7 +425,7 @@
         // (fixes B2's "avatar far from its cards"). Every opponent lives in the TOP band and its
         // cluster is CENTRED in an evenly-divided column, so 1/2/3 opponents spread out neatly and
         // nothing lands on the deck (left-mid) or the table pile (centre). rel→column via zone.
-        //   returns { avX, avY } — avatar tile CENTRE ; { cardX0, cardYc } — back-row left edge + centre-Y
+        //   returns { avX, avY } - avatar tile CENTRE ; { cardX0, cardYc } - back-row left edge + centre-Y
         var CLUSTER_TOP_Y = 60;                 // avatar/fan centre-Y for every top-band seat
         var CLUSTER_GAP = 12;                   // avatar → fan gap
         function clusterCenterX(zone) {
@@ -446,7 +439,7 @@
             var cx = clusterCenterX(zone);
             // Heads-up: centre the FAN on the stage centre so it mirrors MY hand (handSlot also
             // centres on STAGE_W/2), with the avatar attached to its left. Centring the whole
-            // avatar|gap|fan cluster instead pushed the fan right of centre by (AV+GAP)/2 — the
+            // avatar|gap|fan cluster instead pushed the fan right of centre by (AV+GAP)/2 - the
             // "opponent cards shifted right" the single-opponent table showed. For 3-4 players the
             // clusters tile fixed columns, so there we keep centring the whole cluster (centring each
             // fan would overlap the neighbouring column).
@@ -464,11 +457,11 @@
                 cardX0: left + AV + CLUSTER_GAP, cardYc: CLUSTER_TOP_Y
             };
         }
-        // A FLAT horizontal row of backs behind an opponent tile — mirrors MY hand (handSlot:
+        // A FLAT horizontal row of backs behind an opponent tile - mirrors MY hand (handSlot:
         // rot 0, a plain left-to-right row), per the maintainer. The old version stepped only 7px
         // (cards 54px wide → heavy overlap) AND rotateZ'd each by 3°, so the backs read as a
         // tilted VERTICAL pile instead of a hand.
-        // Show EVERY card, not a cap of 6 — a defender who takes the table can hold 10+, and the old
+        // Show EVERY card, not a cap of 6 - a defender who takes the table can hold 10+, and the old
         // 6-cap made the backs disagree with the count badge (maintainer 2026-07-18: "bot only ever
         // draws 6"). Like the real hand (handSlot), the step COMPRESSES as the count grows so the row
         // stays within a bounded width instead of running off the felt.
@@ -545,7 +538,7 @@
             sortByValue(myHand, st.trump);
             var n = myHand.length;
             var play = {};
-            // Attacks / throw-ins: ANY in-play non-defender can play a legal attack card — the
+            // Attacks / throw-ins: ANY in-play non-defender can play a legal attack card - the
             // opener when the table's empty, or a matching-rank throw-in otherwise (the heart of
             // 3–4-player podkidnoy). legalAttacks() encodes every rule (rank on table, table not
             // full, never more uncovered than the defender can cover), so we needn't re-gate on
@@ -605,7 +598,7 @@
         // A card leaving the "wanted" set flies away and is deleted. Destination: normally the deck
         // (a Bito discard, or the odd stale card), but when the bout ended by TAKE it flies to the
         // TAKER's hand instead (boutTakeSeat) so a pickup reads as "these cards go to that player",
-        // not "into the void". Table cards only — a hand card that merely re-slots keeps its element.
+        // not "into the void". Table cards only - a hand card that merely re-slots keeps its element.
         function animateOut(el, toTake) {
             var dst = (toTake && boutTakeSeat >= 0) ? seatHandSlot(boutTakeSeat) : deckSlot();
             try {
@@ -619,7 +612,7 @@
         // drag-and-drop (pick a hand card up, drop it on the table)
         // Reuses the proven QOLLOCK/checkers recipe: drag a throwaway GHOST (not the real
         // card), then on release read the ghost's absolute WINDOW position (the only channel
-        // that survives the engine culling the ghost out of layout — see ARCHITECTURE §7) and
+        // that survives the engine culling the ghost out of layout - see ARCHITECTURE §7) and
         // map it into stage coords to decide the drop target. Click-to-play still works.
         function winPos(panel) {
             if (!panel || !panel.GetPositionWithinWindow) return null;
@@ -637,10 +630,10 @@
             var layerW = (cardLayer && isFinite(cardLayer.actuallayoutwidth) && cardLayer.actuallayoutwidth > 0)
                 ? cardLayer.actuallayoutwidth : STAGE_W;
             var scale = layerW / STAGE_W;
-            var gw = (ghost && isFinite(ghost.actuallayoutwidth) && ghost.actuallayoutwidth > 0
-                      && ghost.actuallayoutwidth < 100000) ? ghost.actuallayoutwidth : CARD_W * scale;
-            var gh = (ghost && isFinite(ghost.actuallayoutheight) && ghost.actuallayoutheight > 0
-                      && ghost.actuallayoutheight < 100000) ? ghost.actuallayoutheight : CARD_H * scale;
+            var gw = (ghost && isFinite(ghost.actuallayoutwidth) && ghost.actuallayoutwidth > 0 &&
+                      ghost.actuallayoutwidth < 100000) ? ghost.actuallayoutwidth : CARD_W * scale;
+            var gh = (ghost && isFinite(ghost.actuallayoutheight) && ghost.actuallayoutheight > 0 &&
+                      ghost.actuallayoutheight < 100000) ? ghost.actuallayoutheight : CARD_H * scale;
             var cx = gp.x + gw / 2, cy = gp.y + gh / 2;
             return { x: (cx - lp.x) / scale, y: (cy - lp.y) / scale };
         }
@@ -658,7 +651,7 @@
                 // GAME-BREAKER FIX (2026-07-18): a defender's card is only DRAGGABLE if it can
                 // legally cover some open attack (computeWanted gates that), so any drop of it onto
                 // the felt UNAMBIGUOUSLY means "defend". The old code additionally required the drop
-                // to land within ~1.4 card widths of the target attack or it snapped back SILENTLY —
+                // to land within ~1.4 card widths of the target attack or it snapped back SILENTLY -
                 // so a player (esp. with the overlapping 5–6-card table) would drag their last card,
                 // miss the pixel target, and watch it float back with no explanation ("не мог кинуть
                 // карту, кнопок никаких"). Now: cover the NEAREST open pair this card can beat,
@@ -717,7 +710,7 @@
 
         function buildControls() {
             controlsZone.RemoveAndDeleteChildren();
-            // BITO ("done — beat the table") — offered to ANY in-play attacker that hasn't confirmed
+            // BITO ("done - beat the table") - offered to ANY in-play attacker that hasn't confirmed
             // while a covered bout is open, not just the primary attacker. Under the explicit-Bito
             // rule EVERY attacker holding cards must press this before the table is beaten (or their
             // 10s window auto-passes it). Online the server tallies the passes and beats only on full
@@ -730,14 +723,14 @@
                           st.hands[mySeat].length > 0 && !pendingAct;
             if (iCanAdd) {
                 // Am I the last attacker who still owes a confirm? True when no OTHER seat is unsettled
-                // and no OTHER seat can still throw in — then my Bito beats the table outright.
+                // and no OTHER seat can still throw in - then my Bito beats the table outright.
                 var othersPending = false;
                 for (var os = 0; os < numPlayers; os++) {
                     if (os === mySeat) continue;
                     if (!D.attackSeatSettled(st, os)) { othersPending = true; break; }
                 }
                 var lastToSettle = !othersPending && pendingThrowers(st).filter(function (s) { return s !== mySeat; }).length === 0;
-                mkButton(controlsZone, lastToSettle ? "Bito" : "Pass", function () {
+                mkButton(controlsZone, lastToSettle ? "Beaten" : "Pass", function () {
                     if (pendingAct || st.passed[mySeat]) return;
                     if (online) { sendAct(4, 0, 0); return; }         // 4 = pass/knock (server tallies)
                     myPass();
@@ -776,7 +769,7 @@
             for (var i = 0; i < wanted.length; i++) ensureCard(wanted[i]);
             buildControls();
             boutTakeSeat = -1;   // one-shot: consumed by this render's animateOut
-            // Reconcile the countdown with the freshly-rendered state — this single hook covers
+            // Reconcile the countdown with the freshly-rendered state - this single hook covers
             // every path (offline afterAction, online pollLoop/pullDraws) since they all render().
             refreshTimer();
         }
@@ -812,8 +805,8 @@
             if (st.table.length === 0 && st.attacker === mySeat) return "Your turn. Attack.";
             // Covered table, my confirm window: I may throw in a matching-rank card or press Bito.
             return legalAttacks(st, mySeat).length > 0
-                ? "Throw in a matching card, or press Bito."
-                : "Press Bito to beat the table.";
+                ? "Throw in a matching card, or press Beaten."
+                : "Press Beaten to beat the table.";
         }
 
         // I knock: "done adding to this table". Records my pass; if that settles the bout it's
@@ -830,7 +823,7 @@
             if (checkOver(st)) { finishGame(); return; }
             // Consensus Bito: a covered table with nobody left to throw in is beaten automatically
             // (offline; online the server owns this). This is the multiplayer replacement for the
-            // old "attacker presses Bito" — the bout ends only once EVERY attack seat has settled.
+            // old "attacker presses Bito" - the bout ends only once EVERY attack seat has settled.
             if (st.phase === "attack" && st.table.length > 0 && canBito(st)) {
                 endBout(st, false); afterAction(); return;
             }
@@ -854,7 +847,7 @@
                 if (c >= 0) applyAttack(st, actor, c);
                 // opener always has a legal card; if not, afterAction's canBito path resolves it
             } else {
-                // Throw-in window: this bot is the current pending thrower — add a cheap matching
+                // Throw-in window: this bot is the current pending thrower - add a cheap matching
                 // card, or knock (pass) when it doesn't want to pile on. Passing lets the next
                 // pending seat (or the consensus Bito) take over.
                 var t = durakBotAttack(st, actor);
@@ -876,10 +869,10 @@
         // ── online sync (worker-as-dealer) ───────────────────────────────────────────
         // The client holds NO authority: it applies the public /api/dlog event stream to a
         // local `st` (opponent hands are placeholder counts, table cards are public, my own
-        // cards come from /api/ddraw) and sends its own actions via /api/dact — never mutating
+        // cards come from /api/ddraw) and sends its own actions via /api/dact - never mutating
         // `st` optimistically. The server's echoed event is the single source of truth, so a
         // rejected action simply never lands (no rollback needed). Post-bout roles are NOT derived
-        // locally — the server emits an authoritative ROLES event after each bout (see applyEvent),
+        // locally - the server emits an authoritative ROLES event after each bout (see applyEvent),
         // which is the only way to get 3–4-player rotation right (it depends on refill + who's out).
         var myDrawExpected = 0;   // total cards the server has told me I hold (from DRAW events)
 
@@ -889,7 +882,7 @@
             if (seat === mySeat) { var i = h.indexOf(card); if (i >= 0) h.splice(i, 1); }
             else if (h.length) h.pop();     // opponents are counts only
         }
-        // Post-bout roles are NOT computed locally — for 3–4 players the rotation depends on
+        // Post-bout roles are NOT computed locally - for 3–4 players the rotation depends on
         // refill order and who ran out of cards (state the client can't see). The server owns it
         // and sends a ROLES event right after each TAKE/BITO (+ the DRAW refills); we just clear
         // the felt here and wait for ROLES to set attacker/defender. (A 2-player game gets the
@@ -907,7 +900,7 @@
             else if (ev.type === "take") {
                 for (var i = 0; i < st.table.length; i++) { addToHand(ev.seat, st.table[i].a); if (st.table[i].d >= 0) addToHand(ev.seat, st.table[i].d); }
                 st.table = [];   // ROLES will set the next attacker/defender
-                resetPasses(st); // fresh bout coming — clear stale throw-in consensus
+                resetPasses(st); // fresh bout coming - clear stale throw-in consensus
                 boutTakeSeat = ev.seat;   // next render flies the picked-up cards to the taker, not the deck
             }
             else if (ev.type === "pass") { st.passed[ev.seat] = true; }   // seat done adding; window still open
@@ -920,7 +913,7 @@
             }
             else if (ev.type === "left") {
                 // A seat abandoned the table. Mirror the server's leaveSeat locally: sit them out,
-                // drop their hand (opponent counts), and void any live bout — the discarded felt
+                // drop their hand (opponent counts), and void any live bout - the discarded felt
                 // just leaves play. The server follows with DRAW refills for the survivors and an
                 // authoritative ROLES (or OVER), so we don't rotate roles here, only clear the felt.
                 st.out[ev.seat] = true;
@@ -937,7 +930,7 @@
             if (drawCursor[mySeat] >= myDrawExpected) { done(); return; }
             MG.Api.ddraw(session.code, session.tok, drawCursor[mySeat], function (card) {
                 if (destroyed) return;
-                if (card == null) { done(); return; }       // nothing at that index yet — try later
+                if (card == null) { done(); return; }       // nothing at that index yet - try later
                 st.hands[mySeat].push(card);
                 drawCursor[mySeat]++;
                 pullDraws(done);
@@ -948,7 +941,7 @@
             if (myTurn()) { status(promptFor()); return; }
             // A non-defender who can throw in during a live attack isn't "on turn", but it CAN act.
             // Nudge it rather than showing a bare "X's turn…" (only when it actually holds a legal
-            // throw-in — legalAttacks() is empty otherwise, e.g. nothing on the table matches).
+            // throw-in - legalAttacks() is empty otherwise, e.g. nothing on the table matches).
             if (canAttackInput() && legalAttacks(st, mySeat).length > 0) { status("You can throw in a matching card."); return; }
             status(nameOf(actionActor()) + "'s turn…");
         }
@@ -980,10 +973,11 @@
             }, function () { if (!destroyed && gen === pollGen) $.Schedule(1.0, function () { pollLoop(gen); }); });
         }
         // Send one action; the server validates and (on success) appends the event we'll read
-        // back on the next poll. We do NOT mutate `st` here — the echo is authoritative.
+        // back on the next poll. We do NOT mutate `st` here - the echo is authoritative.
         function sendAct(a, pair, card) {
             if (destroyed || pendingAct) return;
             pendingAct = true;
+            refreshTimer();                                             // park immediately, before the request starts
             MG.Api.dact(session.code, session.tok, a, pair || 0, card || 0, function (r) {
                 pendingAct = false;
                 if (r && r.ok) { startPolling(); return; }           // pull the echo promptly (single chain)
@@ -992,21 +986,26 @@
                 else if (why === "illegal") status("That move isn't legal.");
                 else if (why === "gone") { if (MG.UI && MG.UI.kickToMenu) MG.UI.kickToMenu("Lobby closed."); }
                 else status("Move rejected.");
-            }, function () { pendingAct = false; status("Server unavailable."); });
+                refreshTimer();                                      // rejected: the same obligation still needs a clock
+            }, function () {
+                pendingAct = false;
+                status("Server unavailable.");
+                refreshTimer();                                      // transport failed: let the player retry on a fresh clock
+            });
         }
 
         // ── deal watchdog ─────────────────────────────────────────────────────────────
         // "Dealing…" with an empty felt that never resolves is an intermittent report. The
         // dealer emits TRUMP/OPEN/DRAW the instant the host starts, so if we've applied ZERO
         // events (logSeq === 0) several seconds in, our poll chain has almost certainly stalled
-        // (mg_net's one-at-a-time image queue can wedge a pending load at dims 0 — see
+        // (mg_net's one-at-a-time image queue can wedge a pending load at dims 0 - see
         // ARCHITECTURE §5 "Request discipline"). Re-kick startPolling(): bumping pollGen abandons
         // the stuck chain and starts a fresh request from logSeq, which recovers the deal. Give
         // up gracefully after a few tries rather than spinning forever. Cheap: only runs until
         // the first event lands (logSeq > 0), then never re-arms.
         function dealWatchdog(tries) {
             if (destroyed || gameOver || !online) return;
-            if (logSeq > 0) return;                     // deal (or any event) arrived — nothing to heal
+            if (logSeq > 0) return;                     // deal (or any event) arrived - nothing to heal
             if (tries >= 6) { status("Still dealing… check your connection or try again."); return; }
             $.Schedule(3.0, function () {
                 if (destroyed || gameOver || logSeq > 0) return;

@@ -1,14 +1,14 @@
 "use strict";
 
 /*
- * rules/checkers.js — pure Russian-draughts rules, shared by BOTH runtimes.
+ * rules/checkers.js - pure Russian-draughts rules, shared by BOTH runtimes.
  *
  * SINGLE SOURCE OF TRUTH. The client loads this as a Panorama script (it hangs the
  * functions off $.MG.Rules.checkers); the Cloudflare Worker gets the exact same bytes
  * concatenated by tools/build_worker.js (it hangs them off globalThis.MGRules.checkers).
  * So the predictor on the client and the authority on the server can never disagree.
  *
- * NO DOM, NO rendering, NO network — pure functions only. The only environment thing it
+ * NO DOM, NO rendering, NO network - pure functions only. The only environment thing it
  * touches is the namespace object it attaches to, resolved below for whichever runtime.
  *
  * Board: flat Array(64), index = row*8 + col. Values: 0 empty · 1 white man · 2 white
@@ -116,7 +116,7 @@
     }
 
     // Apply a single hop in place. Any piece on the diagonal between `from` and `to`
-    // is captured — this covers both a man's 1-over jump and a flying king's ranged
+    // is captured - this covers both a man's 1-over jump and a flying king's ranged
     // capture without needing the captured square passed in (keeps the net protocol
     // just {from,to,end}). Returns {captured, promoted}.
     function applyHop(b, from, to) {
@@ -127,7 +127,7 @@
         var captured = false;
         // Walk the diagonal, bounded to the board (max 7 steps). The guard is pure
         // insurance: a legal move is always diagonal so it reaches (tr,tc) within 7
-        // steps — but a corrupt/desynced hop must never spin the loop forever.
+        // steps - but a corrupt/desynced hop must never spin the loop forever.
         var r = fr + dr, c = fc + dc, guard = 0;
         while ((r !== tr || c !== tc) && guard++ < 8 && inBounds(r, c)) {
             var j = idx(r, c);
@@ -187,6 +187,31 @@
                 if (simpleMovesFor(b, i).length || captureMovesFor(b, i).length) return true;
             }
             return false;
+        }
+
+        // Draw detection. Without it a king-vs-king endgame shuffles forever: the engine had NO
+        // draw rule at all, so an untimed game (the default) could never end and bot-vs-bot
+        // self-play hit its move cap ~15% of the time.
+        //
+        // `idle` is the caller's count of consecutive TURNS with no capture and no man move -
+        // exactly the quantity the Russian-draughts 15-move rule bounds. Tracking it needs the
+        // game's move history, which these pure per-position functions don't have, so the caller
+        // owns the counter (mg_checkers.js pushHistory, which already knows whether the completed
+        // turn captured). Omit it and only the position-local draw is reported.
+        //
+        // Returns "" when the position is not drawn, else a short reason id.
+        function drawReason(b, idle) {
+            if (idle >= 30) return "idle";               // 30 plies = 15 moves per side
+            // Bare kings on both sides with nothing to attack: one king each can never force a win.
+            var wk = 0, bk = 0, wm = 0, bm = 0;
+            for (var i = 0; i < 64; i++) {
+                var v = b[i];
+                if (v === 0) continue;
+                if (v === 1) wm++; else if (v === 2) wk++;
+                else if (v === 3) bm++; else if (v === 4) bk++;
+            }
+            if (wm === 0 && bm === 0 && wk === 1 && bk === 1) return "kings";
+            return "";
         }
 
         // A sequence is one complete turn. For English (promotionEndsTurn=true) a promotion
@@ -315,6 +340,7 @@
             initialBoard: initialBoard,
             simpleMoves: simpleMovesFor, captureMoves: captureMovesFor,
             anyCaptureFor: anyCaptureFor, applyHop: applyHop, hasAnyMove: hasAnyMove,
+            drawReason: drawReason,
             legalSequences: legalSequences, chooseBotMove: chooseBotMove, chooseBotMovePrep: chooseBotMovePrep
         };
     }

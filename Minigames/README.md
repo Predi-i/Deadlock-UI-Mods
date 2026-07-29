@@ -1,16 +1,20 @@
 # Deadlock Minigames
 
-Online mini-games played inside Deadlock's pause (Esc) menu. Shipping games (all online
-**and** vs bot): **Checkers** (Russian draughts), **Tic-Tac-Toe**, **Chess** and
-**Connect Four**. **Durak** plays vs bot for 2–4 players and **online for 2 players**
-(the worker acts as an authoritative dealer); 3–4-seat online is deferred.
+Online mini-games played inside Deadlock's pause (Esc) menu. **Checkers** (Russian
+draughts), **Tic-Tac-Toe**, **Chess** and **Connect Four** support online play and bots.
+**Durak** and **Poker** support 2–4-player bot games and private online tables backed by
+an authoritative dealer; full private tables auto-start, while public Durak matchmaking
+remains heads-up. **Pixel Battle** is
+a persistent shared canvas, while **Wordle** is fully offline.
 
 Four ways to play:
 
 - **Quick Match** — public matchmaking: the server pairs you with anyone else online
   who pressed Quick Match. No code needed.
-- **Quick Match → Select Multiple** — tick several games at once; the server pairs you
-  with anyone whose ticked set overlaps yours and fixes the shared lobby to a matched game.
+- **Quick Match → Select Multiple** — tick several eligible games at once; the server pairs
+  you with anyone whose ticked set overlaps yours and fixes the shared lobby to a matched
+  game. Durak participates as a heads-up-only option and auto-starts after matching; Poker
+  remains private-table only.
 - **Create Game / Join** — private match with a friend: one player clicks **Create Game**
   and reads out the 4-digit code, the other clicks **Join** and types it in.
 - **Play vs Bot** — offline, no server.
@@ -57,11 +61,16 @@ panorama/
 ## Tests
 
 ```
-node tools/mg_rules_test.js     # checkers rules (captures, flying kings, full bot game)
-node tools/mg_server_test.js    # worker: matchmaking, code round-trip, concurrent lobbies
+npm install       # once — ESLint only
+npm run lint      # no-undef net over every shipped script + the worker source
+npm test          # the whole harness suite: pure rules for all six games, the worker
+                  # protocol, client/server rule parity, and a staleness check on the
+                  # generated server/worker.js
 ```
 
-`tools/` and `server/` are dev-only — only `panorama/` is packed into the VPK.
+`tools/` and `server/` are dev-only — only `panorama/` is packed into the VPK. A Public build
+goes through `../tools/build_mod_strip_comments.ps1`, which ships the VPK without comments
+(the working tree keeps them).
 
 ## Networking note
 

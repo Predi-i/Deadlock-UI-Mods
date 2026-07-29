@@ -1,21 +1,26 @@
 "use strict";
 // Server-logic test for the GENERATED worker.js. Run: node tools/mg_server_test.js
-// (Run `node tools/build_worker.js` first — worker.js bundles the shared rules the
+// (Run `node tools/build_worker.js` first - worker.js bundles the shared rules the
 // authoritative server validates with.)
 //
 // worker.js is a Cloudflare ESM module. To avoid adding package.json / wrangler to the
 // deploy path, we load it by stripping the two `export` keywords and evaluating it (same
 // trick mg_rules_test.js uses for the client). The bundled rule IIFEs attach to
 // globalThis.MGRules, which the Hub's validators read. Then we drive the Hub class with a
-// fake storage, decoding each PNG's (width, height) — exactly what the client reads back.
+// fake storage, decoding each PNG's (width, height) - exactly what the client reads back.
 //
-// NOTE ON TOKENS: the server now enforces validTok() — a seat token must be an 8..64-char
+// NOTE ON TOKENS: the server now enforces validTok() - a seat token must be an 8..64-char
 // alphanumeric string (rejects empty/garbage so a lobby can't end up "occupied but
 // tokenless"). Every real seat token below is therefore ≥ 8 chars. Deliberately-invalid
 // tokens (foreign/short) are used only where a rejection is the expected result.
 const fs = require("fs");
 const path = require("path");
 const zlib = require("zlib");
+const v8 = require("v8");
+
+function cloneStored(value) {
+    return v8.deserialize(v8.serialize(value));
+}
 
 let src = fs.readFileSync(path.join(__dirname, "..", "server", "worker.js"), "utf8");
 src = src.replace("export default", "const __workerDefault =").replace("export class Hub", "class Hub");
@@ -46,6 +51,14 @@ class FakeStorage {
         for (e of entries) out.set(e[0], e[1]);
         return out;
     }
+    async transaction(callback) {
+        var tx = new FakeStorage();
+        tx.m = new Map();
+        for (var entry of this.m) tx.m.set(entry[0], cloneStored(entry[1]));
+        var result = await callback(tx);
+        this.m = tx.m;
+        return result;
+    }
 }
 
 // Downlink is now LEVEL-quantised: the worker sends dim = level*STEP + BASE (see
@@ -66,6 +79,12 @@ async function reqRaw(hub, pathAndQuery) {
 }
 async function req(hub, pathAndQuery) {
     return delevel(await reqRaw(hub, pathAndQuery));
+}
+async function reqIp(hub, pathAndQuery, ip) {
+    var res = await hub.fetch(new Request("https://mg.test" + pathAndQuery, {
+        headers: { "CF-Connecting-IP": ip }
+    }));
+    return delevel(await rawDims(res));
 }
 async function adminReq(hub, pathAndQuery, method, body, extraHeaders) {
     var headers = Object.assign({
@@ -123,6 +142,28 @@ async function main() {
     d = await reqRaw(hub, "/api/probe.png");   // probe is sent LITERALLY (calibration reference)
     ok(d.w === 600 && d.h === 1000, "probe = (600,1000)");
 
+    // The probe is state-independent and identical for every caller, so the top-level Worker now
+    // answers it from a cached, compressed buffer WITHOUT touching the Durable Object - it used
+    // to bill a DO request and send 601 KB per call, on the same free-tier bucket the games spend.
+    (async function () {
+        var reachedDO = 0;
+        var fakeEnv = { HUB: { idFromName: function () { return 1; },
+            get: function () { return { fetch: function () { reachedDO++; return new Response("", { status: 200 }); } }; } } };
+        var pr = await Worker.fetch(new Request("https://mg.test/api/probe.png"), fakeEnv);
+        var pb = new Uint8Array(await pr.arrayBuffer());
+        ok(readU32(pb, 16) === 600 && readU32(pb, 20) === 1000, "probe via the Worker is still (600,1000)");
+        ok(pb.length < 2048, "probe response is compressed below 2 KiB");
+        ok(reachedDO === 0, "probe never reaches the Durable Object");
+        var pr2 = await Worker.fetch(new Request("https://mg.test/api/probe.png"), fakeEnv);
+        var pb2 = new Uint8Array(await pr2.arrayBuffer());
+        ok(pb2.length === pb.length, "the cached probe buffer is reused byte-for-byte");
+        await Worker.fetch(new Request("https://mg.test/api/ping.png"), fakeEnv);
+        ok(reachedDO === 0, "ping never reaches the Durable Object either");
+        // Anything stateful must still go through.
+        await Worker.fetch(new Request("https://mg.test/api/status.png?code=1"), fakeEnv);
+        ok(reachedDO === 1, "a stateful route still routes to the Durable Object");
+    })();
+
     // ── Pixel Battle: transparent shared layer + authoritative bank/batching ──
     var pxRes = await hub.fetch(new Request("https://mg.test/api/pxcanvas.png"));
     var pxBytes = new Uint8Array(await pxRes.arrayBuffer());
@@ -167,6 +208,34 @@ async function main() {
     ok(d.h * 64 + d.w === 90, "10-pixel upload spends 10 from the server bank");
     d = await req(hub, "/api/pxversion.png");
     ok(d.w === 1 && d.h === 0, "accepted upload advances the shared canvas version");
+
+    // The version rides one 2-int reply as (lo6, hi6), and the client reads h === 63 as an error -
+    // (5,63) specifically as "you are banned". A 12-bit version put 4032..4095 into that band, so a
+    // canvas painted 4037 times encoded bit-for-bit like the ban sentinel and showed EVERY client a
+    // false ban. Walk the wrap point and assert no version can ever land in the reserved band.
+    (function () {
+        var collide = 0, banLike = 0;
+        for (var v = 0; v < 4032; v++) {
+            var w = v & 63, h = (v >> 6) & 63;
+            if (h === 63) collide++;
+            if (w === 5 && h === 63) banLike++;
+        }
+        ok(collide === 0, "pixel version never encodes into the reserved h=63 error band");
+        ok(banLike === 0, "pixel version can never encode as the (5,63) ban sentinel");
+    })();
+    // Walk the wrap point on a THROWAWAY hub so the shared canvas/bank state the later asserts
+    // depend on is untouched.
+    (async function () {
+        var vhub = new Hub({ storage: new FakeStorage() });
+        await vhub.storage.put("px:version", 4031);       // one step before the wrap
+        var vd = await req(vhub, "/api/pxversion.png");
+        ok(vd.h !== 63, "pixel version at the top of its range is not in the error band");
+        var wrapBatch = [];
+        for (var wi = 0; wi < 10; wi++) wrapBatch.push(wi + ",0,5");
+        await req(vhub, "/api/pxput.png?id=123456789&b=" + wrapBatch.join(";"));
+        vd = await req(vhub, "/api/pxversion.png");
+        ok(vd.w === 0 && vd.h === 0, "pixel version wraps to 0 instead of entering the error band");
+    })();
 
     pxRes = await hub.fetch(new Request("https://mg.test/api/pxcanvas.png?v=1"));
     pxBytes = new Uint8Array(await pxRes.arrayBuffer());
@@ -239,7 +308,174 @@ async function main() {
     ok((await hub.storage.get("px:t:0")) === undefined,
         "fully erased sparse tile is removed from storage");
 
+    // A forged Steam32 cannot reset the shared IP pixel budget. Six people behind one NAT may
+    // still spend a full fresh 100px bank at once; only the seventh immediate full-bank burst
+    // is asked to slow down. No IP is banned, and another IP is unaffected.
+    await (async function () {
+        var budgetHub = new Hub({ storage: new FakeStorage() });
+        var budgetIp = "203.0.113.40";
+        var result = null;
+        for (var accountNo = 0; accountNo < 6; accountNo++) {
+            var fullBank = [];
+            for (var x = 0; x < 100; x++) fullBank.push(x + "," + accountNo + "," + (accountNo + 1));
+            result = await reqIp(budgetHub,
+                "/api/pxput.png?id=" + (31000000 + accountNo) + "&b=" + fullBank.join(";"), budgetIp);
+            ok(result.h !== 63, "pixel IP budget allows full bank for NAT player " + (accountNo + 1));
+        }
+        var seventh = [];
+        for (var sx = 0; sx < 100; sx++) seventh.push(sx + ",6,7");
+        result = await reqIp(budgetHub,
+            "/api/pxput.png?id=31000006&b=" + seventh.join(";"), budgetIp);
+        ok(result.w === 4 && result.h === 63,
+            "rotating Steam32 on one IP eventually receives the retryable pixel throttle");
+        result = await reqIp(budgetHub,
+            "/api/pxput.png?id=31000006&b=" + seventh.join(";"), "198.51.100.40");
+        ok(result.h !== 63, "pixel throttle neither bans nor affects a different IP");
+    })();
+
+    // Expensive uncached 800x400 viewport renders get a human-sized burst. Cached navigation
+    // remains free even after the burst, and another IP gets its own budget.
+    await (async function () {
+        var viewHub = new Hub({ storage: new FakeStorage() });
+        var viewIp = "203.0.113.41";
+        var dims;
+        for (var vx = 0; vx < 12; vx++) {
+            dims = await viewHub.fetch(new Request(
+                "https://mg.test/api/pxview.png?x=" + vx + "&y=0&z=16", {
+                    headers: { "CF-Connecting-IP": viewIp }
+                })).then(rawDims);
+            ok(dims.w === 800 && dims.h === 400, "viewport burst frame " + (vx + 1) + " renders");
+        }
+        dims = await viewHub.fetch(new Request(
+            "https://mg.test/api/pxview.png?x=12&y=0&z=16", {
+                headers: { "CF-Connecting-IP": viewIp }
+            })).then(rawDims).then(delevel);
+        ok(dims.w === 6 && dims.h === 63, "uncached viewport flood receives retryable busy image");
+        dims = await viewHub.fetch(new Request(
+            "https://mg.test/api/pxview.png?x=0&y=0&z=16", {
+                headers: { "CF-Connecting-IP": viewIp }
+            })).then(rawDims);
+        ok(dims.w === 800 && dims.h === 400, "cached viewport remains available while throttled");
+        dims = await viewHub.fetch(new Request(
+            "https://mg.test/api/pxview.png?x=13&y=0&z=16", {
+                headers: { "CF-Connecting-IP": "198.51.100.41" }
+            })).then(rawDims);
+        ok(dims.w === 800 && dims.h === 400, "viewport throttle does not affect another IP");
+    })();
+
     // ── token & game-id validation on create ──
+    // Audit history is append-only during its retention window, then old action and per-user
+    // index records are pruned together so public canvas use cannot grow storage forever.
+    await (async function () {
+        var retentionHub = new Hub({ storage: new FakeStorage() });
+        var oldAt = Date.now() - 181 * 24 * 60 * 60000;
+        var oldIds = [];
+        for (var oi = 0; oi < 513; oi++) {
+            var oldId = String(oldAt + oi).padStart(13, "0") + "-00000001";
+            oldIds.push(oldId);
+            await retentionHub.storage.put("px:a:" + oldId, {
+                id: oldId, at: oldAt + oi, actor: "player", steamid: "32000000",
+                kind: "paint", deltas: [[0, 0, 0, 1, ""]]
+            });
+            await retentionHub.storage.put("px:ua:32000000:" + oldId, true);
+        }
+        var retentionBatch = [];
+        for (var rx = 0; rx < 10; rx++) retentionBatch.push(rx + ",0,5");
+        var retained = await req(retentionHub,
+            "/api/pxput.png?id=32000001&b=" + retentionBatch.join(";"));
+        ok(retained.h !== 63, "new pixel action is accepted while retention cleanup runs");
+        ok(!(await retentionHub.storage.get("px:a:" + oldIds[0])) &&
+            !!(await retentionHub.storage.get("px:a:" + oldIds[512])) &&
+            !(await retentionHub.storage.get("px:audit:lastPrune")),
+            "pixel audit removes 512 expired actions and stays in catch-up mode");
+        var retentionBatch2 = [];
+        for (rx = 0; rx < 10; rx++) retentionBatch2.push(rx + ",1,6");
+        await req(retentionHub, "/api/pxput.png?id=32000001&b=" + retentionBatch2.join(";"));
+        ok(!(await retentionHub.storage.get("px:a:" + oldIds[512])) &&
+            !(await retentionHub.storage.get("px:ua:32000000:" + oldIds[512])) &&
+            !!(await retentionHub.storage.get("px:audit:lastPrune")),
+            "next action finishes audit catch-up before restoring the daily cadence");
+    })();
+
+    // Fault injection: bank, tiles/version, audit and ownership must roll back as one unit.
+    await (async function () {
+        var atomicStorage = new FakeStorage();
+        var atomicHub = new Hub({ storage: atomicStorage });
+        var normalTransaction = atomicStorage.transaction.bind(atomicStorage);
+        atomicStorage.transaction = async function (callback) {
+            var tx = new FakeStorage();
+            tx.m = new Map();
+            for (var entry of this.m) tx.m.set(entry[0], cloneStored(entry[1]));
+            var writes = 0;
+            var normalPut = tx.put.bind(tx);
+            tx.put = async function (key, value) {
+                writes++;
+                if (writes === 3) throw new Error("injected storage failure");
+                return normalPut(key, value);
+            };
+            return callback(tx); // deliberately never commits if callback throws
+        };
+        var atomicBatch = [];
+        for (var ax = 0; ax < 10; ax++) atomicBatch.push(ax + ",0,5");
+        var failedAtomic = await req(atomicHub,
+            "/api/pxput.png?id=33000000&b=" + atomicBatch.join(";"));
+        ok(failedAtomic.w === 9 && failedAtomic.h === 7,
+            "injected Pixel Battle storage failure returns the server-error sentinel");
+        ok(!(await atomicStorage.get("px:u:33000000")) &&
+            !(await atomicStorage.get("px:t:0")) &&
+            !(await atomicStorage.get("px:version")) &&
+            (await atomicStorage.list({ prefix: "px:a:" })).size === 0,
+            "failed Pixel Battle transaction rolls bank, tiles, version and audit back together");
+        atomicStorage.transaction = normalTransaction;
+        var retriedAtomic = await req(atomicHub,
+            "/api/pxput.png?id=33000000&b=" + atomicBatch.join(";"));
+        ok(retriedAtomic.h * 64 + retriedAtomic.w === 90,
+            "the same Pixel Battle batch succeeds once storage recovers");
+    })();
+
+    await (async function () {
+        var adminAtomicStorage = new FakeStorage();
+        var adminAtomicHub = new Hub({ storage: adminAtomicStorage });
+        var normalAdminTransaction = adminAtomicStorage.transaction.bind(adminAtomicStorage);
+        adminAtomicStorage.transaction = async function (callback) {
+            var tx = new FakeStorage();
+            tx.m = new Map();
+            for (var entry of this.m) tx.m.set(entry[0], cloneStored(entry[1]));
+            var writes = 0;
+            var normalPut = tx.put.bind(tx);
+            tx.put = async function (key, value) {
+                writes++;
+                if (writes === 3) throw new Error("injected admin storage failure");
+                return normalPut(key, value);
+            };
+            return callback(tx);
+        };
+        var adminAtomicPixels = [];
+        for (var apx = 0; apx < 10; apx++) adminAtomicPixels.push({ x: apx, y: 0, color: 6 });
+        var failedAdminResponse = await adminAtomicHub.fetch(new Request(
+            "https://mg.test/admin/api/paint", {
+                method: "POST",
+                headers: {
+                    "X-MG-Admin-Login": "pixel-owner",
+                    "X-MG-Admin": "1",
+                    "Origin": "https://mg.test"
+                },
+                body: JSON.stringify({ pixels: adminAtomicPixels })
+            }));
+        var failedAdmin = delevel(await rawDims(failedAdminResponse));
+        ok(failedAdmin.w === 9 && failedAdmin.h === 7,
+            "injected admin paint storage failure returns the server-error sentinel");
+        ok(!(await adminAtomicStorage.get("px:t:0")) &&
+            !(await adminAtomicStorage.get("px:version")) &&
+            (await adminAtomicStorage.list({ prefix: "px:a:" })).size === 0,
+            "failed admin paint transaction rolls tiles, version and audit back together");
+        adminAtomicStorage.transaction = normalAdminTransaction;
+        var retriedAdmin = await adminReq(adminAtomicHub,
+            "/admin/api/paint", "POST", { pixels: adminAtomicPixels });
+        ok(retriedAdmin.status === 200 && retriedAdmin.body.changed === 10,
+            "the same admin paint succeeds once storage recovers");
+    })();
+
     // Pixel Battle browser admin: audit, unlimited paint, safe undo, and CSRF.
     var adminHub = new Hub({ storage: new FakeStorage() });
     var deniedAdmin = await adminHub.fetch(new Request("https://mg.test/admin/api/state"));
@@ -307,8 +543,11 @@ async function main() {
         adminPageHtml.indexOf('id="inspectMode"') >= 0 &&
         adminPageHtml.indexOf('id="debugPanel"') >= 0,
         "browser admin ships zoom, pan, pixel inspector, and preview controls");
-    var tamperedSession = sessionMatch[1].substring(0, sessionMatch[1].length - 1) +
-        (sessionMatch[1].endsWith("A") ? "B" : "A");
+    // Mutate signed PAYLOAD bits, not the final base64url character of the signature: the latter
+    // may contain only padding bits and occasionally decode to the exact same HMAC byte string.
+    var sessionParts = sessionMatch[1].split(".");
+    var tamperedPayload = (sessionParts[0][0] === "A" ? "B" : "A") + sessionParts[0].substring(1);
+    var tamperedSession = tamperedPayload + "." + sessionParts[1];
     var tamperedPage = await Worker.fetch(new Request("https://mg.test/admin", {
         headers: { "Cookie": "mg_admin_session=" + tamperedSession }
     }), oauthEnv);
@@ -545,6 +784,28 @@ async function main() {
         ok(j0.w === 2, "code 0000: join reaches the lobby");
     })();
 
+    // Queue values are stored as numeric codes, so code 0 must not be mistaken for a missing
+    // storage key by either public-matchmaking lookup.
+    await (async function () {
+        var q0 = new Hub({ storage: new FakeStorage() });
+        q0.freshCode = async function () { return 0; };
+        var qh = await req(q0, "/api/quick.png?game=2&tok=ZEROQHST");
+        var qj = await req(q0, "/api/quick.png?game=2&tok=ZEROQJON");
+        ok(codeHost(qh) && decCode(qh) === 0, "code 0000: quick host publishes queue value 0");
+        ok(!codeHost(qj) && decCode(qj) === 0, "code 0000: quick seeker joins queue value 0");
+        ok((await req(q0, "/api/status.png?code=0000")).w === 2,
+            "code 0000: quick lobby has both players");
+
+        var m0 = new Hub({ storage: new FakeStorage() });
+        m0.freshCode = async function () { return 0; };
+        var mh = await req(m0, "/api/mquick.png?games=2,4&tok=ZEROMHST");
+        var mj = await req(m0, "/api/mquick.png?games=2&tok=ZEROMJON");
+        ok(codeHost(mh) && decCode(mh) === 0, "code 0000: mquick host publishes queue value 0");
+        ok(!codeHost(mj) && decCode(mj) === 0, "code 0000: mquick seeker joins queue value 0");
+        ok((await req(m0, "/api/status.png?code=0000")).w === 2,
+            "code 0000: mquick lobby has both players");
+    })();
+
     // The 10-bit code space is finite. A saturated allocator must fail cleanly instead of
     // writing/returning a bogus l:-1 lobby (which aliases every later saturated create).
     await (async function () {
@@ -565,7 +826,7 @@ async function main() {
 
     // ── security hardening (2026-07-18 audit) ──
     await (async function () {
-        // L1: a non-4-digit code can never name a lobby — normalised to "" → missing, not a
+        // L1: a non-4-digit code can never name a lobby - normalised to "" → missing, not a
         // junk "l:<garbage>" key. Covers "1e3", overlong, non-numeric, and unicode-digit inputs.
         var h = new Hub({ storage: new FakeStorage() });
         var bad = ["1e3", "12345", "99", "abcd", "10 0", "١٢٣٤"];
@@ -597,6 +858,67 @@ async function main() {
         // A different IP is unaffected by the first IP's throttle.
         var other = await th.fetch(new Request("https://mg.test/api/create.png?game=1&tok=CLEANIP01", { headers: { "CF-Connecting-IP": "198.51.100.7" } })).then(rawDims).then(delevel);
         ok(other.w !== 9, "H3: a different IP is not throttled (" + other.w + "," + other.h + ")");
+
+        // H4: normal polling of one code is free, but distinct-code enumeration is capped.
+        // The cap resets with time (not a ban), and every IP/NAT gets its own generous set.
+        var scan = new Hub({ storage: new FakeStorage() });
+        for (var sc = 0; sc < 16; sc++) {
+            var sr = await reqIp(scan, "/api/status.png?code=" + sc, "203.0.113.10");
+            ok(sr.w === 9 && sr.h === 1, "H4: distinct code probe " + (sc + 1) + " is allowed");
+        }
+        var scanBlocked = await reqIp(scan, "/api/status.png?code=16", "203.0.113.10");
+        ok(scanBlocked.w === 9 && scanBlocked.h === 4,
+            "H4: seventeenth distinct code in one minute is softly throttled");
+        var sameCode = await reqIp(scan, "/api/status.png?code=0", "203.0.113.10");
+        ok(sameCode.w === 9 && sameCode.h === 1,
+            "H4: retrying an already-seen lobby code remains free");
+        var hotBlocked = await reqIp(scan, "/api/poll.png?code=16&since=0", "203.0.113.10");
+        ok(hotBlocked.w === 1 && hotBlocked.h === 1,
+            "H4: a hot poll gets non-terminal nothing-new when scan-throttled");
+        var clockBlocked = await reqIp(scan, "/api/clocks.png?code=16&seat=0", "203.0.113.10");
+        ok(clockBlocked.w === 9 && clockBlocked.h === 7,
+            "H4: clocks get a retryable server sentinel instead of false lobby-gone");
+        var writeBlocked = await reqIp(scan,
+            "/api/move.png?code=16&from=1&to=2&tok=SCANHOST", "203.0.113.10");
+        ok(writeBlocked.w === 9 && writeBlocked.h === 3,
+            "H4: an authenticated hot write gets non-terminal bad-token when scan-throttled");
+        scan.freshCode = async function () { return 16; };
+        var cleanupLobby = await reqIp(scan,
+            "/api/create.png?game=2&tok=SCANHOST", "203.0.113.10");
+        ok(decCode(cleanupLobby) === 16, "H4: creates still work inside the broad formation burst");
+        var cleanupResult = await reqIp(scan,
+            "/api/cancel.png?code=16&tok=SCANHOST", "203.0.113.10");
+        ok(cleanupResult.w === 1 && cleanupResult.h === 1 &&
+            !(await scan.storage.get("l:16")),
+            "H4: cancel is exempt and cannot strand a throttled lobby or queue");
+        var scanOther = await reqIp(scan, "/api/status.png?code=16", "198.51.100.10");
+        ok(scanOther.w === 9 && scanOther.h === 1,
+            "H4: distinct-code throttle does not affect another IP");
+
+        // H5: an authenticated seat refreshes a genuinely waiting lobby, but an anonymous
+        // existence probe cannot pin it forever and is removed by the normal sweep.
+        var ttl = new Hub({ storage: new FakeStorage() });
+        var ttlCreate = await req(ttl, "/api/create.png?game=2&tok=TTLHOST1");
+        var ttlCode = decCode(ttlCreate);
+        var ttlLobby = await ttl.storage.get("l:" + ttlCode);
+        ttlLobby.t = Date.now() - 31 * 60000;
+        await ttl.storage.put("l:" + ttlCode, ttlLobby);
+        await req(ttl, "/api/status.png?code=" + ttlCode + "&tok=TTLHOST1");
+        await ttl.storage.put("lastSweep", 0);
+        await ttl.maybeSweep();
+        ok(!!(await ttl.storage.get("l:" + ttlCode)),
+            "H5: authenticated waiting-room polling keeps the lobby alive");
+
+        var anonymousCreate = await req(ttl, "/api/create.png?game=2&tok=TTLANON1");
+        var anonymousCode = decCode(anonymousCreate);
+        var anonymousLobby = await ttl.storage.get("l:" + anonymousCode);
+        anonymousLobby.t = Date.now() - 31 * 60000;
+        await ttl.storage.put("l:" + anonymousCode, anonymousLobby);
+        await req(ttl, "/api/status.png?code=" + anonymousCode);
+        await ttl.storage.put("lastSweep", 0);
+        await ttl.maybeSweep();
+        ok(!(await ttl.storage.get("l:" + anonymousCode)),
+            "H5: anonymous status probes cannot keep guessed lobbies alive");
     })();
 
     // ── checkers: forced capture is enforced by the server ──
@@ -655,7 +977,7 @@ async function main() {
     // ── connect four: column marker + gravity + turn + full column ──
     await (async function () {
         var L = await seatedLobby(5, "HCF11234", "JCF11234");
-        // Host (red, seat 0) drops in column 3 — accepted (to=7 marker).
+        // Host (red, seat 0) drops in column 3 - accepted (to=7 marker).
         var a = await req(L.hub, "/api/move.png?code=" + L.code + "&from=3&to=7&end=1&tok=HCF11234");
         ok(a.w === 1 && a.h === 1, "c4: host drops in column 3 (accepted)");
         // A bad marker (to != 7) is illegal.
@@ -664,7 +986,7 @@ async function main() {
         // Host playing twice in a row → not your turn.
         var c2 = await req(L.hub, "/api/move.png?code=" + L.code + "&from=2&to=7&end=1&tok=HCF11234");
         ok(c2.w === 9 && c2.h === 1, "c4: host playing twice → (9,1) not-your-turn");
-        // Joiner (yellow) drops in column 2 — accepted (turn alternation).
+        // Joiner (yellow) drops in column 2 - accepted (turn alternation).
         var e2 = await req(L.hub, "/api/move.png?code=" + L.code + "&from=2&to=7&end=1&tok=JCF11234");
         ok(e2.w === 1 && e2.h === 1, "c4: joiner drops (turn alternation)");
         // Poll round-trips the host's first drop (from=3, to marker=7, end=1).
@@ -687,22 +1009,20 @@ async function main() {
         ok(ft.w === 9 && ft.h === 3, "c4: foreign token → (9,3) bad-token");
     })();
 
-    // ── durak: authoritative dealer (2 players), private deal + public log ──
+    // ── durak: authoritative dealer (2 players), automatic deal + public log ──
     await (async function () {
         var L = await seatedLobby(3, "DHOST123", "DJOIN123");   // create(game=3) + join → seats 0/1
-        // Waiting room: both seated, not started yet.
+        // The declared two-seat room starts atomically when the joiner fills it.
         var rm = await req(L.hub, "/api/room.png?code=" + L.code);
-        ok(rm.w === 2 && rm.h === 1, "durak: room shows 2 players, not started");
-        // Only the host (seat 0) may start.
-        var badStart = await req(L.hub, "/api/start.png?code=" + L.code + "&tok=DJOIN123");
-        ok(badStart.w === 9 && badStart.h === 1, "durak: non-host start → (9,1)");
+        ok(rm.w === 2 && rm.h === 2, "durak: full 2-seat room auto-starts");
+        // A repeated host start is harmless/idempotent.
         var st = await req(L.hub, "/api/start.png?code=" + L.code + "&tok=DHOST123");
-        ok(st.w === 1 && st.h === 1, "durak: host start deals the game");
+        ok(st.w === 1 && st.h === 1, "durak: host start after auto-start is idempotent");
         var rm2 = await req(L.hub, "/api/room.png?code=" + L.code);
-        ok(rm2.w === 2 && rm2.h === 2, "durak: room now shows started");
+        ok(rm2.w === 2 && rm2.h === 2, "durak: room remains started");
         // Public log: TRUMP, OPEN, DRAW(0,6), DRAW(1,6).
         var e0 = await req(L.hub, "/api/dlog.png?code=" + L.code + "&since=0");
-        ok(e0.w === 2 && e0.h >= 2 && e0.h <= 37, "durak: dlog[0] = TRUMP (2, trumpCard+1)");
+        ok(e0.w === 2 && e0.h >= 1 && e0.h <= 36, "durak: dlog[0] = TRUMP (2, trumpCard+1)");
         var e1 = await req(L.hub, "/api/dlog.png?code=" + L.code + "&since=1");
         ok(e1.w === 3 && (e1.h === 1 || e1.h === 2), "durak: dlog[1] = OPEN (3, attacker+1)");
         var attacker = e1.h - 1, defender = attacker === 0 ? 1 : 0;
@@ -742,7 +1062,7 @@ async function main() {
     // ── durak: N-seat private lobby (dcreate/djoin/droom) + 3-player deal, ROLES, throw-in ──
     await (async function () {
         var hub = new Hub({ storage: new FakeStorage() });
-        // Host creates a 3-seat durak table (dcreate is NOT the generic create — the 2-int lobby
+        // Host creates a 3-seat durak table (dcreate is NOT the generic create - the 2-int lobby
         // is hard-capped at 2 seats; a 3–4-player table needs its own routes, like poker).
         var dc = await req(hub, "/api/dcreate.png?n=3&tok=DKHOST01");
         ok(codeHost(dc), "durak-N: dcreate → HOST (w>=100 role flag)");
@@ -758,22 +1078,23 @@ async function main() {
         ok(j1.w === 3 && j1.h === 2, "durak-N: djoin → cap 3, seat index 1");
         var j1b = await req(hub, "/api/djoin.png?code=" + code + "&tok=DKPLR201");
         ok(j1b.w === 3 && j1b.h === 2, "durak-N: djoin re-join idempotent");
+        // Before the table is full, only seat 0 may choose to start early.
+        var badStart = await req(hub, "/api/start.png?code=" + code + "&tok=DKPLR201");
+        ok(badStart.w === 9 && badStart.h === 1, "durak-N: non-host cannot start a partial table");
         var j2 = await req(hub, "/api/djoin.png?code=" + code + "&tok=DKPLR301");
         ok(j2.w === 3 && j2.h === 3, "durak-N: djoin → cap 3, seat index 2");
         // Simulate a lost response: seat 1 retries only after seat 2 has joined. The response
         // must still carry seat 1, not the table's current player count.
         var j1c = await req(hub, "/api/djoin.png?code=" + code + "&tok=DKPLR201");
         ok(j1c.w === 3 && j1c.h === 2, "durak-N: late re-join preserves the original seat index");
-        // Table now full: a 4th join is refused.
+        // Table is already running: an existing seat may retry, but a new token is refused.
         var j3 = await req(hub, "/api/djoin.png?code=" + code + "&tok=DKPLR401");
-        ok(j3.w === 21, "durak-N: djoin into a full table → (21,1)");
-        // Only the host (seat 0) starts, and dealing sets started + numPlayers=3.
-        var badStart = await req(hub, "/api/start.png?code=" + code + "&tok=DKPLR201");
-        ok(badStart.w === 9 && badStart.h === 1, "durak-N: non-host start → (9,1)");
+        ok(j3.w === 22 && j3.h === 1, "durak-N: new join after automatic start → (22,1)");
+        // Filling the declared cap deals immediately; an explicit host start remains idempotent.
         var st = await req(hub, "/api/start.png?code=" + code + "&tok=DKHOST01");
-        ok(st.w === 1 && st.h === 1, "durak-N: host start deals the game");
+        ok(st.w === 1 && st.h === 1, "durak-N: host start after auto-start is idempotent");
         var dr2 = await req(hub, "/api/droom.png?code=" + code);
-        ok(dr2.w === 53 && dr2.h === 3, "durak-N: droom now shows started (players 3, +50 band)");
+        ok(dr2.w === 53 && dr2.h === 3, "durak-N: full declared cap auto-starts (players 3, +50 band)");
         // Three DRAW events (one per seat) confirm a 3-hand deal, plus TRUMP + OPEN up front.
         var e0 = await req(hub, "/api/dlog.png?code=" + code + "&since=0");
         ok(e0.w === 2, "durak-N: dlog[0] = TRUMP");
@@ -814,7 +1135,7 @@ async function main() {
     // ── durak: throw-in PASS consensus (a covered 3-seat table is beaten only on full consensus) ──
     await (async function () {
         // Fresh 3-seat table so there are TWO non-defender attack seats (the opener + one
-        // co-attacker). A single opener PASS must NOT beat the table — it only settles that seat;
+        // co-attacker). A single opener PASS must NOT beat the table - it only settles that seat;
         // Bito waits until every in-play attack seat has passed (or has nothing to throw in).
         var hub = new Hub({ storage: new FakeStorage() });
         var dc = await req(hub, "/api/dcreate.png?n=3&tok=DKPASS01");
@@ -837,7 +1158,7 @@ async function main() {
             if (cov.w === 1 && cov.h === 1) covered = true;
         }
         if (!covered) {
-            // No legal cover in this deal — the consensus path needs a covered table, so just
+            // No legal cover in this deal - the consensus path needs a covered table, so just
             // assert the pass route rejects an uncovered table and move on (still a real check).
             var earlyPass = await req(hub, "/api/dact.png?code=" + code + "&tok=" + toks[openSeat] + "&a=4");
             ok(earlyPass.w === 9 && earlyPass.h === 2, "durak-pass: pass on an uncovered table → (9,2)");
@@ -845,7 +1166,7 @@ async function main() {
             // The cover may have ALREADY beaten the table: if no attack seat held a legal throw-in,
             // canBito() is true the instant the last pair is covered, so the server auto-emits BITO
             // (valid consensus of zero pending throwers). Scan the log tail to find out which case
-            // we're in — both are correct, but they need different follow-up assertions.
+            // we're in - both are correct, but they need different follow-up assertions.
             var seq = 5, coverBito = false;
             for (;;) {
                 var lg0 = await req(hub, "/api/dlog.png?code=" + code + "&since=" + seq);
@@ -855,7 +1176,7 @@ async function main() {
             }
             if (coverBito) {
                 // Auto-consensus on cover: nobody could throw in, so the table was beaten with no
-                // pass needed. That IS the consensus rule with an empty pending set — assert it.
+                // pass needed. That IS the consensus rule with an empty pending set - assert it.
                 ok(true, "durak-pass: covered table with no throw-ins auto-beats (empty consensus)");
             } else {
                 // Live covered table: at least one attack seat still holds a throw-in. Defender may
@@ -888,7 +1209,7 @@ async function main() {
     // ── poker: authoritative dealer (own route set: pcreate/pjoin/proom/pstart/pact/plog/pdraw) ──
     await (async function () {
         var hub = new Hub({ storage: new FakeStorage() });
-        // Host creates a 2-seat poker lobby (pcreate is NOT the generic create — poker owns its
+        // Host creates a 2-seat poker lobby (pcreate is NOT the generic create - poker owns its
         // routes because the shared lobby is hard-capped at 2 while poker seats 2–4).
         var pc = await req(hub, "/api/pcreate.png?n=2&tok=PHOST123");
         ok(codeHost(pc), "poker: pcreate → HOST (w>=100 role flag)");
@@ -900,19 +1221,17 @@ async function main() {
         // Room shows 1 seated, cap 2, not started.
         var pr = await req(hub, "/api/proom.png?code=" + code);
         ok(pr.w === 1 && pr.h === 2, "poker: proom shows 1 player, cap 2, not started");
-        // A second player joins → learns its own seat (1) and the cap (2).
+        // A second player joins, learns its seat, and fills the declared cap.
         var pj = await req(hub, "/api/pjoin.png?code=" + code + "&tok=PJOIN123");
         ok(pj.w === 2 && pj.h === 2, "poker: pjoin → cap 2, seat index 1");
         // Re-join is idempotent (poll safety).
         var pj2 = await req(hub, "/api/pjoin.png?code=" + code + "&tok=PJOIN123");
         ok(pj2.w === 2 && pj2.h === 2, "poker: pjoin re-join idempotent");
-        // Only the host (seat 0) starts.
-        var badStart = await req(hub, "/api/pstart.png?code=" + code + "&tok=PJOIN123");
-        ok(badStart.w === 9 && badStart.h === 1, "poker: non-host start → (9,1)");
-        var ps = await req(hub, "/api/pstart.png?code=" + code + "&tok=PHOST123");
-        ok(ps.w === 1 && ps.h === 1, "poker: host start deals the first hand");
         var pr2 = await req(hub, "/api/proom.png?code=" + code);
-        ok(pr2.w === 52 && pr2.h === 2, "poker: proom now shows started (players 2, started band +50)");
+        ok(pr2.w === 52 && pr2.h === 2, "poker: full declared cap auto-deals (players 2, +50 band)");
+        // A repeated host deal is harmless/idempotent.
+        var ps = await req(hub, "/api/pstart.png?code=" + code + "&tok=PHOST123");
+        ok(ps.w === 1 && ps.h === 1, "poker: host deal after auto-deal is idempotent");
         // Public log opens with a HAND event (2, button+1).
         var h0 = await req(hub, "/api/plog.png?code=" + code + "&since=0");
         ok(h0.w === 2 && (h0.h === 1 || h0.h === 2), "poker: plog[0] = HAND (2, button+1)");
@@ -947,7 +1266,7 @@ async function main() {
     // ── poker: a hand PLAYED TO THE FLOP reveals three DISTINCT, real board cards ──
     // Regression guard for the "three identical 2♠ on the flop online" bug (2026-07-18): the
     // server was reading the community board off newHand's st.board, which is [] until nextStreet
-    // lazily deals it — so every BOARD event encoded card id 0 (= 2♠). No prior test reached a
+    // lazily deals it - so every BOARD event encoded card id 0 (= 2♠). No prior test reached a
     // flop (they all folded preflop), so it shipped green. This drives a real preflop CALL+CHECK
     // to the flop and asserts the board cards are distinct and in range.
     await (async function () {
@@ -958,7 +1277,7 @@ async function main() {
         await req(hub, "/api/pjoin.png?code=" + code + "&tok=" + JOIN);
         await req(hub, "/api/pstart.png?code=" + code + "&tok=" + HOST);
         // Reach the flop: heads-up the button/SB acts first (CALL), then the BB CHECKS. We don't
-        // track whose turn it is here — just try each token with CALL, then CHECK, until the flop
+        // track whose turn it is here - just try each token with CALL, then CHECK, until the flop
         // lands. The server rejects out-of-turn/illegal actions with (9,x), so wrong tries are safe.
         var toks = [HOST, JOIN];
         async function tryAct(a) {
@@ -978,7 +1297,7 @@ async function main() {
             if (e.w === 5) board.push(e.h - 1);
             s++;
         }
-        ok(board.length >= 3, "poker: reached the flop — at least 3 BOARD cards emitted (" + board.length + ")");
+        ok(board.length >= 3, "poker: reached the flop - at least 3 BOARD cards emitted (" + board.length + ")");
         var inRange = board.every(function (c) { return c >= 0 && c <= 51; });
         ok(inRange, "poker: every board card is a real id 0..51");
         ok(new Set(board).size === board.length, "poker: board cards are all DISTINCT (no duplicate 2♠ bug)");
@@ -1104,6 +1423,29 @@ async function main() {
         ok(mv.w === 1 && mv.h === 1, "mquick: fixed game plays chess (e2-e4 accepted)");
     })();
 
+    // ── mquick: Durak resolves to one heads-up pair and auto-starts its dealer flow ──
+    await (async function () {
+        var hm = new Hub({ storage: new FakeStorage() });
+        var mh = await req(hm, "/api/mquick.png?games=2,3&tok=MQDHOST1");
+        var mc = decCode(mh);
+        ok(codeHost(mh), "mquick/durak: first caller waits as host");
+        var mj = await req(hm, "/api/mquick.png?games=3&tok=MQDJOIN1");
+        ok(!codeHost(mj) && decCode(mj) === mc,
+            "mquick/durak: intersecting caller joins the same lobby");
+        var ms = await req(hm, "/api/status.png?code=" + mc);
+        ok(ms.w === 2 && ms.h === 4,
+            "mquick/durak: match resolves to game 3 with exactly two players");
+        var room = await req(hm, "/api/room.png?code=" + mc);
+        ok(room.w === 2 && room.h === 2,
+            "mquick/durak: filled two-seat room starts automatically");
+        var first = await req(hm, "/api/dlog.png?code=" + mc + "&since=0");
+        ok(first.w === 2 && first.h >= 1 && first.h <= 36,
+            "mquick/durak: authoritative deal begins with TRUMP");
+        var third = await req(hm, "/api/quick.png?game=3&tok=MQDTHIRD");
+        ok(codeHost(third) && decCode(third) !== mc,
+            "mquick/durak: a third caller opens a new pair instead of joining the running match");
+    })();
+
     // ── mquick: non-intersecting sets do NOT pair ──
     await (async function () {
         var hm = new Hub({ storage: new FakeStorage() });
@@ -1111,7 +1453,7 @@ async function main() {
         ok(codeHost(a), "mquick: host offers {1,2} (HOST)");
         var ac = decCode(a);
         var b = await req(hm, "/api/mquick.png?games=4,5&tok=MQNOBB01");   // disjoint {4,5}
-        ok(codeHost(b), "mquick: disjoint set does NOT pair — hosts its own lobby");
+        ok(codeHost(b), "mquick: disjoint set does NOT pair - hosts its own lobby");
         var bc = decCode(b);
         ok(bc !== ac, "mquick: the two disjoint hosts are separate lobbies");
         // A third caller offering {2} takes the FIRST host (which still waits under queue 2).
@@ -1177,7 +1519,7 @@ async function main() {
         // Host asks first: armed, still gen 0 → (1, gen+1) = (1,1).
         var r1 = await req(L.hub, "/api/rematch.png?code=" + L.code + "&tok=RMHOST01&gen=0");
         ok(r1.w === 1 && r1.h === 1, "rematch: host armed, waiting → (1, gen0+1)");
-        // Host polling again is idempotent — still waiting, no double-arm side effect.
+        // Host polling again is idempotent - still waiting, no double-arm side effect.
         var r1b = await req(L.hub, "/api/rematch.png?code=" + L.code + "&tok=RMHOST01&gen=0");
         ok(r1b.w === 1 && r1b.h === 1, "rematch: host re-poll stays waiting (idempotent)");
         // Joiner asks: both armed → reset + gen++ → (2, gen1+1) = (2,2).
@@ -1185,7 +1527,7 @@ async function main() {
         ok(r2.w === 2 && r2.h === 2, "rematch: both ready → (2, gen1+1)");
         // The board is fresh: poll from 0 sees nothing (moves cleared), status back to 2 players.
         var pl = await req(L.hub, "/api/poll.png?code=" + L.code + "&since=0");
-        ok(pl.w === 1 && pl.h === 1, "rematch: state reset — poll(since=0) → (1,1) nothing new");
+        ok(pl.w === 1 && pl.h === 1, "rematch: state reset - poll(since=0) → (1,1) nothing new");
         // Host's stale gen-0 poll after the bump can't re-arm the next rematch; it just reads gen 1.
         var stale = await req(L.hub, "/api/rematch.png?code=" + L.code + "&tok=RMHOST01&gen=0");
         ok(stale.w === 1 && stale.h === 2, "rematch: stale gen-0 poll reads gen 1, does not arm");
@@ -1264,7 +1606,7 @@ async function main() {
     // ── /api/leave: mid-game exit (pair teardown, foreign-token no-op, N-seat fold-out) ──
     await (async function () {
         // A) Pair game (chess): a live match. Leaving tears the lobby down so the opponent's next
-        //    poll returns (9,9) "gone" — the survivor is shown "Opponent left." and wins by default.
+        //    poll returns (9,9) "gone" - the survivor is shown "Opponent left." and wins by default.
         var hub = new Hub({ storage: new FakeStorage() });
         var c = await req(hub, "/api/create.png?game=1&tok=LVHOST001");
         var code = decCode(c);
@@ -1340,6 +1682,29 @@ async function main() {
             if (pev.w === 52 && pev.h === 1) sawPLeft = true;
         }
         ok(sawPLeft, "leave(poker-3): LEFT(52) event logged for the departed seat");
+        var afterFirstPokerLeave = (await phub.storage.get("l:" + pcode)).state.log.length;
+        for (var repeatLeave = 0; repeatLeave < 20; repeatLeave++) {
+            await req(phub, "/api/leave.png?code=" + pcode + "&tok=PLPLR301");
+        }
+        var afterRepeatedPokerLeave = (await phub.storage.get("l:" + pcode)).state.log.length;
+        ok(afterRepeatedPokerLeave === afterFirstPokerLeave,
+            "leave(poker-3): repeated leave is idempotent and appends no duplicate LEFT events");
+
+        // Even a first-time departure at the hard log ceiling must not push the persisted lobby
+        // past MOVE_CAP. Tearing the abuse-only table down is safer than an unlogged fold.
+        var capHub = new Hub({ storage: new FakeStorage() });
+        var capCreate = await req(capHub, "/api/pcreate.png?n=4&tok=CAPLHOST");
+        var capCode = decCode(capCreate);
+        await req(capHub, "/api/pjoin.png?code=" + capCode + "&tok=CAPLPLR1");
+        await req(capHub, "/api/pjoin.png?code=" + capCode + "&tok=CAPLPLR2");
+        await req(capHub, "/api/pjoin.png?code=" + capCode + "&tok=CAPLPLR3");
+        await req(capHub, "/api/pstart.png?code=" + capCode + "&tok=CAPLHOST");
+        var cappedLobby = await capHub.storage.get("l:" + capCode);
+        cappedLobby.state.log = new Array(1200).fill({ w: 2, h: 1 });
+        await capHub.storage.put("l:" + capCode, cappedLobby);
+        await req(capHub, "/api/leave.png?code=" + capCode + "&tok=CAPLPLR3");
+        ok((await req(capHub, "/api/plog.png?code=" + capCode + "&since=0")).w === 9,
+            "leave(poker-4): MOVE_CAP departure tears down instead of growing the log");
 
         // D) Pre-start lobby: leave behaves like cancel (tears down a waiting lobby).
         var whub = new Hub({ storage: new FakeStorage() });
@@ -1348,6 +1713,252 @@ async function main() {
         await req(whub, "/api/leave.png?code=" + wcode + "&tok=WLHOST001");
         var wstat = await req(whub, "/api/status.png?code=" + wcode);
         ok(wstat.w === 9, "leave: pre-start host leaving tears the waiting lobby down");
+
+        // E) Pre-start MULTI-seat leave keeps the table. A joiner walking away (closing the Esc
+        // menu in the room view calls /api/leave) used to delete the whole lobby, taking the host
+        // and every other seated player with it. The vacated index becomes a HOLE, never a
+        // renumbering - each client cached its own seat at join time and is never told otherwise.
+        var hhub = new Hub({ storage: new FakeStorage() });
+        var hc = await req(hhub, "/api/dcreate.png?n=4&tok=HOLEHOST");
+        var hcode = decCode(hc);
+        var hj1 = await req(hhub, "/api/djoin.png?code=" + hcode + "&tok=HOLEJ001");
+        var hj2 = await req(hhub, "/api/djoin.png?code=" + hcode + "&tok=HOLEJ002");
+        ok(hj1.h === 2 && hj2.h === 3, "hole: joiners took seats 1 and 2");
+        var hlv = await req(hhub, "/api/leave.png?code=" + hcode + "&tok=HOLEJ001");
+        ok(hlv.w === 1 && hlv.h === 1, "hole: pre-start joiner leave → (1,1)");
+        var hroom = await req(hhub, "/api/droom.png?code=" + hcode);
+        ok(hroom.w !== 9, "hole: table SURVIVES a pre-start joiner leave");
+        ok(hroom.w === 2, "hole: droom reports 2 present (not the 3 seats ever handed out)");
+        // The seat-2 player must keep index 2 - compacting would have handed it index 1.
+        var hre = await req(hhub, "/api/djoin.png?code=" + hcode + "&tok=HOLEJ002");
+        ok(hre.h === 3, "hole: the remaining joiner still holds seat 2 (no renumbering)");
+        // A fresh joiner refills the hole rather than growing the table past cap.
+        var hj3 = await req(hhub, "/api/djoin.png?code=" + hcode + "&tok=HOLEJ003");
+        ok(hj3.h === 2, "hole: a new joiner is seated INTO the vacated index 1");
+        ok((await req(hhub, "/api/droom.png?code=" + hcode)).w === 3, "hole: droom back to 3 present");
+        var refilledDurak = await hhub.storage.get("l:" + hcode);
+        ok(!refilledDurak.left || refilledDurak.left.indexOf(1) < 0,
+            "hole: djoin clears the replacement seat's stale left marker");
+        // Start, then let the other original joiner leave. Host + replacement are still live, so
+        // stale departure bookkeeping must not tear their table down.
+        await req(hhub, "/api/start.png?code=" + hcode + "&tok=HOLEHOST");
+        await req(hhub, "/api/leave.png?code=" + hcode + "&tok=HOLEJ002");
+        var refilledDurakRoom = await req(hhub, "/api/droom.png?code=" + hcode);
+        ok(refilledDurakRoom.w === 52,
+            "hole: later leave keeps the started Durak table alive with host + replacement");
+
+        // Host leaving PRE-start still ends a separate room - nobody else can press Start.
+        var hostLeaveHub = new Hub({ storage: new FakeStorage() });
+        var hostLeaveCreate = await req(hostLeaveHub, "/api/dcreate.png?n=3&tok=HLHOST01");
+        var hostLeaveCode = decCode(hostLeaveCreate);
+        await req(hostLeaveHub, "/api/djoin.png?code=" + hostLeaveCode + "&tok=HLJOIN01");
+        await req(hostLeaveHub, "/api/leave.png?code=" + hostLeaveCode + "&tok=HLHOST01");
+        ok((await req(hostLeaveHub, "/api/droom.png?code=" + hostLeaveCode)).w === 9,
+            "hole: pre-start HOST leave still tears the table down");
+
+        // F) Start with an unfilled hole: the deal must run and fold the empty seat out, so the
+        // remaining players get a live game instead of a table that waits on a ghost.
+        var ghub = new Hub({ storage: new FakeStorage() });
+        var gc = await req(ghub, "/api/dcreate.png?n=4&tok=GAPHOST1");
+        var gcode = decCode(gc);
+        await req(ghub, "/api/djoin.png?code=" + gcode + "&tok=GAPJ0001");
+        await req(ghub, "/api/djoin.png?code=" + gcode + "&tok=GAPJ0002");
+        await req(ghub, "/api/leave.png?code=" + gcode + "&tok=GAPJ0001");   // hole at seat 1
+        var gst = await req(ghub, "/api/start.png?code=" + gcode + "&tok=GAPHOST1");
+        ok(gst.w === 1 && gst.h === 1, "gap: host can start a durak table with a hole in it");
+        var sawGapLeft = false, gapEvents = 0;
+        for (var gi = 0; gi < 60; gi++) {
+            var gev = await req(ghub, "/api/dlog.png?code=" + gcode + "&since=" + gi);
+            if (gev.w === 1 && gev.h === 1) break;
+            gapEvents++;
+            if (gev.w === 46) sawGapLeft = true;                 // LEFT(seat 1) = 45 + 1
+        }
+        ok(gapEvents > 0, "gap: the deal produced a public log");
+        ok(sawGapLeft, "gap: the empty seat is folded out via a LEFT event");
+        // Poker takes the same route, but a hole just starts with a zero stack (newHand sits it out).
+        var qhub = new Hub({ storage: new FakeStorage() });
+        var qc = await req(qhub, "/api/pcreate.png?n=4&tok=GAPPHST1");
+        var qcode = decCode(qc);
+        await req(qhub, "/api/pjoin.png?code=" + qcode + "&tok=GAPPJ001");
+        await req(qhub, "/api/pjoin.png?code=" + qcode + "&tok=GAPPJ002");
+        await req(qhub, "/api/leave.png?code=" + qcode + "&tok=GAPPJ001");
+        var qbad = await req(qhub, "/api/pstart.png?code=" + qcode + "&tok=GAPPJ002");
+        ok(qbad.w === 9 && qbad.h === 1, "gap: non-host cannot deal a partial poker table");
+        var qst = await req(qhub, "/api/pstart.png?code=" + qcode + "&tok=GAPPHST1");
+        ok(qst.w === 1 && qst.h === 1, "gap: host can deal a poker table with a hole in it");
+        ok((await req(qhub, "/api/proom.png?code=" + qcode)).w >= 50, "gap: poker table reports started");
+        var sawPokerGapLeft = false;
+        for (var qgi = 0; qgi < 20; qgi++) {
+            var qgev = await req(qhub, "/api/plog.png?code=" + qcode + "&since=" + qgi);
+            if (qgev.w === 1 && qgev.h === 1) break;
+            if (qgev.w === 51) sawPokerGapLeft = true;              // LEFT(seat 1) = 50 + 1
+        }
+        ok(sawPokerGapLeft, "gap: poker clients are told that the empty seat is out");
+
+        // Poker reuses and restores a pre-start hole exactly like Durak. A later leave must count
+        // the replacement as live rather than deleting the table out from under it.
+        var pHoleHub = new Hub({ storage: new FakeStorage() });
+        var pHoleCreate = await req(pHoleHub, "/api/pcreate.png?n=4&tok=PHOLHOST");
+        var pHoleCode = decCode(pHoleCreate);
+        await req(pHoleHub, "/api/pjoin.png?code=" + pHoleCode + "&tok=PHOLPLR1");
+        await req(pHoleHub, "/api/pjoin.png?code=" + pHoleCode + "&tok=PHOLPLR2");
+        await req(pHoleHub, "/api/leave.png?code=" + pHoleCode + "&tok=PHOLPLR1");
+        var pHoleJoin = await req(pHoleHub, "/api/pjoin.png?code=" + pHoleCode + "&tok=PHOLREPL");
+        ok(pHoleJoin.h === 2, "hole: pjoin reuses the vacated seat index");
+        var refilledPoker = await pHoleHub.storage.get("l:" + pHoleCode);
+        ok(!refilledPoker.left || refilledPoker.left.indexOf(1) < 0,
+            "hole: pjoin clears the replacement seat's stale left marker");
+        await req(pHoleHub, "/api/pstart.png?code=" + pHoleCode + "&tok=PHOLHOST");
+        await req(pHoleHub, "/api/leave.png?code=" + pHoleCode + "&tok=PHOLPLR2");
+        ok((await req(pHoleHub, "/api/proom.png?code=" + pHoleCode)).w === 52,
+            "hole: later leave keeps the started Poker table alive with host + replacement");
+
+        // G) /api/join must REFUSE an mquick lobby. It sits at game 0 until a seeker resolves it
+        // through finalizeJoin; the generic join hard-set players=2 with game 0 and state null,
+        // which bricked the lobby for its full 30-minute life (host span forever on waitForMulti-
+        // Match, every move answered (9,2), and the pubq:m:* keys stayed pinned to a dead code).
+        var mhub = new Hub({ storage: new FakeStorage() });
+        var mc = await req(mhub, "/api/mquick.png?games=1,2&tok=MQHOST001");
+        var mcode = decCode(mc);
+        var mj = await req(mhub, "/api/join.png?code=" + mcode + "&tok=MQJOIN001");
+        ok(mj.w === 20 && mj.h === 1, "mquick: generic /api/join is refused with (20,1) missing");
+        var mstat = await req(mhub, "/api/status.png?code=" + mcode);
+        ok(mstat.w === 1, "mquick: the lobby is untouched - still waiting with 1 player");
+        // …and the intended path still works: a seeker matches through mquick itself.
+        var ms = await req(mhub, "/api/mquick.png?games=2,4&tok=MQSEEK001");
+        ok(ms.w > 0 && ms.w !== 9, "mquick: a real seeker still matches into the lobby");
+
+        // J) A token can never occupy both seats of one lobby. seatOf returns the FIRST match, so
+        // self-matching made seat 1 unreachable: every move resolved to seat 0 and the game wedged
+        // after the first one. Reachable honestly by double-clicking Quick Match (cancel then
+        // refuses to free the abandoned lobby because players is already 2).
+        var xhub = new Hub({ storage: new FakeStorage() });
+        var q1 = await req(xhub, "/api/quick.png?game=2&tok=SELFMTCH");
+        var q2 = await req(xhub, "/api/quick.png?game=2&tok=SELFMTCH");
+        ok(decCode(q1) !== decCode(q2), "self-match: a second quick with the same token does NOT join its own lobby");
+        ok((await req(xhub, "/api/status.png?code=" + decCode(q1))).w === 1, "self-match: the first lobby is still waiting for a real opponent");
+        // A different token matches into whichever lobby currently owns the queue slot (the second
+        // host overwrote it), but it must be a REAL match: two players in one lobby.
+        var q3 = await req(xhub, "/api/quick.png?game=2&tok=OTHERPLR");
+        ok((await req(xhub, "/api/status.png?code=" + decCode(q3))).w === 2, "self-match: a DIFFERENT token still matches into a waiting lobby");
+        // Typing your own private code is idempotent, not a second seat.
+        var chub = new Hub({ storage: new FakeStorage() });
+        var cc = await req(chub, "/api/create.png?game=2&tok=SELFJOIN");
+        var ccode = decCode(cc);
+        var selfJoin = await req(chub, "/api/join.png?code=" + ccode + "&tok=SELFJOIN");
+        ok(selfJoin.w === 2, "self-join: the host typing its own code gets an idempotent reply");
+        ok((await req(chub, "/api/status.png?code=" + ccode)).w === 1, "self-join: the lobby still has ONE player");
+        ok((await req(chub, "/api/join.png?code=" + ccode + "&tok=REALJOIN")).w === 2, "self-join: a real joiner can still take seat 1");
+
+        // H) Rematch on a 3-seat table needs EVERY seat, not just seats 0 and 1. Two players used
+        // to be able to reset the game from under the third: state was re-initialised and the
+        // public log truncated to empty, leaving that seat's `since` cursor past the end of it -
+        // a frozen screen with no way back.
+        var rhub = new Hub({ storage: new FakeStorage() });
+        var rc = await req(rhub, "/api/dcreate.png?n=3&tok=RMHOST01");
+        var rcode = decCode(rc);
+        await req(rhub, "/api/djoin.png?code=" + rcode + "&tok=RMPLR001");
+        await req(rhub, "/api/djoin.png?code=" + rcode + "&tok=RMPLR002");
+        await req(rhub, "/api/start.png?code=" + rcode + "&tok=RMHOST01");
+        var rlogLen = 0;
+        for (var ri = 0; ri < 80; ri++) {
+            var rev = await req(rhub, "/api/dlog.png?code=" + rcode + "&since=" + ri);
+            if (rev.w === 1 && rev.h === 1) { rlogLen = ri; break; }
+        }
+        ok(rlogLen > 0, "rematch: the started table has a public log");
+        var rm0 = await req(rhub, "/api/rematch.png?code=" + rcode + "&tok=RMHOST01&gen=0");
+        var rm1 = await req(rhub, "/api/rematch.png?code=" + rcode + "&tok=RMPLR001&gen=0");
+        ok(rm0.w === 1 && rm1.w === 1, "rematch: seats 0 and 1 agreeing is NOT enough on a 3-seat table");
+        var stillThere = await req(rhub, "/api/dlog.png?code=" + rcode + "&since=" + (rlogLen - 1));
+        ok(!(stillThere.w === 1 && stillThere.h === 1), "rematch: seat 2's log cursor is still valid");
+        var rm2 = await req(rhub, "/api/rematch.png?code=" + rcode + "&tok=RMPLR002&gen=0");
+        ok(rm2.w === 2, "rematch: the LAST seat agreeing performs the reset");
+        ok((await req(rhub, "/api/droom.png?code=" + rcode)).w === 53,
+            "rematch: all 3 seats are automatically dealt a fresh Durak game");
+        var freshDurakLog = await req(rhub, "/api/dlog.png?code=" + rcode + "&since=0");
+        ok(freshDurakLog.w === 2, "rematch: fresh Durak log begins with TRUMP, not an empty poll");
+        // An empty seat can never answer, so it must not hold the rematch hostage.
+        var ehub = new Hub({ storage: new FakeStorage() });
+        var ec = await req(ehub, "/api/dcreate.png?n=3&tok=RMEHOST1");
+        var ecode = decCode(ec);
+        await req(ehub, "/api/djoin.png?code=" + ecode + "&tok=RMEPLR01");
+        await req(ehub, "/api/djoin.png?code=" + ecode + "&tok=RMEPLR02");
+        await req(ehub, "/api/start.png?code=" + ecode + "&tok=RMEHOST1");
+        await req(ehub, "/api/leave.png?code=" + ecode + "&tok=RMEPLR02");   // seat 2 walks out mid-game
+        await req(ehub, "/api/rematch.png?code=" + ecode + "&tok=RMEHOST1&gen=0");
+        var erm = await req(ehub, "/api/rematch.png?code=" + ecode + "&tok=RMEPLR01&gen=0");
+        ok(erm.w === 2, "rematch: a departed seat does not block the remaining players");
+        ok((await req(ehub, "/api/droom.png?code=" + ecode)).w === 52,
+            "rematch: remaining Durak seats are automatically redealt");
+        var departedFreshLog = await req(ehub, "/api/dlog.png?code=" + ecode + "&since=0");
+        ok(departedFreshLog.w === 2,
+            "rematch: Durak redeal with a departed seat still begins with TRUMP");
+
+        // Poker uses the same generic Play Again handshake, but its controller also only polls:
+        // a successful rematch must append a fresh HAND event server-side.
+        var pokerRematchHub = new Hub({ storage: new FakeStorage() });
+        var pokerRematchCreate = await req(pokerRematchHub, "/api/pcreate.png?n=2&tok=PRMHOST1");
+        var pokerRematchCode = decCode(pokerRematchCreate);
+        await req(pokerRematchHub, "/api/pjoin.png?code=" + pokerRematchCode + "&tok=PRMJOIN1");
+        await req(pokerRematchHub, "/api/pstart.png?code=" + pokerRematchCode + "&tok=PRMHOST1");
+        await req(pokerRematchHub, "/api/rematch.png?code=" + pokerRematchCode + "&tok=PRMHOST1&gen=0");
+        var pokerRematchDone = await req(pokerRematchHub,
+            "/api/rematch.png?code=" + pokerRematchCode + "&tok=PRMJOIN1&gen=0");
+        ok(pokerRematchDone.w === 2, "rematch: both Poker seats complete the handshake");
+        ok((await req(pokerRematchHub, "/api/proom.png?code=" + pokerRematchCode)).w === 52,
+            "rematch: Poker table is automatically dealt again");
+        var freshPokerLog = await req(pokerRematchHub,
+            "/api/plog.png?code=" + pokerRematchCode + "&since=0");
+        ok(freshPokerLog.w === 2, "rematch: fresh Poker log begins with HAND, not an empty poll");
+
+        // I) Durak PASS is idempotent. applyPass always was, but the event push was not, so a seat
+        // spamming /api/dact?a=4 appended a PASS event every time. st.pub was the one monotonic log
+        // MOVE_CAP never bounded, so it grew until the Durable Object's 128 KiB per-value limit made
+        // storage.put throw - after which EVERY request on that lobby answered (9,7) forever.
+        // PASS is only legal on a fully-covered non-empty table, so build one first (same shape as
+        // the durak-pass test above): opener attacks, defender covers.
+        var shub = new Hub({ storage: new FakeStorage() });
+        var sc = await req(shub, "/api/dcreate.png?n=3&tok=SPHOST01");
+        var scode = decCode(sc);
+        var stoks = ["SPHOST01", "SPPLR001", "SPPLR002"];
+        await req(shub, "/api/djoin.png?code=" + scode + "&tok=SPPLR001");
+        await req(shub, "/api/djoin.png?code=" + scode + "&tok=SPPLR002");
+        await req(shub, "/api/start.png?code=" + scode + "&tok=SPHOST01");
+        var sOpenEv = await req(shub, "/api/dlog.png?code=" + scode + "&since=1");
+        var sOpen = sOpenEv.h - 1, sDef = (sOpen + 1) % 3;
+        var sAtk = (await req(shub, "/api/ddraw.png?code=" + scode + "&tok=" + stoks[sOpen] + "&i=0")).w - 2;
+        await req(shub, "/api/dact.png?code=" + scode + "&tok=" + stoks[sOpen] + "&a=1&c=" + sAtk);
+        var sCovered = false;
+        for (var sdi = 0; sdi < 6 && !sCovered; sdi++) {
+            var sdc = (await req(shub, "/api/ddraw.png?code=" + scode + "&tok=" + stoks[sDef] + "&i=" + sdi)).w - 2;
+            var scov = await req(shub, "/api/dact.png?code=" + scode + "&tok=" + stoks[sDef] + "&a=2&p=0&c=" + sdc);
+            if (scov.w === 1 && scov.h === 1) sCovered = true;
+        }
+        async function logLen(hub, c) {
+            for (var i = 0; i < 400; i++) {
+                var e = await req(hub, "/api/dlog.png?code=" + c + "&since=" + i);
+                if (e.w === 1 && e.h === 1) return i;
+            }
+            return -1;
+        }
+        if (sCovered) {
+            // Pass ONCE from the opener. On a 3-seat table this only settles that seat - Bito waits
+            // for the co-attacker - so the pass window stays open, which is the state the unbounded
+            // push exploited. (If the co-attacker held no legal throw-in the cover already beat the
+            // table; then there is nothing to spam and we skip, same as the durak-pass test does.)
+            var firstPass = await req(shub, "/api/dact.png?code=" + scode + "&tok=" + stoks[sOpen] + "&a=4");
+            var afterFirst = await logLen(shub, scode);
+            var stillOpen = (await req(shub, "/api/dact.png?code=" + scode + "&tok=" + stoks[sOpen] + "&a=4")).w === 1;
+            if (firstPass.w === 1 && stillOpen) {
+                // Re-passing the SAME already-settled seat must be a no-op. Without the guard each
+                // call pushed another PASS event, and st.pub had no MOVE_CAP ceiling.
+                for (var sp = 0; sp < 40; sp++)
+                    await req(shub, "/api/dact.png?code=" + scode + "&tok=" + stoks[sOpen] + "&a=4");
+                var afterSpam = await logLen(shub, scode);
+                ok(afterSpam === afterFirst,
+                    "pass-spam: 41 re-passes from a settled seat add 0 events (added " + (afterSpam - afterFirst) + ")");
+            }
+        }
     })();
 
     console.log("\nALL SERVER TESTS PASSED (" + passed + " checks)");

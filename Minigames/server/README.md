@@ -118,92 +118,66 @@ write server-side and makes the normal client stop after its single access prefl
 
 ## Verify it works (in a normal browser)
 
-- `<URL>/api/probe` → a **600×1000** pixel PNG (the client uses it to calibrate swap+scale).
-- `<URL>/api/create?game=1` → a small PNG like **45×92** — that encodes lobby code
-  `4591` (`width*100 + (height-1)` = `45*100 + 91`).
-- `<URL>/api/status?code=4591` → **1×1** (1 player so far).
+- `<URL>/api/probe` → a **600×1000** PNG. This one is LITERAL pixels: it is the calibration
+  reference the client measures the UI scale against. Its all-zero payload is pre-compressed
+  to well under 2 KiB; the large dimensions do not imply a large download.
+- `<URL>/api/ping` → the encoding of `(1, 1)`, i.e. **24×24** (see below). If you get that, the
+  Worker is up.
 
-If you can see those images with the right dimensions, the server is good.
+Every OTHER route answers a *level-encoded* PNG, so the dimensions are not the values:
+
+```
+dim = level * 9 + 15        (STEP = 9, BASE = 15)
+```
+
+So level 0 → 15px, level 1 → 24px, level 63 → 582px; the client decodes back with
+`round((dim - 15) / 9)`. Reading a create/status response by eye means undoing that first — a
+lobby code arrives as two 6-bit halves in a banded width plus a height, not as
+`width*100 + height`.
 
 ---
 
 ## Protocol reference
 
-All routes are GET, all return a PNG. Always append `&rnd=<random>` to defeat the
-engine's image cache. Responses are read as `(width, height)`:
+**The authoritative reference is the header comment of `worker.core.js`** — the route table,
+every `(w, h)` reply, every `(9, x)` rejection code, and the durak/poker public event logs.
+§5 of `../ARCHITECTURE.md` mirrors it.
 
-Every online route now carries a per-seat **token** (`&tok=<tok>`) that flows only
-upward (in the query) and never in a response, so the server can bind each seat to a
-caller and reject spoofed actions. See §5.1 of `ARCHITECTURE.md`.
+This file used to inline a route table of its own. It described the ORIGINAL `dim = int + 1`
+encoding with a `+100` host flag and 4-digit codes in the 1000..9999 range — all three were
+replaced on 2026-07-20 by the level encoding above, 10-bit codes in 0..1023, and dedicated
+width bands for the host/joiner roles. Rather than keep a third copy that drifts again, it is
+gone: read the source, which is also what `tools/mg_server_test.js` asserts against.
 
-### Full-information games (checkers 1, tic-tac-toe 2, chess 4, connect four 5)
+Two things worth knowing before poking at routes by hand:
 
-| Route | Response `(w, h)` |
-|---|---|
-| `/api/probe` | `(600, 1000)` — used once on startup to detect swap + UI scale factor |
-| `/api/create?game=G&tok=T` | `(CODE_HI, CODE_LO+1)` — new lobby; caller is host / seat 0 |
-| `/api/quick?game=G&tok=T` | JOINER `(CODE_HI, CODE_LO+1)` · HOST `(CODE_HI+100, CODE_LO+1)` |
-| `/api/join?code=C&tok=T` | `(G, 1)` joined · `(20, 1)` not found · `(21, 1)` full |
-| `/api/status?code=C` | `(players, 1)` · `(9, 1)` gone — host polls until players == 2 |
-| `/api/move?code=C&from=F&to=T&end=E&tok=T` | `(1,1)` ok · `(9,1)` not-your-turn · `(9,2)` illegal · `(9,3)` bad-token · `(9,9)` gone |
-| `/api/poll?code=C&since=S` | `(from+1 [+100 if end], to+1)` · `(1, 1)` nothing new |
-| `/api/reset?code=C&game=G&tok=T` | `(1, 1)` · `(9,3)` bad-token — restart the same lobby |
-
-- **Connect four** encodes a column drop as `from = col (0..6)`, `to = COL_MARKER = 7`;
-  the server computes the landing row, validates the column isn't full, and stores it.
-  `from != to` always holds, so `(1,1)` stays a safe "nothing new" marker.
-- The **server is authoritative**: `/api/move` runs the shared rules engine
-  (`rules/*.js`, the same bytes the client predicts with) and only appends a *validated*
-  move to the log. A cheat's illegal move returns `(9,x)` and never reaches the opponent.
-
-### Durak (game 3) — authoritative dealer + private deal
-
-Durak doesn't fit "a move is two ints" (it has hidden hands), so the worker OWNS the
-deck/hands/seed and uses a **separate route set**. Clients rebuild the table, trump,
-turn, roles and every player's card *count* from a public event log, and learn only
-their OWN card identities from a private per-seat channel. **2 players only for now.**
-
-| Route | Response `(w, h)` |
-|---|---|
-| `/api/room?code=C` | `(players, started?2:1)` · `(9, 1)` gone |
-| `/api/start?code=C&tok=T` | host seat 0 deals: `(1,1)` ok · `(9,1)` not-host · `(9,2)` too-few-players · `(9,3)` bad-token |
-| `/api/dact?code=C&tok=T&a=A&p=P&c=CARD` | `(1,1)` ok · `(9,1)` not-your-role/turn · `(9,2)` illegal · `(9,3)` bad-token · `(9,9)` gone |
-| `/api/dlog?code=C&since=S` | next public event (see table) · `(1, 1)` nothing new |
-| `/api/ddraw?code=C&tok=T&i=I` | `(card+2, 1)` my i-th private card · `(1,1)` none yet · `(9,3)` not my seat |
-
-`dact` action codes: `a = 1` attack/throw-in (with `c`), `2` cover pair `p` (with `c`),
-`3` take, `4` bito (beat). Public event encoding (both dims ≤ ~63, none is `(1,1)`):
-
-| Event | `w` | `h` |
-|---|---|---|
-| TRUMP | `2` | `trumpCard+1` |
-| OPEN (first attacker seat s) | `3` | `s+1` |
-| PLAY seat s, card c | `10+s` | `c+1` |
-| COVER pair p, card c | `20+p` | `c+1` |
-| TAKE seat s | `30+s` | `1` |
-| BITO | `40` | `1` |
-| DRAW seat s, count n | `50+s` | `n+1` |
-| OVER loser L | `60` | `L+2` (`1`=draw) |
-
-Private cards use `card+2` (2..37), **not** `card+1`, so card id 0 never collides with
-the universal `(1,1)` "nothing new". `ddraw` is gated by the seat token — a caller can
-only read its OWN seat's private cards (a foreign token → `(9,3)`), which closes the
-"read a neighbour's hand" hole.
-
-- Image dimensions are always ≥ 1, so 0 can never be read back — every sentinel is non-zero.
-- `CODE = CODE_HI*100 + CODE_LO` (4-digit). Client decodes `width*100 + (height-1)`.
-- Squares are `0..63` (full 8×8 grid). The client polls with `since = last applied seq`;
-  the returned move/event is implicitly `seq = since+1`, so seq is not echoed.
-- `END = 1` means "turn passes to the other player" (multi-jumps send `END=0` per hop).
-- Every dimension stays ≤ ~128 px, so each returned image is only a few hundred bytes.
-
+- Always append a random query parameter to defeat the engine's image cache.
+- Every state-changing route carries a per-seat token that only ever travels upward, in the
+  query string. The server binds each seat to its token, so a guessed lobby code alone cannot
+  act on a match. See §5.1 of `../ARCHITECTURE.md`.
 
 ---
 
 ## Data & limits
 
-- Lobbies live in one Durable Object. They are not garbage-collected yet; codes are
-  reused only when free. For a small friend group this is irrelevant. (A TTL sweep
-  can be added later if needed.)
-- Free plan: 100k requests/day. Polling every ~1.5s uses ~2.4k requests/hour per
-  active pair — comfortably within free limits.
+- Lobbies live in one Durable Object, keyed `l:<code>` over the 0..1023 code space. An
+  opportunistic sweep (at most once a minute, and only off the lobby-creation paths) drops
+  anything idle for over 30 minutes and clears its public matchmaking-queue slots.
+- Authenticated `status`/`room` polling refreshes a waiting lobby at most once per five minutes;
+  anonymous code probes cannot keep a guessed lobby alive.
+- Abuse controls are temporary throttles, never IP bans. One IP may touch sixteen distinct lobby
+  codes per minute while retrying the same real code is free. Pixel Battle permits six complete
+  fresh 100-pixel banks per IP in a burst and then refills 120 pixels/minute. Expensive uncached
+  map views allow a burst of twelve and one new frame/second; cache hits remain free.
+- Pixel Battle audit actions are append-only for 180 days. Cleanup removes expired action and
+  per-user index records in bounded 512-action batches; every new action runs another batch until
+  caught up, then cleanup returns to a daily cadence. This is an internal deletion batch size,
+  **not** a player/game/action limit. Player/admin paint and undo commit their tiles/version,
+  audit, and ownership in one storage transaction.
+- A lobby's move/event log is capped (`MOVE_CAP`) well below the Durable Object's 128 KiB
+  per-value limit. No honest game comes close; the cap exists so deliberate bloating can't push
+  a lobby past that limit, which would wedge it permanently.
+- Free plan: 100k requests/day, shared between Worker and Durable Object requests. The in-game
+  poll cadence is adaptive (fast for the first few empty polls, then slower) and the side clocks
+  are interpolated locally rather than polled — that is what keeps a match in the low hundreds
+  of requests rather than thousands.

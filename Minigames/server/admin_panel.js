@@ -40,7 +40,7 @@ const ADMIN_HTML = `<!doctype html>
           <button id="panMode" class="secondary" type="button" aria-pressed="false">Pan</button>
           <button id="inspectMode" class="secondary inspect-button" type="button" aria-pressed="false">Inspect pixel</button>
         </div>
-        <div id="pixelCoords" class="pixel-coords">PIXEL —, —</div>
+        <div id="pixelCoords" class="pixel-coords">PIXEL -, -</div>
       </div>
       <div id="canvasShell" class="canvas-shell"><canvas id="canvas" width="512" height="256"></canvas></div>
       <div id="debugPanel" class="debug-panel" hidden>
@@ -195,7 +195,7 @@ const ADMIN_JS = `"use strict";
   });
   canvas.addEventListener("pointerup",stopPointer);
   canvas.addEventListener("pointercancel",stopPointer);
-  canvas.addEventListener("pointerleave",function(){if(!drawing&&!panning)document.getElementById("pixelCoords").textContent="PIXEL —, —";});
+  canvas.addEventListener("pointerleave",function(){if(!drawing&&!panning)document.getElementById("pixelCoords").textContent="PIXEL -, -";});
   canvas.addEventListener("contextmenu",function(e){e.preventDefault();});
   shell.addEventListener("wheel",function(e){if(!canvas.contains(e.target)&&e.target!==canvas)return;e.preventDefault();setZoom(e.deltaY<0?zoom*2:zoom/2,e);},{passive:false});
   document.getElementById("zoomOut").addEventListener("click",function(){setZoom(zoom/2);});
@@ -238,8 +238,8 @@ const ADMIN_JS = `"use strict";
     if(!state)return "";
     var groups=new Map();
     pixels.forEach(function(p){var key=p.beforeDisplay+">"+p.afterDisplay;groups.set(key,(groups.get(key)||0)+1);});
-    var out=[];groups.forEach(function(count,key){var pair=key.split(">"),before=state.paletteNames[+pair[0]]||pair[0],after=state.paletteNames[+pair[1]]||pair[1];out.push(before+" в†’ "+after+" Г—"+count);});
-    return out.slice(0,8).join(" В· ");
+    var out=[];groups.forEach(function(count,key){var pair=key.split(">"),before=state.paletteNames[+pair[0]]||pair[0],after=state.paletteNames[+pair[1]]||pair[1];out.push(before+" → "+after+" ×"+count);});
+    return out.slice(0,8).join(" · ");
   }
   function userActions(steamid){
     document.getElementById("steamId").value=steamid;loadActions(true);document.querySelector(".log-panel").scrollIntoView({behavior:"smooth",block:"start"});
@@ -269,14 +269,14 @@ const ADMIN_JS = `"use strict";
       buttons.push({label:"Force undo",className:"danger",handler:function(){if(confirm("Force undo and overwrite "+data.conflicts+" conflicting pixels?"))undoAction(data.id,true);}});
     }
     buttons.push({label:"Clear preview",className:"secondary",handler:clearPreview});
-    showDebug("PLACED PIXELS"+(data.conflicts&&force?" (FORCE SCOPE)":""),actorName(data)+" В· "+data.count+" pixels",lines,buttons);
+    showDebug("PLACED PIXELS"+(data.conflicts&&force?" (FORCE SCOPE)":""),actorName(data)+" · "+data.count+" pixels",lines,buttons);
   }
   async function previewAction(id){
-    showDebug("ACTION PREVIEW","Loading "+id+"вЂ¦",[],[]);
+    showDebug("ACTION PREVIEW","Loading "+id+"…",[],[]);
     try{var data=await api("/admin/api/action?id="+encodeURIComponent(id));applyActionPreview(data,false,true);}catch(e){notify(e.message,true);clearPreview();}
   }
   async function inspectPixel(p){
-    showDebug("PIXEL INSPECTOR","Inspecting "+p.x+", "+p.y+"вЂ¦",[],[]);
+    showDebug("PIXEL INSPECTOR","Inspecting "+p.x+", "+p.y+"…",[],[]);
     try{
       var data=await api("/admin/api/pixel?x="+p.x+"&y="+p.y);stopPulse();preview={kind:"inspect",x:p.x,y:p.y};render();focusBounds([p.x,p.y,p.x,p.y]);
       var lines=[{text:"Color: "+data.colorName,className:"important"},{text:"Coordinate "+p.x+", "+p.y}],buttons=[];

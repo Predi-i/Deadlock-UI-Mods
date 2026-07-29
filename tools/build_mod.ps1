@@ -718,12 +718,6 @@ while ($true) {
             }
         }
 
-        $CacheObj = New-Object PSObject
-        foreach ($key in $BuildCache.Keys) {
-            $CacheObj | Add-Member -MemberType NoteProperty -Name $key -Value $BuildCache[$key]
-        }
-        $CacheObj | ConvertTo-Json -Depth 1 | Set-Content $CachePath -Encoding UTF8
-
         Write-Host "Step 2/3: Compiling assets..." -ForegroundColor Cyan
         $errorCount = 0
         $totalFiles = $FilesToCompile.Count
@@ -759,8 +753,17 @@ while ($true) {
         }
 
         if ($errorCount -gt 0) {
-            Write-Host "WARNING: $errorCount files failed to compile. VPK might be incomplete." -ForegroundColor Red
+            throw "$errorCount files failed to compile. Aborting before VPK packing."
         }
+
+        # Only persist the incremental-build cache after every changed source
+        # compiled successfully. Otherwise a failed source could be skipped by
+        # the next build merely because its timestamp was already cached.
+        $CacheObj = New-Object PSObject
+        foreach ($key in $BuildCache.Keys) {
+            $CacheObj | Add-Member -MemberType NoteProperty -Name $key -Value $BuildCache[$key]
+        }
+        $CacheObj | ConvertTo-Json -Depth 1 | Set-Content $CachePath -Encoding UTF8
 
         Write-Host "Step 3/3: Packing VPK..." -ForegroundColor Cyan
         if (Test-Path $OutputVpk) { Remove-Item -Path $OutputVpk -Force }
@@ -789,6 +792,11 @@ while ($true) {
     catch {
         Write-Host "`n=== BUILD FAILED ===" -ForegroundColor Red
         Write-Host $_.Exception.Message -ForegroundColor Red
+        # A caller such as build_mod_strip_comments.ps1 must receive a failing
+        # exit status instead of treating the printed error as a successful build.
+        if (-not [string]::IsNullOrWhiteSpace($ModFolderName)) {
+            throw
+        }
     }
     finally {
         Start-Sleep -Milliseconds 500 

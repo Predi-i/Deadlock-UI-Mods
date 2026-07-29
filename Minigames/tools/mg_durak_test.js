@@ -1,6 +1,6 @@
 "use strict";
 // Rules test for the shared Durak engine. Run: node tools/mg_durak_test.js
-// Since the trust refactor the pure rules live in panorama/scripts/rules/durak.js — the exact
+// Since the trust refactor the pure rules live in panorama/scripts/rules/durak.js - the exact
 // same file the authoritative server dealer runs. Load it like the other rules tests: the IIFE
 // sees no `$` in Node, so it attaches to globalThis.MGRules.durak.
 const fs = require("fs");
@@ -70,13 +70,13 @@ console.log("attack / defend flow");
     M.applyAttack(st, st.attacker, atkCard);
     ok(st.phase === "defend" && st.table.length === 1 && st.table[0].a === atkCard, "attack places a card, phase→defend");
     ok(st.hands[st.attacker].indexOf(atkCard) < 0, "attack card left the attacker's hand");
-    // Find any legal defense; if none, that's a legit 'must take' state — skip the cover assert.
+    // Find any legal defense; if none, that's a legit 'must take' state - skip the cover assert.
     const ld = M.legalDefends(st, 0);
     if (ld.length) {
         M.applyDefend(st, 0, ld[0]);
         ok(st.table[0].d === ld[0] && st.phase === "attack", "defend covers the pair, phase→attack");
     } else {
-        ok(true, "no legal defense in this deal (take is the only option) — flow ok");
+        ok(true, "no legal defense in this deal (take is the only option) - flow ok");
     }
     ok(totalCards(st) === 36, "cards conserved after attack/defend");
 })();
@@ -130,7 +130,7 @@ console.log("full bot-vs-bot games terminate & conserve cards");
                         const c = M.durakBotAttack(st, actor);
                         if (c >= 0) M.applyAttack(st, actor, c);
                         else if (st.table.length > 0) M.endBout(st, false);
-                        else { // opener refused — would be a bug; break to surface it
+                        else { // opener refused - would be a bug; break to surface it
                             M.endBout(st, false);
                         }
                     }
@@ -156,7 +156,7 @@ console.log("throw-in consensus (canBito / pass window)");
     if (ld.length) {
         M.applyDefend(st, 0, ld[0]);
         // Table now covered. Under the explicit-Bito rule a seat that still HOLDS cards is never
-        // auto-settled — whether or not it holds a legal throw-in, it must explicitly pass before the
+        // auto-settled - whether or not it holds a legal throw-in, it must explicitly pass before the
         // table can be beaten. (Only an empty hand auto-settles.) This is what keeps a covered table
         // on screen after a defence instead of sweeping it to discard in the same tick.
         const hasCards = st.hands[atk].length > 0;
@@ -172,7 +172,7 @@ console.log("throw-in consensus (canBito / pass window)");
             ok(M.canBito(st), "covered and attacker has no cards → auto-settled, bito allowed");
         }
     } else {
-        ok(true, "deal forces a take — consensus not exercised this seed");
+        ok(true, "deal forces a take - consensus not exercised this seed");
     }
 })();
 
@@ -211,7 +211,7 @@ console.log("a fresh attack card reopens a passed window");
 console.log("full CONSENSUS bot games (all attack seats throw in) terminate & conserve");
 (function () {
     // Drive games where EVERY in-play non-defender throws in until it has nothing legal, then
-    // passes — the true podkidnoy flow. Bito only when canBito(). This exercises the new consensus
+    // passes - the true podkidnoy flow. Bito only when canBito(). This exercises the new consensus
     // path end-to-end (the old loop above only lets the primary attacker act).
     let bad = 0;
     for (let seed = 1; seed <= 40; seed++) {
@@ -249,7 +249,7 @@ console.log("full CONSENSUS bot games (all attack seats throw in) terminate & co
                     } else {
                         // No pending thrower but not yet bito → someone holding cards still owes a
                         // confirm. Pass that seat (explicit Bito). If firstUnsettled can't find one,
-                        // the state is inconsistent — flag it.
+                        // the state is inconsistent - flag it.
                         const u = M.firstUnsettled(st);
                         if (u < 0) { threw = true; break; }
                         M.applyPass(st, u);

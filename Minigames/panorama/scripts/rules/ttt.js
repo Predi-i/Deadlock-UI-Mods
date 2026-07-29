@@ -1,7 +1,7 @@
 "use strict";
 
 /*
- * rules/ttt.js — pure Tic-Tac-Toe rules, shared by client predictor + server authority.
+ * rules/ttt.js - pure Tic-Tac-Toe rules, shared by client predictor + server authority.
  * See rules/checkers.js header for the shared-namespace mechanism.
  *
  * Board is a flat length-9 array: 0 empty, 1 = X, 2 = O. Cells index left→right,
@@ -45,14 +45,14 @@
             if (b[i]) continue;
             b[i] = mark;
             var w = tttWinner(b);
-            b[i] = 0;                      // restore — this must not mutate the board
+            b[i] = 0;                      // restore - this must not mutate the board
             if (w && w.mark === mark) return i;
         }
         return -1;
     }
 
     // Heuristic bot: win > block > center > corner > side. Strong but not a full
-    // minimax, so a sharp human can still fork it — deliberately beatable.
+    // minimax, so a sharp human can still fork it - deliberately beatable.
     function tttBotMove(b, mark) {
         var opp = mark === 1 ? 2 : 1;
         var pick = tttFindWin(b, mark); if (pick >= 0) return pick;   // 1) take the win

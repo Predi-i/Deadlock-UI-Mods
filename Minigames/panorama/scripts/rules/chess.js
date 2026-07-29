@@ -1,13 +1,13 @@
 "use strict";
 
 /*
- * rules/chess.js — pure chess rules, shared by client predictor + server authority.
+ * rules/chess.js - pure chess rules, shared by client predictor + server authority.
  * See rules/checkers.js header for the shared-namespace mechanism.
  *
  * Board is a flat Array(64), index = row*8 + col, row 0 = TOP (black back rank), row 7 =
  * BOTTOM (white back rank). Piece value: 0 empty; SIGN = colour (white > 0, black < 0);
  * ABS = type 1=pawn 2=knight 3=bishop 4=rook 5=queen 6=king. "Colour" here is +1 (white) /
- * -1 (black) — the sign of the piece — NOT the checkers WHITE/BLACK strings. White = host,
+ * -1 (black) - the sign of the piece - NOT the checkers WHITE/BLACK strings. White = host,
  * bottom rows (6-7), moves first. Promotion is ALWAYS to a queen (MVP). from/to alone
  * travels the wire: castling / en-passant / promotion are derived by makeMove.
  */
@@ -50,9 +50,14 @@
         return b;
     }
 
-    // Game state that from/to alone can't carry: castling rights + en-passant target square.
-    function initialChessState() { return { ep: -1, wK: true, wQ: true, bK: true, bQ: true }; }
-    function cloneChessState(st) { return { ep: st.ep, wK: st.wK, wQ: st.wQ, bK: st.bK, bQ: st.bQ }; }
+    // Game state that from/to alone can't carry: castling rights + en-passant target square +
+    // the halfmove clock for the fifty-move rule (`half`: plies since the last capture or pawn
+    // move). `half` is a plain int so cloneChessState stays allocation-cheap inside the search.
+    // Threefold repetition is NOT tracked here - it needs the whole game's position list, which
+    // would make every search node copy an array. The caller keeps a positionKey() count instead
+    // and passes it to chessResult().
+    function initialChessState() { return { ep: -1, wK: true, wQ: true, bK: true, bQ: true, half: 0 }; }
+    function cloneChessState(st) { return { ep: st.ep, wK: st.wK, wQ: st.wQ, bK: st.bK, bQ: st.bQ, half: st.half || 0 }; }
 
     function findKing(b, color) {
         var k = color > 0 ? C_KING : -C_KING;
@@ -108,6 +113,9 @@
         var nb = b.slice(), nst = cloneChessState(st);
         var piece = b[from], color = cSign(piece), t = cType(piece);
         var fr = cRow(from), fc = cCol(from), tr = cRow(to), tc = cCol(to);
+        // Fifty-move rule: the halfmove clock resets on a capture or ANY pawn move, else ticks.
+        // Read b[to] BEFORE the board is mutated below.
+        nst.half = (t === C_PAWN || b[to] !== 0) ? 0 : (st.half || 0) + 1;
         nst.ep = -1;
         nb[to] = piece; nb[from] = 0;
         if (t === C_PAWN) {
@@ -135,12 +143,12 @@
         if (attacksSquare(b, ksq, -color)) return;                 // not out of check
         var kSide = color > 0 ? st.wK : st.bK;
         var qSide = color > 0 ? st.wQ : st.bQ;
-        if (kSide && b[cSq(row, 5)] === 0 && b[cSq(row, 6)] === 0 && b[cSq(row, 7)] === color * C_ROOK
-            && !attacksSquare(b, cSq(row, 5), -color) && !attacksSquare(b, cSq(row, 6), -color)) {
+        if (kSide && b[cSq(row, 5)] === 0 && b[cSq(row, 6)] === 0 && b[cSq(row, 7)] === color * C_ROOK &&
+            !attacksSquare(b, cSq(row, 5), -color) && !attacksSquare(b, cSq(row, 6), -color)) {
             moves.push({ from: ksq, to: cSq(row, 6) });
         }
-        if (qSide && b[cSq(row, 1)] === 0 && b[cSq(row, 2)] === 0 && b[cSq(row, 3)] === 0 && b[cSq(row, 0)] === color * C_ROOK
-            && !attacksSquare(b, cSq(row, 3), -color) && !attacksSquare(b, cSq(row, 2), -color)) {
+        if (qSide && b[cSq(row, 1)] === 0 && b[cSq(row, 2)] === 0 && b[cSq(row, 3)] === 0 && b[cSq(row, 0)] === color * C_ROOK &&
+            !attacksSquare(b, cSq(row, 3), -color) && !attacksSquare(b, cSq(row, 2), -color)) {
             moves.push({ from: ksq, to: cSq(row, 2) });
         }
     }
@@ -203,9 +211,54 @@
         return out;
     }
 
-    // "ongoing" | "checkmate" | "stalemate" for `color` to move.
-    function chessResult(b, st, color) {
-        if (legalMoves(b, st, color).length > 0) return "ongoing";
+    // Can EITHER side still force a mate with the material on the board? Draws the classic
+    // insufficient-material cases: K vs K, K+minor vs K, and K+B vs K+B on the same colour.
+    // Any pawn, rook or queen (or two minors on one side) can still mate, so those are "ongoing".
+    function insufficientMaterial(b) {
+        var minors = { 1: [], "-1": [] };      // bishop/knight squares per colour
+        for (var i = 0; i < 64; i++) {
+            var v = b[i];
+            if (v === 0) continue;
+            var t = cType(v);
+            if (t === C_KING) continue;
+            if (t === C_PAWN || t === C_ROOK || t === C_QUEEN) return false;   // mating material
+            minors[cSign(v)].push({ t: t, sq: i });
+        }
+        var w = minors[1], bl = minors["-1"];
+        if (w.length > 1 || bl.length > 1) return false;   // two minors can mate (BB, and BN)
+        if (w.length === 0 && bl.length === 0) return true;                    // K vs K
+        if (w.length + bl.length === 1) return true;                           // K+minor vs K
+        // one minor each: only a draw when both are bishops on the SAME colour complex
+        if (w[0].t === C_BISHOP && bl[0].t === C_BISHOP) {
+            var wc = (cRow(w[0].sq) + cCol(w[0].sq)) & 1;
+            var bc = (cRow(bl[0].sq) + cCol(bl[0].sq)) & 1;
+            return wc === bc;
+        }
+        return false;
+    }
+
+    // Compact position identity for threefold repetition: piece placement + side to move +
+    // castling rights + en-passant target. Two positions repeat only when ALL of those match
+    // (FIDE), so the key must include everything that changes the set of legal continuations.
+    function positionKey(b, st, color) {
+        var s = b.join(",");
+        return s + "|" + color + "|" + (st.wK ? 1 : 0) + (st.wQ ? 1 : 0) + (st.bK ? 1 : 0) + (st.bQ ? 1 : 0) + "|" + st.ep;
+    }
+
+    // "ongoing" | "checkmate" | "stalemate" | "draw50" | "repetition" | "insufficient"
+    // for `color` to move. `repeats` is OPTIONAL: how many times the CURRENT position has now
+    // occurred in this game (the caller counts positionKey() hits - the rules module can't, since
+    // it would have to carry the whole game history into every search node). Pass nothing and only
+    // the position-local draws are reported, which is what the bot search wants.
+    function chessResult(b, st, color, repeats) {
+        if (legalMoves(b, st, color).length > 0) {
+            // A checkmate/stalemate ALWAYS outranks a draw claim: you can be mated on move 100
+            // of a fifty-move count, and that is a loss, not a draw.
+            if (repeats >= 3) return "repetition";
+            if ((st.half || 0) >= 100) return "draw50";        // 100 plies = 50 full moves
+            if (insufficientMaterial(b)) return "insufficient";
+            return "ongoing";
+        }
         return inCheck(b, color) ? "checkmate" : "stalemate";
     }
 
@@ -267,7 +320,7 @@
     }
 
     // Resumable variant of chessBotMove: SAME depth-3 alpha-beta, but one root move per step so the
-    // caller can yield between them. Panorama JS is single-threaded — the one-shot search froze the
+    // caller can yield between them. Panorama JS is single-threaded - the one-shot search froze the
     // whole HUD (the "лаги при ходе бота") and that freeze swallowed the premove-grab window.
     // Stepping across frames keeps the UI responsive; the node budget is shared across steps so the
     // total work (and playing strength) is unchanged.
@@ -295,6 +348,7 @@
         initialChessBoard: initialChessBoard, initialChessState: initialChessState, cloneChessState: cloneChessState,
         findKing: findKing, attacksSquare: attacksSquare, inCheck: inCheck,
         makeMove: makeMove, pseudoMoves: pseudoMoves, legalMoves: legalMoves, chessResult: chessResult,
+        insufficientMaterial: insufficientMaterial, positionKey: positionKey,
         chessBotMove: chessBotMove, chessBotMovePrep: chessBotMovePrep
     };
 })();

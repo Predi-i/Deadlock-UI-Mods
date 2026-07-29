@@ -1,38 +1,39 @@
 "use strict";
 
 /*
- * mg_net.js — image side-channel network facade for the Deadlock Minigames mod.
+ * mg_net.js - image side-channel network facade for the Deadlock Minigames mod.
  *
  * Panorama UI has no fetch / AsyncWebRequest / websockets. The only way to read data
  * back from a server is the intrinsic pixel size of an <Image>: we set the image src
- * (sending data via URL params — unlimited) and poll actuallayoutwidth/height to read
+ * (sending data via URL params - unlimited) and poll actuallayoutwidth/height to read
  * the response, which the server encoded as the image's (width, height).
  *
  * Everything shared across the mod's scripts hangs off $.MG (the $ object is the one
- * global shared between all scripts loaded in the same panel — see tengu.js's
+ * global shared between all scripts loaded in the same panel - see tengu.js's
  * $.HeroWinLose pattern).
  *
  * Public API:
  *   $.MG.Net.isConfigured()                     -> false until BASE_URL is set
  *   $.MG.Net.request(path, params, onDone, onErr)  raw (w,h) after swap+scale decode
+ *   $.MG.Net.loadImage(url, onDone, onErr, attrs)  ordinary image through the same FIFO
  *   $.MG.Session.newToken()                     -> a fresh high-entropy seat token
  *   $.MG.Api.create(game, tok, cb(code), err)
  *   $.MG.Api.quick(game, tok, cb({role,code}), err)   role = "host" | "joiner"
  *   $.MG.Api.mquick(games[], tok, cb({role,code}), err)   multi-select; game learned via status
  *   $.MG.Api.cancel(code, cb(ok), err)
  *   $.MG.Api.join(code, tok, cb({ok,game,reason}), err)
- *   $.MG.Api.status(code, cb({gone,players,game}), err)  game = fixed game (0 while undecided)
+ *   $.MG.Api.status(code, tok, cb({gone,players,game}), err) game = fixed game (0 while undecided)
  *   $.MG.Api.move(code, from, to, end, tok, cb({ok,reason}), err)   reason: turn|illegal|token|gone
  *   $.MG.Api.poll(code, since, cb(move|null), err)      move = {from,to,end,seq}
  *   $.MG.Api.reset(code, game, tok, cb(ok), err)
- *   $.MG.Api.room(code, cb({gone,players,started}), err)            Durak online room state
+ *   $.MG.Api.room(code, tok, cb({gone,players,started}), err)       Durak online room state
  *   $.MG.Api.start(code, tok, cb({ok,reason}), err)                 Durak host starts/deals
  *   $.MG.Api.dact(code, tok, a, pair, card, cb({ok,reason}), err)   Durak public action
  *   $.MG.Api.dlog(code, since, cb(event|null), err)                 Durak public event log
  *   $.MG.Api.ddraw(code, tok, index, cb(card|null), err)            Durak private draw log
  *   $.MG.Api.pcreate(cap, tok, cb({code,cap}), err)                 Poker private lobby (2-4 seats)
  *   $.MG.Api.pjoin(code, tok, cb({ok,seat,cap,reason}), err)        Poker join (learns own seat)
- *   $.MG.Api.proom(code, cb({gone,players,cap,started}), err)       Poker room state
+ *   $.MG.Api.proom(code, tok, cb({gone,players,cap,started}), err)  Poker room state
  *   $.MG.Api.pstart(code, tok, cb({ok,reason}), err)                Poker host starts/deals
  *   $.MG.Api.pact(code, tok, a, to, cb({ok,reason}), err)           Poker betting action (0f/1chk/2call/3raise)
  *   $.MG.Api.pnext(code, tok, cb({ok,reason}), err)                 Poker deal next hand
@@ -62,7 +63,7 @@
     // dominant request cost of a match, so the cadence is tuned here once and reused by
     // checkers/chess/TTT/Connect-Four. Model: poll FAST for the first few checks after
     // it becomes the opponent's turn (a quick reply feels responsive), then BACK OFF to a
-    // slower steady rate while they think — a long think shouldn't cost ~2.5 req/s.
+    // slower steady rate while they think - a long think shouldn't cost ~2.5 req/s.
     //   misses 0..(FAST_POLLS-1) → POLL_FAST_S ; then POLL_SLOW_S ; a long think → POLL_IDLE_S
     // `misses` = consecutive empty ("nothing new") polls this turn; reset to 0 on each real
     // move so the next wait starts fast again. Transport errors reuse the same schedule.
@@ -76,27 +77,27 @@
     // ── shared WAITING-ROOM cadence (lobbies, rematch, matchmaking) ──────────
     // A completely different cost profile from in-game polling: nobody's mid-move, we're just
     // waiting for a friend to type a code / click Join / accept a rematch. Latency here is
-    // irrelevant (a chess lobby, not a shooter — 1s vs 5s to notice a join is unnoticeable), and
+    // irrelevant (a chess lobby, not a shooter - 1s vs 5s to notice a join is unnoticeable), and
     // these screens can sit OPEN for minutes, so a fixed ~1s poll is pure waste that scales with
     // idle players, not games played. Ramp HARD: a couple of quick checks, then settle to 5s.
     //   misses:  0    1    2    3    4    5+
     //   delay:  1.5  1.5  3.0  3.0  4.0  5.0   (seconds)
-    // Monotonic — a waiting room has no "real move" to reset on; it just resolves when it fills.
+    // Monotonic - a waiting room has no "real move" to reset on; it just resolves when it fills.
     var WAIT_STEPS = [1.5, 1.5, 3.0, 3.0, 4.0, 5.0];
     function waitDelay(misses) {
         var i = misses < 0 ? 0 : (misses < WAIT_STEPS.length ? misses : WAIT_STEPS.length - 1);
         return WAIT_STEPS[i];
     }
 
-    // ── Downlink level encoding — MUST match worker.core.js `d()` exactly ──
+    // ── Downlink level encoding - MUST match worker.core.js `d()` exactly ──
     // A response dimension carries a small "level", not a raw int: dim = level*STEP + BASE.
     // The old dim=int+1 scheme died on UI-scaled displays (the engine biases small sizes
-    // up ~1px, so value 1 rendered as 2 — corrupting corner-square moves, the (1,1) marker,
+    // up ~1px, so value 1 rendered as 2 - corrupting corner-square moves, the (1,1) marker,
     // and every code half). STEP=9 spaces adjacent levels 9 logical px apart so a ±2px
     // engine error can't cross a boundary even when a sub-1080p display downscales. Safe
     // range is levels 0..63 (63*9+15 = 582px < the 600px probe envelope, so the host panel
     // is never clamped). Proven 720p–8K by tools/mg_simulate_resolutions.js. The probe is
-    // NOT level-encoded — it stays a literal 600x1000 and is read via rawRequest, bypassing
+    // NOT level-encoded - it stays a literal 600x1000 and is read via rawRequest, bypassing
     // decode(). See github2/IMAGE_SIDECHANNEL_1PX_BUG.md.
     var STEP = 9, BASE = 15;
 
@@ -105,7 +106,7 @@
     var HOST_W = 640, HOST_H = 1020;
 
     // Debug logging. Ships OFF. When toggled on (overlay tools → Debug Log) every step is
-    // written to Deadlock's dev CONSOLE via $.Msg — no on-screen panel. When OFF, nothing
+    // written to Deadlock's dev CONSOLE via $.Msg - no on-screen panel. When OFF, nothing
     // is emitted at all (not even the routine step logs). Lines are still buffered so a
     // later toggle-on can dump recent history to the console.
     var DEBUG = false;
@@ -121,7 +122,7 @@
         if (DEBUG) {
             // Dump buffered history so turning it on shows what already happened.
             try {
-                $.Msg("[MG] debug ON — recent history:");
+                $.Msg("[MG] debug ON - recent history:");
                 for (var i = 0; i < dbgLines.length; i++) $.Msg("[MG] " + dbgLines[i]);
             } catch (e) {}
         }
@@ -131,7 +132,7 @@
     function log(msg) { debug(msg); }
     MG.debug = debug; // shared: mg_ui.js routes its logs here too
 
-    // Host that carries the request images. It MUST be on-screen and not culled —
+    // Host that carries the request images. It MUST be on-screen and not culled -
     // an off-screen / zero-opacity / occluded panel makes Panorama skip the image
     // load entirely (which is why nothing reached the server before). It also MUST
     // be larger than the biggest response image (the 600x1000 probe): Panorama
@@ -163,7 +164,7 @@
     // Tear the host down whenever no request needs it. Left alive, its 640x1020
     // invisible footprint lingered over the escape menu and killed hover on every
     // setting. Calibration state (swap/scaleX/scaleY) lives in vars, not the panel,
-    // so dropping it costs nothing — the next request recreates it via ensureHost.
+    // so dropping it costs nothing - the next request recreates it via ensureHost.
     function releaseHost() {
         if (!host) return;
         try { host.DeleteAsync(0); } catch (e) {}
@@ -176,12 +177,26 @@
     // Panorama's image loader wedges when several <Image> loads are in flight at once
     // (the connections from prior requests don't free up before new ones fire, and every
     // pending load then stalls at dims 0 until it times out). So we run requests strictly
-    // ONE AT A TIME through a FIFO queue — the poll loop + user actions can never overlap.
+    // ONE AT A TIME through a FIFO queue - the poll loop + user actions can never overlap.
     var reqQueue = [];
     var reqActive = false;
 
     function rawRequest(path, params, onDone, onError) {
-        reqQueue.push({ path: path, params: params, onDone: onDone, onError: onError });
+        reqQueue.push({ kind: "protocol", path: path, params: params, onDone: onDone, onError: onError });
+        drainQueue();
+    }
+
+    // Load a normal image through the SAME FIFO as the dimension-encoded API. On
+    // success ownership of the already-loaded <Image> passes to the caller, which
+    // may re-parent it into the visible UI or delete it after inspecting its
+    // intrinsic dimensions. This is the only safe way for update markers and
+    // Pixel Battle frames to coexist with protocol traffic: Panorama can wedge
+    // every image when two independent SetImage loads overlap.
+    function loadImage(url, onDone, onError, attributes) {
+        reqQueue.push({
+            kind: "image", url: url, onDone: onDone, onError: onError,
+            attributes: attributes || null
+        });
         drainQueue();
     }
     function drainQueue() {
@@ -189,29 +204,93 @@
         var job = reqQueue.shift();
         if (!job) { releaseHost(); return; } // idle: drop the host so it stops covering the menu
         reqActive = true;
-        rawRequestNow(job.path, job.params, function (w, h) {
-            reqActive = false;
-            // Schedule gives the engine 1 frame to release memory before the next load
-            try { if (job.onDone) job.onDone(w, h); } finally { $.Schedule(0.05, drainQueue); }
-        }, function (e) {
-            reqActive = false;
+        var success = function (a, b, c) {
+            // Keep reqActive latched through the callback and release frame. Callbacks
+            // commonly enqueue their next poll synchronously; clearing it here would let
+            // that request bypass the intended gap and start inside this callback.
+            try {
+                if (job.onDone) {
+                    if (job.kind === "image") job.onDone(a, b, c);
+                    else job.onDone(a, b);
+                }
+            } finally {
+                $.Schedule(0.05, function () { reqActive = false; drainQueue(); });
+            }
+        };
+        var failure = function (e) {
             // The Panorama image loader is intermittently flaky (a URL that loads
             // instantly in a browser sometimes stalls to a timeout here). One silent
             // re-queue at the front of the line recovers most of those. This is a
-            // mitigation, not a proven fix — it can't be verified without in-game runs.
+            // mitigation, not a proven fix - it can't be verified without in-game runs.
             job.tries = (job.tries || 0) + 1;
             if (job.tries < 2) {
-                log("↻ retry " + job.path + " (attempt " + (job.tries + 1) + ")");
+                log("↻ retry " + (job.path || job.url) + " (attempt " + (job.tries + 1) + ")");
                 reqQueue.unshift(job);
-                $.Schedule(0.05, drainQueue);
+                $.Schedule(0.05, function () { reqActive = false; drainQueue(); });
                 return;
             }
-            try { if (job.onError) job.onError(e); } finally { $.Schedule(0.05, drainQueue); }
-        });
+            try {
+                if (job.onError) job.onError(e);
+            } finally {
+                $.Schedule(0.05, function () { reqActive = false; drainQueue(); });
+            }
+        };
+        if (job.kind === "image") imageRequestNow(job.url, job.attributes, success, failure);
+        else rawRequestNow(job.path, job.params, success, failure);
+    }
+
+    // Load an ordinary PNG into an intrinsic-size panel. Unlike rawRequestNow,
+    // success does NOT clear/delete the image: the caller receives the loaded
+    // panel and owns its remaining lifetime.
+    function imageRequestNow(url, attributes, onDone, onError) {
+        var img;
+        try {
+            var h = ensureHost();
+            img = $.CreatePanel("Image", h, "mgimg_" + (reqCounter++), attributes || {});
+            img.style.position = "0px 0px 0px";
+            log("→ IMG " + url);
+            img.SetImage(url);
+        } catch (e) {
+            log("✗ EXC loading image: " + (e && e.message ? e.message : e));
+            if (img) {
+                try { img.SetImage(""); } catch (e2) {}
+                try { img.DeleteAsync(0); } catch (e3) {}
+            }
+            if (onError) onError("exception");
+            return;
+        }
+
+        var elapsed = 0;
+        var finished = false;
+        function discard() {
+            try { img.SetImage(""); } catch (e) {}
+            try { img.DeleteAsync(0); } catch (e2) {}
+        }
+        function check() {
+            if (finished) return;
+            var w = Number(img.actuallayoutwidth);
+            var hh = Number(img.actuallayoutheight);
+            if (w > 0 && hh > 0) {
+                finished = true;
+                log("← IMG = " + w + "x" + hh + " (" + Math.round(elapsed) + "ms)");
+                onDone(img, w, hh);
+                return;
+            }
+            elapsed += POLL_STEP * 1000;
+            if (elapsed >= REQ_TIMEOUT_MS) {
+                finished = true;
+                discard();
+                log("✗ IMAGE TIMEOUT (dims stayed 0 for " + REQ_TIMEOUT_MS + "ms)");
+                if (onError) onError("timeout");
+                return;
+            }
+            $.Schedule(POLL_STEP, check);
+        }
+        $.Schedule(POLL_STEP, check);
     }
 
     // Fire one request; call onDone(rawW, rawH) with the image's pixel dimensions.
-    // Once started, a request ALWAYS runs to completion (response or timeout) — there
+    // Once started, a request ALWAYS runs to completion (response or timeout) - there
     // is deliberately no abort. Aborting an in-flight request silently (without firing
     // a callback) once left `calibrating` latched true forever, deadlocking all
     // networking. Requests are short, so the worst case is one 8s timeout; stale
@@ -235,7 +314,7 @@
                     }
                 }
             }
-            // NOTE: Panorama's image loader keys off the URL extension — it will
+            // NOTE: Panorama's image loader keys off the URL extension - it will
             // silently refuse a URL that doesn't look like an image, so paths end ".png".
             var fullUrl = BASE_URL + path + ".png?" + qs;
             log("→ GET " + path + ".png");
@@ -305,7 +384,7 @@
     // (~9s cold has been observed), so a single probe attempt isn't enough. Retry a
     // few times; only if ALL attempts fail is the server treated as unreachable and
     // pending requests get their error callback. NEVER fall back to scale=1: on a
-    // scaled UI that decodes garbage — wrong lobby codes, phantom second players,
+    // scaled UI that decodes garbage - wrong lobby codes, phantom second players,
     // corrupted moves that eat pieces.
     var PROBE_ATTEMPTS = 3;
 
@@ -334,7 +413,7 @@
             var sx = w / PROBE_W, sy = hh / PROBE_H;
             // Clamp detector. Panorama scales the whole UI by ONE uniform factor, so a
             // faithfully-read probe always yields sx ≈ sy. If they diverge, the probe
-            // image was squeezed to fit a container of a different aspect ratio — the
+            // image was squeezed to fit a container of a different aspect ratio - the
             // exact failure that read a 600x1000 probe as a 200x200 host and latched a
             // bogus scale (sx=0.333, sy=0.200) that corrupted every later decode. Reject
             // it and retry rather than calibrate to garbage. (A too-small host is the
@@ -355,7 +434,7 @@
 
     // Called when a response decodes to something the protocol can never produce
     // (out-of-range code, >2 players, a non-diagonal "move"). That means the scale
-    // is stale — bad probe or a resolution change — so re-run it, throttled so a
+    // is stale - bad probe or a resolution change - so re-run it, throttled so a
     // burst of bad reads doesn't stack recalibrations.
     var lastSuspect = 0;
     function suspectDecode(why) {
@@ -370,7 +449,7 @@
     // Decode a raw (w,h) image back to the two protocol LEVELS the worker encoded.
     // Mirrors worker.core.js d(): dim = level*STEP + BASE, so level = (dim/scale - BASE)/STEP.
     // The scale-correction (÷scale) is done WITHOUT rounding and the single Math.round happens
-    // here at the end — a value is never rounded twice (double-rounding is what tipped a level
+    // here at the end - a value is never rounded twice (double-rounding is what tipped a level
     // across a boundary on scaled displays). Callers get the same small ints as the old
     // dim=int+1 scheme did, so every decoder downstream is unchanged.
     function decodeLevel(dim, scale) { return Math.round((dim / scale - BASE) / STEP); }
@@ -391,9 +470,10 @@
 
     MG.Net = {
         request: request,
+        loadImage: loadImage,
         clearQueue: function () {
             // Drop pending UI traffic (stale status/poll ticks from a view we just
-            // left) — their callers are token-guarded, so silence is fine. Two things
+            // left) - their callers are token-guarded, so silence is fine. Two things
             // are deliberately NOT touched:
             //  - the calibration probe: dropping it would strand `calibrating` at
             //    true and deadlock every future request;
@@ -424,7 +504,7 @@
         newToken: function () {
             // Prefer a crypto-grade source when the engine exposes one: 24 random bytes
             // → 48 hex chars, matching validTok's [a-z0-9]{8,64}. crypto is feature-DETECTED,
-            // not assumed — Panorama's JS runtime may not expose it, and calling an absent
+            // not assumed - Panorama's JS runtime may not expose it, and calling an absent
             // API unguarded would throw and break every online seat. When it's missing we
             // fall back to the original Math.random mix, which is still far beyond guessable
             // for a friendly relay and never travels downward where it could leak.
@@ -473,12 +553,12 @@
 
     // ── Typed protocol layer ────────────────────────────────────────────────
     // Every decode is range-checked against what the protocol can actually produce.
-    // An impossible value means the scale calibration is stale — reject it, trigger
+    // An impossible value means the scale calibration is stale - reject it, trigger
     // a recalibration, and let the caller's normal error/retry path handle it.
     // Acting on a garbage decode is what caused phantom opponents and eaten pieces.
     MG.Api = {
         // Round-trip latency check. The FIRST request after boot pays for the
-        // engine's cold image-loader start (and calibration) — many seconds that
+        // engine's cold image-loader start (and calibration) - many seconds that
         // say nothing about the server. Warm up with one request, time the second.
         ping: function (cb, err) {
             request("/api/ping", null, function () {
@@ -510,7 +590,7 @@
         // Public quickmatch. Server either seats us into a waiting lobby (JOINER, we play
         // black) or hosts a fresh public lobby and waits (HOST, +100 on the width flags it).
         // tc = time-control choice (chess/checkers only): concrete SECONDS (60/180/300/600),
-        // the literal "any" (wildcard — pairs with any waiter, else 5 min), or omitted/0 for a
+        // the literal "any" (wildcard - pairs with any waiter, else 5 min), or omitted/0 for a
         // non-clock game. The server pools waiters by (game, tc) so banks never force-mismatch;
         // the resolved bank is discovered by both clients from the authoritative /api/clocks.
         quick: function (game, tok, cb, err, tc, cv) {
@@ -532,7 +612,7 @@
         // Multi-select quick match: the caller offers a SET of games (games[] → "1,2,4,5").
         // Same role/code encoding as quick (HOST flagged by +100 on the width). A JOINER is
         // paired into a waiting host whose game (or undecided candidate set) intersects ours,
-        // and the server FIXES the shared lobby to the matched game — but the 2-int response
+        // and the server FIXES the shared lobby to the matched game - but the 2-int response
         // can't also carry which game was chosen, so BOTH sides read it from status() (whose
         // height now carries game+1). The caller resolves the game before mounting.
         mquick: function (games, tok, cb, err, tc, cv) {
@@ -567,7 +647,7 @@
         // Leave a game already in progress. Unlike cancel (which only works while a lobby waits),
         // this reaches the server mid-match so the opponent learns at once: a pair game is torn
         // down (their next poll returns (9,9) → "Opponent left."), while a 3–4-seat durak/poker
-        // table folds this seat out and plays on. Fire-and-forget — the caller is leaving anyway.
+        // table folds this seat out and plays on. Fire-and-forget - the caller is leaving anyway.
         leave: function (code, tok, cb, err) {
             request("/api/leave", { code: code, tok: tok || "" }, function (w, h) { if (cb) cb(true); }, err);
         },
@@ -577,7 +657,7 @@
             request("/api/join", { code: code, tok: tok }, function (w, h) {
                 log("join decoded w=" + w + " h=" + h);
                 // h carries the host's time control as a small INDEX (0=untimed,1=60,2=180,
-                // 3=300,4=600), not raw seconds — 600 would overflow a level. tcFromIndex maps
+                // 3=300,4=600), not raw seconds - 600 would overflow a level. tcFromIndex maps
                 // it back. join's width is the game id (1..9); tc rides the height.
                 if (w === 9 && h === 4) { cb({ ok: false, reason: "busy" }); return; } // rate-limited
                 if (w >= 1 && w <= 9) cb({ ok: true, game: w, tc: tcFromIndex(h) });
@@ -590,18 +670,18 @@
             }, err);
         },
 
-        status: function (code, cb, err) {
-            request("/api/status", { code: code }, function (w, h) {
+        status: function (code, tok, cb, err) {
+            request("/api/status", { code: code, tok: tok || "" }, function (w, h) {
                 log("status(" + code + ") decoded w=" + w + " h=" + h);
                 if (w === 9 && h === 4) { if (err) err("busy"); return; } // rate-limited: caller retries
-                if (w === 9) {
+                if (w === 9 && h === 1) {
                     // status is only polled while a host waits for a joiner, so a
                     // "gone" here means the lobby was swept/closed, not that an
                     // opponent dropped (nobody had joined yet).
-                    if (MG.UI && MG.UI.kickToMenu) MG.UI.kickToMenu("Lobby closed.");
                     cb({ gone: true, players: 0 });
                     return;
                 }
+                if (w === 9) { if (err) err("transient"); return; }
                 if (w !== 1 && w !== 2) {
                     suspectDecode("status w=" + w + " h=" + h);
                     if (err) err("decode");
@@ -621,13 +701,19 @@
         match: function (code, cb, err) {
             request("/api/match", { code: code }, function (w, h) {
                 if (w === 9 && h === 4) { if (err) err("busy"); return; } // rate-limited: caller retries
-                if (w < 1 || w > 9) { cb({ gone: true }); return; }        // (9,1) gone/undecided
+                if (w === 9 && h === 1) { cb({ gone: true }); return; }    // gone/undecided
+                if (w === 9) { if (err) err("transient"); return; }
+                if (w < 1 || w > 9) {
+                    suspectDecode("match w=" + w + " h=" + h);
+                    if (err) err("decode");
+                    return;
+                }
                 cb({ gone: false, game: w, tc: matchTcFromHeight(h), variant: matchVariantFromHeight(h) });
             }, err);
         },
 
         // The seat token authorises this move. The server validates it against its own
-        // board and returns (1,1) on accept or (9,x) on reject — the client maps x to a
+        // board and returns (1,1) on accept or (9,x) on reject - the client maps x to a
         // reason so the controller can roll back its prediction and resync:
         //   (9,1) turn · (9,2) illegal · (9,3) token · (9,9) gone.
         move: function (code, from, to, end, tok, cb, err) {
@@ -645,11 +731,11 @@
 
         // `validate(from,to)` is an optional game-specific sanity check on the decoded move
         // (a mis-scaled read yields plausible-but-wrong squares that corrupt the board). Each
-        // game knows what a legal (from,to) looks like — checkers passes a diagonal test,
-        // tic-tac-toe passes its cell-placement shape — so the transport stays generic and
+        // game knows what a legal (from,to) looks like - checkers passes a diagonal test,
+        // tic-tac-toe passes its cell-placement shape - so the transport stays generic and
         // every caller keeps its own guard. Omitting it applies only the 0..63 range check.
         // A failed check trips suspectDecode (stale scale → recalibrate). The
-        // move's turn-hand-off flag `end` is NO LONGER sent down — it didn't fit the level
+        // move's turn-hand-off flag `end` is NO LONGER sent down - it didn't fit the level
         // codec and is derivable: `deriveEnd(from,to)` (optional) recomputes it from the SAME
         // shared rules engine the server used, applied to the caller's board. When omitted,
         // end defaults to 1 (every TTT/chess/C4 move ends the turn; only checkers chains).
@@ -683,23 +769,32 @@
         // 0..600 s = 10 bits, which needs BOTH image dimensions under the level codec, so the
         // route now returns ONE seat per read (&seat=S) as (CLK_BASE+hi, lo), sec = hi*64+lo.
         // We fetch seat 0 then seat 1 and stitch them back into the same {sec:[s0,s1], flag}
-        // shape callers already consume — the two reads are ~1 frame apart, far tighter than
+        // shape callers already consume - the two reads are ~1 frame apart, far tighter than
         // the ~1 s poll cadence, so no visible drift. Sentinels: (9,9) gone · (9,8) untimed.
-        // cb({ sec:[s0,s1], flag }) — flag is the seat that ran out of time, or -1.
+        // cb({ sec:[s0,s1], flag }) - flag is the seat that ran out of time, or -1.
         clocks: function (code, cb, err) {
+            function fail(reason) { if (err) err(reason); }
             function readSeat(seat, next) {
                 request("/api/clocks", { code: code, seat: seat }, function (w, h) {
-                    if (w === 9) { next(null); return; }          // (9,9) gone / (9,8) untimed
+                    // Only the explicit (9,8) sentinel means "this lobby is untimed". A gone,
+                    // server-error or transport failure must take the error path so createClock
+                    // retries instead of permanently deleting/freezing a real timed clock.
+                    if (w === 9 && h === 8) { next(null); return; }
+                    if (w === 9) { fail(h === 9 ? "gone" : "server"); return; }
                     // Real reading: width is the CLK band (30..39 = 30+hi), height is lo (0..63).
                     var sec = (w - 30) * 64 + h;
-                    if (w < 30 || w > 45 || sec < 0 || sec > 600) { next(NaN); return; }
+                    if (w < 30 || w > 39 || sec < 0 || sec > 600) {
+                        suspectDecode("clocks seat=" + seat + " w=" + w + " h=" + h);
+                        fail("decode");
+                        return;
+                    }
                     next(sec);
-                }, function () { next(null); });
+                }, fail);
             }
             readSeat(0, function (s0) {
-                if (s0 === null || (s0 !== s0)) { if (cb) cb(null); return; } // gone/untimed/decode
+                if (s0 === null) { if (cb) cb(null); return; } // authoritative untimed sentinel
                 readSeat(1, function (s1) {
-                    if (s1 === null || (s1 !== s1)) { if (cb) cb(null); return; }
+                    if (s1 === null) { if (cb) cb(null); return; }
                     // The running seat that hits 0 is the flag-fall loser; the server floors it
                     // at 0 and never lets the other tick past it, so at most one seat reads 0.
                     var flag = s0 === 0 ? 0 : (s1 === 0 ? 1 : -1);
@@ -711,8 +806,8 @@
         // Rematch handshake. Poll this from the game-over screen with your CURRENT gen
         // (0 for a fresh lobby, then the last gen the server reported). The server arms this
         // seat's rematch flag only when gen matches (so a stale detect-poll can't re-arm after
-        // a restart), and once BOTH seats are armed it resets the board and bumps gen.
-        //   cb({ state, gen }): state 1 = armed, waiting for opponent · 2 = both ready (reset done)
+        // a restart), and once every present seat is armed it resets/redeals and bumps gen.
+        //   cb({ state, gen }): state 1 = armed, waiting · 2 = consensus reached (reset done)
         //                       9 = lobby gone / bad token (gen carries 3=bad-token, 9=gone)
         //   gen = the lobby's current generation (grows by 1 each rematch).
         rematch: function (code, tok, gen, cb, err) {
@@ -720,15 +815,15 @@
                 function (w, h) { if (cb) cb({ state: w, gen: h - 1 }); }, err);
         },
 
-        // ── Durak online (authoritative 2-player dealer) ────────────────────
+        // ── Durak online (authoritative dealer, 2–4 seats) ──────────────────
         // These routes use the same image side-channel but a separate indexed public
         // event log (`dlog`) plus a private per-seat draw stream (`ddraw`). All writes and
         // private reads are authorised by the seat token. Event dimensions deliberately stay
         // small (<= ~63) and no real event is (1,1), so (1,1) remains "nothing new".
-        room: function (code, cb, err) {
-            request("/api/room", { code: code }, function (w, h) {
-                // ONLY (9,1) means the lobby is truly gone (swept/closed). Any OTHER 9,x — an
-                // unknown route on a stale-deployed worker (9,8), a server error (9,7), etc. — is
+        room: function (code, tok, cb, err) {
+            request("/api/room", { code: code, tok: tok || "" }, function (w, h) {
+                // ONLY (9,1) means the lobby is truly gone (swept/closed). Any OTHER 9,x - an
+                // unknown route on a stale-deployed worker (9,8), a server error (9,7), etc. - is
                 // treated as a TRANSIENT error so the poll retries instead of instantly kicking the
                 // host out of a freshly-created room (the "durak lobby closes immediately" bug).
                 if (w === 9 && h === 1) { cb({ gone: true, players: 0, started: false }); return; }
@@ -816,9 +911,9 @@
         },
 
         // ── Durak N-seat private lobby (2–4 seats) ──────────────────────────────
-        // The 2-player room rides the generic create/join; a 3–4-seat table needs its own
-        // create/join/room (same shape as poker's pcreate/pjoin/proom). Once the host deals
-        // via /api/start, play runs through dact/dlog/ddraw above — seat-count agnostic.
+        // Private tables of every size use this create/join/room set (same shape as poker's
+        // pcreate/pjoin/proom); only public heads-up Quick uses the generic room. Once the host
+        // deals via /api/start, play runs through dact/dlog/ddraw above - seat-count agnostic.
         dcreate: function (cap, tok, cb, err) {
             request("/api/dcreate", { n: cap, tok: tok }, function (w, h) {
                 if (w === 9 && h === 4) { if (err) err("busy"); return; }   // rate-limited
@@ -847,8 +942,8 @@
             }, err);
         },
 
-        droom: function (code, cb, err) {
-            request("/api/droom", { code: code }, function (w, h) {
+        droom: function (code, tok, cb, err) {
+            request("/api/droom", { code: code, tok: tok || "" }, function (w, h) {
                 // Same transient-vs-gone discipline as room(): only (9,1) is truly gone.
                 if (w === 9 && h === 1) { cb({ gone: true, players: 0, cap: 0, started: false }); return; }
                 if (w === 9) { if (err) err("transient"); return; }
@@ -898,8 +993,8 @@
             }, err);
         },
 
-        proom: function (code, cb, err) {
-            request("/api/proom", { code: code }, function (w, h) {
+        proom: function (code, tok, cb, err) {
+            request("/api/proom", { code: code, tok: tok || "" }, function (w, h) {
                 // Same transient-vs-gone discipline as room(): only (9,1) is truly gone.
                 if (w === 9 && h === 1) { cb({ gone: true, players: 0, cap: 0, started: false }); return; }
                 if (w === 9) { if (err) err("transient"); return; }
@@ -978,7 +1073,7 @@
                 // width 40..47 can never read as (1,1). The controller stitches to = hi*64+lo.
                 else if (w >= 40 && w <= 43 && h >= 0) ev = { type: "raiselo", seat: w - 40, lo: h };
                 else if (w >= 44 && w <= 47 && h >= 0) ev = { type: "raisehi", seat: w - 44, hi: h };
-                // LEFT(50+seat, 1) — a seat abandoned the table; replayed as a fold + chip forfeit
+                // LEFT(50+seat, 1) - a seat abandoned the table; replayed as a fold + chip forfeit
                 else if (w >= 50 && w <= 53 && h === 1) ev = { type: "left", seat: w - 50 };
                 // SHOW(60+seat, card+1)
                 else if (w >= 60 && w <= 63 && h >= 1 && h <= 52) ev = { type: "show", seat: w - 60, card: h - 1 };
@@ -1009,11 +1104,11 @@
     // panel, and runtime hittest=false does NOT actually pass input through (hittest is
     // an XML-construction attribute, not a live style), so a host sitting over the bare
     // escape menu swallows hover on every native setting until it's torn down. Instead
-    // calibration runs lazily on the first real online request (Create/Join/Quick) —
+    // calibration runs lazily on the first real online request (Create/Join/Quick) -
     // which always fires from inside our overlay, where the full-screen dim already
     // covers the menu. Bot games make no requests at all, so they never spawn a host.
     // Cost: the first online action pays the engine's cold image-load once, spent under
-    // the "waiting for opponent" view — a fair trade for never breaking menu hover.
+    // the "waiting for opponent" view - a fair trade for never breaking menu hover.
 
     log("loaded (configured=" + MG.Net.isConfigured() + ")");
 })();

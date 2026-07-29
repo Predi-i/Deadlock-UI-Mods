@@ -1,0 +1,7 @@
+# Staging trees produced by tools/build_mod_strip_comments.ps1. Each is a throwaway copy of a
+# mod folder with comments stripped, handed to build_mod.ps1 and then deleted — it only lingers
+# after -DryRun or -KeepStaging, and it must never be committed.
+*-stripped/
+
+# Local VPK output from build_mod.ps1.
+tools/builds/

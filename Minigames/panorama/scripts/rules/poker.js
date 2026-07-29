@@ -1,7 +1,7 @@
 "use strict";
 
 /*
- * rules/poker.js — pure No-Limit Texas Hold'em rules, shared by the client (predictor +
+ * rules/poker.js - pure No-Limit Texas Hold'em rules, shared by the client (predictor +
  * bot) and the authoritative server dealer (same shared-namespace mechanism as the other
  * rules/*.js). Nothing here touches Panorama; it is fully unit-testable in Node.
  *
@@ -9,7 +9,7 @@
  * T,J,Q,K,A (higher rank index = stronger). This matches the deck art filenames
  * (SUIT_CHARS[suit] + RANK_CHARS[rank] + ".vtex" → e.g. "SA", "H2", "DT"). A given seed
  * fully determines a deal (mulberry32); online the SERVER owns that seed so the client
- * never sees the deck or a foreign hole card — it rebuilds its view from the public event
+ * never sees the deck or a foreign hole card - it rebuilds its view from the public event
  * log + its own private cards.
  *
  * Hand evaluation returns a comparable SCORE ARRAY [category, k1, k2, ...] where category
@@ -40,7 +40,7 @@
     function rankOf(id) { return id % 13; }
     function cardVal(id) { return rankOf(id) + 2; }   // 2..14 (ace high)
 
-    // Deterministic PRNG (mulberry32) — identical to the other engines so seeds line up.
+    // Deterministic PRNG (mulberry32) - identical to the other engines so seeds line up.
     function makeRng(seed) {
         var s = seed | 0;
         return function () {
@@ -99,21 +99,32 @@
         for (i = 0; i < groups.length; i++) vals.push(groups[i][1]);
 
         var c0 = groups[0], c1 = groups[1];
-        if (c0[0] === 4) return [7, c0[1], firstOther(vals, c0[1])];
+        if (c0[0] === 4) return [7, c0[1], bestExcluding(cards, [c0[1]])];
         if (c0[0] === 3 && c1 && c1[0] >= 2) return [6, c0[1], c1[1]];
         if (flushVals) { flushVals = flushVals.slice().sort(desc); return [5, flushVals[0], flushVals[1], flushVals[2], flushVals[3], flushVals[4]]; }
         var st = straightHigh(allVals(cards));
         if (st) return [4, st];
         if (c0[0] === 3) return [3, c0[1], vals[1], vals[2]];
-        if (c0[0] === 2 && c1 && c1[0] === 2) return [2, c0[1], c1[1], firstOtherPair(vals, c0[1], c1[1])];
+        if (c0[0] === 2 && c1 && c1[0] === 2) return [2, c0[1], c1[1], bestExcluding(cards, [c0[1], c1[1]])];
         if (c0[0] === 2) return [1, c0[1], vals[1], vals[2], vals[3]];
         var hv = allVals(cards).sort(desc);
         return [0, hv[0], hv[1], hv[2], hv[3], hv[4]];
     }
     function desc(a, b) { return b - a; }
     function allVals(cards) { var o = []; for (var i = 0; i < cards.length; i++) o.push(cardVal(cards[i])); return o; }
-    function firstOther(vals, exclude) { for (var i = 0; i < vals.length; i++) if (vals[i] !== exclude) return vals[i]; return 0; }
-    function firstOtherPair(vals, a, b) { for (var i = 0; i < vals.length; i++) if (vals[i] !== a && vals[i] !== b) return vals[i]; return 0; }
+    // Highest card value in `cards` whose value is not in `exclude`. MUST NOT be derived from
+    // the `vals` (group) order: groups sort by COUNT first, so a third pair / second pair sits
+    // ahead of the genuine high kicker there and picking from it awarded the wrong pot
+    // (e.g. AAKK2 2 Q scored its kicker as the 2, not the Q).
+    function bestExcluding(cards, exclude) {
+        var best = 0;
+        for (var i = 0; i < cards.length; i++) {
+            var v = cardVal(cards[i]);
+            if (exclude.indexOf(v) !== -1) continue;
+            if (v > best) best = v;
+        }
+        return best;
+    }
 
     function compareScores(a, b) {
         var n = Math.max(a.length, b.length);
@@ -163,7 +174,7 @@
     // Blinds are posted, hole cards dealt, action set to the correct opener.
     //
     // ONLINE: pass seed=null. The deck stays EMPTY (the server owns it), no hole cards are
-    // dealt, and dealBoard/showdown/finish become no-ops (see st.online guards) — the client
+    // dealt, and dealBoard/showdown/finish become no-ops (see st.online guards) - the client
     // fills board/hole/winners from the server's public event log instead. Everything else
     // (blinds, currentBet, whose turn) is CARD-INDEPENDENT, so the client's replay of the
     // betting is byte-identical to the server's authority with no deck knowledge at all.
@@ -174,14 +185,14 @@
             numPlayers: numPlayers, button: button, sb: sb, bb: bb, online: online,
             deck: deck, hole: [], board: [],
             stacks: stacks.slice(),
-            bet: [], committed: [], folded: [], allIn: [], inHand: [], acted: [],
+            bet: [], committed: [], folded: [], allIn: [], inHand: [], acted: [], noReopen: [],
             street: "preflop", currentBet: 0, minRaise: bb,
             toAct: -1, lastAggressor: -1,
             pots: [], result: null
         };
         for (var s = 0; s < numPlayers; s++) {
             st.bet.push(0); st.committed.push(0); st.folded.push(false);
-            st.allIn.push(false); st.acted.push(false);
+            st.allIn.push(false); st.acted.push(false); st.noReopen.push(false);
             st.inHand.push(stacks[s] > 0);
             st.hole.push([]);
         }
@@ -212,6 +223,19 @@
         st.bbSeat = bbSeat;
         // preflop opener = seat left of the big blind (UTG); heads-up = the SB/button.
         st.toAct = (activeSeatCount(st) === 2) ? sbSeat : nextToAct(st, bbSeat);
+        // A blind can put its own seat ALL-IN (stack <= sb/bb). The heads-up branch above
+        // assigns toAct = sbSeat unconditionally, and legalActions() returns nothing for an
+        // all-in seat, so every action was rejected and the hand froze in "preflop" forever
+        // (offline the bot re-folded into a dead table; online /api/pact answered code 2 to
+        // everyone). Route the opener through nextToAct, and if NOBODY can voluntarily act,
+        // run the board out - the same terminal handling nextStreet already does. Uncalled
+        // chips come back through the single-contributor side pot in showdown().
+        if (st.toAct < 0 || st.allIn[st.toAct] || st.stacks[st.toAct] === 0)
+            st.toAct = nextToAct(st, st.toAct >= 0 ? st.toAct : bbSeat);
+        if (st.toAct < 0) {
+            if (activeCount(st) <= 1) finish(st);
+            else runout(st);
+        }
         return st;
     }
     function activeSeatCount(st) { var n = 0; for (var s = 0; s < st.numPlayers; s++) if (st.inHand[s]) n++; return n; }
@@ -231,9 +255,11 @@
         if (toCall <= 0) out.canCheck = true;
         else { out.canCall = true; out.callAmount = Math.min(toCall, st.stacks[seat]); }
         // A raise needs chips beyond the call. Min raise-to = currentBet + last raise size,
-        // capped by the stack (a short stack can shove for less as an all-in).
+        // capped by the stack (a short stack can shove for less as an all-in). `noReopen`
+        // marks seats that had already matched the bet when a SHORT all-in came in: they owe
+        // the shove's remainder but standard NLHE does not let them re-raise it.
         var maxTo = st.bet[seat] + st.stacks[seat];
-        if (maxTo > st.currentBet) {
+        if (maxTo > st.currentBet && !(st.noReopen && st.noReopen[seat])) {
             out.canRaise = true;
             out.minRaiseTo = Math.min(maxTo, st.currentBet + st.minRaise);
             out.maxRaiseTo = maxTo;
@@ -265,10 +291,22 @@
             putIn(st, seat, to - st.bet[seat]);
             // A full-size raise reopens the action; a short all-in that doesn't reach the
             // min-raise does NOT (matched players don't get to re-raise). Standard NLHE.
-            if (raiseSize >= st.minRaise) st.minRaise = raiseSize;
+            // resetActedExcept used to run UNCONDITIONALLY, which contradicted this comment and
+            // handed a free re-raise to seats that had already called.
             st.currentBet = Math.max(st.currentBet, st.bet[seat]);
             st.lastAggressor = seat;
-            resetActedExcept(st, seat);
+            if (raiseSize >= st.minRaise) {
+                st.minRaise = raiseSize;
+                resetActedExcept(st, seat);
+                clearNoReopen(st);                  // a full raise reopens the action for everyone
+            } else {
+                // Short all-in: only seats that still owe chips must act again, and they may only
+                // call or fold. Seats that already matched the previous currentBet are done.
+                for (var s2 = 0; s2 < st.numPlayers; s2++) {
+                    if (s2 === seat) continue;
+                    if (st.bet[s2] < st.currentBet) { st.acted[s2] = false; st.noReopen[s2] = true; }
+                }
+            }
         } else {
             return false;
         }
@@ -278,6 +316,11 @@
     }
     function resetActedExcept(st, seat) {
         for (var s = 0; s < st.numPlayers; s++) if (s !== seat) st.acted[s] = false;
+    }
+    // Clear the "you may call but not re-raise" marks (set by a short all-in). Called whenever a
+    // full-size raise reopens the action and at the start of every new street.
+    function clearNoReopen(st) {
+        for (var s = 0; s < st.numPlayers; s++) st.noReopen[s] = false;
     }
 
     // Is the current betting round complete?
@@ -302,13 +345,14 @@
 
     var STREETS = { preflop: "flop", flop: "turn", turn: "river", river: "showdown" };
     // Online the deck is empty and the board is filled from the server's BOARD events, so
-    // dealing is a no-op here — betting never reads st.board, only the display does.
+    // dealing is a no-op here - betting never reads st.board, only the display does.
     function dealBoard(st, n) { if (st.online) return; for (var i = 0; i < n; i++) st.board.push(st.deck.shift()); }
 
     function nextStreet(st) {
         // clear the street's bets (committed already holds them for side pots)
         for (var s = 0; s < st.numPlayers; s++) { st.bet[s] = 0; st.acted[s] = false; }
         st.currentBet = 0; st.minRaise = st.bb; st.lastAggressor = -1;
+        clearNoReopen(st);                  // last street's short-shove restrictions expire
         var nx = STREETS[st.street];
         if (nx === "flop") dealBoard(st, 3);
         else if (nx === "turn" || nx === "river") dealBoard(st, 1);
@@ -333,9 +377,9 @@
         showdown(st);
     }
 
-    // A seat abandons the table mid-game (online "Leave"). It plays out EXACTLY like a fold —
+    // A seat abandons the table mid-game (online "Leave"). It plays out EXACTLY like a fold -
     // card-independent, so the server and every client replay it byte-identically off a single
-    // LEFT event — plus the leaver forfeits their remaining chips so `newHand`'s `stacks[s] > 0`
+    // LEFT event - plus the leaver forfeits their remaining chips so `newHand`'s `stacks[s] > 0`
     // test sits them out of every future hand. Folding a seat that wasn't `toAct` can still end
     // the hand (everyone else already folded) or complete the round (they were the last to act),
     // so we re-run the same terminal checks `advance` does, but only hand `toAct` forward when the
@@ -444,7 +488,7 @@
     // ── bot ─────────────────────────────────────────────────────────────────────
     // A deterministic, honest-but-cautious bot. Preflop it rates its two cards; postflop it
     // rates its made hand's category. It calls small bets, raises with strength, and folds
-    // weak hands to real pressure — plenty for a friendly table, no bluff modelling.
+    // weak hands to real pressure - plenty for a friendly table, no bluff modelling.
     function preflopStrength(hole) {
         var a = cardVal(hole[0]), b = cardVal(hole[1]);
         var hi = Math.max(a, b), lo = Math.min(a, b);

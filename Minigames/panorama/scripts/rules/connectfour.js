@@ -1,13 +1,13 @@
 "use strict";
 
 /*
- * rules/connectfour.js — pure Connect Four rules, shared by client predictor + server
+ * rules/connectfour.js - pure Connect Four rules, shared by client predictor + server
  * authority (same shared-namespace mechanism as rules/checkers.js / rules/ttt.js).
  *
  * Board is a flat length-42 array, index = row*7 + col. row 0 = TOP, row 5 = BOTTOM;
  * col 0 = LEFT. Values: 0 empty, 1 = host (red, seat 0, moves first), 2 = joiner (yellow).
  * A move is a COLUMN 0..6; gravity drops the disc to the lowest empty row of that column,
- * so only the column travels the wire (the landing row is derived — same "derive, don't
+ * so only the column travels the wire (the landing row is derived - same "derive, don't
  * transmit" idiom as checkers applyHop / chess makeMove).
  */
 
@@ -71,7 +71,7 @@
     function isFull(b) { for (var i = 0; i < CELLS; i++) if (b[i] === 0) return false; return true; }
     function isDraw(b) { return !winner(b) && isFull(b); }
 
-    // The four-cell winning line for `player` (row-major cell indices), or null. UI-only —
+    // The four-cell winning line for `player` (row-major cell indices), or null. UI-only -
     // lets the controller highlight the winning discs.
     function winningLine(b, player) {
         for (var r = 0; r < ROWS; r++) {
@@ -94,9 +94,9 @@
     // Negamax + alpha-beta with a light positional eval. Centre columns are searched first
     // (better pruning) and weighted in the eval (classic Connect Four heuristic).
     //
-    // PERF (2026-07-20 — the maintainer's "дикие лаги"): the search runs SYNCHRONOUSLY on
+    // PERF (2026-07-20 - the maintainer's "дикие лаги"): the search runs SYNCHRONOUSLY on
     // Panorama's UI thread, and the old code allocated a fresh 42-element board (drop()'s
-    // b.slice()) at EVERY node — tens of thousands of arrays per move, GC-thrashing Panorama's
+    // b.slice()) at EVERY node - tens of thousands of arrays per move, GC-thrashing Panorama's
     // slow interpreter into a multi-second freeze. Now the search does MAKE/UNDO on ONE working
     // board (write a cell, recurse, write it back to 0): zero allocation in the hot loop. The
     // public drop() still copies (its callers rely on that); only the internal search mutates,
@@ -131,7 +131,7 @@
     }
 
     // Did the disc JUST placed at (r,c) complete a four-in-a-row? Only scans the four lines
-    // THROUGH that cell (O(1)) instead of the whole board — the make/undo search's per-node
+    // THROUGH that cell (O(1)) instead of the whole board - the make/undo search's per-node
     // terminal test. `v` is the mover's colour at (r,c).
     function winsAt(b, r, c, v) {
         for (var d = 0; d < DIRS.length; d++) {
@@ -150,16 +150,23 @@
         }
         return false;
     }
-    // Lowest empty row of `col` on the CURRENT (mutated) board — search's make step. -1 if full.
+    // Lowest empty row of `col` on the CURRENT (mutated) board - search's make step. -1 if full.
     function landRow(b, col) { for (var r = ROWS - 1; r >= 0; r--) if (b[idx(r, col)] === 0) return r; return -1; }
 
-    // Negamax on ONE working board via make/undo (no per-node allocation — see the PERF note).
+    // Negamax on ONE working board via make/undo (no per-node allocation - see the PERF note).
     // `lastWin` = the mover of the PARENT node just won by landing at (lastR,lastC); we detect the
     // terminal at the child so we never need a full-board winner() scan inside the loop.
-    function negamax(b, player, me, depth, alpha, beta, lastR, lastC, lastV) {
-        if (lastR >= 0 && winsAt(b, lastR, lastC, lastV))  // parent's move already won
-            return lastV === me ? -(100000 + depth) : (100000 + depth);
-        if (depth === 0) return evalBoard(b, me);
+    //
+    // NEGAMAX INVARIANT: every value this returns is from the point of view of `player` (the side
+    // to move AT THIS NODE), because the caller negates it. Scoring relative to a fixed root
+    // colour instead made the sign flip with parity - the bot maximised the OPPONENT on even
+    // plies and lost 0:40 head-to-head against this corrected version.
+    function negamax(b, player, depth, alpha, beta, lastR, lastC, lastV) {
+        // The parent's move ended the game. lastV is the parent's mover, never `player`, so this
+        // node's side to move has already lost. Deeper wins score lower (prefer the fast mate).
+        if (lastR >= 0 && winsAt(b, lastR, lastC, lastV))
+            return -(100000 + depth);
+        if (depth === 0) return evalBoard(b, player);
         var best = -1e9, moved = false;
         for (var i = 0; i < CENTER_ORDER.length; i++) {
             var col = CENTER_ORDER[i];
@@ -168,7 +175,7 @@
             moved = true;
             var cell = idx(r, col);
             b[cell] = player;                              // make
-            var val = -negamax(b, player === 1 ? 2 : 1, me, depth - 1, -beta, -alpha, r, col, player);
+            var val = -negamax(b, player === 1 ? 2 : 1, depth - 1, -beta, -alpha, r, col, player);
             b[cell] = 0;                                   // undo
             if (val > best) best = val;
             if (val > alpha) alpha = val;
@@ -198,7 +205,7 @@
             if (r < 0) continue;
             var cell = idx(r, col);
             w[cell] = player;                              // make
-            var val = -negamax(w, opp, player, DEPTH - 1, -1e9, 1e9, r, col, player);
+            var val = -negamax(w, opp, DEPTH - 1, -1e9, 1e9, r, col, player);
             w[cell] = 0;                                   // undo
             if (val > bestVal) { bestVal = val; bestCol = col; }
         }

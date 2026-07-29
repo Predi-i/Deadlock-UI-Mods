@@ -1,6 +1,6 @@
 "use strict";
 // Ad-hoc rules test for the shared chess engine. Run: node tools/mg_chess_test.js
-// Since the trust refactor the engine lives in panorama/scripts/rules/chess.js — the exact
+// Since the trust refactor the engine lives in panorama/scripts/rules/chess.js - the exact
 // same file the authoritative server runs. Loading it in Node (no `$`) attaches it to
 // globalThis.MGRules.chess, which we read here.
 // Exercises: perft node counts + castling / en-passant / promotion / mate / stalemate.

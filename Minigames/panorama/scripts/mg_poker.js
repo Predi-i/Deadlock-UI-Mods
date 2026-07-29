@@ -1,23 +1,23 @@
 "use strict";
 
 /*
- * mg_poker.js — No-Limit Texas Hold'em controller for the Deadlock Minigames mod.
+ * mg_poker.js - No-Limit Texas Hold'em controller for the Deadlock Minigames mod.
  *
  * Two modes share this controller. OFFLINE ("you + N bots") runs the whole hand locally off
  * the shared engine + a seeded bot. ONLINE (worker-as-dealer, 2–4 seats) holds NO authority:
  * it replays the SAME pure betting engine against the server's public event log (/api/plog),
  * pulls its own two hole cards privately (/api/pdraw), fills the board + revealed hands from
- * events, and resolves the pots locally at showdown — mirroring Durak Stage 2. The pure rules
+ * events, and resolves the pots locally at showdown - mirroring Durak Stage 2. The pure rules
  * live in rules/poker.js (shared byte-for-byte with the worker); here we render + take input.
  *
  * RENDERING follows the Durak idiom (ARCHITECTURE §8.6 + the traps): everything sits on ONE
  * flow-children:none felt STAGE, positioned by transform:translate3d (Panorama has NO
  * position:absolute). Cards draw their face/back with a CHILD <Image> (setFace), NOT a panel
- * background-image — a background paints the .vtex at its native 367×512 px on frame 1 (the
+ * background-image - a background paints the .vtex at its native 367×512 px on frame 1 (the
  * ~300% zoom bug). The felt is larger than Durak's (the maintainer said the 4-seat Durak table
  * is cramped): 760×520.
  *
- * NONE of the visuals are verifiable from a shell — reasoned from the game's CSS idioms + the
+ * NONE of the visuals are verifiable from a shell - reasoned from the game's CSS idioms + the
  * Durak/Connect Four controllers, confirmed only after a VPK repack.
  *
  * Card model matches rules/poker.js: id 0..51 = suit*13 + rank. suit 0..3 = S,H,D,C.
@@ -37,20 +37,9 @@
     function cardFaceUrl(id) { return DECK_DIR + SUIT_CHARS[P.suitOf(id)] + RANK_CHARS[P.rankOf(id)] + ".vtex"; }
     var BACK_URL = DECK_DIR + "BACK.vtex";
 
-    // Draw a card face/back with a CHILD <Image> (SetImage + scaling), NOT the container's
-    // style.backgroundImage — a Panel background paints the .vtex at its native pixel size until
-    // the panel is re-laid-out (the ~300% first-frame zoom). An <Image> fills its CSS box from
-    // frame 1 (game idiom: hud_ability_icon.xml). The Image is transparent to input.
-    function setFace(container, url) {
-        var img = container._faceImg;
-        if (!img) {
-            img = $.CreatePanel("Image", container, "", { scaling: "stretch-to-fit-preserve-aspect" });
-            img.AddClass("mg-face-img");
-            try { img.SetAttributeString("hittest", "false"); } catch (e) {}
-            container._faceImg = img;
-        }
-        img.SetImage(url);
-    }
+    // Card faces/backs are drawn by a CHILD <Image>, not the container's background - see
+    // MG.Widgets.setFace in mg_games.js for why (and for the copy durak/chess/the picker share).
+    var setFace = MG.Widgets.setFace;
     function setBack(container) { setFace(container, BACK_URL); }
 
     // Where each opponent sits on MY screen, given their relative seat offset. I always sit at
@@ -61,7 +50,7 @@
         return rel === 1 ? "left" : (rel === 2 ? "top" : "right"); // N === 4
     }
 
-    // Stage geometry (px). Bigger than Durak's 680×500 — the 4-seat felt needs the room.
+    // Stage geometry (px). Bigger than Durak's 680×500 - the 4-seat felt needs the room.
     var CARD_W = 76, CARD_H = 106;     // board card size
     var HERO_W = 106, HERO_H = 148;    // MY hole cards: ~1.4x the board so my hand reads clearly bottom-centre
     var OPP_CW = 42, OPP_CH = 59;      // opponents' small face-down backs (avoid the mushy overlap)
@@ -89,7 +78,7 @@
 
         // ── online sync state (worker-as-dealer) ──────────────────────────────────
         // logSeq = next public event index to fetch; pollGen guards against two concurrent
-        // poll chains sharing logSeq (the exact bug that dropped Durak events — see mg_durak).
+        // poll chains sharing logSeq (the exact bug that dropped Durak events - see mg_durak).
         // holeCursor = how many of MY 2 hole cards I've pulled via pdraw for the current hand;
         // pendingAct blocks input between send and the echoed event.
         var logSeq = 0, pollGen = 0, holeCursor = 0, pendingAct = false, gameOver = false;
@@ -117,7 +106,7 @@
         // Per-turn countdown, pinned to the felt's LEFT EDGE (boardW = STAGE_W 760). Parented on
         // `container` (the flow:none game host). Poker's action is ALWAYS optional-in-spirit but the
         // clock is mandatory: if it empties, the seat is timed out with a fold (or a check when
-        // checking is free — never forfeit chips you didn't have to). Absent build (old mg_games) →
+        // checking is free - never forfeit chips you didn't have to). Absent build (old mg_games) →
         // null; every call guarded. See refreshTimer/onTimerExpire below.
         var turnTimer = (MG.Widgets && MG.Widgets.createTurnTimer) ? MG.Widgets.createTurnTimer(container, { boardW: 760 }) : null;
 
@@ -146,7 +135,7 @@
             var c = seatCenter(seat);
             if (seat === mySeat) {
                 // Big face-up pair along the bottom edge, centred. Below the pot label, clear of
-                // my corner tile — the felt's bottom-centre is otherwise empty. Uses HERO_* (larger
+                // my corner tile - the felt's bottom-centre is otherwise empty. Uses HERO_* (larger
                 // than the board cards) so my own hand is the easiest thing on the felt to read.
                 return { x: STAGE_W / 2 - HERO_W - 4, y: STAGE_H - HERO_H - 14, spread: HERO_W + 8, w: HERO_W, h: HERO_H };
             }
@@ -175,7 +164,7 @@
 
         // ── per-turn countdown ───────────────────────────────────────────────────────
         // The clock runs ONLY while it's my turn to act (myTurn()). If it empties I'm timed out:
-        // fold my hand — the maintainer's ruling — unless checking is free, in which case I check
+        // fold my hand - the maintainer's ruling - unless checking is free, in which case I check
         // (there's no reason to forfeit equity when staying in costs nothing). pendingAct parks the
         // action send, so a slow round-trip can't fire a bogus timeout. render() calls refreshTimer
         // after every state change; a mode change (my turn ↔ not) (re)arms or stops the 20s.
@@ -190,7 +179,9 @@
         }
         function onTimerExpire() {
             timerOn = false;
-            if (destroyed || !st || !myTurn()) return;
+            // stop() invalidates the widget callback, but an expiry tick that was already
+            // dispatched must still be harmless while an authoritative action is in flight.
+            if (destroyed || pendingAct || !st || !myTurn()) return;
             var la = P.legalActions(st, mySeat);
             var action = la.canCheck ? { type: "check" } : { type: "fold" };
             doAction(action);
@@ -200,7 +191,7 @@
             var pot = P.totalPot(st);
             var lbl = $.CreatePanel("Label", decorLayer, "");
             lbl.AddClass("mg-pk-pot");
-            // X comes purely from .mg-pk-pot's horizontal-align:center — do NOT also translate X.
+            // X comes purely from .mg-pk-pot's horizontal-align:center - do NOT also translate X.
             // The old code did BOTH (align-centre + translateX of STAGE_W/2-100), and Panorama
             // stacks them, shoving the 200px label to the felt's right edge where it landed on the
             // right-hand seat's bet chip readout ("texts overlap", maintainer 2026-07-18). translateY
@@ -307,7 +298,7 @@
             if (!myTurn()) return;
             var la = P.legalActions(st, mySeat);
 
-            // Stepper row (only when a raise is possible) sits ABOVE the action buttons — the
+            // Stepper row (only when a raise is possible) sits ABOVE the action buttons - the
             // standard poker layout. The action buttons (incl. Raise) all live on ONE centred
             // row so the Raise button inherits the row's flow-children:right + centre and can't
             // clip half-off the left edge (the "half-visible button" bug).
@@ -421,7 +412,7 @@
                 stacks = st.stacks.slice();
                 render();
                 // The result is shown ONCE, on the felt banner above "Next hand" (buildNextHand).
-                // Don't ALSO push it to the footer status — that was the doubled "You win" report.
+                // Don't ALSO push it to the footer status - that was the doubled "You win" report.
                 status("");
                 return;
             }
@@ -455,7 +446,7 @@
         // public event log (fold/check/call/raise are card-independent, so the replay is
         // byte-identical to the server's), fills the board from BOARD events, its own two hole
         // cards privately from /api/pdraw, and every contender's cards from SHOW events at
-        // showdown — then resolves the pots LOCALLY (resolveShowdown, same side-pot maths as the
+        // showdown - then resolves the pots LOCALLY (resolveShowdown, same side-pot maths as the
         // server) so nobody's hole cards travel until the hand is decided. Actions are sent via
         // /api/pact WITHOUT optimistic mutation: the echoed event is the single source of truth.
         // (opponent names come from nameOf(), which already reads "Player N" online.)
@@ -477,7 +468,7 @@
             if (ev.type === "show") {
                 // Reveal a contender's two hole cards at showdown. My OWN seat is skipped: I
                 // already hold my real cards from pdraw, and the server SHOWs every contender
-                // (me included) — pushing them again would give me a 4-card hand.
+                // (me included) - pushing them again would give me a 4-card hand.
                 if (st && ev.seat !== mySeat && st.hole[ev.seat] && st.hole[ev.seat].length < 2)
                     st.hole[ev.seat].push(ev.card);
                 return;
@@ -503,10 +494,10 @@
                 if (leftSeats.indexOf(ev.seat) < 0) leftSeats.push(ev.seat);
                 return;
             }
-            // betting actions — replayed through the shared engine (validated already server-side)
+            // betting actions - replayed through the shared engine (validated already server-side)
             // A raise-to amount (up to ~800, the whole stack) overflows one level dimension, so
             // the worker splits it into a raiselo (low 6 bits) immediately followed by a raisehi
-            // (high bits). Stash lo, then drive the reducer once the hi half completes it —
+            // (high bits). Stash lo, then drive the reducer once the hi half completes it -
             // to = hi*64 + lo. The pair is always adjacent + ordered in the log, so a per-seat
             // stash is enough (no seq bookkeeping).
             if (ev.type === "raiselo") { pendingRaiseLo[ev.seat] = ev.lo; return; }
@@ -528,7 +519,7 @@
             if (holeCursor >= 2) { wantHole = false; done(); return; }
             MG.Api.pdraw(session.code, session.tok, holeCursor, function (card) {
                 if (destroyed) return;
-                if (card == null) { done(); return; }      // not dealt at that index yet — retry via poll
+                if (card == null) { done(); return; }      // not dealt at that index yet - retry via poll
                 if (st && st.hole[mySeat]) st.hole[mySeat][holeCursor] = card;
                 holeCursor++;
                 pullHole(done);
@@ -538,7 +529,7 @@
         function onlineStatus() {
             if (gameOver) return;
             if (!st) { status("Dealing…"); return; }
-            // At hand-over the felt banner (buildNextHand) already shows the result — keep the
+            // At hand-over the felt banner (buildNextHand) already shows the result - keep the
             // footer blank so it isn't printed twice (the doubled "You win" report).
             if (st.street === "over") { status(""); return; }
             if (myTurn()) { status(streetName() + ": your action."); return; }
@@ -546,7 +537,7 @@
             status(streetName());
         }
 
-        // Single authoritative poll chain (pollGen guards it, exactly like mg_durak — two chains
+        // Single authoritative poll chain (pollGen guards it, exactly like mg_durak - two chains
         // sharing logSeq would double-apply one event and skip the next).
         function startPolling() { pollGen++; pollMisses = 0; pollLoop(pollGen); }
         function pollLoop(gen) {
@@ -583,13 +574,14 @@
         }
 
         // Send one betting action; the server validates and (on success) appends the echoed
-        // event the poll reads back. No optimistic local mutation — a rejected action just
+        // event the poll reads back. No optimistic local mutation - a rejected action just
         // never lands. a: 0 fold · 1 check · 2 call · 3 raise (to).
         function sendAct(action) {
             if (destroyed || pendingAct) return;
             var a = action.type === "fold" ? 0 : action.type === "check" ? 1 : action.type === "call" ? 2 : 3;
             var to = (a === 3) ? (action.to | 0) : 0;
             pendingAct = true;
+            refreshTimer();                                             // park immediately, before the request starts
             status("Sending…");
             MG.Api.pact(session.code, session.tok, a, to, function (r) {
                 pendingAct = false;
@@ -598,14 +590,19 @@
                 else if (r && r.reason === "illegal") status("That move isn't legal.");
                 else if (r && r.reason === "gone") { if (MG.UI && MG.UI.kickToMenu) MG.UI.kickToMenu("Lobby closed."); }
                 else status("Move rejected.");
-            }, function () { pendingAct = false; status("Server unavailable."); });
+                refreshTimer();                                      // rejected: re-arm the unchanged local turn
+            }, function () {
+                pendingAct = false;
+                status("Server unavailable.");
+                refreshTimer();                                      // transport failed: permit a retry with a fresh clock
+            });
         }
 
         function requestNextHand() {
             if (destroyed) return;
             status("Dealing next hand…");
             MG.Api.pnext(session.code, session.tok, function (r) {
-                // Success OR "wait" (someone else already dealt) — the poll will pick up the HAND
+                // Success OR "wait" (someone else already dealt) - the poll will pick up the HAND
                 // event either way. Only a token/gone failure is worth surfacing.
                 if (r && !r.ok && r.reason === "gone" && MG.UI && MG.UI.kickToMenu) MG.UI.kickToMenu("Lobby closed.");
             }, function () { status("Server unavailable."); });

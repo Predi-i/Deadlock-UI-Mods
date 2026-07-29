@@ -1,14 +1,14 @@
 "use strict";
 
 /*
- * mg_ttt.js — Tic-Tac-Toe CONTROLLER for the Deadlock Minigames mod.
+ * mg_ttt.js - Tic-Tac-Toe CONTROLLER for the Deadlock Minigames mod.
  *
  * Split out of mg_games.js (2026-07-24). The pure rules live in rules/ttt.js (shared
  * byte-for-byte with the authoritative worker). Wire format reuses the checkers move
  * transport: a placement in cell 0..8 is sent as move(code, cell, 9, end=1). to=9 is a
  * fixed non-cell marker so from!=to always holds and validation is trivial. Board is
  * Array(9) (0 empty, 1 = X, 2 = O). Host plays X and moves first. Marks are panel-drawn
- * (fonts lack ✕/◯ glyphs — see ARCHITECTURE trap 6).
+ * (fonts lack ✕/◯ glyphs - see ARCHITECTURE trap 6).
  *
  * Self-registers game id 2 like mg_durak / mg_connectfour / mg_poker. Loads AFTER
  * mg_games.js so MG.Rules.ttt, MG.Widgets.createTurnTimer and the MG.Games registry exist.
@@ -67,7 +67,7 @@
 
         // Per-turn countdown (left gutter of the modal). Parented on `container` (the flow:none game
         // host) so it parks in the left margin, clear of the centred board. Runs only while it's my
-        // move; on expiry I forfeit (TTT is always heads-up with a MANDATORY move — maintainer's
+        // move; on expiry I forfeit (TTT is always heads-up with a MANDATORY move - maintainer's
         // ruling: timeout = loss). Online I also fire Leave so the opponent's poll learns at once.
         // boardW = 3 cells × (104 + 2×3 margin) + 2 × 3px border = 336 → pin the timer to the
         // board's left edge (narrow centred board; the far-left modal gutter looked detached).
@@ -188,7 +188,7 @@
             });
         }
 
-        // Server rejected our placement — discard the optimistic mark, rebuild the board
+        // Server rejected our placement - discard the optimistic mark, rebuild the board
         // from the accepted log, and resume polling so the authoritative order drives us.
         function rejectAndResync(reason) {
             gameOver = false;
