@@ -1491,46 +1491,90 @@
         }, tc, cv);
     }
 
-    function renderRoom(code, isHost, isPublic, ctx) {
+    // ── shared lobby-room view ───────────────────────────────────────────────
+    // ONE implementation behind the three rooms that used to be copy-pasted (2-seat durak
+    // quick-match, N-seat poker table, N-seat durak table). They differed only in strings, in
+    // which room/start route they call, and in whether the seat list is 2 fixed labels or `cap`
+    // generated ones — everything structural (ctx/token binding, the poll loop, the started
+    // hand-off, the gone/kick path) was identical, which is exactly how the copies drifted:
+    // the `gone` handling and the stray-leave fix had to be applied three times.
+    //
+    // cfg = {
+    //   code, isHost, ctx,
+    //   gameId,                  // for renderGame on start
+    //   cap,                     // seat count (2 for the quick-match room)
+    //   seat,                    // this client's seat index
+    //   title, joinedTitle,      // modal title, host / joiner
+    //   codeCaption, hint,       // code box; omitted entirely when `searching` is set
+    //   searching,               // public matchmaking: show this line instead of a code
+    //   startLabel,              // "Start" / "Deal"
+    //   startingMsg, startVerb,  // "Starting Durak…" / "deal"
+    //   waitHost, waitJoiner,    // status while waiting
+    //   readyMsg,                // fn(players) → host status once ≥2 are seated
+    //   roomApi, startApi,       // fn(code, cb, err) / fn(code, tok, cb, err)
+    //   closedMsg                // kickToMenu text when the lobby is gone
+    // }
+    function renderLobbyRoom(cfg) {
         cleanupCurrentView(false);
         view = "room";
-        setTitle(isHost ? "Durak Room" : "Joined Durak Room");
+        setTitle(cfg.isHost ? cfg.title : cfg.joinedTitle);
         clearBody();
-        currentCode = code;
+        // Bind the globals to THIS action's ctx. A create/join is async (~1.5s image load); if the
+        // user fired another one meanwhile, the globals would hold the OTHER lobby's token and
+        // Start/Deal would send it → server seatOf miss → (9,3). Closing over roomTok keeps the
+        // room self-consistent regardless of later churn; the ctx guard drops a stale room's
+        // callbacks entirely.
+        if (cfg.ctx) { cfg.ctx.code = cfg.code; cfg.ctx.phase = "room"; }
+        currentCode = cfg.code;
+        var roomTok = cfg.ctx ? cfg.ctx.tok : currentTok;
+        currentTok = roomTok;
 
-        if (isPublic) {
+        var code = cfg.code, isHost = cfg.isHost, ctx = cfg.ctx;
+        var cap = Math.max(2, cfg.cap | 0);
+        var seat = isHost ? 0 : (cfg.seat | 0);
+
+        if (cfg.searching) {
             var searching = $.CreatePanel("Label", modalBody, "");
             searching.AddClass("mg-searching");
-            searching.text = isHost ? "Waiting for a Durak opponent…" : "Matched. Waiting for host start…";
+            searching.text = cfg.searching;
         } else {
             var box = $.CreatePanel("Panel", modalBody, "");
             box.AddClass("mg-code-box");
-            var cap = $.CreatePanel("Label", box, ""); cap.AddClass("mg-code-cap"); cap.text = "Durak lobby code:";
+            var capL = $.CreatePanel("Label", box, ""); capL.AddClass("mg-code-cap"); capL.text = cfg.codeCaption;
             var big = $.CreatePanel("Label", box, ""); big.AddClass("mg-code-big"); big.text = codeStr(code);
-            var hint = $.CreatePanel("Label", box, ""); hint.AddClass("mg-code-hint");
-            hint.text = "2-player online Durak. Host starts after the second player joins.";
+            var hint = $.CreatePanel("Label", box, ""); hint.AddClass("mg-code-hint"); hint.text = cfg.hint;
         }
 
         var seats = $.CreatePanel("Panel", modalBody, "");
         seats.AddClass("mg-room-seats");
-        var seat0 = $.CreatePanel("Label", seats, ""); seat0.AddClass("mg-room-seat"); seat0.text = isHost ? "Seat 1: You (host)" : "Seat 1: Host";
-        var seat1 = $.CreatePanel("Label", seats, ""); seat1.AddClass("mg-room-seat"); seat1.text = isHost ? "Seat 2: Waiting…" : "Seat 2: You";
+        var seatLabels = [];
+        for (var s = 0; s < cap; s++) {
+            var lbl = $.CreatePanel("Label", seats, ""); lbl.AddClass("mg-room-seat");
+            lbl.text = "Seat " + (s + 1) + ": " +
+                (s === seat ? ("You" + (isHost ? " (host)" : "")) : (s === 0 ? "Host" : "Waiting…"));
+            seatLabels.push(lbl);
+        }
 
         var row = $.CreatePanel("Panel", modalBody, "");
         row.AddClass("mg-actions");
         if (isHost) {
-            var start = $.CreatePanel("Button", row, "");
-            start.AddClass("mg-btn"); start.AddClass("mg-btn-primary");
-            var sl = $.CreatePanel("Label", start, ""); sl.text = "Start";
-            start.SetPanelEvent("onactivate", function () {
-                setStatus("Starting Durak…");
-                MG.Api.start(code, ctx.tok, function (r) {
-                    if (!actionAlive(ctx)) return;
-                    if (r.ok) { renderGame(3, code, true, false, { seat: 0, numPlayers: 2 }, ctx); return; }
-                    if (r.reason === "players") setStatus("Need a second player before starting.");
-                    else if (r.reason === "host") setStatus("Only the host can start.");
-                    else setStatus("Couldn't start Durak (" + (r.reason || "error") + ").");
-                }, function () { if (actionAlive(ctx)) setStatus("Server unavailable."); });
+            var startBtn = $.CreatePanel("Button", row, "");
+            startBtn.AddClass("mg-btn"); startBtn.AddClass("mg-btn-primary");
+            var sl = $.CreatePanel("Label", startBtn, ""); sl.text = cfg.startLabel;
+            startBtn.SetPanelEvent("onactivate", function () {
+                setStatus(cfg.startingMsg);
+                cfg.startApi(code, roomTok, function (r) {
+                    if (ctx && !actionAlive(ctx)) return;
+                    if (r.ok) {
+                        currentTok = roomTok;
+                        renderGame(cfg.gameId, code, true, false, { seat: 0, numPlayers: cap }, ctx);
+                        return;
+                    }
+                    if (r.reason === "players") setStatus("Need at least two players before " + cfg.startVerb + ".");
+                    else if (r.reason === "host") setStatus("Only the host can " + cfg.startVerb + ".");
+                    else if (r.reason === "token") setStatus("Session desync — please recreate the table.");
+                    else setStatus("Couldn't " + cfg.startVerb + " (" + (r.reason || "error") + ").");
+                }, function () { if (!ctx || actionAlive(ctx)) setStatus("Server unavailable."); });
             });
         }
         var back = $.CreatePanel("Button", row, "");
@@ -1538,198 +1582,88 @@
         var bl = $.CreatePanel("Label", back, ""); bl.text = "Cancel";
         back.SetPanelEvent("onactivate", function () { renderMenu(); });
 
-        setStatus(isHost ? "Waiting for player 2…" : "Waiting for host to start…");
-        pollDurakRoom(code, isHost, seat1, ctx);
+        setStatus(isHost ? cfg.waitHost : cfg.waitJoiner);
+        pollLobbyRoom(cfg, cap, seat, seatLabels);
     }
 
-    function pollDurakRoom(code, isHost, seat1Label, ctx) {
+    function pollLobbyRoom(cfg, cap, seat, seatLabels) {
         statusPollToken++;
         var token = statusPollToken;
         var misses = 0;
+        var code = cfg.code, isHost = cfg.isHost, ctx = cfg.ctx;
         function tick() {
-            if (token !== statusPollToken || view !== "room" || !actionAlive(ctx)) return;
-            MG.Api.room(code, function (r) {
-                if (token !== statusPollToken || view !== "room" || !actionAlive(ctx)) return;
-                if (r.gone) { kickToMenu("Lobby closed."); return; }   // clears currentCode first, so cleanupCurrentView does not fire /api/leave at a dead lobby
-                if (seat1Label && seat1Label.IsValid && seat1Label.IsValid()) {
-                    seat1Label.text = isHost ? (r.players >= 2 ? "Seat 2: Player joined" : "Seat 2: Waiting…") : "Seat 2: You";
+            if (token !== statusPollToken || view !== "room" || (ctx && !actionAlive(ctx))) return;
+            cfg.roomApi(code, function (r) {
+                if (token !== statusPollToken || view !== "room" || (ctx && !actionAlive(ctx))) return;
+                // kickToMenu, not renderMenu: it clears currentCode first, so cleanupCurrentView
+                // does not fire /api/leave at a lobby the server has already reported gone.
+                if (r.gone) { kickToMenu(cfg.closedMsg); return; }
+                for (var s = 0; s < cap; s++) {
+                    if (s === seat) continue;   // never overwrite "You"
+                    if (!seatLabels[s] || !seatLabels[s].IsValid || !seatLabels[s].IsValid()) continue;
+                    seatLabels[s].text = "Seat " + (s + 1) + ": " + (s < r.players ? "Player joined" : "Waiting…");
                 }
-                if (r.started) { renderGame(3, code, isHost, false, { seat: isHost ? 0 : 1, numPlayers: 2 }, ctx); return; }
-                if (isHost) setStatus(r.players >= 2 ? "Player 2 joined. Press Start." : "Waiting for player 2…");
-                else setStatus("Waiting for host to start…");
+                if (r.started) {
+                    renderGame(cfg.gameId, code, isHost, false, { seat: seat, numPlayers: cap }, ctx);
+                    return;
+                }
+                if (isHost) setStatus(r.players >= 2 ? cfg.readyMsg(r.players) : cfg.waitHost);
+                else setStatus(cfg.waitJoiner);
                 $.Schedule(MG.Net.waitDelay(misses++), tick);
             }, function () { $.Schedule(MG.Net.waitDelay(misses++), tick); });
         }
         tick();
     }
 
-    // Poker lobby room: 2–4 seats. Host sees the shared code + a Deal button (usable once ≥2
-    // seats are filled); joiners wait for the host to deal. `cap` is the table size fixed at
-    // create; `mySeat` is the joiner's seat (host = 0).
+    // 2-seat durak room, reached from Quick Match (public) or a generic join of a durak lobby.
+    function renderRoom(code, isHost, isPublic, ctx) {
+        renderLobbyRoom({
+            code: code, isHost: isHost, ctx: ctx, gameId: 3, cap: 2, seat: isHost ? 0 : 1,
+            title: "Durak Room", joinedTitle: "Joined Durak Room",
+            searching: isPublic
+                ? (isHost ? "Waiting for a Durak opponent…" : "Matched. Waiting for host start…")
+                : null,
+            codeCaption: "Durak lobby code:",
+            hint: "2-player online Durak. Host starts after the second player joins.",
+            startLabel: "Start", startingMsg: "Starting Durak…", startVerb: "start",
+            waitHost: "Waiting for player 2…", waitJoiner: "Waiting for host to start…",
+            readyMsg: function () { return "Player 2 joined. Press Start."; },
+            roomApi: MG.Api.room, startApi: MG.Api.start,
+            closedMsg: "Lobby closed."
+        });
+    }
+
+    // Poker table: 2–4 seats, private code, host deals.
     function renderPokerRoom(code, isHost, cap, mySeat, ctx) {
-        cleanupCurrentView(false);
-        view = "room";
-        setTitle(isHost ? "Poker Table" : "Joined Poker Table");
-        clearBody();
-        // Re-establish the global seat/code from THIS action's generation-guarded ctx. A create/join
-        // is async (~1.5s image load); if the user fired another create meanwhile, the globals would
-        // hold the OTHER lobby's token and Deal would send it → server seatOf miss → (9,3) "couldn't
-        // deal". Binding here (and closing over roomTok for the Deal handler) keeps the room self-
-        // consistent regardless of later churn; the ctx guard drops a stale room's callbacks entirely.
-        if (ctx) { ctx.code = code; ctx.phase = "room"; }
-        currentCode = code;
-        var roomTok = ctx ? ctx.tok : currentTok;
-        currentTok = roomTok;
-        var seat = isHost ? 0 : (mySeat | 0);
-
-        var box = $.CreatePanel("Panel", modalBody, "");
-        box.AddClass("mg-code-box");
-        var capL = $.CreatePanel("Label", box, ""); capL.AddClass("mg-code-cap"); capL.text = "Poker table code:";
-        var big = $.CreatePanel("Label", box, ""); big.AddClass("mg-code-big"); big.text = codeStr(code);
-        var hint = $.CreatePanel("Label", box, ""); hint.AddClass("mg-code-hint");
-        hint.text = cap + "-seat No-Limit Hold'em. Host deals once everyone's in.";
-
-        var seats = $.CreatePanel("Panel", modalBody, "");
-        seats.AddClass("mg-room-seats");
-        var seatLabels = [];
-        for (var s = 0; s < cap; s++) {
-            var lbl = $.CreatePanel("Label", seats, ""); lbl.AddClass("mg-room-seat");
-            lbl.text = "Seat " + (s + 1) + ": " + (s === seat ? "You" + (isHost ? " (host)" : "") : (s === 0 ? "Host" : "Waiting…"));
-            seatLabels.push(lbl);
-        }
-
-        var row = $.CreatePanel("Panel", modalBody, "");
-        row.AddClass("mg-actions");
-        if (isHost) {
-            var startBtn = $.CreatePanel("Button", row, "");
-            startBtn.AddClass("mg-btn"); startBtn.AddClass("mg-btn-primary");
-            var sl = $.CreatePanel("Label", startBtn, ""); sl.text = "Deal";
-            startBtn.SetPanelEvent("onactivate", function () {
-                setStatus("Dealing…");
-                MG.Api.pstart(code, roomTok, function (r) {
-                    if (ctx && !actionAlive(ctx)) return;
-                    if (r.ok) { currentTok = roomTok; renderGame(6, code, true, false, { seat: 0, numPlayers: cap }, ctx); return; }
-                    if (r.reason === "players") setStatus("Need at least two players before dealing.");
-                    else if (r.reason === "host") setStatus("Only the host can deal.");
-                    else if (r.reason === "token") setStatus("Session desync — please recreate the table.");
-                    else setStatus("Couldn't deal (" + (r.reason || "error") + ").");
-                }, function () { if (!ctx || actionAlive(ctx)) setStatus("Server unavailable."); });
-            });
-        }
-        var back = $.CreatePanel("Button", row, "");
-        back.AddClass("mg-btn");
-        var bl = $.CreatePanel("Label", back, ""); bl.text = "Cancel";
-        back.SetPanelEvent("onactivate", function () { renderMenu(); });
-
-        setStatus(isHost ? "Waiting for players…" : "Waiting for the host to deal…");
-        pollPokerRoom(code, isHost, cap, seat, seatLabels, ctx);
+        renderLobbyRoom({
+            code: code, isHost: isHost, ctx: ctx, gameId: 6, cap: cap, seat: mySeat,
+            title: "Poker Table", joinedTitle: "Joined Poker Table",
+            codeCaption: "Poker table code:",
+            hint: cap + "-seat No-Limit Hold'em. Host deals once everyone's in.",
+            startLabel: "Deal", startingMsg: "Dealing…", startVerb: "deal",
+            waitHost: "Waiting for players…", waitJoiner: "Waiting for the host to deal…",
+            readyMsg: function (n) { return n + "/" + cap + " seated. Press Deal."; },
+            roomApi: MG.Api.proom, startApi: MG.Api.pstart,
+            closedMsg: "Table closed."
+        });
     }
 
-    function pollPokerRoom(code, isHost, cap, seat, seatLabels, ctx) {
-        statusPollToken++;
-        var token = statusPollToken;
-        var misses = 0;
-        function tick() {
-            if (token !== statusPollToken || view !== "room" || (ctx && !actionAlive(ctx))) return;
-            MG.Api.proom(code, function (r) {
-                if (token !== statusPollToken || view !== "room" || (ctx && !actionAlive(ctx))) return;
-                if (r.gone) { kickToMenu("Table closed."); return; }   // see above: no stray leave
-                for (var s = 0; s < cap; s++) {
-                    if (s === seat) continue;   // never overwrite "You"
-                    if (!seatLabels[s] || !seatLabels[s].IsValid || !seatLabels[s].IsValid()) continue;
-                    seatLabels[s].text = "Seat " + (s + 1) + ": " + (s < r.players ? "Player joined" : "Waiting…");
-                }
-                if (r.started) { renderGame(6, code, isHost, false, { seat: seat, numPlayers: cap }, ctx); return; }
-                if (isHost) setStatus(r.players >= 2 ? (r.players + "/" + cap + " seated. Press Deal.") : "Waiting for players…");
-                else setStatus("Waiting for the host to deal…");
-                $.Schedule(MG.Net.waitDelay(misses++), tick);
-            }, function () { $.Schedule(MG.Net.waitDelay(misses++), tick); });
-        }
-        tick();
-    }
-
-    // Durak PRIVATE N-seat lobby room (2–4 seats). The 2-player public Quick Match still uses the
-    // simpler renderRoom/pollDurakRoom above; this mirrors renderPokerRoom for the private table.
-    // Host sees the shared code + a Start button (usable once ≥2 seats fill); joiners wait. `cap`
-    // is the table size fixed at create; `seat` is this client's seat (host = 0).
+    // Durak private table: 2–4 seats on durak's own routes (the 2-seat quick-match room above
+    // goes through the generic room/start pair instead).
     function renderDurakRoom(code, isHost, cap, seat, ctx) {
-        cleanupCurrentView(false);
-        view = "room";
-        setTitle(isHost ? "Durak Table" : "Joined Durak Table");
-        clearBody();
-        // Bind the globals to THIS action's ctx (see renderPokerRoom for why — a concurrent
-        // create could otherwise leave currentTok pointing at the wrong lobby → Start gets (9,3)).
-        if (ctx) { ctx.code = code; ctx.phase = "room"; }
-        currentCode = code;
-        var roomTok = ctx ? ctx.tok : currentTok;
-        currentTok = roomTok;
-        seat = seat | 0;
-
-        var box = $.CreatePanel("Panel", modalBody, "");
-        box.AddClass("mg-code-box");
-        var capL = $.CreatePanel("Label", box, ""); capL.AddClass("mg-code-cap"); capL.text = "Durak table code:";
-        var big = $.CreatePanel("Label", box, ""); big.AddClass("mg-code-big"); big.text = codeStr(code);
-        var hint = $.CreatePanel("Label", box, ""); hint.AddClass("mg-code-hint");
-        hint.text = cap + "-player online Durak. Host starts once everyone's in.";
-
-        var seats = $.CreatePanel("Panel", modalBody, "");
-        seats.AddClass("mg-room-seats");
-        var seatLabels = [];
-        for (var s = 0; s < cap; s++) {
-            var lbl = $.CreatePanel("Label", seats, ""); lbl.AddClass("mg-room-seat");
-            lbl.text = "Seat " + (s + 1) + ": " + (s === seat ? "You" + (isHost ? " (host)" : "") : (s === 0 ? "Host" : "Waiting…"));
-            seatLabels.push(lbl);
-        }
-
-        var row = $.CreatePanel("Panel", modalBody, "");
-        row.AddClass("mg-actions");
-        if (isHost) {
-            var startBtn = $.CreatePanel("Button", row, "");
-            startBtn.AddClass("mg-btn"); startBtn.AddClass("mg-btn-primary");
-            var sl = $.CreatePanel("Label", startBtn, ""); sl.text = "Start";
-            startBtn.SetPanelEvent("onactivate", function () {
-                setStatus("Starting Durak…");
-                MG.Api.start(code, roomTok, function (r) {
-                    if (ctx && !actionAlive(ctx)) return;
-                    if (r.ok) { currentTok = roomTok; renderGame(3, code, true, false, { seat: 0, numPlayers: cap }, ctx); return; }
-                    if (r.reason === "players") setStatus("Need at least two players before starting.");
-                    else if (r.reason === "host") setStatus("Only the host can start.");
-                    else if (r.reason === "token") setStatus("Session desync — please recreate the table.");
-                    else setStatus("Couldn't start Durak (" + (r.reason || "error") + ").");
-                }, function () { if (!ctx || actionAlive(ctx)) setStatus("Server unavailable."); });
-            });
-        }
-        var back = $.CreatePanel("Button", row, "");
-        back.AddClass("mg-btn");
-        var bl = $.CreatePanel("Label", back, ""); bl.text = "Cancel";
-        back.SetPanelEvent("onactivate", function () { renderMenu(); });
-
-        setStatus(isHost ? "Waiting for players…" : "Waiting for the host to start…");
-        pollDurakTable(code, isHost, cap, seat, seatLabels, ctx);
+        renderLobbyRoom({
+            code: code, isHost: isHost, ctx: ctx, gameId: 3, cap: cap, seat: seat,
+            title: "Durak Table", joinedTitle: "Joined Durak Table",
+            codeCaption: "Durak table code:",
+            hint: cap + "-player online Durak. Host starts once everyone's in.",
+            startLabel: "Start", startingMsg: "Starting Durak…", startVerb: "start",
+            waitHost: "Waiting for players…", waitJoiner: "Waiting for the host to start…",
+            readyMsg: function (n) { return n + "/" + cap + " seated. Press Start."; },
+            roomApi: MG.Api.droom, startApi: MG.Api.start,
+            closedMsg: "Table closed."
+        });
     }
 
-    function pollDurakTable(code, isHost, cap, seat, seatLabels, ctx) {
-        statusPollToken++;
-        var token = statusPollToken;
-        var misses = 0;
-        function tick() {
-            if (token !== statusPollToken || view !== "room" || (ctx && !actionAlive(ctx))) return;
-            MG.Api.droom(code, function (r) {
-                if (token !== statusPollToken || view !== "room" || (ctx && !actionAlive(ctx))) return;
-                if (r.gone) { kickToMenu("Table closed."); return; }   // see above: no stray leave
-                for (var s = 0; s < cap; s++) {
-                    if (s === seat) continue;   // never overwrite "You"
-                    if (!seatLabels[s] || !seatLabels[s].IsValid || !seatLabels[s].IsValid()) continue;
-                    seatLabels[s].text = "Seat " + (s + 1) + ": " + (s < r.players ? "Player joined" : "Waiting…");
-                }
-                if (r.started) { renderGame(3, code, isHost, false, { seat: seat, numPlayers: cap }, ctx); return; }
-                if (isHost) setStatus(r.players >= 2 ? (r.players + "/" + cap + " seated. Press Start.") : "Waiting for players…");
-                else setStatus("Waiting for the host to start…");
-                $.Schedule(MG.Net.waitDelay(misses++), tick);
-            }, function () { $.Schedule(MG.Net.waitDelay(misses++), tick); });
-        }
-        tick();
-    }
 
     // `tc` (seconds) is the host's chosen time control, threaded through so the host mounts its
     // clock with the same bank the joiner will read from the server. 0 for untimed / non-clock games.
