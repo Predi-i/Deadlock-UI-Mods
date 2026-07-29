@@ -1,12 +1,12 @@
 "use strict";
 
 /*
- * rules/durak.js — pure "Durak" (Podkidnoy) rules, shared by the client (predictor + bot)
+ * rules/durak.js - pure "Durak" (Podkidnoy) rules, shared by the client (predictor + bot)
  * and the authoritative server dealer (same shared-namespace mechanism as rules/ttt.js).
  *
  * Card model: id 0..35 = suit*9 + rank. suit 0..3 = S,H,D,C. rank 0..8 = 6,7,8,9,T,J,Q,K,A
  * (higher rank index = stronger). Trump = suit of the deck's bottom card. A given seed fully
- * determines a deal (mulberry32), and online the SERVER owns that seed — so the client never
+ * determines a deal (mulberry32), and online the SERVER owns that seed - so the client never
  * sees the deck, it rebuilds its view from the public event log + its own private cards.
  *
  * Scope note: the mod ships 2-player online Durak for now; 3–4-player online seating/plumbing
@@ -32,7 +32,7 @@
     function suitOf(id) { return (id / 9) | 0; }
     function rankOf(id) { return id % 9; }
 
-    // Deterministic PRNG (mulberry32) so a given seed always deals the same game — the test
+    // Deterministic PRNG (mulberry32) so a given seed always deals the same game - the test
     // relies on this, and online the server owns the seed.
     function makeRng(seed) {
         var s = seed | 0;
@@ -118,7 +118,7 @@
             // non-defender who still holds a legal throw-in has passed (see canBito). Any card
             // hitting the table (attack OR cover) reopens the window, so passes reset then. This
             // is what gives co-attackers (and the primary attacker) a real window to pile on
-            // matching ranks before the table is beaten — the mechanic the 2-player code never
+            // matching ranks before the table is beaten - the mechanic the 2-player code never
             // exercised (one non-defender = the attacker, so its single "pass" was the old Bito).
             passed: [],
             loser: -1
@@ -180,7 +180,7 @@
 
     // Clear every seat's "done adding" flag. Called whenever the table changes (a new attack
     // card or a cover), because fresh cards can create new throw-in options for a seat that had
-    // already passed — so consensus must be re-earned before the bout can be beaten.
+    // already passed - so consensus must be re-earned before the bout can be beaten.
     function resetPasses(st) {
         for (var s = 0; s < st.numPlayers; s++) st.passed[s] = false;
     }
@@ -191,12 +191,12 @@
     // Record that `seat` is done adding cards to the current table (a "pass"/knock). Idempotent.
     function applyPass(st, seat) { if (isAttackSeat(st, seat)) st.passed[seat] = true; }
 
-    // Has `seat` settled the current table — i.e. it owes no further Bito confirmation? An attack
+    // Has `seat` settled the current table - i.e. it owes no further Bito confirmation? An attack
     // seat is settled once it either passed (declared "done"/Bito) OR holds NO cards at all (an
-    // empty hand can neither throw in nor meaningfully confirm, so it auto-settles — the deadlock
+    // empty hand can neither throw in nor meaningfully confirm, so it auto-settles - the deadlock
     // guard). A seat that still HOLDS cards is NOT auto-settled just because none of them is a legal
     // throw-in: it must explicitly press Bito. That explicit-confirm rule is what keeps a covered
-    // table on screen after the defender covers — the old "no legal throw-in ⇒ auto-settled" made
+    // table on screen after the defender covers - the old "no legal throw-in ⇒ auto-settled" made
     // canBito flip true in the SAME tick a defence landed, so endBout swept the felt to discard
     // before the player could even see what the defender covered with.
     function attackSeatSettled(st, seat) {
@@ -213,7 +213,7 @@
         for (var s = 0; s < st.numPlayers; s++) if (!attackSeatSettled(st, s)) return false;
         return true;
     }
-    // First in-play attack seat (turn order from the primary attacker) that has NOT settled — i.e.
+    // First in-play attack seat (turn order from the primary attacker) that has NOT settled - i.e.
     // whoever is currently "on the clock" to either throw in a card or confirm Bito on a covered
     // table. -1 when everyone has settled (the bout is ready to be beaten). Drives actionActor so
     // the confirm turn walks every attacker, not just those still holding a legal throw-in.
@@ -307,11 +307,11 @@
     function leaveSeat(st, seat) {
         if (st.out[seat] || st.phase === "over") return;
         st.out[seat] = true;
-        // The leaver's hand is dead — count it into the discard pile so deck maths stay sane.
+        // The leaver's hand is dead - count it into the discard pile so deck maths stay sane.
         st.discard += st.hands[seat].length;
         st.hands[seat] = [];
         // Void any open bout: the table's cards go to discard (the defender may be the one leaving,
-        // so there's no clean "took"/"beaten" resolution — the bout simply doesn't count).
+        // so there's no clean "took"/"beaten" resolution - the bout simply doesn't count).
         for (var i = 0; i < st.table.length; i++) { st.discard++; if (st.table[i].d >= 0) st.discard++; }
         st.table = [];
         resetPasses(st);

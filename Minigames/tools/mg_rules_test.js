@@ -1,6 +1,6 @@
 "use strict";
 // Ad-hoc rules test for the shared checkers + ttt engines. Run: node tools/mg_rules_test.js
-// Since the trust refactor the pure rules live in panorama/scripts/rules/*.js — the exact
+// Since the trust refactor the pure rules live in panorama/scripts/rules/*.js - the exact
 // same files the authoritative server runs. We load them here: each file's IIFE sees no `$`
 // (Node), so it attaches to globalThis.MGRules, which we then read.
 const fs = require("fs");
@@ -45,7 +45,7 @@ function empty() { return new Array(64).fill(0); }
     ok(caps.some(function (c) { return c.to === E.idx(2, 2); }), "English king captures forward");
     ok(caps.some(function (c) { return c.to === E.idx(6, 6); }), "English king captures backward");
     b = empty();
-    b[E.idx(7, 0)] = 2; b[E.idx(5, 2)] = 3; // enemy 2 squares away — no gap to land
+    b[E.idx(7, 0)] = 2; b[E.idx(5, 2)] = 3; // enemy 2 squares away - no gap to land
     ok(E.captureMoves(b, E.idx(7, 0)).length === 0, "English king cannot capture at range");
 
     // English: promotion ends the turn even when further captures exist.
@@ -55,7 +55,7 @@ function empty() { return new Array(64).fill(0); }
     ok(seqs.length === 1 && seqs[0].length === 1, "English promotion ends turn (no continue-as-king)");
 })();
 
-// Russian: promotion during capture — man becomes king and MUST continue as flying king.
+// Russian: promotion during capture - man becomes king and MUST continue as flying king.
 (function () {
     // White man at (2,1), black at (1,2) and (1,4). After capturing (1,2) and landing on (0,3)
     // the man is crowned; as a flying king it can now capture (1,4) and land on (2,5) or (3,6).

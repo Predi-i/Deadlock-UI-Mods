@@ -1,10 +1,10 @@
 "use strict";
 
 /*
- * mg_connectfour.js — "Connect Four" controller for the Deadlock Minigames mod.
+ * mg_connectfour.js - "Connect Four" controller for the Deadlock Minigames mod.
  *
  * Full-information 2-player game, so it rides the EXISTING server-authoritative 2-int
- * transport unchanged: a move is a COLUMN 0..6 sent as move(code, col, 7, end=1) — the
+ * transport unchanged: a move is a COLUMN 0..6 sent as move(code, col, 7, end=1) - the
  * fixed marker to=7 keeps from != to (like tic-tac-toe's to=9), and the SERVER derives the
  * gravity landing row and validates. The pure engine lives in rules/connectfour.js (shared
  * byte-for-byte with the worker); here we render, take input, predict + poll, and run the
@@ -14,13 +14,13 @@
  * 1 = host (red, seat 0, moves first), 2 = joiner (yellow).
  *
  * RENDERING: discs live on a single OVERLAY layer stacked over the grid (the checkers
- * .mg-board-wrap / .mg-pieces-layer idiom), positioned by transform:translate3d — NOT as
+ * .mg-board-wrap / .mg-pieces-layer idiom), positioned by transform:translate3d - NOT as
  * children of individual cells. A cell child is clipped by its own 60×60 box, which hid the
  * fall animation and made resting discs vanish (the maintainer's "no falling animation /
  * half the discs invisible" report). On the noclip overlay a disc is visible across the whole
  * column as it slides down.
  *
- * NONE of the rendering/input is verifiable from a shell — reasoned from the game's CSS
+ * NONE of the rendering/input is verifiable from a shell - reasoned from the game's CSS
  * idioms + the checkers/ttt controllers, confirmed only after a VPK repack.
  */
 
@@ -53,7 +53,7 @@
 
         // Per-turn countdown (left gutter of the modal). Parented on `container` (the flow:none game
         // host) so it parks in the left margin, clear of the centred plate. Runs only while it's my
-        // move; on expiry I forfeit (Connect Four is always heads-up with a MANDATORY move —
+        // move; on expiry I forfeit (Connect Four is always heads-up with a MANDATORY move -
         // maintainer's ruling: timeout = loss). Online I also fire Leave so the opponent learns.
         // boardW = 7 cols × 60px + 2 × 6px plate padding = 432 → the timer pins to the board's
         // left edge (narrow centred board; the far-left modal gutter looked detached).
@@ -79,7 +79,7 @@
         // Grid + discs OVERLAY are stacked siblings under a flow-children:none wrap (checkers
         // .mg-board-wrap idiom). Discs sit on the overlay ABOVE the plate; the overlay is
         // overflow:clip and sized to the plate's inner window, so a falling disc is visible only
-        // WITHIN the plate — it drops in from the top slot instead of flying above the modal (п3).
+        // WITHIN the plate - it drops in from the top slot instead of flying above the modal (п3).
         var wrap = $.CreatePanel("Panel", root, "MG_C4Wrap");
         wrap.AddClass("mg-cf-wrap");
         var boardPanel = $.CreatePanel("Panel", wrap, "MG_C4Board");
@@ -122,17 +122,17 @@
 
         // Place a disc on the OVERLAY at cell `i`. If animate, it starts one cell above the
         // plate's top edge and slides down into place. The overlay CLIPS to the plate window, so
-        // the disc only becomes visible as it crosses the top slot and falls "inside" the board —
+        // the disc only becomes visible as it crosses the top slot and falls "inside" the board -
         // it is never seen above the plate or over the modal's dark windows (п3).
         //
         // ARMING (the checkers / durak .mg-anim idiom): set the OFF-SCREEN start transform (y ≈ -55,
         // one cell above the clip box), then ONE frame later add .mg-cf-anim and write the final
-        // transform — the browser tweens between the two. Both writes MUST land in SEPARATE frames:
+        // transform - the browser tweens between the two. Both writes MUST land in SEPARATE frames:
         // the earlier code did the flush + final in the SAME JS frame (reading actuallayoutheight to
         // "commit" the start), but Panorama coalesces same-frame transform writes so the disc SNAPPED
         // to final with NO fall (maintainer 2026-07-20: "ход оппонента не рендерится, фишки просто
-        // спавнятся"). $.Schedule(0.0) is the fix. The old worry — that the bot's OPENING disc could
-        // arm before the overlay's first layout and strand off-screen (invisible) — no longer bites:
+        // спавнятся"). $.Schedule(0.0) is the fix. The old worry - that the bot's OPENING disc could
+        // arm before the overlay's first layout and strand off-screen (invisible) - no longer bites:
         // botTurn is deferred $.Schedule(0.35, ...) so layout is long settled, and if the arm ever
         // fails to fire the disc still ends at its visible resting spot (never stranded off-screen).
         function placeDisc(i, mark, animate) {
@@ -165,7 +165,7 @@
         }
 
         // Clear the win styling. It has to clear the DISC class: that is the one with a rule
-        // (.mg-cf-disc.mg-cf-win-disc — white ring + brightness). The old version only removed a
+        // (.mg-cf-disc.mg-cf-win-disc - white ring + brightness). The old version only removed a
         // `mg-cf-win` class from the cells, which no stylesheet has ever defined, so after a
         // server rejection the previous winning line stayed lit on the rebuilt board.
         function clearWinHighlight() {
@@ -209,7 +209,7 @@
 
         function onColClick(col) {
             if (destroyed || !myTurn()) return;
-            if (C.dropRow(board, col) < 0) return;       // column full — ignore
+            if (C.dropRow(board, col) < 0) return;       // column full - ignore
             applyDrop(col, myMark);
             turn = (myMark === RED ? YEL : RED);
             refreshTimer();                              // I just acted → stop my clock

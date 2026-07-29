@@ -1,15 +1,15 @@
 "use strict";
 // Server-logic test for the GENERATED worker.js. Run: node tools/mg_server_test.js
-// (Run `node tools/build_worker.js` first — worker.js bundles the shared rules the
+// (Run `node tools/build_worker.js` first - worker.js bundles the shared rules the
 // authoritative server validates with.)
 //
 // worker.js is a Cloudflare ESM module. To avoid adding package.json / wrangler to the
 // deploy path, we load it by stripping the two `export` keywords and evaluating it (same
 // trick mg_rules_test.js uses for the client). The bundled rule IIFEs attach to
 // globalThis.MGRules, which the Hub's validators read. Then we drive the Hub class with a
-// fake storage, decoding each PNG's (width, height) — exactly what the client reads back.
+// fake storage, decoding each PNG's (width, height) - exactly what the client reads back.
 //
-// NOTE ON TOKENS: the server now enforces validTok() — a seat token must be an 8..64-char
+// NOTE ON TOKENS: the server now enforces validTok() - a seat token must be an 8..64-char
 // alphanumeric string (rejects empty/garbage so a lobby can't end up "occupied but
 // tokenless"). Every real seat token below is therefore ≥ 8 chars. Deliberately-invalid
 // tokens (foreign/short) are used only where a rejection is the expected result.
@@ -124,7 +124,7 @@ async function main() {
     ok(d.w === 600 && d.h === 1000, "probe = (600,1000)");
 
     // The probe is state-independent and identical for every caller, so the top-level Worker now
-    // answers it from a cached buffer WITHOUT touching the Durable Object — it used to bill a DO
+    // answers it from a cached buffer WITHOUT touching the Durable Object - it used to bill a DO
     // request and re-encode 601 KB per call, on the same free-tier bucket the games spend.
     (async function () {
         var reachedDO = 0;
@@ -189,7 +189,7 @@ async function main() {
     d = await req(hub, "/api/pxversion.png");
     ok(d.w === 1 && d.h === 0, "accepted upload advances the shared canvas version");
 
-    // The version rides one 2-int reply as (lo6, hi6), and the client reads h === 63 as an error —
+    // The version rides one 2-int reply as (lo6, hi6), and the client reads h === 63 as an error -
     // (5,63) specifically as "you are banned". A 12-bit version put 4032..4095 into that band, so a
     // canvas painted 4037 times encoded bit-for-bit like the ban sentinel and showed EVERY client a
     // false ban. Walk the wrap point and assert no version can ever land in the reserved band.
@@ -614,7 +614,7 @@ async function main() {
 
     // ── security hardening (2026-07-18 audit) ──
     await (async function () {
-        // L1: a non-4-digit code can never name a lobby — normalised to "" → missing, not a
+        // L1: a non-4-digit code can never name a lobby - normalised to "" → missing, not a
         // junk "l:<garbage>" key. Covers "1e3", overlong, non-numeric, and unicode-digit inputs.
         var h = new Hub({ storage: new FakeStorage() });
         var bad = ["1e3", "12345", "99", "abcd", "10 0", "١٢٣٤"];
@@ -704,7 +704,7 @@ async function main() {
     // ── connect four: column marker + gravity + turn + full column ──
     await (async function () {
         var L = await seatedLobby(5, "HCF11234", "JCF11234");
-        // Host (red, seat 0) drops in column 3 — accepted (to=7 marker).
+        // Host (red, seat 0) drops in column 3 - accepted (to=7 marker).
         var a = await req(L.hub, "/api/move.png?code=" + L.code + "&from=3&to=7&end=1&tok=HCF11234");
         ok(a.w === 1 && a.h === 1, "c4: host drops in column 3 (accepted)");
         // A bad marker (to != 7) is illegal.
@@ -713,7 +713,7 @@ async function main() {
         // Host playing twice in a row → not your turn.
         var c2 = await req(L.hub, "/api/move.png?code=" + L.code + "&from=2&to=7&end=1&tok=HCF11234");
         ok(c2.w === 9 && c2.h === 1, "c4: host playing twice → (9,1) not-your-turn");
-        // Joiner (yellow) drops in column 2 — accepted (turn alternation).
+        // Joiner (yellow) drops in column 2 - accepted (turn alternation).
         var e2 = await req(L.hub, "/api/move.png?code=" + L.code + "&from=2&to=7&end=1&tok=JCF11234");
         ok(e2.w === 1 && e2.h === 1, "c4: joiner drops (turn alternation)");
         // Poll round-trips the host's first drop (from=3, to marker=7, end=1).
@@ -791,7 +791,7 @@ async function main() {
     // ── durak: N-seat private lobby (dcreate/djoin/droom) + 3-player deal, ROLES, throw-in ──
     await (async function () {
         var hub = new Hub({ storage: new FakeStorage() });
-        // Host creates a 3-seat durak table (dcreate is NOT the generic create — the 2-int lobby
+        // Host creates a 3-seat durak table (dcreate is NOT the generic create - the 2-int lobby
         // is hard-capped at 2 seats; a 3–4-player table needs its own routes, like poker).
         var dc = await req(hub, "/api/dcreate.png?n=3&tok=DKHOST01");
         ok(codeHost(dc), "durak-N: dcreate → HOST (w>=100 role flag)");
@@ -863,7 +863,7 @@ async function main() {
     // ── durak: throw-in PASS consensus (a covered 3-seat table is beaten only on full consensus) ──
     await (async function () {
         // Fresh 3-seat table so there are TWO non-defender attack seats (the opener + one
-        // co-attacker). A single opener PASS must NOT beat the table — it only settles that seat;
+        // co-attacker). A single opener PASS must NOT beat the table - it only settles that seat;
         // Bito waits until every in-play attack seat has passed (or has nothing to throw in).
         var hub = new Hub({ storage: new FakeStorage() });
         var dc = await req(hub, "/api/dcreate.png?n=3&tok=DKPASS01");
@@ -886,7 +886,7 @@ async function main() {
             if (cov.w === 1 && cov.h === 1) covered = true;
         }
         if (!covered) {
-            // No legal cover in this deal — the consensus path needs a covered table, so just
+            // No legal cover in this deal - the consensus path needs a covered table, so just
             // assert the pass route rejects an uncovered table and move on (still a real check).
             var earlyPass = await req(hub, "/api/dact.png?code=" + code + "&tok=" + toks[openSeat] + "&a=4");
             ok(earlyPass.w === 9 && earlyPass.h === 2, "durak-pass: pass on an uncovered table → (9,2)");
@@ -894,7 +894,7 @@ async function main() {
             // The cover may have ALREADY beaten the table: if no attack seat held a legal throw-in,
             // canBito() is true the instant the last pair is covered, so the server auto-emits BITO
             // (valid consensus of zero pending throwers). Scan the log tail to find out which case
-            // we're in — both are correct, but they need different follow-up assertions.
+            // we're in - both are correct, but they need different follow-up assertions.
             var seq = 5, coverBito = false;
             for (;;) {
                 var lg0 = await req(hub, "/api/dlog.png?code=" + code + "&since=" + seq);
@@ -904,7 +904,7 @@ async function main() {
             }
             if (coverBito) {
                 // Auto-consensus on cover: nobody could throw in, so the table was beaten with no
-                // pass needed. That IS the consensus rule with an empty pending set — assert it.
+                // pass needed. That IS the consensus rule with an empty pending set - assert it.
                 ok(true, "durak-pass: covered table with no throw-ins auto-beats (empty consensus)");
             } else {
                 // Live covered table: at least one attack seat still holds a throw-in. Defender may
@@ -937,7 +937,7 @@ async function main() {
     // ── poker: authoritative dealer (own route set: pcreate/pjoin/proom/pstart/pact/plog/pdraw) ──
     await (async function () {
         var hub = new Hub({ storage: new FakeStorage() });
-        // Host creates a 2-seat poker lobby (pcreate is NOT the generic create — poker owns its
+        // Host creates a 2-seat poker lobby (pcreate is NOT the generic create - poker owns its
         // routes because the shared lobby is hard-capped at 2 while poker seats 2–4).
         var pc = await req(hub, "/api/pcreate.png?n=2&tok=PHOST123");
         ok(codeHost(pc), "poker: pcreate → HOST (w>=100 role flag)");
@@ -996,7 +996,7 @@ async function main() {
     // ── poker: a hand PLAYED TO THE FLOP reveals three DISTINCT, real board cards ──
     // Regression guard for the "three identical 2♠ on the flop online" bug (2026-07-18): the
     // server was reading the community board off newHand's st.board, which is [] until nextStreet
-    // lazily deals it — so every BOARD event encoded card id 0 (= 2♠). No prior test reached a
+    // lazily deals it - so every BOARD event encoded card id 0 (= 2♠). No prior test reached a
     // flop (they all folded preflop), so it shipped green. This drives a real preflop CALL+CHECK
     // to the flop and asserts the board cards are distinct and in range.
     await (async function () {
@@ -1007,7 +1007,7 @@ async function main() {
         await req(hub, "/api/pjoin.png?code=" + code + "&tok=" + JOIN);
         await req(hub, "/api/pstart.png?code=" + code + "&tok=" + HOST);
         // Reach the flop: heads-up the button/SB acts first (CALL), then the BB CHECKS. We don't
-        // track whose turn it is here — just try each token with CALL, then CHECK, until the flop
+        // track whose turn it is here - just try each token with CALL, then CHECK, until the flop
         // lands. The server rejects out-of-turn/illegal actions with (9,x), so wrong tries are safe.
         var toks = [HOST, JOIN];
         async function tryAct(a) {
@@ -1027,7 +1027,7 @@ async function main() {
             if (e.w === 5) board.push(e.h - 1);
             s++;
         }
-        ok(board.length >= 3, "poker: reached the flop — at least 3 BOARD cards emitted (" + board.length + ")");
+        ok(board.length >= 3, "poker: reached the flop - at least 3 BOARD cards emitted (" + board.length + ")");
         var inRange = board.every(function (c) { return c >= 0 && c <= 51; });
         ok(inRange, "poker: every board card is a real id 0..51");
         ok(new Set(board).size === board.length, "poker: board cards are all DISTINCT (no duplicate 2♠ bug)");
@@ -1160,7 +1160,7 @@ async function main() {
         ok(codeHost(a), "mquick: host offers {1,2} (HOST)");
         var ac = decCode(a);
         var b = await req(hm, "/api/mquick.png?games=4,5&tok=MQNOBB01");   // disjoint {4,5}
-        ok(codeHost(b), "mquick: disjoint set does NOT pair — hosts its own lobby");
+        ok(codeHost(b), "mquick: disjoint set does NOT pair - hosts its own lobby");
         var bc = decCode(b);
         ok(bc !== ac, "mquick: the two disjoint hosts are separate lobbies");
         // A third caller offering {2} takes the FIRST host (which still waits under queue 2).
@@ -1226,7 +1226,7 @@ async function main() {
         // Host asks first: armed, still gen 0 → (1, gen+1) = (1,1).
         var r1 = await req(L.hub, "/api/rematch.png?code=" + L.code + "&tok=RMHOST01&gen=0");
         ok(r1.w === 1 && r1.h === 1, "rematch: host armed, waiting → (1, gen0+1)");
-        // Host polling again is idempotent — still waiting, no double-arm side effect.
+        // Host polling again is idempotent - still waiting, no double-arm side effect.
         var r1b = await req(L.hub, "/api/rematch.png?code=" + L.code + "&tok=RMHOST01&gen=0");
         ok(r1b.w === 1 && r1b.h === 1, "rematch: host re-poll stays waiting (idempotent)");
         // Joiner asks: both armed → reset + gen++ → (2, gen1+1) = (2,2).
@@ -1234,7 +1234,7 @@ async function main() {
         ok(r2.w === 2 && r2.h === 2, "rematch: both ready → (2, gen1+1)");
         // The board is fresh: poll from 0 sees nothing (moves cleared), status back to 2 players.
         var pl = await req(L.hub, "/api/poll.png?code=" + L.code + "&since=0");
-        ok(pl.w === 1 && pl.h === 1, "rematch: state reset — poll(since=0) → (1,1) nothing new");
+        ok(pl.w === 1 && pl.h === 1, "rematch: state reset - poll(since=0) → (1,1) nothing new");
         // Host's stale gen-0 poll after the bump can't re-arm the next rematch; it just reads gen 1.
         var stale = await req(L.hub, "/api/rematch.png?code=" + L.code + "&tok=RMHOST01&gen=0");
         ok(stale.w === 1 && stale.h === 2, "rematch: stale gen-0 poll reads gen 1, does not arm");
@@ -1313,7 +1313,7 @@ async function main() {
     // ── /api/leave: mid-game exit (pair teardown, foreign-token no-op, N-seat fold-out) ──
     await (async function () {
         // A) Pair game (chess): a live match. Leaving tears the lobby down so the opponent's next
-        //    poll returns (9,9) "gone" — the survivor is shown "Opponent left." and wins by default.
+        //    poll returns (9,9) "gone" - the survivor is shown "Opponent left." and wins by default.
         var hub = new Hub({ storage: new FakeStorage() });
         var c = await req(hub, "/api/create.png?game=1&tok=LVHOST001");
         var code = decCode(c);
@@ -1401,7 +1401,7 @@ async function main() {
         // E) Pre-start MULTI-seat leave keeps the table. A joiner walking away (closing the Esc
         // menu in the room view calls /api/leave) used to delete the whole lobby, taking the host
         // and every other seated player with it. The vacated index becomes a HOLE, never a
-        // renumbering — each client cached its own seat at join time and is never told otherwise.
+        // renumbering - each client cached its own seat at join time and is never told otherwise.
         var hhub = new Hub({ storage: new FakeStorage() });
         var hc = await req(hhub, "/api/dcreate.png?n=4&tok=HOLEHOST");
         var hcode = decCode(hc);
@@ -1413,14 +1413,14 @@ async function main() {
         var hroom = await req(hhub, "/api/droom.png?code=" + hcode);
         ok(hroom.w !== 9, "hole: table SURVIVES a pre-start joiner leave");
         ok(hroom.w === 2, "hole: droom reports 2 present (not the 3 seats ever handed out)");
-        // The seat-2 player must keep index 2 — compacting would have handed it index 1.
+        // The seat-2 player must keep index 2 - compacting would have handed it index 1.
         var hre = await req(hhub, "/api/djoin.png?code=" + hcode + "&tok=HOLEJ002");
         ok(hre.h === 3, "hole: the remaining joiner still holds seat 2 (no renumbering)");
         // A fresh joiner refills the hole rather than growing the table past cap.
         var hj3 = await req(hhub, "/api/djoin.png?code=" + hcode + "&tok=HOLEJ003");
         ok(hj3.h === 2, "hole: a new joiner is seated INTO the vacated index 1");
         ok((await req(hhub, "/api/droom.png?code=" + hcode)).w === 3, "hole: droom back to 3 present");
-        // Host leaving pre-start still ends it — nobody else can press Start.
+        // Host leaving pre-start still ends it - nobody else can press Start.
         await req(hhub, "/api/leave.png?code=" + hcode + "&tok=HOLEHOST");
         ok((await req(hhub, "/api/droom.png?code=" + hcode)).w === 9, "hole: pre-start HOST leave still tears the table down");
 
@@ -1464,7 +1464,7 @@ async function main() {
         var mj = await req(mhub, "/api/join.png?code=" + mcode + "&tok=MQJOIN001");
         ok(mj.w === 20 && mj.h === 1, "mquick: generic /api/join is refused with (20,1) missing");
         var mstat = await req(mhub, "/api/status.png?code=" + mcode);
-        ok(mstat.w === 1, "mquick: the lobby is untouched — still waiting with 1 player");
+        ok(mstat.w === 1, "mquick: the lobby is untouched - still waiting with 1 player");
         // …and the intended path still works: a seeker matches through mquick itself.
         var ms = await req(mhub, "/api/mquick.png?games=2,4&tok=MQSEEK001");
         ok(ms.w > 0 && ms.w !== 9, "mquick: a real seeker still matches into the lobby");
@@ -1493,7 +1493,7 @@ async function main() {
 
         // H) Rematch on a 3-seat table needs EVERY seat, not just seats 0 and 1. Two players used
         // to be able to reset the game from under the third: state was re-initialised and the
-        // public log truncated to empty, leaving that seat's `since` cursor past the end of it —
+        // public log truncated to empty, leaving that seat's `since` cursor past the end of it -
         // a frozen screen with no way back.
         var rhub = new Hub({ storage: new FakeStorage() });
         var rc = await req(rhub, "/api/dcreate.png?n=3&tok=RMHOST01");
@@ -1530,7 +1530,7 @@ async function main() {
         // I) Durak PASS is idempotent. applyPass always was, but the event push was not, so a seat
         // spamming /api/dact?a=4 appended a PASS event every time. st.pub was the one monotonic log
         // MOVE_CAP never bounded, so it grew until the Durable Object's 128 KiB per-value limit made
-        // storage.put throw — after which EVERY request on that lobby answered (9,7) forever.
+        // storage.put throw - after which EVERY request on that lobby answered (9,7) forever.
         // PASS is only legal on a fully-covered non-empty table, so build one first (same shape as
         // the durak-pass test above): opener attacks, defender covers.
         var shub = new Hub({ storage: new FakeStorage() });
@@ -1558,8 +1558,8 @@ async function main() {
             return -1;
         }
         if (sCovered) {
-            // Pass ONCE from the opener. On a 3-seat table this only settles that seat — Bito waits
-            // for the co-attacker — so the pass window stays open, which is the state the unbounded
+            // Pass ONCE from the opener. On a 3-seat table this only settles that seat - Bito waits
+            // for the co-attacker - so the pass window stays open, which is the state the unbounded
             // push exploited. (If the co-attacker held no legal throw-in the cover already beat the
             // table; then there is nothing to spam and we skip, same as the durak-pass test does.)
             var firstPass = await req(shub, "/api/dact.png?code=" + scode + "&tok=" + stoks[sOpen] + "&a=4");

@@ -1,11 +1,11 @@
 "use strict";
-// tools/gen_soundevents.js — generate soundevents/world_ambient_emitters.vsndevts
+// tools/gen_soundevents.js - generate soundevents/world_ambient_emitters.vsndevts
 //
 // WHY this file overrides world_ambient_emitters.vsndevts: it is an EXISTING base game
 // soundevents file the engine already loads, so overriding it drops our events into the
 // already-loaded manifest (the QOLLOCK trick, FEATURES_PLAN §5). We copy QOLLOCK's own
 // events verbatim first, so a user who already runs QOLLOCK keeps their sounds, then append
-// ours. We do NOT copy any QOLLOCK .wav/.vsnd — only the event manifest entries.
+// ours. We do NOT copy any QOLLOCK .wav/.vsnd - only the event manifest entries.
 //
 // Panorama's PlaySoundEffect takes an event NAME and no volume arg, so "volume" is faked by
 // pre-generating one event per volume step: MG.<Name>_V0 .. MG.<Name>_V20 (volume 0.00..1.00,
@@ -21,15 +21,15 @@ var ROOT = path.resolve(__dirname, "..");
 var QOLLOCK_SRC = "D:/GitHub2/QOLLOCK/soundevents/world_ambient_emitters.vsndevts";
 // Output at MOD-ROOT soundevents/ (not panorama/soundevents/): build_mod.ps1 keeps the path
 // relative to the mod root, and the base game file lives at pak01 soundevents/, so this path
-// is what overrides it — same placement QOLLOCK uses.
+// is what overrides it - same placement QOLLOCK uses.
 var OUT = path.join(ROOT, "soundevents", "world_ambient_emitters.vsndevts");
 
 var HEADER = "<!-- kv3 encoding:text:version{e21c7f3c-8a33-41c5-9977-a76d3a32aa0d} format:generic:version{7412167c-06e9-4698-aff2-e63eb59037e7} -->";
 
-var STEPS = 20;        // _V0.._V20 — MUST match mg_sound.js
+var STEPS = 20;        // _V0.._V20 - MUST match mg_sound.js
 var VOL_MAX = 8.0;     // volume at V20. The base WAVs are quiet, so 100% maps to ×8 gain
                        // (the vsndevts `volume` is a linear gain multiplier, >1 is allowed)
-                       // — maintainer 2026-07-15: "too quiet even at 100%, 2× them" → still quiet,
+                       // - maintainer 2026-07-15: "too quiet even at 100%, 2× them" → still quiet,
                        //   doubled again 2026-07-16 (1.0 → 2.0 → 4.0), and again 2026-07-20 (→ 8.0).
 
 // event-name suffix -> wav file (in panorama/sounds/mods/, compiled to .vsnd by build_mod.ps1)
@@ -47,7 +47,7 @@ var SOUNDS = [
     { name: "TenSeconds", file: "tenseconds" }
 ];
 
-// vsnd path root — WAVs stay under panorama/sounds/mods/ (maintainer decision 2026-07-15).
+// vsnd path root - WAVs stay under panorama/sounds/mods/ (maintainer decision 2026-07-15).
 var VSND_DIR = "panorama/sounds/mods/";
 
 function f6(n) { return n.toFixed(6); }
@@ -70,7 +70,7 @@ function extractQollockBody(src) {
     return body;
 }
 
-// One soundevent block (KV3, tab-indented — matches QOLLOCK byte layout).
+// One soundevent block (KV3, tab-indented - matches QOLLOCK byte layout).
 function eventBlock(eventName, volume, wavFile) {
     var vsnd = VSND_DIR + wavFile + ".vsnd";
     return [
@@ -87,7 +87,7 @@ function eventBlock(eventName, volume, wavFile) {
 }
 
 function mgBaseBlock() {
-    // 2D UI mix, no occlusion/positioning — same shape as QOLLOCK's BuffReminderBase.
+    // 2D UI mix, no occlusion/positioning - same shape as QOLLOCK's BuffReminderBase.
     return [
         "\tMG.SoundBase = ",
         "\t{",
@@ -122,7 +122,7 @@ function main() {
         qollockBody = extractQollockBody(QOLLOCK_SRC);
     } else {
         console.warn("[gen_soundevents] QOLLOCK source not found at " + QOLLOCK_SRC +
-            " — writing MG events only (QOLLOCK users would lose their sounds; check the path).");
+            " - writing MG events only (QOLLOCK users would lose their sounds; check the path).");
     }
 
     var mgEvents = buildMgEvents();

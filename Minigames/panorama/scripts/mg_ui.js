@@ -1,7 +1,7 @@
 "use strict";
 
 /*
- * mg_ui.js — menu shell for the Deadlock Minigames mod.
+ * mg_ui.js - menu shell for the Deadlock Minigames mod.
  *
  *  - Injects a "Minigames" button into the in-game escape menu (Esc), styled like the
  *    native menu items. The escape menu is created lazily, so we poll for its anchor.
@@ -26,6 +26,11 @@
     // to 160 callbacks per check for a network load that takes far longer than a frame; 0.15s reads
     // the same to the user at a third of the churn.
     var UPDATE_CHECK_POLL_S = 0.15;
+    // Accept only the two deliberately distant marker shapes. A square is current and the 8:1
+    // template is outdated; anything in the large gap between them is malformed/ambiguous, not an
+    // update. This avoids turning an unexpected image placeholder into a false update notice.
+    var UPDATE_RELEVANT_MAX_RATIO = 1.35;
+    var UPDATE_OUTDATED_MIN_RATIO = 4.0;
 
     // Route through MG.debug so nothing hits the console unless debug mode is ON.
     function log(m) {
@@ -33,14 +38,15 @@
     }
 
     var overlay = null, modalBody = null, statusLabel = null, titleLabel = null;
+    var headerCredit = null, updatePopup = null, updatePopupBody = null;
     var updateProbeHost = null;
-    // UI-scale control (dropdown left of the close X): scales the WHOLE modal — picker,
-    // boards, Durak felt & cards — via the `ui-scale` LAYOUT-scale on .mg-modal (crisp re-layout,
+    // UI-scale control (dropdown left of the close X): scales the WHOLE modal - picker,
+    // boards, Durak felt & cards - via the `ui-scale` LAYOUT-scale on .mg-modal (crisp re-layout,
     // NOT the blurry pre-transform raster; see applyUiScale). Kept for the session; the drag maths
     // in the games are already relative so any scale is safe.
     var modalPanel = null, uiScalePct = 100, scaleDropdown = null;
     // In the MENU view the status text lives on the LEFT of the footer row (same line as the
-    // dev tools) instead of on its own line below — shorter panel, and the message sits level
+    // dev tools) instead of on its own line below - shorter panel, and the message sits level
     // with Test Connection / Check Updates. Other views keep the centred bottom statusLabel.
     var footerStatus = null;
     var overlayShown = false;     // our modal is up (independent of the menu's own state)
@@ -76,7 +82,7 @@
             else MG.Api.leave(code, ctx.tok);
         } catch (e) {}
     }
-    // Lobby codes live in 0..1023 (the level-quantised downlink can't carry a bigger int — see
+    // Lobby codes live in 0..1023 (the level-quantised downlink can't carry a bigger int - see
     // mg_net dCode). That means most codes are 3 digits and a few are 4 (1000..1023). Pad the
     // DISPLAYED code to a stable 4 digits so it always looks like a code; the join input strips
     // non-digits and validCode() parseInt's it, so "0838" and "838" resolve to the same lobby
@@ -87,20 +93,21 @@
     var rematchPollToken = 0;     // guards the rematch poll loop, like statusPollToken
     var selfTestToken = 0;
     var updateCheckToken = 0;
-    var cardEls = [];        // [{ id, panel }] — picker cards, so selection can re-skin them without a full rebuild
+    var autoUpdateCheckStarted = false;
+    var cardEls = [];        // [{ id, panel }] - picker cards, so selection can re-skin them without a full rebuild
     var detailPanel = null;  // right-column detail container (title + description + action buttons)
     // Quick Match "Select Multiple": when ON, the right panel shows a checkbox list over the
     // multi-capable games and ONE Quick Match button that searches all ticked games at once
     // (server /api/mquick pairs on set intersection). Durak is excluded (it needs its own room
     // flow). State persists across card selection so the mode stays put while browsing.
     var multiSelect = false;
-    var multiChecked = {};   // { gameId: true } — games ticked for the multi-search
+    var multiChecked = {};   // { gameId: true } - games ticked for the multi-search
     // Time control (§8 commit 2.3), chess/checkers only. selectedTimeControl = seconds per side:
     // a concrete 60/180/300/600, or -1 = "Any" (quick-match wildcard). For Create / vs-Bot the
     // room needs a concrete bank so "Any" collapses to TC_ANY_DEFAULT (5 min); the joiner reads
     // the host's bank back from join(). For Quick Match a concrete pick pools by that bank and
     // "Any" rides up as tc="any" (server pairs it with any waiter, else 5 min). Online clients no
-    // longer need tc up-front — the clock is discovered from the authoritative /api/clocks poll.
+    // longer need tc up-front - the clock is discovered from the authoritative /api/clocks poll.
     var TC_GAMES = { 1: true, 4: true };            // checkers=1, chess=4 (mirror server CLOCK_GAMES)
     var TC_CHOICES = [60, 180, 300, 600];           // 1 / 3 / 5 / 10 minutes
     var TC_ANY_DEFAULT = 300;                       // "Any" collapses to 5 min where a concrete bank is required
@@ -118,7 +125,7 @@
     function hasVariant(id) { return !!CV_GAMES[id]; }
     function concreteVariant(v) { return v === "any" ? CV_ANY_DEFAULT : v; }
     // Games that can be TICKED in Select-Multiple. Durak (3) is included so it can be picked
-    // too (maintainer). Public mquick still can't pair durak — its online path is a room — so
+    // too (maintainer). Public mquick still can't pair durak - its online path is a room - so
     // ticking durak alone falls back to its Create/room flow; ticked alongside others it's just
     // highlighted and the server matches the non-durak games.
     var MULTI_GAME_IDS = [1, 2, 3, 4, 5];
@@ -141,14 +148,14 @@
     };
 
     // Opens the maintainer's Boosty donate page in the external browser. Proven Panorama
-    // channel (same call QOLLOCK uses for its Ko-fi / Discord links) — no fetch needed.
+    // channel (same call QOLLOCK uses for its Ko-fi / Discord links) - no fetch needed.
     function openSupport() {
         try { $.DispatchEvent("ExternalBrowserGoToURL", "https://boosty.to/predi_1/donate"); }
         catch (e) { setStatus("Couldn't open the browser."); }
     }
 
     // Opens the community Discord invite in the external browser (same proven channel as
-    // openSupport — no fetch in Panorama).
+    // openSupport - no fetch in Panorama).
     function openDiscord() {
         try { $.DispatchEvent("ExternalBrowserGoToURL", "https://discord.gg/vY9PEAWHuh"); }
         catch (e) { setStatus("Couldn't open the browser."); }
@@ -194,7 +201,7 @@
 
     // Cached handle to the injected button. The loop below runs for the WHOLE match, and
     // ensureEscapeButton's early-out only fires after findAnchor has already walked up to 40
-    // parents and run two FindChildTraverse sweeps of the entire HUD tree — every 1.5 s, for
+    // parents and run two FindChildTraverse sweeps of the entire HUD tree - every 1.5 s, for
     // every player, including those who never open the mod. One IsValid check skips all of it.
     // The engine rebuilds the escape menu on some transitions, which invalidates the panel; that
     // is exactly when the handle goes stale and the full search runs again.
@@ -217,13 +224,13 @@
         btn.SetPanelEvent("onactivate", function () { showOverlay(); });
         escBtn = btn;
         // Leave it appended (bottom of the list); CSS lifts it up and out of the way of
-        // the native items — forcing it to the top made it overlap "Swap Hero".
+        // the native items - forcing it to the top made it overlap "Swap Hero".
         log("escape button injected");
     }
 
     // Cached handle to the injected button. The loop below runs for the WHOLE match, and
     // ensureEscapeButton's early-out only fires after findAnchor has already walked up to 40
-    // parents and run two FindChildTraverse sweeps of the entire HUD tree — every 1.5 s, for
+    // parents and run two FindChildTraverse sweeps of the entire HUD tree - every 1.5 s, for
     // every player, including those who never open the mod. One IsValid check skips all of it.
     // The engine rebuilds the escape menu on some transitions, which invalidates the panel; that
     // is exactly when the handle goes stale and the full search runs again.
@@ -243,7 +250,7 @@
         overlay.style.visibility = "collapse";
 
         // Backdrop: blocks clicks from reaching the game behind, but does NOT close
-        // on click — a misclick (e.g. missing a checker) must not kick you out. The
+        // on click - a misclick (e.g. missing a checker) must not kick you out. The
         // no-op onactivate makes the panel explicitly consume the click so it can't
         // fall through to the menu's EscapeBackground (which would resume/close).
         var dim = $.CreatePanel("Panel", overlay, "MG_Dim");
@@ -257,16 +264,17 @@
 
         var header = $.CreatePanel("Panel", modal, "");
         header.AddClass("mg-header");
-        // Left cluster: the mod NAME + a small "by Predi_i" credit right beside it.
+        // Left cluster: the mod name + credit + community buttons. The credit is hidden only in
+        // the long-title waiting room so the fixed right controls stay inside the modal.
         var headerLeft = $.CreatePanel("Panel", header, "");
         headerLeft.AddClass("mg-header-left");
         titleLabel = $.CreatePanel("Label", headerLeft, "");
         titleLabel.AddClass("mg-title");
         titleLabel.text = "DL Arcade";
-        var credit = $.CreatePanel("Button", headerLeft, "");
-        credit.AddClass("mg-header-credit");
-        var creditLbl = $.CreatePanel("Label", credit, ""); creditLbl.text = "by Predi_i";
-        credit.SetPanelEvent("onactivate", function () { openSupport(); });
+        headerCredit = $.CreatePanel("Button", headerLeft, "");
+        headerCredit.AddClass("mg-header-credit");
+        var creditLbl = $.CreatePanel("Label", headerCredit, ""); creditLbl.text = "by Predi_i";
+        headerCredit.SetPanelEvent("onactivate", function () { openSupport(); });
         // Support pill sits just right of the credit (thumbsup icon + label) → Boosty.
         var supportBtn = $.CreatePanel("Button", headerLeft, "");
         supportBtn.AddClass("mg-support-btn");
@@ -274,7 +282,7 @@
         sIcon.AddClass("mg-support-icon");   // background-image = icon_thumbsup.vsvg (CSS)
         var sLbl = $.CreatePanel("Label", supportBtn, ""); sLbl.AddClass("mg-support-label"); sLbl.text = "Support";
         supportBtn.SetPanelEvent("onactivate", function () { openSupport(); });
-        // Discord pill sits just right of Support — same shape, Discord blurple palette. The
+        // Discord pill sits just right of Support - same shape, Discord blurple palette. The
         // logo is a .vtex (raster), so it MUST be drawn by a child <Image> (setFace), NOT a
         // Panel background-image: a raster background paints at native px until relayout (the
         // ~300% first-frame zoom). The .vsvg thumbsup on Support is a vector and doesn't suffer
@@ -287,12 +295,12 @@
         var dLbl = $.CreatePanel("Label", discordBtn, ""); dLbl.AddClass("mg-discord-label"); dLbl.text = "Discord";
         discordBtn.SetPanelEvent("onactivate", function () { openDiscord(); });
         // Flexible spacer: eats the row's slack so the two right controls flow to the far right edge.
-        // (horizontal-align:right is IGNORED on a child of a flow-children:right parent — the controls
+        // (horizontal-align:right is IGNORED on a child of a flow-children:right parent - the controls
         // just flow in a row and stay stuck next to the left cluster. A fill-parent-flow spacer is the
         // reliable way to push them right, mirroring the footer's status+spacer+tools layout.)
         var headerSpacer = $.CreatePanel("Panel", header, "");
         headerSpacer.AddClass("mg-header-spacer");
-        // ⚠ RIGHT CONTROLS: scale dropdown (in a fixed 80px WRAPPER), then close X — both in flow.
+        // ⚠ RIGHT CONTROLS: scale dropdown (in a fixed 80px WRAPPER), then close X - both in flow.
         // The WRAPPER is the fix for the vanishing X: the native DropDown reports the game's base
         // width:352px as its PREFERRED size (citadel_base_styles.css); as a direct flow child that
         // phantom 352 advanced the cursor and shoved the trailing X off the modal's clipped edge
@@ -323,6 +331,30 @@
         statusLabel = $.CreatePanel("Label", modal, "MG_Status");
         statusLabel.AddClass("mg-status");
         statusLabel.text = "";
+
+        // A small persistent notice for a newer release. It is a sibling of the main modal so it
+        // paints above every lobby/game view and survives view rebuilds. Visibility is controlled
+        // by a same-panel class (the reliable Panorama popup pattern); only its close button hides
+        // it, and there is deliberately no timer.
+        updatePopup = $.CreatePanel("Panel", overlay, "MG_UpdatePopup");
+        updatePopup.AddClass("mg-update-popup");
+        var updatePopupHeader = $.CreatePanel("Panel", updatePopup, "");
+        updatePopupHeader.AddClass("mg-update-popup-header");
+        var updatePopupTitle = $.CreatePanel("Label", updatePopupHeader, "");
+        updatePopupTitle.AddClass("mg-update-popup-title");
+        updatePopupTitle.text = "UPDATE AVAILABLE";
+        var updatePopupSpacer = $.CreatePanel("Panel", updatePopupHeader, "");
+        updatePopupSpacer.AddClass("mg-update-popup-spacer");
+        var updatePopupClose = $.CreatePanel("Button", updatePopupHeader, "");
+        updatePopupClose.AddClass("mg-update-popup-close");
+        var updatePopupCloseLbl = $.CreatePanel("Label", updatePopupClose, "");
+        updatePopupCloseLbl.text = "X";
+        updatePopupClose.SetPanelEvent("onactivate", function () {
+            if (updatePopup) updatePopup.RemoveClass("mg-open");
+        });
+        updatePopupBody = $.CreatePanel("Label", updatePopup, "");
+        updatePopupBody.AddClass("mg-update-popup-body");
+
         applyUiScale();
         // Cache the natural (100%) modal height next frame so the >100% clamp has a baseline. Runs
         // once; the height is view-independent (fixed-height columns), so no per-view remeasure.
@@ -343,10 +375,15 @@
             statusLabel.style.visibility = (t ? "visible" : "collapse");
         }
     }
-    function setTitle(t) { if (titleLabel) titleLabel.text = t; }
+    function setTitle(t) {
+        if (titleLabel) titleLabel.text = t;
+        // The long waiting-room title needs the reclaimed width; all other views keep the credit.
+        if (headerCredit && headerCredit.IsValid && headerCredit.IsValid())
+            headerCredit.SetHasClass("mg-credit-hidden", view === "waiting");
+    }
 
     // ── UI-scale control (NATIVE DropDown, QOLLOCK Default-Hero recipe) ────────
-    // Uses the game's own `DropDown` widget — the SAME control QOLLOCK ships for "Default Hero".
+    // Uses the game's own `DropDown` widget - the SAME control QOLLOCK ships for "Default Hero".
     // Earlier custom button+popup attempts never reliably opened in this HUD context; the native
     // widget opens itself (the engine toggles the popup's `DropDownMenuVisible` class on click)
     // and its popup is auto-created at the panel-context root with id `<dropdownId>DropDownMenu`.
@@ -375,7 +412,7 @@
             dd.AddOption(opt);
             if (pct === uiScalePct) selectedId = optId;
         }
-        // SetSelected wants the option-panel ID (NOT an index) — this is what puts the real
+        // SetSelected wants the option-panel ID (NOT an index) - this is what puts the real
         // "100%" in the closed control instead of the "…" placeholder.
         try { dd.SetSelected(selectedId || ("MG_Scale_" + SCALE_STEPS[0])); } catch (e) {}
         // The engine fires oninputsubmit when the user picks an option. Read the % from the
@@ -394,7 +431,7 @@
     }
 
     // ── sound control (volume), left of the scale dropdown ─────────────────────────
-    // The volume picker is a native `DropDown` — the SAME proven recipe as the UI-scale control
+    // The volume picker is a native `DropDown` - the SAME proven recipe as the UI-scale control
     // (buildScaleControl): the custom click-segment popup didn't reliably open in our HUD context,
     // so we reuse the widget the engine opens/closes itself. No separate icon (maintainer
     // 2026-07-15): the "0%" option IS the mute, so the dropdown alone is the whole control.
@@ -403,7 +440,7 @@
     var soundWrapEl = null, soundDropdown = null;
     function buildSoundControl(wrap) {
         soundWrapEl = wrap;
-        // native DropDown for the level — mirrors buildScaleControl exactly. 0% = muted.
+        // native DropDown for the level - mirrors buildScaleControl exactly. 0% = muted.
         var dd = $.CreatePanel("DropDown", wrap, VOL_DD_ID);
         dd.AddClass("mg-vol-dd");
         soundDropdown = dd;
@@ -440,19 +477,19 @@
 
 
     // ⚠ SCALE with `ui-scale`, NOT `pre-transform-scale2d`. pre-transform-scale2d is a member of
-    // the TRANSFORM family — it runs AFTER layout and stretches the panel's already-rendered
+    // the TRANSFORM family - it runs AFTER layout and stretches the panel's already-rendered
     // texture, so text and .vtex art blow up as a blurry bitmap when scaled >100% (the "растровое
     // мыло" the maintainer saw). `ui-scale` scales at the LAYOUT level: the modal is re-laid-out at
     // the new size and fonts/vectors/.vtex are re-rasterised crisply. This is the game's own idiom
-    // for sizing text UI — CitadelButton.Large/Medium/Small/XSmall are just ui-scale 125/100/80/65%
-    // (citadel_base_styles.css) — and QOLLOCK sets it from JS the same way (panel.style.uiScale).
+    // for sizing text UI - CitadelButton.Large/Medium/Small/XSmall are just ui-scale 125/100/80/65%
+    // (citadel_base_styles.css) - and QOLLOCK sets it from JS the same way (panel.style.uiScale).
     // The full-screen dim (#MG_Dim) is a separate sibling, and the modal stays centre-aligned in the
     // overlay, so growing the modal's layout box keeps it centred. Drag maths read window px and
     // divide by the rendered layer width, so the scale cancels either way (unchanged from before).
     //
     // ⚠ CLAMP TO VIEWPORT. `ui-scale` grows the modal's LAYOUT box by the factor, and the modal is
     // vertical-align:center in the full-screen overlay, so once (natural height × scale) exceeds the
-    // viewport height the top AND bottom clip OFF-SCREEN — the maintainer's 200% screenshot with
+    // viewport height the top AND bottom clip OFF-SCREEN - the maintainer's 200% screenshot with
     // "PLAY WITH A FRIEND" cut off. `max-height: 92%` on .mg-modal can NOT stop it: that cap is in
     // LOGICAL px, evaluated BEFORE ui-scale multiplies. Width never overflows (900px even at 200% is
     // < the canvas), so only height is clamped.
@@ -460,19 +497,19 @@
     // The modal's natural height is NOT constant across views, and assuming it was is what made
     // 125% eat the poker LEAVE button. The menu is ~640 logical px (header + the 500px columns);
     // the poker view is ~838 (a 520px felt + a fixed 104px controls row + LEAVE + status). So the
-    // height is measured per VIEW, cached per view, and the largest measurement seen wins —
+    // height is measured per VIEW, cached per view, and the largest measurement seen wins -
     // clamping for the tallest view we know about is safe for the shorter ones (they just sit a bit
     // further from the edge), whereas clamping for the shortest lets the tallest clip.
     //
     // ⚠ The clamp must be STRICTER than .mg-modal's own `max-height` (mg.css) or it never gets to
     // act: a % max-height resolves in the SCALED space, i.e. the real ceiling is
-    // `maxHeightPct * viewport / scale`, so CSS silently truncated the modal — no scrollbar, no
-    // symptom, just a missing footer — before JS ever considered clamping. FIT_MARGIN was 0.96
+    // `maxHeightPct * viewport / scale`, so CSS silently truncated the modal - no scrollbar, no
+    // symptom, just a missing footer - before JS ever considered clamping. FIT_MARGIN was 0.96
     // against a CSS 0.92, which is backwards. They are now 0.98 / 0.99, with CSS the looser of the
     // two, so the JS clamp is what decides and it reports a scale that actually fits.
     //
     // ⚠ CONSEQUENCE, not a bug: on 1080p the poker view can't show much past ~125%, and the menu
-    // past ~160%. Higher dropdown steps clamp to those. That is the physical ceiling — a taller
+    // past ~160%. Higher dropdown steps clamp to those. That is the physical ceiling - a taller
     // modal cannot be shown without cutting content off, which is the whole point of the clamp.
     // On a 1440p+ display the higher steps open up.
     var FIT_MARGIN = 0.98;                 // scaled modal may fill up to this fraction of viewport height
@@ -489,13 +526,13 @@
     // against the menu's height is what let 125% cut the LEAVE button off.
     //
     // Reads actuallayoutheight and divides by the CURRENT scale, so it works at any scale instead of
-    // only at 100% — the old version bailed unless uiScalePct was 100, which meant a player whose
+    // only at 100% - the old version bailed unless uiScalePct was 100, which meant a player whose
     // saved scale was already >100% never got a measurement at all and never got a clamp.
     //
     // RETRIES until the engine has laid the modal out: a fresh view is built and measured in the
     // same frame, so the first read can legitimately be 0. On a 0 read the old code rescheduled
     // nothing, so naturalModalH stayed 0 for the session and fittedScalePct silently stopped
-    // clamping — the exact clipped modal the clamp exists to prevent, with no symptom to notice.
+    // clamping - the exact clipped modal the clamp exists to prevent, with no symptom to notice.
     var naturalTries = 0;
     function measureNaturalH() {
         if (!(modalPanel && modalPanel.IsValid && modalPanel.IsValid())) return;
@@ -524,12 +561,11 @@
         // Stop any background polling and drop pending requests from the queue
         statusPollToken++;
         selfTestToken++;
-        updateCheckToken++;
         if (MG.Net && MG.Net.clearQueue) try { MG.Net.clearQueue(); } catch (e) {}
         
         // Tell the server the player is leaving. A lobby still WAITING (waiting/room) is cancelled
-        // — it only exists to be torn down before anyone's committed. A live game uses leave
-        // instead: cancel is a no-op once players ≥ 2, so it never reached a mid-match opponent —
+        // - it only exists to be torn down before anyone's committed. A live game uses leave
+        // instead: cancel is a no-op once players ≥ 2, so it never reached a mid-match opponent -
         // leave folds this seat out (3–4-seat durak/poker) or ends the match (pair games) at once.
         if (cancelServer) {
             var oldCode = currentCode, oldTok = currentTok, oldView = view;
@@ -552,12 +588,12 @@
     }
 
     function clearBody() {
-        // footerStatus is a child of modalBody's footer, so it's about to be deleted — drop the
+        // footerStatus is a child of modalBody's footer, so it's about to be deleted - drop the
         // reference so setStatus falls back to the centred bottom line until the menu rebuilds it.
         footerStatus = null;
         // Same reason: detailPanel and every entry in cardEls are children of modalBody. Leaving
         // the references behind meant renderDetail/updateCardSkins held handles to deleted panels,
-        // and neither checks IsValid — the exact shape of the two ReferenceErrors this codebase has
+        // and neither checks IsValid - the exact shape of the two ReferenceErrors this codebase has
         // already shipped once. Nothing calls them from outside the menu today; this keeps it that
         // way by construction rather than by luck.
         detailPanel = null;
@@ -567,7 +603,7 @@
         // NOT the old per-view re-fit that caused the button jitter: that one forced the scale back
         // to 100% for a frame to take a clean reading. This only reads a height and divides the
         // applied scale out, so nothing moves unless the new view is genuinely TALLER than anything
-        // seen so far (poker's felt vs the menu's columns — the difference that made 125% clip the
+        // seen so far (poker's felt vs the menu's columns - the difference that made 125% clip the
         // LEAVE button). The scale itself lives on modalPanel, which we did not clear.
         naturalTries = 0;
         $.Schedule(0.0, measureNaturalH);
@@ -582,7 +618,7 @@
     // ⚠ We use an <Image> panel (SetImage + scaling), NOT Panel+style.backgroundImage.
     // A Panel background paints the .vtex at its NATIVE pixel size until the panel is
     // re-laid-out (hover = restyle = relayout), which is the ~300% first-frame zoom the
-    // maintainer kept seeing. An <Image> sizes to its CSS box from frame 1 — the game's
+    // maintainer kept seeing. An <Image> sizes to its CSS box from frame 1 - the game's
     // own idiom (hud_ability_icon.xml, QOLLOCK ArcadeFlappyBird). SetImage wants the BARE
     // s2r:// url, never a url('…') wrapper. Shared implementation: MG.Widgets.setFace.
     var setFace = MG.Widgets.setFace;
@@ -590,8 +626,8 @@
     // ── views ───────────────────────────────────────────────────────────────
     // The lobby is a two-column layout: LEFT is the game picker grid, RIGHT is the
     // detail + action panel for whichever card is selected. Selecting a card only
-    // re-skins the cards and rebuilds the right column (renderDetail) — no full
-    // teardown — so the pick feels instant and the right side can fade between games.
+    // re-skins the cards and rebuilds the right column (renderDetail) - no full
+    // teardown - so the pick feels instant and the right side can fade between games.
     function renderMenu() {
         cleanupCurrentView(true);
         view = "menu";
@@ -638,7 +674,7 @@
                     ll.text = "IN DEVELOPMENT";
                 }
                 // Click: in multi-select mode a multi-capable, enabled card TOGGLES its ticked
-                // state (shown by the card's own accent highlight — no corner badge, per the
+                // state (shown by the card's own accent highlight - no corner badge, per the
                 // maintainer); otherwise it just selects the card.
                 card.SetPanelEvent("onactivate", function () {
                     if (multiSelect && isMultiGame(g.id) && g.enabled) {
@@ -701,7 +737,7 @@
 
         if (!g.enabled) {
             // Call to action FIRST (maintainer: the Discord request button sits ABOVE the
-            // "IN DEVELOPMENT" notice): request this game in the community Discord — same
+            // "IN DEVELOPMENT" notice): request this game in the community Discord - same
             // external-browser channel as the header Discord pill.
             var reqBtn = $.CreatePanel("Button", detailPanel, "");
             reqBtn.AddClass("mg-request-btn");
@@ -804,7 +840,7 @@
         // deliberately deferred; the normal Create/Join/Quick buttons enter a 2-seat room.
         var onlineReady = true;
 
-        // "Select multiple games" toggle — ALWAYS visible (even on durak), a single check.
+        // "Select multiple games" toggle - ALWAYS visible (even on durak), a single check.
         // When ON, you TICK games directly on the LEFT picker (a corner check); Quick Match
         // searches the whole ticked set and Create picks a random one from it. Durak can't
         // join a multi-quick (its own room flow) so it's never ticked, but the toggle stays.
@@ -831,12 +867,12 @@
         });
 
         // Top-cluster picker (rendered BEFORE the spacer, so Quick Match sits at the SAME height
-        // for every game and never jumps as you browse — maintainer 2026-07-18). Which picker:
+        // for every game and never jumps as you browse - maintainer 2026-07-18). Which picker:
         //   • chess/checkers → time-control bank (governs Create + vs-Bot; Quick Match forces 5 min)
         //   • durak          → private N-seat table size (governs Create; Quick Match stays heads-up)
         //   • poker          → table size (governs Create; poker has no public Quick Match)
         // Previously durak/poker rendered their picker AFTER Quick Match, which shoved Quick Match
-        // down for those two games only — the "jump" the maintainer flagged.
+        // down for those two games only - the "jump" the maintainer flagged.
         if (!multiSelect && onlineReady) {
             if (isTimedGame(selectedGameId)) renderTimeControl();
             else if (isDurakOnlineGame(selectedGameId)) renderDurakSeatPicker();
@@ -859,11 +895,11 @@
             var isPoker = isPokerOnlineGame(selectedGameId);
             var isDurak = isDurakOnlineGame(selectedGameId);
             // Primary: one-button public matchmaking. Wrapped in a .mg-btn-row so it uses
-            // fill-parent-flow width, NOT width:100% — the latter makes Panorama clip the button's
+            // fill-parent-flow width, NOT width:100% - the latter makes Panorama clip the button's
             // right border (the PLAY VS BOT / QUICK MATCH "no right border" bug). Same structure as
             // the working CREATE/JOIN row.
             // Poker has NO public matchmaking (its lobby seats 2–4 on its own routes), but we still
-            // show the button DISABLED for visual parity — a game with no Quick Match button at all
+            // show the button DISABLED for visual parity - a game with no Quick Match button at all
             // looked broken (maintainer 2026-07-18). Its table-size picker lives in the top cluster.
             var quickRow = $.CreatePanel("Panel", detailPanel, "");
             quickRow.AddClass("mg-btn-row");
@@ -916,7 +952,7 @@
     }
 
     // Time-control segmented control (chess/checkers). One row of 1/3/5/10-minute segments plus
-    // "Any" (value -1: quick-match wildcard — pair with any waiting bank, else 5 min). The picked
+    // "Any" (value -1: quick-match wildcard - pair with any waiting bank, else 5 min). The picked
     // one carries .mg-on. selectedTimeControl persists while browsing. For Create/vs-Bot a room
     // needs a concrete bank, so "Any" collapses to 5 min (TC_ANY_DEFAULT); for Quick Match "Any"
     // rides up as tc="any" and the server resolves the bank when a second searcher arrives.
@@ -1041,7 +1077,7 @@
     // small, low-contrast text links so they no longer compete with the play buttons.
     // A Support link sits at the far right. (Tools get hidden wholesale near release.)
     // Footer: only the discreet dev tools now (Support moved up to the header). The Debug
-    // toggle no longer spawns an on-screen panel — it just routes logs to the dev console.
+    // toggle no longer spawns an on-screen panel - it just routes logs to the dev console.
     function buildFooter() {
         var footer = $.CreatePanel("Panel", modalBody, "");
         footer.AddClass("mg-footer");
@@ -1083,7 +1119,7 @@
                 setStatus("❌ Ping failed. Server unreachable.");
             });
         });
-        mkTool("Check Updates", function () { checkUpdates(); });
+        mkTool("Check Updates", function () { checkUpdates(false); });
         // Debug toggle: flips console logging on/off (no on-screen panel anymore).
         function dbgText() { return MG.Net.isDebug && MG.Net.isDebug() ? "Debug: ON" : "Debug: OFF"; }
         var dbgLbl = mkTool(dbgText(), function () {
@@ -1098,19 +1134,34 @@
     // Exercises the full lobby protocol against the REAL deployed server from ONE client
     // (fills both seats with two tokens), so it's the only check that validates the live
     // transport under the actual in-game UI scale. Beyond the happy path it now drives the
-    // three AUTHORITATIVE REJECTIONS a real game relies on — a foreign token, an out-of-turn
-    // move, and an illegal move must each be refused with the right reason — so a mis-deployed
+    // three AUTHORITATIVE REJECTIONS a real game relies on - a foreign token, an out-of-turn
+    // move, and an illegal move must each be refused with the right reason - so a mis-deployed
     // worker or a decode regression is caught in-game, not just offline. Steps run sequentially
     // (a small runner, not nested callbacks); any failure aborts and cleans the lobby up.
     // (Full rules coverage lives offline in tools/mg_*_test.js + Play-vs-Bot.)
     // The update check deliberately bypasses the Workers transport. Panorama loads a tiny PNG
     // straight from GitHub and exposes only its layout dimensions. A square means this version is
     // current; a deliberately wide marker means a newer release superseded it. We compare aspect
-    // ratio instead of literal 16x16 because UI scale multiplies both dimensions and some setups
-    // report them swapped.
-    function checkUpdates() {
+    // ratio instead of literal dimensions because UI scale multiplies both dimensions and some
+    // setups report them swapped. Ratios between the two intentional shapes are rejected instead
+    // of being reported as an update.
+    function classifyUpdateMarker(w, h) {
+        if (!(isFinite(w) && isFinite(h) && w > 0 && h > 0)) return "invalid";
+        var ratio = Math.max(w, h) / Math.min(w, h);
+        if (ratio <= UPDATE_RELEVANT_MAX_RATIO) return "current";
+        if (ratio >= UPDATE_OUTDATED_MIN_RATIO) return "outdated";
+        return "invalid";
+    }
+    function showUpdatePopup() {
+        if (!(updatePopup && updatePopup.IsValid && updatePopup.IsValid())) return;
+        if (updatePopupBody && updatePopupBody.IsValid && updatePopupBody.IsValid())
+            updatePopupBody.text = "A newer version of DL Arcade is available. You are using v" +
+                MG_VERSION + ".";
+        updatePopup.AddClass("mg-open");
+    }
+    function checkUpdates(automatic) {
         if (!(updateProbeHost && updateProbeHost.IsValid && updateProbeHost.IsValid())) {
-            setStatus("Couldn't check for updates.");
+            if (!automatic) setStatus("Couldn't check for updates.");
             return;
         }
 
@@ -1129,16 +1180,24 @@
         }
         function fail() {
             cleanup();
-            if (alive()) setStatus("Couldn't check for updates.");
+            if (alive() && !automatic && view === "menu") setStatus("Couldn't check for updates.");
         }
         function poll() {
             if (!alive()) { cleanup(); return; }
             var w = Number(img.actuallayoutwidth), h = Number(img.actuallayoutheight);
             if (w > 0 && h > 0) {
                 cleanup();
-                var ratio = Math.max(w, h) / Math.min(w, h);
-                if (ratio <= 1.35) setStatus("v" + MG_VERSION + " is up to date.");
-                else setStatus("An update is available for v" + MG_VERSION + ".");
+                var marker = classifyUpdateMarker(w, h);
+                if (marker === "outdated") {
+                    showUpdatePopup();
+                    if (!automatic && view === "menu")
+                        setStatus("An update is available for v" + MG_VERSION + ".");
+                } else if (marker === "current") {
+                    if (!automatic && view === "menu")
+                        setStatus("v" + MG_VERSION + " is up to date.");
+                } else if (!automatic && view === "menu") {
+                    setStatus("Couldn't verify the update marker.");
+                }
                 return;
             }
             elapsed += UPDATE_CHECK_POLL_S * 1000;
@@ -1146,7 +1205,7 @@
             $.Schedule(UPDATE_CHECK_POLL_S, poll);
         }
 
-        setStatus("Checking for updates...");
+        if (!automatic) setStatus("Checking for updates...");
         try {
             img = $.CreatePanel("Image", updateProbeHost, "MG_UpdateProbe_" + token);
             try { img.SetAttributeString("hittest", "false"); } catch (e) {}
@@ -1165,12 +1224,12 @@
         function alive() { return t === selfTestToken; }
 
         // Three tokens: host (white/seat 0), joiner (black/seat 1), and a stranger seated
-        // in neither — used to prove a foreign token can't move.
+        // in neither - used to prove a foreign token can't move.
         var hostTok = MG.Session.newToken(), joinTok = MG.Session.newToken(), foreignTok = MG.Session.newToken();
         var code = null, pingMs = 0;
         var mFrom = 40, mTo = 33;   // legal white checkers opener (5,0)->(4,1) = squares 40 -> 33
         var illFrom = 40, illTo = 41;   // (5,0)->(5,1): sideways, never a legal checkers move
-        var blkFrom = 17, blkTo = 24;   // a black man's square — used to test moving out of turn
+        var blkFrom = 17, blkTo = 24;   // a black man's square - used to test moving out of turn
 
         function cleanup() { if (code) { try { MG.Api.cancel(code, hostTok); } catch (e) {} } }
         function fail(what) { if (alive()) { cleanup(); setStatus("❌ Self-test failed at: " + what); } }
@@ -1315,7 +1374,7 @@
         clearBody();
 
         if (isPublic) {
-            // Public: no code to share — the server pairs us with whoever comes next.
+            // Public: no code to share - the server pairs us with whoever comes next.
             var searching = $.CreatePanel("Label", modalBody, "");
             searching.AddClass("mg-searching");
             searching.text = "Looking for an opponent…";
@@ -1353,7 +1412,7 @@
         host.AddClass("mg-game-host");
 
         // The controller calls onGameOver(result) the moment its game ends (win/lose/draw).
-        // We use it only to reveal Play Again — the result string is not needed for the flow.
+        // We use it only to reveal Play Again - the result string is not needed for the flow.
         var playAgainBtn = null;
         function onGameOver() {
             if (playAgainBtn && playAgainBtn.IsValid && playAgainBtn.IsValid()) {
@@ -1369,10 +1428,10 @@
             seat: opts && opts.seat,
             numPlayers: opts && opts.numPlayers,
             // Time control in SECONDS (0 = untimed). Only chess/checkers ever set it. Offline the
-            // controller ticks it locally; online it's advisory — the controller polls the
-            // server-authoritative /api/clocks — but we still pass it so the clock UI is built.
+            // controller ticks it locally; online it's advisory - the controller polls the
+            // server-authoritative /api/clocks - but we still pass it so the clock UI is built.
             timeControl: (opts && opts.timeControl) | 0,
-            // Checkers variant: "russian" (default) or "english". Concrete by mount time — the
+            // Checkers variant: "russian" (default) or "english". Concrete by mount time - the
             // picker's "Any" is resolved to a real variant before we get here (offline: collapsed
             // to Russian; online: read back from /api/match once the lobby is settled).
             variant: (opts && opts.variant) || "russian",
@@ -1407,7 +1466,7 @@
 
     // Mount an ONLINE game once its lobby is settled. Checkers carries a server-resolved variant
     // (the picker's "Any" may have paired with either engine), and the 2-int join/quick replies
-    // can't carry it — so for checkers we first read /api/match to learn the chosen variant, then
+    // can't carry it - so for checkers we first read /api/match to learn the chosen variant, then
     // mount. Every other game has no variant, so it mounts straight away. On a match() failure we
     // fall back to Russian (the server default) rather than block the game from starting.
     function mountOnlineGame(gameId, code, isHost, opts, ctx) {
@@ -1429,7 +1488,7 @@
     // its `gen` and resets the board once BOTH have asked (mg_net Api.rematch, worker.core.js).
     // We pass our current gen up so a stale poll from before a restart can't re-arm the next
     // rematch. When state==2 (we completed the pair) OR the server's gen outran ours (the
-    // opponent completed it), the lobby state is already fresh — re-mount the SAME game, same
+    // opponent completed it), the lobby state is already fresh - re-mount the SAME game, same
     // seat/side; the sides never swap online (host stays seat 0).
     function startRematch(gameId, code, isHost, opts, btn) {
         rematchPollToken++;
@@ -1460,7 +1519,7 @@
 
     // ── lobby flow ────────────────────────────────────────────────────────────
     function isDurakOnlineGame(id) { return id === 3; }
-    // Poker online is PRIVATE-CODE only (2–4 seats via its own pcreate/pjoin/proom routes —
+    // Poker online is PRIVATE-CODE only (2–4 seats via its own pcreate/pjoin/proom routes -
     // the generic create/join/quick paths are hard-capped at 2 and would clobber a poker
     // lobby). It has no public quick-match, so the detail view hides that button for it.
     function isPokerOnlineGame(id) { return id === 6; }
@@ -1476,7 +1535,7 @@
         // The host's time-control pick rides the create request (chess/checkers only); the joiner
         // learns it back from join(). A private room must fix a concrete bank, so "Any"(-1)
         // collapses to 5 min here. Untimed games send 0 (server ignores it anyway).
-        // Poker owns its route set (2–4 seats) — pcreate, not the generic 2-cap create.
+        // Poker owns its route set (2–4 seats) - pcreate, not the generic 2-cap create.
         if (isPokerOnlineGame(selectedGameId)) {
             MG.Api.pcreate(pokerSeatCap, ctx.tok, function (res) {
                 if (!bindActionCode(ctx, res.code)) { discardStaleSeat(ctx, res.code, true); return; }
@@ -1488,7 +1547,7 @@
             return;
         }
         // Durak's private lobby seats 2–4 on its own routes (dcreate/djoin/droom), so Create
-        // routes through dcreate — never the generic 2-cap create — exactly like poker.
+        // routes through dcreate - never the generic 2-cap create - exactly like poker.
         if (isDurakOnlineGame(selectedGameId)) {
             MG.Api.dcreate(durakSeatCap, ctx.tok, function (res) {
                 if (!bindActionCode(ctx, res.code)) { discardStaleSeat(ctx, res.code, true); return; }
@@ -1518,7 +1577,7 @@
     // ONE implementation behind the three rooms that used to be copy-pasted (2-seat durak
     // quick-match, N-seat poker table, N-seat durak table). They differed only in strings, in
     // which room/start route they call, and in whether the seat list is 2 fixed labels or `cap`
-    // generated ones — everything structural (ctx/token binding, the poll loop, the started
+    // generated ones - everything structural (ctx/token binding, the poll loop, the started
     // hand-off, the gone/kick path) was identical, which is exactly how the copies drifted:
     // the `gone` handling and the stray-leave fix had to be applied three times.
     //
@@ -1595,7 +1654,7 @@
                     }
                     if (r.reason === "players") setStatus("Need at least two players before " + cfg.startVerb + ".");
                     else if (r.reason === "host") setStatus("Only the host can " + cfg.startVerb + ".");
-                    else if (r.reason === "token") setStatus("Session desync — please recreate the table.");
+                    else if (r.reason === "token") setStatus("Session desync - please recreate the table.");
                     else setStatus("Couldn't " + cfg.startVerb + " (" + (r.reason || "error") + ").");
                 }, function () { if (!ctx || actionAlive(ctx)) setStatus("Server unavailable."); });
             });
@@ -1701,7 +1760,7 @@
                 if (st.players === 2) { mountOnlineGame(selectedGameId, code, true, { timeControl: tc | 0 }, ctx); return; }
                 // A swept or cancelled lobby answers `gone`. Without this the host sat on
                 // "Searching for an opponent…" forever, polling a dead code at the slowest
-                // cadence — waitForMultiMatch has always handled it; this copy had not.
+                // cadence - waitForMultiMatch has always handled it; this copy had not.
                 if (st.gone) { kickToMenu("Lobby closed."); return; }
                 $.Schedule(MG.Net.waitDelay(misses++), tick);
             }, function () { $.Schedule(MG.Net.waitDelay(misses++), tick); });
@@ -1718,7 +1777,7 @@
         // Quick Match time control (chess/checkers only): a concrete pick pools with same-bank
         // searchers; "Any"(-1) rides up as tc="any" and the server pairs it with any waiter (or
         // 5 min if two "Any" seekers meet). The server resolves the final bank when both seats are
-        // present, so the client no longer knows it up-front — the online clock is poll-discovered
+        // present, so the client no longer knows it up-front - the online clock is poll-discovered
         // from /api/clocks, hence renderGame gets timeControl:0 (untimed games send it too, no-op).
         var tcArg = isTimedGame(selectedGameId) ? (selectedTimeControl === -1 ? "any" : selectedTimeControl) : 0;
         var cvArg = hasVariant(selectedGameId) ? selectedVariant : "";   // "any"/"russian"/"english"
@@ -1744,7 +1803,7 @@
 
     // ── multi-select quick match ──────────────────────────────────────────────
     // Reflect the ticked set on the LEFT picker: a ticked multi-capable game gets the accent
-    // highlight (.mg-ticked). NO corner badge — the maintainer didn't want the round tick.
+    // highlight (.mg-ticked). NO corner badge - the maintainer didn't want the round tick.
     // Called after every toggle.
     function updateCardSkins() {
         for (var i = 0; i < cardEls.length; i++) {
@@ -1758,7 +1817,7 @@
 
     // Right panel when Select-Multiple is ON: a hint, then QUICK MATCH (searches the whole
     // ticked set) and CREATE (a private lobby in ONE randomly-picked ticked game). Games are
-    // ticked on the LEFT picker, so there's no checkbox list here — just the count + actions.
+    // ticked on the LEFT picker, so there's no checkbox list here - just the count + actions.
     function renderMultiPanel() {
         var ids = multiCheckedIds();
         var n = ids.length;
@@ -1884,7 +1943,7 @@
         var ctx = beginOnlineAction(selectedGameId);
         // Poker lobbies live on their own routes; join via pjoin (which learns our seat + the
         // table cap) rather than the generic 2-seat join. The Join screen is shared, so we try
-        // pjoin first ONLY when the user is browsing poker — otherwise fall through to join.
+        // pjoin first ONLY when the user is browsing poker - otherwise fall through to join.
         if (isPokerOnlineGame(selectedGameId)) {
             MG.Api.pjoin(code, ctx.tok, function (res) {
                 if (res.ok) {
@@ -1917,7 +1976,7 @@
         }
         MG.Api.join(code, ctx.tok, function (res) {
             if (res.ok) {
-                // The game id must decode to a real, playable game — mounting a
+                // The game id must decode to a real, playable game - mounting a
                 // disabled stub would leave the host playing against a ghost.
                 var g = MG.Games.byId(res.game);
                 if (!g || !g.enabled) { if (actionAlive(ctx)) setStatus("Couldn't read the lobby. Please try again."); return; }
@@ -1925,7 +1984,7 @@
                 if (res.game === 3) { renderRoom(code, false, false, ctx); return; }
                 // res.tc = the host's time control (seconds), decoded from the join reply. The
                 // clock itself is server-authoritative; we pass tc only so the clock UI is built.
-                // Checkers also carries a variant — mountOnlineGame reads it from /api/match.
+                // Checkers also carries a variant - mountOnlineGame reads it from /api/match.
                 mountOnlineGame(res.game, code, false, { timeControl: res.tc | 0 }, ctx);
                 return;
             }
@@ -1943,6 +2002,12 @@
         overlayShown = true;
         setEscapeBackgroundActive(false); // stop the menu's backdrop from closing on a misclick
         renderMenu();
+        // One automatic request per loaded HUD session, on the first explicit DL Arcade open.
+        // Later opens do not touch GitHub; the footer action remains available for a manual retry.
+        if (!autoUpdateCheckStarted) {
+            autoUpdateCheckStarted = true;
+            checkUpdates(true);
+        }
     }
 
     function hideOverlay() {
@@ -1955,12 +2020,12 @@
     }
 
     // The escape menu can close under us (Esc / Resume / clicking a native item).
-    // Nothing notifies us, and our overlay — now a child of #EscapeMenu — would
+    // Nothing notifies us, and our overlay - now a child of #EscapeMenu - would
     // otherwise linger (hittest-active, only faded by opacity) over the game. Poll the
     // menu's open state and tear our modal down the moment the menu is gone.
     function watchEscape() {
         if (overlayShown && !isEscapeOpen()) {
-            log("escape menu closed — hiding overlay");
+            log("escape menu closed - hiding overlay");
             hideOverlay();
         }
         $.Schedule(0.3, watchEscape);
@@ -1969,7 +2034,7 @@
     function kickToMenu(reason) {
         if (view !== "game" && view !== "waiting" && view !== "room") return;
         log("kicked to menu: " + reason);
-        // 0 is now a VALID lobby code (0..1023 space), so null — not 0 — is the "no lobby" sentinel
+        // 0 is now a VALID lobby code (0..1023 space), so null - not 0 - is the "no lobby" sentinel
         // that stops cleanupCurrentView from firing a stray cancel/leave at a real lobby.
         currentCode = null;
         currentAction = null;

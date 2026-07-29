@@ -5,9 +5,12 @@ var path = require("path");
 
 var ROOT = path.join(__dirname, "..");
 var uiSource = fs.readFileSync(path.join(ROOT, "panorama", "scripts", "mg_ui.js"), "utf8");
-var thresholdMatch = uiSource.match(/if \(ratio <= ([0-9.]+)\)/);
-if (!thresholdMatch) throw new Error("could not read update-marker ratio threshold from mg_ui.js");
-var THRESHOLD = Number(thresholdMatch[1]);
+var relevantMatch = uiSource.match(/UPDATE_RELEVANT_MAX_RATIO = ([0-9.]+)/);
+var outdatedMatch = uiSource.match(/UPDATE_OUTDATED_MIN_RATIO = ([0-9.]+)/);
+if (!relevantMatch || !outdatedMatch)
+    throw new Error("could not read update-marker ratio thresholds from mg_ui.js");
+var RELEVANT_MAX = Number(relevantMatch[1]);
+var OUTDATED_MIN = Number(outdatedMatch[1]);
 
 function pngSize(name) {
     var bytes = fs.readFileSync(path.join(ROOT, "update-markers", name));
@@ -17,8 +20,11 @@ function pngSize(name) {
     return { w: bytes.readUInt32BE(16), h: bytes.readUInt32BE(20) };
 }
 
-function isRelevant(w, h) {
-    return Math.max(w, h) / Math.min(w, h) <= THRESHOLD;
+function classify(w, h) {
+    var ratio = Math.max(w, h) / Math.min(w, h);
+    if (ratio <= RELEVANT_MAX) return "current";
+    if (ratio >= OUTDATED_MIN) return "outdated";
+    return "invalid";
 }
 
 function verify(name, expected) {
@@ -30,7 +36,7 @@ function verify(name, expected) {
             for (var eh = -2; eh <= 2; eh++) {
                 var w = Math.max(1, Math.round(raw.w * scales[s]) + ew);
                 var h = Math.max(1, Math.round(raw.h * scales[s]) + eh);
-                if (isRelevant(w, h) !== expected || isRelevant(h, w) !== expected) {
+                if (classify(w, h) !== expected || classify(h, w) !== expected) {
                     throw new Error(name + " misclassified at scale=" + scales[s] +
                         " error=(" + ew + "," + eh + ") dims=" + w + "x" + h);
                 }
@@ -41,7 +47,15 @@ function verify(name, expected) {
     console.log("  \u2713 " + name + " " + raw.w + "x" + raw.h + ": " + cases + " simulated reads");
 }
 
-verify("relevant-template.png", true);
-verify("is-1-0-relevant.png", true);
-verify("outdated-template.png", false);
-console.log("update marker tests passed (threshold " + THRESHOLD + ")");
+verify("relevant-template.png", "current");
+verify("is-1-0-relevant.png", "current");
+verify("outdated-template.png", "outdated");
+
+// A malformed or unexpected image must never produce a false update notification.
+if (classify(64, 32) !== "invalid" || classify(32, 64) !== "invalid")
+    throw new Error("ambiguous 2:1 marker must be rejected");
+if (!(RELEVANT_MAX < OUTDATED_MIN))
+    throw new Error("update-marker ratio bands must not overlap");
+
+console.log("update marker tests passed (current <= " + RELEVANT_MAX +
+    ", outdated >= " + OUTDATED_MIN + ")");

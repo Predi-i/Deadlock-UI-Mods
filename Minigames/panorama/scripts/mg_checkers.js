@@ -1,13 +1,13 @@
 "use strict";
 
 /*
- * mg_checkers.js — Checkers (draughts) CONTROLLER for the Deadlock Minigames mod.
+ * mg_checkers.js - Checkers (draughts) CONTROLLER for the Deadlock Minigames mod.
  *
  * Split out of mg_games.js (2026-07-24). The pure rules live in rules/checkers.js
  * (shared byte-for-byte with the authoritative worker); here we render the board +
  * pieces overlay, take click + drag input, predict + poll online moves, and run the
  * offline bot. Two variants ride the SAME controller: session.variant "english" picks
- * MG.Rules.checkersEnglish, anything else Russian (see RCv below) — exactly how the
+ * MG.Rules.checkersEnglish, anything else Russian (see RCv below) - exactly how the
  * server switches on lobby.cv.
  *
  * Board cell values: 0 empty · 1 white man · 2 white king · 3 black man · 4 black king.
@@ -15,7 +15,7 @@
  *
  * Self-registers game id 1 like mg_durak / mg_connectfour / mg_poker. Loads AFTER
  * mg_games.js (base_hud.xml order) so MG.Rules.*, MG.Widgets.createClock and the
- * MG.Games registry all exist. NONE of the rendering/input is shell-verifiable —
+ * MG.Games registry all exist. NONE of the rendering/input is shell-verifiable -
  * reasoned from the game's CSS idioms, confirmed only after a VPK repack.
  */
 
@@ -54,7 +54,7 @@
         // Pick the rules engine for this game's variant. English draughts (kings step one square,
         // men capture forward only) lives in MG.Rules.checkersEnglish; anything else = Russian.
         // Shadow the module-level aliases with the chosen engine so every helper below (board init,
-        // legal moves, bot search) routes through it — the server does the same via lobby.cv.
+        // legal moves, bot search) routes through it - the server does the same via lobby.cv.
         var RCv = (session.variant === "english" && MG.Rules.checkersEnglish) ? MG.Rules.checkersEnglish : RC;
         var initialBoard = RCv.initialBoard;
         var simpleMoves = RCv.simpleMoves, captureMoves = RCv.captureMoves;
@@ -64,7 +64,7 @@
         var myColor = session.isHost ? WHITE : BLACK;
         var board = initialBoard();
         var turn = WHITE;              // white (host) moves first
-        // Consecutive turns with no capture and no man move — the Russian 15-move draw rule's
+        // Consecutive turns with no capture and no man move - the Russian 15-move draw rule's
         // counter. rules/checkers.js can't track it (it is per-position, not per-game), so the
         // controller owns it and feeds it to drawReason(). Reset by turnResetsIdle().
         var idleTurns = 0;
@@ -80,14 +80,14 @@
 
         // Time control (§8 commit 2.3). session.timeControl = seconds per side (0 = untimed).
         // The clock is authoritative on the SERVER online; offline (bot) it ticks locally. seat
-        // 0 = white/host, seat 1 = black/joiner — the clock indexes by seat, so map colour→seat.
+        // 0 = white/host, seat 1 = black/joiner - the clock indexes by seat, so map colour→seat.
         var timeControl = session.timeControl || 0;
         var clock = null;               // createClock handle, built in buildSidePanel
 
         // Move history + local review (§8 commit 2.2). Each finished TURN pushes one entry
         // { from, to, cap, boardAfter, label }. reviewIndex === null means "live" (board shows
         // the real position); an integer k means we are REVIEWING: -1 = initial position,
-        // 0..history.length-1 = the position right after that turn. Reviewing is read-only —
+        // 0..history.length-1 = the position right after that turn. Reviewing is read-only -
         // input handlers bail while reviewing and live moves keep updating the model + list
         // silently without disturbing the shown snapshot.
         var history = [];
@@ -99,7 +99,7 @@
         // Premove (online only, ONE queued move): while it's the opponent's turn you may click/drag
         // your piece to a square; we remember {from,to}, glow both cells orange, and the instant the
         // opponent's move lands (turn flips to us) we try to play it. It's validated against the NEW
-        // position via targetsFor — an illegal queued move (piece captured, target blocked, a forced
+        // position via targetsFor - an illegal queued move (piece captured, target blocked, a forced
         // jump elsewhere) is simply discarded. preSelected holds the from-square mid-selection.
         var premove = null;            // { from, to } or null
         var preSelected = -1;          // my piece picked for a premove, awaiting a destination click
@@ -116,7 +116,7 @@
 
         // Tear the drag state down from ANY exit path, not just DragEnd. The DragEnd handler is
         // bound to the PIECE panel; if the opponent captures that piece while you hold it (a
-        // polled hop → animateHop deletes the panel), the panel — and its DragEnd handler — is
+        // polled hop → animateHop deletes the panel), the panel - and its DragEnd handler - is
         // gone, the engine never synthesises DragEnd on a dead panel, and the ghost + dragActive
         // leak forever (the "zависший ghost при съедении" bug). Calling clearDrag() from the
         // capture/rebuild paths covers that. Idempotent: a no-op once already cleared (own move,
@@ -129,10 +129,10 @@
         }
 
         // TEMP diagnostic. When true, every DragEnd writes what each drop channel actually
-        // produced to the on-screen status line — so ONE in-game test reveals which signal
+        // produced to the on-screen status line - so ONE in-game test reveals which signal
         // the engine really populates, instead of guessing a 5th time. Flip to false (or
         // delete the status() call in commitDropMultimethod) once drag is confirmed working.
-        var DRAG_DEBUG = false;        // drag confirmed working in-game — silence the per-drop status trace
+        var DRAG_DEBUG = false;        // drag confirmed working in-game - silence the per-drop status trace
 
         function status(t) { if (session.onStatus) session.onStatus(t); }
         function sfx(n) { if (MG.Sound) MG.Sound.play(n); }
@@ -160,13 +160,13 @@
         boardPanel.AddClass("mg-board");
         // Move-list side panel (right column): a header, a scrollable list of completed turns,
         // and a Prev/Next/Live navigation bar. renderMoveList() fills the list; the nav buttons
-        // step a purely LOCAL review of past positions (see navPrev/navNext/navLive) — the live
+        // step a purely LOCAL review of past positions (see navPrev/navNext/navLive) - the live
         // game keeps running underneath and the model board is never touched by a review.
         var moveListRows = null, navPrevBtn = null, navNextBtn = null, navLiveBtn = null;
         (function buildSidePanel() {
             var panel = $.CreatePanel("Panel", twoCol, "MG_CheckersMoves");
             panel.AddClass("mg-movelist");
-            // Clocks sit at the TOP of the side panel (opponent above, you below — see clockSeat).
+            // Clocks sit at the TOP of the side panel (opponent above, you below - see clockSeat).
             // secs=0 → the module builds nothing and every call is a no-op, so an untimed game is
             // visually unchanged. Server seat 0 = host = white; clockSeat maps that to my view.
             clock = createClock(panel, timeControl, !session.bot, code, onFlag, clockNames(), clockSeatFor(myColor));
@@ -232,7 +232,7 @@
                     (function (square) {
                         cell.SetPanelEvent("onactivate", function () { onCellClick(square); });
                         // Drop target for drag-and-drop. In Panorama a panel only becomes a
-                        // valid drop target when its DragEnter handler returns true — without
+                        // valid drop target when its DragEnter handler returns true - without
                         // it, DragDrop never fires on the cell (that was why the drop didn't
                         // land). DragEnter also lets us remember which square the cursor is
                         // over, so DragEnd can commit the move even if DragDrop is flaky.
@@ -261,13 +261,13 @@
             buildCoords();
             // Pieces live in an overlay ABOVE the cells so they can slide across squares
             // (transform transition). It is a SIBLING of the board inside the flow:none
-            // wrap — NOT a child of boardPanel (whose flow:down would push it below the
+            // wrap - NOT a child of boardPanel (whose flow:down would push it below the
             // rows). CSS positions it inside the board's 3px border so it aligns to cells.
             //
             // hittest=false makes the LAYER itself transparent to input, so a click on an
             // empty square passes through to the cell beneath (which owns destination
             // clicks + '.mg-target' highlighting). hittestchildren stays default (true) so
-            // the PIECES do receive input — required for drag-and-drop and click-to-select.
+            // the PIECES do receive input - required for drag-and-drop and click-to-select.
             // Destination squares are always empty, so no piece ever blocks a target cell.
             piecesLayer = $.CreatePanel("Panel", boardWrap, "MG_PiecesLayer");
             piecesLayer.AddClass("mg-pieces-layer");
@@ -302,7 +302,7 @@
             // same idiom as the pieces). rank → top-left; file → bottom-right of the 60px cell.
             // The file letter is shoved HARD into the bottom-right corner: the piece is a 46px
             // circle centred in the 60px cell (radius 23 about (30,30)); the old (46,43) offset put
-            // the glyph ~20px from that centre — INSIDE the circle — so the piece painted over it and
+            // the glyph ~20px from that centre - INSIDE the circle - so the piece painted over it and
             // the letter vanished under knights/rooks/bishops (maintainer 2026-07-16: "букв не видно").
             // (51,46) lands the glyph ~32px out, clear of the circle, and still inside the 60px cell.
             var ox = kind === "file" ? (SQ - 9) : 3;
@@ -311,7 +311,7 @@
         }
 
         // interactive defaults to true (live board). Review renders pass false so the snapshot
-        // pieces are inert (no drag/select) — you're looking at a past position, not playing it.
+        // pieces are inert (no drag/select) - you're looking at a past position, not playing it.
         function makePiece(realIdx, v, interactive) {
             var piece = $.CreatePanel("Panel", piecesLayer, "");
             piece.AddClass("mg-piece");
@@ -319,7 +319,7 @@
             if (isKing(v)) piece.AddClass("mg-king");
             // Set the start position WITHOUT the transition (base .mg-piece has none), so a
             // fresh piece snaps onto its square instead of sliding in from the corner. Add
-            // the animating class one frame later, once this position is committed — from
+            // the animating class one frame later, once this position is committed - from
             // then on every transform/opacity/scale change animates. This is the same idiom
             // the game uses (transition on a class, toggled after the value is set).
             piece.style.transform = transformFor(realIdx);
@@ -334,13 +334,13 @@
 
         // Wire one piece for BOTH interaction styles the user asked for:
         //  • click-to-select  (onactivate → onCellClick on its own square)
-        //  • drag-and-drop     (native SetDraggable + DragStart/DragEnd — QOLLOCK recipe)
+        //  • drag-and-drop     (native SetDraggable + DragStart/DragEnd - QOLLOCK recipe)
         // Because the pieces layer now lets pieces receive input (hittest passes through
         // only on empty squares), the click that used to fall through to the cell beneath
-        // is delivered to the PIECE — so the piece must forward it to the same handler.
+        // is delivered to the PIECE - so the piece must forward it to the same handler.
         function setupPieceInput(piece) {
             // A tap on a piece selects it (or, if it's already a legal target square of
-            // the current selection, plays the hop) — identical to clicking its cell.
+            // the current selection, plays the hop) - identical to clicking its cell.
             piece.SetPanelEvent("onactivate", function () {
                 if (piece._sq === undefined) return;
                 onCellClick(piece._sq);
@@ -358,8 +358,8 @@
                 var sq = piece._sq;
                 // Only ever start a drag on a square that STILL holds one of MY pieces. A piece
                 // the opponent just captured lingers ~0.22s as a shrinking, still-draggable panel;
-                // grabbing it would (a) build the ghost from board[sq] — now the opponent's piece,
-                // so a wrong-colour ghost — and (b) leak that ghost forever, because the fade
+                // grabbing it would (a) build the ghost from board[sq] - now the opponent's piece,
+                // so a wrong-colour ghost - and (b) leak that ghost forever, because the fade
                 // deletes the panel mid-drag and the engine never fires DragEnd on a dead panel.
                 // My own pieces stay mine throughout the opponent's turn, so premove-drags pass.
                 if (colorOf(board[sq]) !== myColor) return;
@@ -387,7 +387,7 @@
                 dragFromSq = sq;                  // remember where this drag began (used by the premove drop path)
                 piece.AddClass("mg-drag-source"); // dim the real piece while it's "lifted"
 
-                // Light up this piece's legal targets as drop hints — but only when it may
+                // Light up this piece's legal targets as drop hints - but only when it may
                 // actually move now (my turn, and mid-chain only the chaining piece). If it
                 // can't, we leave no selection, so any drop is a harmless snap-back.
                 if (!destroyed && myTurn() && !(chaining && sq !== selected)) {
@@ -397,18 +397,18 @@
 
             $.RegisterEventHandler("DragEnd", piece, function (_p, droppedPanel) {
                 // THE hard part. Every single-channel drop scheme we tried failed in-game.
-                // Don't trust any ONE signal — gather EVERY candidate square we can and
+                // Don't trust any ONE signal - gather EVERY candidate square we can and
                 // commit the first that is a legal target. A wrong/garbage candidate simply
                 // isn't in legalTargets, so it's ignored; if none match, the piece snaps
                 // back. No false move is possible, and nothing here touches the server.
                 // `droppedPanel` is DragEnd's 2nd arg: the panel released onto (native,
-                // authoritative when present — this is how QOLLOCK's ql_hero_testing works).
+                // authoritative when present - this is how QOLLOCK's ql_hero_testing works).
                 if (!myTurn() && canPremove()) {
                     // Dragged during the opponent's turn → queue a PREMOVE to the dropped square.
                     var pmTo = dropSquare(droppedPanel);
                     if (pmTo >= 0 && pmTo !== dragFromSq) {
                         if (premoveGeometryOk(dragFromSq, pmTo)) { premove = { from: dragFromSq, to: pmTo }; preSelected = -1; sfx("Premove"); }
-                        else sfx("Illegal");   // impossible shape for this piece — don't queue it
+                        else sfx("Illegal");   // impossible shape for this piece - don't queue it
                     }
                     clearDrag();
                     refreshHighlights();
@@ -417,7 +417,7 @@
                 // The turn flipped to me WHILE this piece was held: the drag began during the
                 // opponent's turn (a premove-grab, so DragStart set no selection), but the polled
                 // move landed before I released. Without this, DragEnd falls through to
-                // commitDropMultimethod, which bails on `selected < 0` and snaps the piece back —
+                // commitDropMultimethod, which bails on `selected < 0` and snaps the piece back -
                 // the "premove teleports back instead of moving" bug. Promote the grab to a live
                 // move: select dragFromSq and let the normal drop path validate + play it.
                 if (selected < 0 && dragFromSq >= 0 && colorOf(board[dragFromSq]) === myColor) {
@@ -427,7 +427,7 @@
                 commitDropMultimethod(droppedPanel);
 
                 // Tear the ghost + dim + drag state down regardless of outcome. A drop on empty
-                // space (no legal target) just snaps back — the real piece never moved.
+                // space (no legal target) just snaps back - the real piece never moved.
                 clearDrag();
             });
         }
@@ -452,7 +452,7 @@
         // Render scale = WINDOW px per LAYOUT px. Panorama scales the whole UI by one uniform
         // factor, but a panel's actuallayoutwidth stays in LAYOUT px while GetPositionWithinWindow
         // returns WINDOW px. The old squareFromWindow divided a window-px delta by a layout-px cell
-        // size (=60) — they only agree at 100% UI scale; at 125% the drop landed a square or two off
+        // size (=60) - they only agree at 100% UI scale; at 125% the drop landed a square or two off
         // (the maintainer's "DROP MISS win=30 … targets=[21]" trace: 1.25× off). We DERIVE the scale
         // from two board cells a known layout distance apart, using ONLY GetPositionWithinWindow
         // (proven in-game 2026-07-07). actualuiscale_x IS in the engine property table but neither
@@ -460,7 +460,7 @@
         // fallback only if the cell measurement fails).
         function uiScale() {
             var a = cells[fromDisplay(0)];   // display (row 0, col 0)
-            var b = cells[fromDisplay(7)];   // display (row 0, col 7) — 7 cells to the right
+            var b = cells[fromDisplay(7)];   // display (row 0, col 7) - 7 cells to the right
             var pa = winPos(a), pb = winPos(b);
             if (pa && pb) {
                 var dx = Math.abs(pb.x - pa.x);       // = 7 * SQ * scale in window px
@@ -496,7 +496,7 @@
         // diagnostics, or null.
         //
         // PRIMARY channel = style.x / style.y. With removePositionBeforeDrop=false the engine
-        // writes the drop position into the display panel's style.x/style.y — this is exactly
+        // writes the drop position into the display panel's style.x/style.y - this is exactly
         // what QOLLOCK's ReadPanelPosition reads FIRST, and it's the channel we had never used.
         // actualxoffset is only the fallback.
         function ghostPos() {
@@ -523,7 +523,7 @@
             return fromDisplay(drow * 8 + dcol);
         }
 
-        // Resolve the raw board square a drop landed on (no legal-target filter — used by the
+        // Resolve the raw board square a drop landed on (no legal-target filter - used by the
         // premove path, which validates later against the post-opponent board). Same multi-channel
         // geometry as commitDropMultimethod: window position first, then the native drop panel.
         function dropSquare(droppedPanel) {
@@ -548,7 +548,7 @@
             var gw = winPos(dragGhost);
             var wSq = squareFromWindow();               // W: absolute window geometry (new primary)
             var aPanel = squareFromPanel(droppedPanel); // A: native drop panel (proven = the ghost, no id)
-            var bOver = dragOverSq;                     // B: last cell hovered (DragEnter/mouseover — dead in-game)
+            var bOver = dragOverSq;                     // B: last cell hovered (DragEnter/mouseover - dead in-game)
             var cGhost = squareFromGhost();             // C: ghost layout geometry (FLT_MAX in-game)
             var candidates = [wSq, aPanel, bOver, cGhost];
             var names = ["win", "panel", "over", "ghost"];
@@ -585,7 +585,7 @@
         }
 
         // Selection + legal-target highlighting only (cheap; touches no pieces). Suppressed
-        // while reviewing — renderReview() owns the cell classes then, and a live move landing
+        // while reviewing - renderReview() owns the cell classes then, and a live move landing
         // during a review must not repaint the board the player is studying.
         function refreshHighlights() {
             if (reviewIndex !== null) return;
@@ -734,7 +734,7 @@
         // validateCheckers EXACTLY: apply the hop to a COPY, then the turn continues (end=0)
         // only if this same piece just captured, wasn't crowned, and still has a capture
         // available; otherwise the turn hands off (end=1). Uses a copy so the live board is
-        // untouched — the caller applies the real hop itself.
+        // untouched - the caller applies the real hop itself.
         function deriveMoveEnd(from, to) {
             var copy = board.slice();
             var res = applyHop(copy, from, to);
@@ -744,12 +744,12 @@
 
         // Slide the piece from->to; shrink-fade a captured piece; crown on promotion.
         function animateHop(from, to, capIdx, promoted) {
-            // While reviewing, the pieces layer shows a past snapshot, not the live model —
+            // While reviewing, the pieces layer shows a past snapshot, not the live model -
             // so skip the visual (the model already advanced via applyHopFx). navLive() rebuilds
             // the current position from the model when the player returns to the live game.
             if (reviewIndex !== null) { clearDrag(); return; }
             // A hop arriving mid-drag (you're queuing a premove during the opponent's turn) must
-            // NOT yank your held piece back — that snap-back was the checkers copy of the chess
+            // NOT yank your held piece back - that snap-back was the checkers copy of the chess
             // "premove teleports back" bug. Only tear the drag down when this hop actually DELETES
             // the piece you're holding (it captures on dragFromSq): its panel + DragEnd handler
             // vanish, which would otherwise leak the ghost, and the premove is impossible anyway.
@@ -760,9 +760,9 @@
                 var dead = pieceEls[capIdx];
                 delete pieceEls[capIdx];
                 // Keep the translate3d that holds the piece on its square, and shrink it
-                // IN PLACE with pre-transform-scale2d (the game's idiom — it scales before
+                // IN PLACE with pre-transform-scale2d (the game's idiom - it scales before
                 // the translate, so the piece stays put). scale3d INSIDE the transform
-                // multiplied the translate offset and hurled the piece toward (0,0) — that
+                // multiplied the translate offset and hurled the piece toward (0,0) - that
                 // was the "flies up-left" artifact. opacity + scale animate via .mg-piece.
                 dead.AddClass("mg-captured");
                 dead.style.preTransformScale2d = "0.2";
@@ -794,7 +794,7 @@
         }
 
         // Illegal-move feedback (maintainer 2026-07-15): a wrong click/drop plays the Illegal
-        // cue and, when a capture is available, briefly flashes the piece(s) that MUST jump —
+        // cue and, when a capture is available, briefly flashes the piece(s) that MUST jump -
         // Russian checkers forces the capture and it isn't always obvious which piece is obliged.
         // The flash is a JS-toggled class (.mg-mustcap) removed after ~0.9s; a background-color
         // transition eases the amber in/out (mg.css). Squares with a mandatory capture right now, for my colour.
@@ -827,13 +827,13 @@
         function clearPremove() { premove = null; preSelected = -1; refreshHighlights(); }
         // A click while it's the opponent's turn: pick one of my pieces as the premove source,
         // then a second click sets the destination. We DON'T validate against the current board
-        // (the position will change after the opponent moves — e.g. a recapture lands on a square
+        // (the position will change after the opponent moves - e.g. a recapture lands on a square
         // that's still occupied by my own piece right now); the queued {from,to} is validated when
         // it's actually my turn (tryPremove) and silently dropped if it's no longer legal.
         // We DO gate on the piece's MOVEMENT GEOMETRY, though: occupancy changes after the
         // opponent moves but a man can never step sideways and a piece never leaves a diagonal,
         // so an impossible shape is rejected up-front (sound feedback) instead of being painted
-        // orange only to be silently discarded — the "premove anywhere" complaint.
+        // orange only to be silently discarded - the "premove anywhere" complaint.
         function premoveGeometryOk(from, to) {
             var v = board[from];
             if (colorOf(v) !== myColor || from === to) return false;
@@ -856,7 +856,7 @@
         }
         // Called the instant the turn flips to me (opponent's move just landed). Replays the
         // queued premove if it's legal on the NEW board, else discards it. A bare source pick with
-        // no destination (preSelected set, premove null) is ALSO cleared here — else the orange
+        // no destination (preSelected set, premove null) is ALSO cleared here - else the orange
         // "pending" wash on the picked cell would survive the turn flip forever (the stuck-orange bug).
         function tryPremove() {
             if (!premove) { if (preSelected >= 0) { preSelected = -1; refreshHighlights(); } return; }
@@ -870,7 +870,7 @@
                     return;
                 }
             }
-            refreshHighlights();   // premove no longer legal — just drop it
+            refreshHighlights();   // premove no longer legal - just drop it
         }
 
         function onCellClick(i) {
@@ -935,7 +935,7 @@
                 return;
             }
 
-            // Turn complete — mark last hop as turn-ending and relay the whole sequence.
+            // Turn complete - mark last hop as turn-ending and relay the whole sequence.
             chaining = false;
             clearSelection();
             var hops = pendingHops.slice();
@@ -1013,7 +1013,7 @@
                     return;
                 }
                 // The AUTHORITATIVE server rejected this hop (illegal / not-our-turn /
-                // bad token). Our optimistic prediction is now wrong — roll the whole
+                // bad token). Our optimistic prediction is now wrong - roll the whole
                 // turn back to the last server-confirmed state and resync via poll.
                 rejectAndResync(r.reason);
             }, function () {
@@ -1059,7 +1059,7 @@
                     if (mv.end) turn = (turn === WHITE ? BLACK : WHITE);
                     replayAccepted(seq + 1);
                 } else {
-                    // fewer accepted moves than expected — trust what we have
+                    // fewer accepted moves than expected - trust what we have
                     appliedSeq = seq;
                     replayAccepted(seq);
                 }
@@ -1077,7 +1077,7 @@
             startPolling();
         }
 
-        // Consecutive empty polls in the CURRENT wait — drives the adaptive cadence
+        // Consecutive empty polls in the CURRENT wait - drives the adaptive cadence
         // (MG.Net.pollDelay): fast for the first few, then slower while the opponent thinks.
         var pollMisses = 0;
         function startPolling() {
@@ -1132,7 +1132,7 @@
             if (wc === 0) { finish(BLACK); return; }
             if (bc === 0) { finish(WHITE); return; }
             // Draughts: you lose when YOU have no move ON YOUR TURN. Testing both colours
-            // unconditionally declared a side lost while it wasn't even on the clock — the
+            // unconditionally declared a side lost while it wasn't even on the clock - the
             // opponent still has to move and may well unblock the position first (self-play
             // showed 48 premature game-overs in 4000 games).
             if (!hasAnyMove(board, turn)) { finish(turn === WHITE ? BLACK : WHITE); return; }

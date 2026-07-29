@@ -1,10 +1,10 @@
 "use strict";
-// mg_timer_test.js — the turn-timer bar's colour must SNAP to green when a fresh turn starts.
+// mg_timer_test.js - the turn-timer bar's colour must SNAP to green when a fresh turn starts.
 //
 // Regression guard for a bug the maintainer hit in-game twice: "wait for the bar to go red, move,
 // and the next turn opens red too". arm() writes an inline transition-duration LIST ("25s, 0.3s")
 // for its two legs (transform + background-color). Once .mg-tt-anim is removed, the effective
-// transition-property is the base rule's SINGLE background-color — which consumes that list's
+// transition-property is the base rule's SINGLE background-color - which consumes that list's
 // FIRST entry, so removing the red class while the stale list was still live handed the COLOUR
 // 25 seconds and it crawled from red back to green. stop() and snapFull() now zero the duration
 // BEFORE touching any class, and arm() restores a real one.

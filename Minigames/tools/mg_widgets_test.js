@@ -1,5 +1,5 @@
 "use strict";
-// mg_widgets_test.js — exercise the state-free helpers mg_games.js exposes on MG.Widgets
+// mg_widgets_test.js - exercise the state-free helpers mg_games.js exposes on MG.Widgets
 // (winPos / parsePx / squareFromPanel / makeNavBtn / setNavState), which chess and checkers both
 // alias. They used to be duplicated per controller, where nothing could reach them; hosting them
 // on MG.Widgets makes them the ONLY part of those two files a Node test can touch, so they get

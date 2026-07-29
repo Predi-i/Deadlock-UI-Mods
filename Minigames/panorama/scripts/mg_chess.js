@@ -1,7 +1,7 @@
 "use strict";
 
 /*
- * mg_chess.js — Chess CONTROLLER for the Deadlock Minigames mod.
+ * mg_chess.js - Chess CONTROLLER for the Deadlock Minigames mod.
  *
  * Split out of mg_games.js (2026-07-24). Pure rules live in rules/chess.js (shared
  * byte-for-byte with the authoritative worker). The RX alias block (RC.idx re-export
@@ -33,7 +33,7 @@
     // Same alias idiom as checkers/ttt above: the engine lives in rules/chess.js (loaded
     // before this file and shared byte-for-byte with the authoritative server); here we
     // just bind local names identical to the old inline copies so the controller is
-    // untouched. Colour is +1 (white) / -1 (black) — the sign of the piece.
+    // untouched. Colour is +1 (white) / -1 (black) - the sign of the piece.
     var RX = MG.Rules.chess;
     var C_PAWN = RX.C_PAWN, C_KNIGHT = RX.C_KNIGHT, C_BISHOP = RX.C_BISHOP;
     var C_ROOK = RX.C_ROOK, C_QUEEN = RX.C_QUEEN, C_KING = RX.C_KING;
@@ -59,7 +59,7 @@
         var appliedSeq = 0;            // moves consumed from the shared server list
         var pollMisses = 0;            // consecutive empty polls this turn (drives the adaptive cadence)
         var selected = -1;
-        var legalTargets = [];         // [{to}] — shape kept identical to checkers so the drag code is shared
+        var legalTargets = [];         // [{to}] - shape kept identical to checkers so the drag code is shared
         var pollToken = 0;
         var destroyed = false;
         var gameOver = false;
@@ -80,7 +80,7 @@
 
         // Time control (§8 commit 2.3), mirrors createCheckers. session.timeControl = seconds per
         // side (0 = untimed). Authoritative on the SERVER online; offline (bot) it ticks locally.
-        // seat 0 = white/host, seat 1 = black/joiner — the clock indexes by seat.
+        // seat 0 = white/host, seat 1 = black/joiner - the clock indexes by seat.
         var timeControl = session.timeControl || 0;
         var clock = null;              // createClock handle, built in buildSidePanel
 
@@ -247,7 +247,7 @@
             lbl.text = text;
             // Shoved into the bottom-right corner so the letter clears the piece. Chess sprites are
             // 56px (nearly the whole 60px cell) but transparent in the corners, so (51,46) tucks the
-            // glyph past the visible figure — knights/rooks/bishops no longer cover it (maintainer
+            // glyph past the visible figure - knights/rooks/bishops no longer cover it (maintainer
             // 2026-07-16). Matches createCheckers.addCoord.
             var ox = kind === "file" ? (SQ - 9) : 3;       // rank → top-left; file → bottom-right
             var oy = kind === "file" ? (SQ - 14) : 2;
@@ -315,7 +315,7 @@
                     var pmTo = dropSquare(droppedPanel);
                     if (pmTo >= 0 && pmTo !== dragFromSq) {
                         if (premoveGeometryOk(dragFromSq, pmTo)) { premove = { from: dragFromSq, to: pmTo }; preSelected = -1; sfx("Premove"); }
-                        else sfx("Illegal");   // impossible shape for this piece — don't queue it
+                        else sfx("Illegal");   // impossible shape for this piece - don't queue it
                     }
                     clearDrag();
                     refreshHighlights();
@@ -324,7 +324,7 @@
                 // The turn flipped to me WHILE this piece was held: the drag began during the
                 // opponent's turn (a premove-grab, so DragStart set no selection), but the polled
                 // move landed before I released. Without this, DragEnd falls through to
-                // commitDropMultimethod, which bails on `selected < 0` and snaps the piece back —
+                // commitDropMultimethod, which bails on `selected < 0` and snaps the piece back -
                 // the "premove teleports back instead of moving" bug. Promote the grab to a live
                 // move: select dragFromSq and let the normal drop path validate + play it.
                 if (selected < 0 && dragFromSq >= 0 && cSign(board[dragFromSq]) === myColor) {
@@ -345,7 +345,7 @@
 
                 // winPos: shared, see MG.Widgets in mg_games.js
 
-        // Render scale = WINDOW px per LAYOUT px — see the checkers copy for the full rationale.
+        // Render scale = WINDOW px per LAYOUT px - see the checkers copy for the full rationale.
         // GetPositionWithinWindow is window px; actuallayoutwidth is layout px; dividing one by the
         // other only agreed at 100% UI scale, so drops landed off at 125%. Derive scale from two
         // board cells a known layout distance apart, via the proven GetPositionWithinWindow only.
@@ -409,7 +409,7 @@
             if (DRAG_DEBUG) status("DROP MISS win=" + wSq + " panel=" + aPanel + " over=" + bOver + " ghost=" + cGhost);
         }
 
-        // Raw dropped square (any of 0..63) with NO legal-target filter — used to queue a premove
+        // Raw dropped square (any of 0..63) with NO legal-target filter - used to queue a premove
         // while it's the opponent's turn (validated later by tryPremove). Same channels as
         // commitDropMultimethod, first valid one wins.
         function dropSquare(droppedPanel) {
@@ -566,7 +566,7 @@
         // Apply from→to to the model and mirror it visually: slide the mover, fade any capture
         // (incl. en passant), swap the sprite on promotion, and slide the rook on a castle.
         function applyChessMove(from, to) {
-            // While reviewing, the pieces layer shows a past snapshot — advance the MODEL only and
+            // While reviewing, the pieces layer shows a past snapshot - advance the MODEL only and
             // skip all visuals; navLive() rebuilds the current position from the model on return.
             if (reviewIndex !== null) {
                 var wasPawnEdge = cType(board[from]) === C_PAWN && (cRow(to) === 0 || cRow(to) === 7);
@@ -583,7 +583,7 @@
             else if (board[to] !== 0) capSq = to;
             var castled = (t === C_KING && Math.abs(tc - fc) === 2);
             // A move arriving mid-drag (you're queuing a premove during the opponent's turn) must
-            // NOT yank your held piece back — that was the "premove teleports back" bug. Only tear
+            // NOT yank your held piece back - that was the "premove teleports back" bug. Only tear
             // the drag down when this move actually DELETES the piece you're holding (it captures
             // on dragFromSq): its panel + DragEnd handler vanish, which would otherwise leak the
             // ghost, and the premove is impossible anyway. Any other move leaves the drag intact so
@@ -628,14 +628,14 @@
         // Premove (online only): pick a piece then a destination while it's the opponent's turn.
         // Occupancy isn't validated now (the position changes after the opponent moves); tryPremove
         // replays it when it's actually my turn and drops it if illegal on the new board. But we DO
-        // gate on the piece's MOVEMENT GEOMETRY up-front — a knight's L, a bishop's diagonal etc. —
+        // gate on the piece's MOVEMENT GEOMETRY up-front - a knight's L, a bishop's diagonal etc. -
         // so you can't queue a shape the piece can never make (the "premove anywhere" complaint).
         // Mirrors createCheckers.
         function canPremove() { return !gameOver && !destroyed && reviewIndex === null && !myTurn(); }
         function clearPremove() { premove = null; preSelected = -1; refreshHighlights(); }
         // True if `to` is a geometrically reachable square for whatever of my pieces sits on `from`
         // RIGHT NOW, ignoring occupancy/pins/check (those depend on the post-opponent board and are
-        // re-checked by tryPremove). Sliding pieces pass on direction alone — blockers may clear.
+        // re-checked by tryPremove). Sliding pieces pass on direction alone - blockers may clear.
         function premoveGeometryOk(from, to) {
             var v = board[from];
             if (cSign(v) !== myColor || from === to) return false;
@@ -675,7 +675,7 @@
                     return;
                 }
             }
-            refreshHighlights();   // premove no longer legal — just drop it
+            refreshHighlights();   // premove no longer legal - just drop it
         }
 
         function onCellClick(i) {
@@ -686,7 +686,7 @@
                     if (legalTargets[t].to === i) { doLocalMove(selected, i); return; }
                 }
                 // A selection is up and this isn't one of its targets: if it's not a re-select
-                // of another of my pieces, it's an illegal attempt — sound feedback (no forced
+                // of another of my pieces, it's an illegal attempt - sound feedback (no forced
                 // capture in chess, so no flash).
                 if (cSign(board[i]) !== myColor) { sfx("Illegal"); return; }
             }
@@ -724,14 +724,14 @@
             }
             status("Move sent. Waiting for opponent…");
             checkEnd();                    // may end the game (and set the win/draw status)
-            sendChessMove(from, to);       // always relay — the opponent must see even a mating move
+            sendChessMove(from, to);       // always relay - the opponent must see even a mating move
         }
 
         // ── bot (offline) ─────────────────────────────────────────────────────────────
         function scheduleBotTurn() { $.Schedule(0.45, botTurn); }
         // Drive the resumable search ONE root move per frame so the HUD never freezes (the
         // "лаги при ходе бота") and a premove can be grabbed while the bot thinks. Same depth-3
-        // alpha-beta, same strength — only the scheduling changed. Falls back to the one-shot
+        // alpha-beta, same strength - only the scheduling changed. Falls back to the one-shot
         // chessBotMove if the prep driver isn't present (older rules bundle).
         function botTurn() {
             if (destroyed || gameOver) return;
@@ -774,7 +774,7 @@
             });
         }
 
-        // Server rejected our move — rebuild the position from the accepted log (which
+        // Server rejected our move - rebuild the position from the accepted log (which
         // encodes castling / en passant / promotion via makeMove) and resume polling.
         function rejectAndResync(reason) {
             sfx("Illegal");
@@ -784,7 +784,7 @@
             cst = initialChessState();
             turn = 1;
             // The rejected move was optimistically pushed to history (doLocalMove pushes BEFORE
-            // sendChessMove), so the rebuilt board no longer matches those entries — reviewing one
+            // sendChessMove), so the rebuilt board no longer matches those entries - reviewing one
             // would render an impossible position. createCheckers already drops the list here;
             // this copy had drifted and kept the stale rows.
             history = []; reviewIndex = null;

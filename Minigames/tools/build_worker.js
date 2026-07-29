@@ -1,12 +1,12 @@
 "use strict";
 /*
- * build_worker.js — generate the deploy artifact server/worker.js.
+ * build_worker.js - generate the deploy artifact server/worker.js.
  *
  * Concatenates the SHARED rule engines (panorama/scripts/rules/*.js) in front of the
  * authored core (server/worker.core.js). The rule IIFEs see no `$` in the Worker
  * runtime, so they attach to globalThis.MGRules; the core then reads move validators
  * from there. This is what makes the server authority and the client predictor run
- * byte-for-byte identical rules — no hand-copied second source of truth.
+ * byte-for-byte identical rules - no hand-copied second source of truth.
  *
  * Run: node tools/build_worker.js   (then `npx wrangler deploy` from server/).
  * Run: node tools/build_worker.js --check   to VERIFY the committed worker.js matches its
@@ -31,7 +31,7 @@ function read(p) { return fs.readFileSync(p, "utf8"); }
 
 const banner =
     "/* ============================================================================\n" +
-    " * GENERATED FILE — DO NOT EDIT BY HAND.\n" +
+    " * GENERATED FILE - DO NOT EDIT BY HAND.\n" +
     " * Produced by `node tools/build_worker.js` from:\n" +
     " *   panorama/scripts/rules/*.js                              (shared with client)\n" +
     " *   server/pixelbattle_map.generated.js                     (generated land mask)\n" +
@@ -59,7 +59,7 @@ if (process.argv.indexOf("--check") !== -1) {
         console.log("worker.js is in sync with its sources");
         process.exit(0);
     }
-    console.log("STALE worker.js — it does not match its sources. Run: node tools/build_worker.js");
+    console.log("STALE worker.js - it does not match its sources. Run: node tools/build_worker.js");
     if (current !== null) console.log("  (committed " + current.length + " bytes, sources produce " + out.length + ")");
     process.exit(1);
 }

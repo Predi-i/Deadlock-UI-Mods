@@ -1,7 +1,7 @@
 "use strict";
 // Parity test: the client predictor and the authoritative server must agree on the
 // legal-move set for every reachable position, or a public game desyncs (client thinks
-// a move is legal, server rejects it — or vice-versa). Run: node tools/mg_parity_test.js
+// a move is legal, server rejects it - or vice-versa). Run: node tools/mg_parity_test.js
 //
 // Since the trust refactor BOTH sides run the SAME files: the client <include>s
 // panorama/scripts/rules/*.js, and tools/build_worker.js concatenates those very bytes
@@ -9,7 +9,7 @@
 // way (globalThis.MGRules from the source files) and the rules the SERVER way (sliced out
 // of the GENERATED worker.js), then checks that, over many random self-played positions,
 // the two engines return byte-identical legal-move sets. A mismatch means the build step
-// drifted from the source — exactly the desync this whole refactor exists to prevent.
+// drifted from the source - exactly the desync this whole refactor exists to prevent.
 
 const fs = require("fs");
 const path = require("path");
@@ -203,7 +203,7 @@ function makeRng(seed) { var s = seed >>> 0; return function () { s = (s * 16645
                 var act = C.botAction(st, seat, rng);
                 if (!C.applyAction(st, seat, act) && !C.applyAction(st, seat, { type: "fold" })) break;
             }
-            // Hand evaluation is what actually decides the pot — compare it on the real cards.
+            // Hand evaluation is what actually decides the pot - compare it on the real cards.
             for (s = 0; s < n; s++) {
                 if (!st.hole[s] || st.hole[s].length !== 2 || st.board.length < 3) continue;
                 evals++;
@@ -218,6 +218,6 @@ function makeRng(seed) { var s = seed >>> 0; return function () { s = (s * 16645
 
 console.log((failures === 0 ? "  ✓ " : "") + "");
 console.log(failures === 0
-    ? "ALL PARITY CHECKS PASSED (" + checks + " checks) — client predictor == server authority"
-    : "\n" + failures + " PARITY FAILURE(S) — client and server rules have DRIFTED (rebuild worker.js?)");
+    ? "ALL PARITY CHECKS PASSED (" + checks + " checks) - client predictor == server authority"
+    : "\n" + failures + " PARITY FAILURE(S) - client and server rules have DRIFTED (rebuild worker.js?)");
 process.exit(failures === 0 ? 0 : 1);

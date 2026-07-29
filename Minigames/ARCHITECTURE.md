@@ -393,6 +393,9 @@ These are the mistakes to NOT repeat. Every one was confirmed against the game's
    left cluster `width: fit-children` and add a separate flexible `.mg-header-spacer`
    (`fill-parent-flow(1.0)`) between it and the right controls — exactly how the footer's
    status+spacer+tools row works. Then fixed-width right controls always stay on-screen.
+   The waiting-room title is the widest state, so `setTitle` additionally applies
+   `.mg-credit-hidden` to `by Predi_i` only while `view === "waiting"`; Support and Discord remain,
+   and every other view restores the credit.
 
 
 13. **A raw option/badge panel with no CSS parks at its parent's top-left and shows always.**
@@ -570,6 +573,17 @@ These are the mistakes to NOT repeat. Every one was confirmed against the game's
      so 150/175/200% all land there; the menu goes higher. On 1440p+ the steps open up.
      ⚠ The clamp maths are covered by `tools/mg_uiscale_test.js` using heights measured off real
      1080p screenshots, but the RENDERED result still needs a VPK repack to confirm on ultrawide.
+
+21. **The update check is one-shot on the first DL Arcade open, and marker shapes are
+    fail-closed.** Panorama cannot read a JSON/version response, so `mg_ui.js` loads the current
+    release's tiny PNG directly from the public `main` branch and reads only its rendered
+    dimensions. A square marker means current; the deliberately 8:1 marker means outdated.
+    Classification uses orientation-independent aspect ratio because UI scale multiplies both
+    axes and some setups swap them. Only two distant bands are accepted (`<=1.35` current,
+    `>=4.0` outdated); the gap is an error, never a false update. The automatic request runs once
+    per loaded HUD session when the player first presses DL Arcade. The footer button remains a
+    manual retry. An outdated result opens a same-class-state popup with no auto-close timer.
+    `tools/mg_update_marker_test.js` simulates 50–400% UI scale, swapped axes and ±2px errors.
 
 ---
 

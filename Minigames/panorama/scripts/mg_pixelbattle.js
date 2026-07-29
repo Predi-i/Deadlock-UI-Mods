@@ -1,5 +1,5 @@
 /*
- * Pixel Battle — one persistent public canvas.
+ * Pixel Battle - one persistent public canvas.
  *
  * Deadlock does not expose GameUI.GetCursorPosition, so the editor uses a fixed
  * 32x16 hit grid. At overview zoom a click drills into that region; at 16x every
@@ -200,7 +200,7 @@
 
         // NOTE: there used to be a `stage` subtree here (a scaled/translated Panel holding a
         // base-map <Image> and a remote-overlay <Image>) for compositing the map locally. Rendering
-        // moved entirely server-side — updateView set stage.visibility = "collapse" on every call
+        // moved entirely server-side - updateView set stage.visibility = "collapse" on every call
         // and nothing ever set it back, so the subtree was permanently invisible, remoteImage never
         // received a non-empty url, and baseImage still decoded world_map.vtex into memory for a
         // panel nobody could see. Removed with its CSS (.mg-px-stage/.mg-px-map-image).
@@ -583,7 +583,7 @@
         }
 
         // Coalesce viewport fetches. Every D-pad press, zoom step and RESET calls updateView, and
-        // each one used to fire its own /api/pxview.png — a full 800x400 render, straight through
+        // each one used to fire its own /api/pxview.png - a full 800x400 render, straight through
         // SetImage so it bypasses mg_net's request queue entirely. At 16x a pan step is 8 canvas
         // pixels, so crossing the map is dozens of presses and dozens of full frames. Waiting a
         // frame-and-a-bit collapses a burst of presses into ONE fetch of the final position; a

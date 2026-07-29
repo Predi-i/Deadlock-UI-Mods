@@ -1,7 +1,7 @@
 "use strict";
 
 /*
- * Wordle — offline five-letter word game.
+ * Wordle - offline five-letter word game.
  *
  * No worker routes, matchmaking, or image-side-channel traffic are used. The controller
  * owns the answer, guesses, duplicate-letter scoring, and physical-keyboard input via a
@@ -97,7 +97,7 @@
         var destroyed = false, row = 0, current = "", over = false;
         var keyState = {}, keyButtons = {};
         // Fresh random answer per game. The old formula was (day + gamesStarted*37), which tied the
-        // word to the UTC day and only stepped it by a fixed 37 indices per Play Again — so two
+        // word to the UTC day and only stepped it by a fixed 37 indices per Play Again - so two
         // sessions on the same day always opened with the SAME word and the sequence after it was
         // fully predictable. This is an offline puzzle with nothing at stake, so plain Math.random
         // is the right tool (no CSPRNG needed).
@@ -136,7 +136,7 @@
 
         // Hidden TextEntry captures the physical keyboard. It overlaps the board (flow:none
         // boardwrap) so any click on the board gives it focus. `ontextentrychange` fires per
-        // keystroke and `oninputsubmit` on Enter — the game's own confirmed input idiom
+        // keystroke and `oninputsubmit` on Enter - the game's own confirmed input idiom
         // (chat.xml / popup_join_party.xml). The entry's own text is the source of truth for the
         // current guess: we read it back, upper-case it, drop anything that isn't A–Z, cap it at
         // 5, and mirror the result into the tiles. Backspace is handled for free (the text just

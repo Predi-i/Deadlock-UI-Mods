@@ -1,16 +1,16 @@
 "use strict";
 
 /*
- * mg_games.js — shared infrastructure for the Deadlock Minigames mod.
+ * mg_games.js - shared infrastructure for the Deadlock Minigames mod.
  *
  * Contains ONLY the shared widgets and the game registry. Individual game controllers
  * live in their own files and self-register via MG.Games.register:
- *   mg_checkers.js  — Checkers (Russian + English draughts), game id 1
- *   mg_ttt.js       — Tic-Tac-Toe, game id 2
- *   mg_chess.js     — Chess, game id 4
- *   mg_durak.js     — Durak, game id 3
- *   mg_connectfour.js — Connect Four, game id 5
- *   mg_poker.js     — Poker, game id 6
+ *   mg_checkers.js  - Checkers (Russian + English draughts), game id 1
+ *   mg_ttt.js       - Tic-Tac-Toe, game id 2
+ *   mg_chess.js     - Chess, game id 4
+ *   mg_durak.js     - Durak, game id 3
+ *   mg_connectfour.js - Connect Four, game id 5
+ *   mg_poker.js     - Poker, game id 6
  *
  * Load order (base_hud.xml): rules/* → mg_games → mg_checkers → mg_ttt → mg_chess
  *   → mg_durak → mg_connectfour → mg_poker → mg_ui
@@ -29,12 +29,12 @@
 
     // ── shared game clock (chess & checkers) ─────────────────────────────────
     // Two side clocks rendered above/below the board. There are two backing modes:
-    //   ONLINE  — the SERVER owns the banks and even the CHOICE of whether there's a clock at
+    //   ONLINE  - the SERVER owns the banks and even the CHOICE of whether there's a clock at
     //             all (Quick Match resolves the time control only once a joiner arrives). So the
     //             online clock is fully POLL-DISCOVERED: we build a hidden shell, poll
     //             /api/clocks ~1/s, reveal it on the first timed reply and render verbatim, or
     //             tear it down if the server says the lobby is untimed. `secs` is IGNORED online.
-    //   OFFLINE (bot) — no server, so we tick locally from `secs`: the side to move drains, and
+    //   OFFLINE (bot) - no server, so we tick locally from `secs`: the side to move drains, and
     //             when it hits 0 that side flags. secs=0 offline → no clock (a no-op stub).
     // onFlag(seat) fires once when a side runs out. seatNames labels each clock.
     function createClock(parent, secs, online, code, onFlag, seatNames, mySeat) {
@@ -54,7 +54,7 @@
         if (online) wrap.style.visibility = "collapse";   // hidden until the first timed poll reveals it
         var rows = [];
         // Build the two rows TOP→BOTTOM with MY seat at the bottom, so my clock sits under the
-        // board I'm playing from (my colour is always the bottom side — see toDisplay). The `rows`
+        // board I'm playing from (my colour is always the bottom side - see toDisplay). The `rows`
         // array stays SEAT-indexed (paint/setTurn/fireFlag are unchanged); only the visual creation
         // order changes. mySeat unknown (-1) keeps the legacy white-top/black-bottom order.
         var rowOrder = (mySeat === 0 || mySeat === 1) ? [1 - mySeat, mySeat] : [0, 1];
@@ -92,7 +92,7 @@
         // modes: offline it's the sole authority (flags locally at 0); online it runs BETWEEN the
         // infrequent server resyncs so the seconds tick smoothly every frame without a network hit.
         // Online the SERVER owns flag-fall, so a locally-interpolated 0 just PINS at 0 (no local
-        // fireFlag) until the next resync confirms it — interpolation drift must never mis-flag.
+        // fireFlag) until the next resync confirms it - interpolation drift must never mis-flag.
         function interpTick() {
             if (stopped || flagged >= 0) return;
             if (online && sec[0] === null) { $.Schedule(0.25, interpTick); return; } // await first resync
@@ -115,8 +115,8 @@
         // ONLINE resync: fetch the authoritative banks and SNAP the local banks to them, correcting
         // any interpolation drift and applying the server's flag-fall. Deliberately INFREQUENT
         // (RESYNC_S): the clock is the only thing that used to poll continuously, and at 2 requests
-        // per read it (a) swamped the strictly one-at-a-time image queue — stalling the move-poll so
-        // an opponent's move surfaced many seconds late, the "20s to see a move" desync — and (b)
+        // per read it (a) swamped the strictly one-at-a-time image queue - stalling the move-poll so
+        // an opponent's move surfaced many seconds late, the "20s to see a move" desync - and (b)
         // burned the daily request budget (2 short games ≈ 1200 requests came almost entirely from
         // this loop). Interpolating locally between rare resyncs keeps the display live for ~free.
         // Reveals the shell on the first timed reply; tears it down if the lobby is untimed.
@@ -133,7 +133,7 @@
                     paint(sec);
                     $.Schedule(RESYNC_S, resyncTick);
                 } else {
-                    // Server says this lobby has no clock — remove the empty shell and stop polling.
+                    // Server says this lobby has no clock - remove the empty shell and stop polling.
                     stopped = true;
                     if (!revealed) { try { wrap.DeleteAsync(0); } catch (e) {} }
                 }
@@ -150,7 +150,7 @@
             el: wrap,
             isTimed: true,
             // Set which seat's clock is running (the side to move). Banks the elapsed time to the
-            // seat that was running, then switches. Works identically online and offline now — the
+            // seat that was running, then switches. Works identically online and offline now - the
             // local interpolation is accurate at turn granularity, and the ~8s resync corrects any
             // drift against the authoritative server banks.
             setTurn: function (seat) {
@@ -169,18 +169,18 @@
     // clocks (two banks, server-authoritative), this is a SINGLE bar that runs ONLY while
     // it's the LOCAL player's turn: the controller calls start(onExpire) when the human is
     // put on the clock and stop() the instant they act (or a bot / online opponent takes
-    // over). If the bar empties, onExpire() fires exactly once — the controller turns that
+    // over). If the bar empties, onExpire() fires exactly once - the controller turns that
     // into a forfeit / elimination (offline it decides locally; online it sends a forfeit).
     //
-    // NO @keyframes (ARCHITECTURE §17 — a stray @keyframes rule silently BRICKS the whole
+    // NO @keyframes (ARCHITECTURE §17 - a stray @keyframes rule silently BRICKS the whole
     // modded HUD stylesheet). The drain is ONE `transform: translate3d(0, H, 0)` write with
     // a TURN_SECS-long LINEAR transition that lives on the .mg-tt-anim class (the
     // .mg-piece "set the value, let CSS tween it" idiom): a single assignment starts a smooth
     // slide with zero per-frame JS. A ~200ms $.Schedule loop only refreshes the seconds
-    // label + swaps the low/crit colour classes and arms the expiry — the motion is pure CSS.
+    // label + swaps the low/crit colour classes and arms the expiry - the motion is pure CSS.
     //
     // The wrap is ALWAYS laid out (never visibility:collapse) so the empty channel reserves its
-    // footprint permanently — the widget never pops in/out and the modal never jumps height when
+    // footprint permanently - the widget never pops in/out and the modal never jumps height when
     // a turn changes hands. Only the FILL + the seconds label toggle (opacity/text) between "my
     // turn" (draining) and idle (blank channel). TRACK_H is kept shorter than the shortest board
     // (TTT ≈336px) so the flow:none host always measures its height from the board, not the bar.
@@ -197,15 +197,15 @@
         // Position the wrap with ONE inline transform (inline beats any CSS transform):
         //  • Y: the wrap is vertical-align:center in the flow:none host, but it's flow-children:down
         //    (track 280 + 6 gap + 22 num = 308 tall), so the TRACK's centre sits half the below-track
-        //    stack — (6+22)/2 = 14px — ABOVE the wrap centre, i.e. 14px above the board centre. Nudge
+        //    stack - (6+22)/2 = 14px - ABOVE the wrap centre, i.e. 14px above the board centre. Nudge
         //    the whole wrap DOWN 14px so the BAR (not the wrap box) is centred on the board. (Was the
         //    "timer sits above the board centre" report, 2026-07-20.)
         //  • X: with opts.boardW, pin the bar to that board's LEFT EDGE (centre-align via
         //    .mg-tt-attached, then shove left by half the board + a gap). TTT/C4 pass it (narrow
-        //    centred boards — the far-left gutter looked detached). Poker/durak omit it: their felts
+        //    centred boards - the far-left gutter looked detached). Poker/durak omit it: their felts
         //    are wide (760/680) so a board-edge shove would push the bar off the modal's left margin,
-        //    and the left gutter already sits right at the felt's edge — keep the gutter placement.
-        var VNUDGE = 14;                   // (num margin-top 6 + num height 22) / 2 — see mg.css .mg-tt-num
+        //    and the left gutter already sits right at the felt's edge - keep the gutter placement.
+        var VNUDGE = 14;                   // (num margin-top 6 + num height 22) / 2 - see mg.css .mg-tt-num
         var vx = 0;
         if (opts && opts.boardW) {
             // .mg-tt-attached centres the wrap in the 844px inner zone; shove it left so its RIGHT
@@ -237,11 +237,11 @@
         function snapFull() {
             // Kill the transition duration FIRST, then drop the classes. arm() leaves an inline
             // "<secs>s, 0.3s" list behind, and once .mg-tt-anim is off, the effective
-            // transition-property is the base rule's single `background-color` — which consumes that
+            // transition-property is the base rule's single `background-color` - which consumes that
             // list's FIRST entry. So removing the red class with the stale list still in place gave
             // the colour 25 SECONDS: it crawled from red back to green, and the next turn opened red
             // (maintainer, in-game: "wait for red, move, and the new turn is red too").
-            // "0s" rather than "0.3s" because this is a SNAP — a fresh turn must start green with no
+            // "0s" rather than "0.3s" because this is a SNAP - a fresh turn must start green with no
             // visible fade, and a zero duration cannot crawl no matter how the lists line up.
             // (transition-duration: 0s is standard in the game's own CSS.)
             fill.style.transitionDuration = "0s";
@@ -276,7 +276,7 @@
             fill.SetHasClass("mg-tt-low", remain <= 10);
             fill.SetHasClass("mg-tt-crit", remain <= 5);
             // Warn ONCE as the clock crosses into the final 10s (only if the turn had more than
-            // 10s to begin with — durak's 10s Bito window would otherwise beep the instant it opens).
+            // 10s to begin with - durak's 10s Bito window would otherwise beep the instant it opens).
             if (!warned10 && remain <= 10 && curSecs > 10) {
                 warned10 = true;
                 if (MG.Sound) MG.Sound.play("TenSeconds");
@@ -298,7 +298,7 @@
                 warned10 = false;
                 expireCb = onExpire || null;
                 deadline = Date.now() + curSecs * 1000;
-                snapFull();               // reveals the fill (opacity) — the wrap is always laid out
+                snapFull();               // reveals the fill (opacity) - the wrap is always laid out
                 num.text = String(curSecs);
                 // Arm the CSS drain one frame later (the .mg-piece/.mg-anim arming trick): the
                 // full-snap must commit first, or the browser coalesces both writes and the bar
@@ -313,7 +313,7 @@
                 gen++;                     // invalidate any in-flight tick + arm
                 running = false;
                 expireCb = null;
-                fill.style.transitionDuration = "0s";      // BEFORE the classes — see snapFull
+                fill.style.transitionDuration = "0s";      // BEFORE the classes - see snapFull
                 fill.RemoveClass("mg-tt-anim");
                 fill.RemoveClass("mg-tt-low");
                 fill.RemoveClass("mg-tt-crit");
@@ -343,7 +343,7 @@
     // The picker reads `list` (id/key/name/enabled); `mount` dispatches to a factory
     // registered under the game's id. Games self-register their factory via
     // `register(...)` so a new game (e.g. Durak in mg_durak.js) can live in its own
-    // file: it just calls MG.Games.register(...) after this script has run — no edit
+    // file: it just calls MG.Games.register(...) after this script has run - no edit
     // to the dispatch here. A game with no registered factory falls back to the stub.
     MG.Games = {
         list: [
@@ -391,7 +391,7 @@
     // the panel), rather than setting container.style.backgroundImage. A Panel background paints
     // the .vtex at its native pixel size until the panel is re-laid-out, which is the ~300%
     // first-frame zoom this codebase kept hitting; a child <Image> sizes to its CSS box from frame
-    // one. Used for card faces/backs (durak, poker), chess pieces and the picker card art — four
+    // one. Used for card faces/backs (durak, poker), chess pieces and the picker card art - four
     // byte-identical copies of this lived in mg_chess/mg_durak/mg_poker/mg_ui.
     function setFace(container, url) {
         var img = container._faceImg;
@@ -407,14 +407,14 @@
     // ── board-widget helpers shared by chess and checkers ────────────────────
     // Only genuinely STATE-FREE helpers live here. The rest of those two files' drag/review
     // stacks (squareFromWindow, dropSquare, renderReview, tryPremove, …) read the controller's
-    // own closure — board, cells, piecesLayer, history, myColor — so they are not extractable
+    // own closure - board, cells, piecesLayer, history, myColor - so they are not extractable
     // without inventing a context object, and several that LOOK identical are not: sqName uses
     // colOf vs cCol, clockNames compares myColor against WHITE vs 1. Moving those on the
     // assumption that they matched would have silently broken one of the two games.
 
     // A panel's window-space position, or null. GetPositionWithinWindow returns either {x,y} or
     // an array depending on build, and can hand back an FLT_MAX sentinel for a panel that has not
-    // been laid out yet — both are normalised here so callers only see a usable point or null.
+    // been laid out yet - both are normalised here so callers only see a usable point or null.
     function winPos(panel) {
         if (!panel || !panel.GetPositionWithinWindow) return null;
         var r;
@@ -462,7 +462,7 @@
         if (enabled) btn.RemoveClass("mg-nav-disabled"); else btn.AddClass("mg-nav-disabled");
     }
 
-    // Shared widget factories reused by the separate game files via MG.Widgets — they can't
+    // Shared widget factories reused by the separate game files via MG.Widgets - they can't
     // see this file's closure otherwise. createTurnTimer: durak / poker / connect-four / ttt.
     // createClock: checkers / chess (the two-side game clock). createStub: the picker fallback.
     MG.Widgets = MG.Widgets || {};

@@ -1,11 +1,11 @@
 "use strict";
-// mg_uiscale_test.js — the ui-scale clamp must keep the TALLEST view on screen.
+// mg_uiscale_test.js - the ui-scale clamp must keep the TALLEST view on screen.
 //
 // Regression guard for a bug the maintainer hit in-game: at 125% the poker LEAVE button was
 // simply gone. Two separate ceilings existed and were the wrong way round:
 //   * .mg-modal max-height was 92%, and a percentage resolves in the SCALED space, so the real
 //     ceiling was 0.92*1080/1.25 = 795px against a poker view needing ~838px. The engine
-//     truncated the modal with no scrollbar and no warning — the footer just vanished.
+//     truncated the modal with no scrollbar and no warning - the footer just vanished.
 //   * the JS clamp used FIT_MARGIN 0.96, LOOSER than the CSS 0.92, so CSS always clipped first,
 //     and it measured the modal height ONCE (from the ~640px menu) rather than per view, so it
 //     never knew the ~838px poker felt existed.

@@ -1,4 +1,4 @@
-<!-- Deadlock Minigames — base_hud override. Injects the mod's scripts + styles.
+<!-- Deadlock Minigames - base_hud override. Injects the mod's scripts + styles.
      Load order matters: net → rules/* → mg_games (registry + shared widgets) →
      mg_checkers → mg_ttt → mg_chess → mg_durak → mg_connectfour → mg_poker →
      mg_pixelbattle → mg_wordle → ui. -->

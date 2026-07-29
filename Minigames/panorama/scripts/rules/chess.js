@@ -1,13 +1,13 @@
 "use strict";
 
 /*
- * rules/chess.js — pure chess rules, shared by client predictor + server authority.
+ * rules/chess.js - pure chess rules, shared by client predictor + server authority.
  * See rules/checkers.js header for the shared-namespace mechanism.
  *
  * Board is a flat Array(64), index = row*8 + col, row 0 = TOP (black back rank), row 7 =
  * BOTTOM (white back rank). Piece value: 0 empty; SIGN = colour (white > 0, black < 0);
  * ABS = type 1=pawn 2=knight 3=bishop 4=rook 5=queen 6=king. "Colour" here is +1 (white) /
- * -1 (black) — the sign of the piece — NOT the checkers WHITE/BLACK strings. White = host,
+ * -1 (black) - the sign of the piece - NOT the checkers WHITE/BLACK strings. White = host,
  * bottom rows (6-7), moves first. Promotion is ALWAYS to a queen (MVP). from/to alone
  * travels the wire: castling / en-passant / promotion are derived by makeMove.
  */
@@ -53,7 +53,7 @@
     // Game state that from/to alone can't carry: castling rights + en-passant target square +
     // the halfmove clock for the fifty-move rule (`half`: plies since the last capture or pawn
     // move). `half` is a plain int so cloneChessState stays allocation-cheap inside the search.
-    // Threefold repetition is NOT tracked here — it needs the whole game's position list, which
+    // Threefold repetition is NOT tracked here - it needs the whole game's position list, which
     // would make every search node copy an array. The caller keeps a positionKey() count instead
     // and passes it to chessResult().
     function initialChessState() { return { ep: -1, wK: true, wQ: true, bK: true, bQ: true, half: 0 }; }
@@ -247,7 +247,7 @@
 
     // "ongoing" | "checkmate" | "stalemate" | "draw50" | "repetition" | "insufficient"
     // for `color` to move. `repeats` is OPTIONAL: how many times the CURRENT position has now
-    // occurred in this game (the caller counts positionKey() hits — the rules module can't, since
+    // occurred in this game (the caller counts positionKey() hits - the rules module can't, since
     // it would have to carry the whole game history into every search node). Pass nothing and only
     // the position-local draws are reported, which is what the bot search wants.
     function chessResult(b, st, color, repeats) {
@@ -320,7 +320,7 @@
     }
 
     // Resumable variant of chessBotMove: SAME depth-3 alpha-beta, but one root move per step so the
-    // caller can yield between them. Panorama JS is single-threaded — the one-shot search froze the
+    // caller can yield between them. Panorama JS is single-threaded - the one-shot search froze the
     // whole HUD (the "лаги при ходе бота") and that freeze swallowed the premove-grab window.
     // Stepping across frames keeps the UI responsive; the node budget is shared across steps so the
     // total work (and playing strength) is unchanged.

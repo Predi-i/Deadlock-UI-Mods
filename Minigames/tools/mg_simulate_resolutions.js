@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /*
- * mg_simulate_resolutions.js — offline monitor-resolution tester for the Deadlock
+ * mg_simulate_resolutions.js - offline monitor-resolution tester for the Deadlock
  * Minigames image side-channel. Proves the encode/decode survives a given display
  * WITHOUT shipping a repack to a tester every time. Ported from QOLLOCK's
  * scripts/simulate_resolutions.js (same engine model), but minigames has a very
@@ -57,7 +57,7 @@ const BASE = 15;
 // panel. 63*9+15 = 582px < 600. All protocol values fit in 0..63.
 const LEVEL_MAX = 63;
 
-// Host panel styled size (layout units) — from mg_net.js host style. Response images
+// Host panel styled size (layout units) - from mg_net.js host style. Response images
 // are clamped to host*uiScale; we model that to catch any clamp regression.
 const HOST_W = 640, HOST_H = 1020;
 const PROBE_W = 600, PROBE_H = 1000;
@@ -161,7 +161,7 @@ function protocolValues() {
   for (let g = 1; g <= 9; g++) push("status game+1", 2, g);
   for (let c = 2; c <= 4; c++) push("djoin cap/seat", c, c);
 
-  // Durak dlog events (w, h) — full documented ranges.
+  // Durak dlog events (w, h) - full documented ranges.
   push("dlog trump", 2, 36);
   push("dlog open", 3, 4);
   push("dlog roles", 4, 16);
@@ -207,7 +207,7 @@ function testResolution(res, maxBias, verbose) {
   const hostLimitW = Math.round(HOST_W * uiScale);
   const hostLimitH = Math.round(HOST_H * uiScale);
 
-  // Probe calibration: the 600x1000 reference. Large, so no small-size bias — the
+  // Probe calibration: the 600x1000 reference. Large, so no small-size bias - the
   // client recovers scale from it exactly the way the game does.
   const probeActualW = render(PROBE_W, uiScale, 0, hostLimitW);
   const probeActualH = render(PROBE_H, uiScale, 0, hostLimitH);
@@ -251,7 +251,7 @@ function main() {
   const bi = args.indexOf("--bias");
   if (bi >= 0 && args[bi + 1]) maxBias = parseInt(args[bi + 1], 10) || 2;
 
-  console.log("Deadlock Minigames resolution simulator — STEP=" + STEP + " BASE=" + BASE +
+  console.log("Deadlock Minigames resolution simulator - STEP=" + STEP + " BASE=" + BASE +
     " LEVEL_MAX=" + LEVEL_MAX + ", worst-case engine bias 0.." + maxBias + "px");
   console.log("(uiScale = height/1080; every route value stressed across the full bias range)\n");
   console.log("  resolution              uiScale  values  result");
@@ -269,7 +269,7 @@ function main() {
 
   console.log("");
   if (allPass) {
-    console.log("ALL RESOLUTIONS PASS — every route value survives encode/decode on every modelled display.");
+    console.log("ALL RESOLUTIONS PASS - every route value survives encode/decode on every modelled display.");
     process.exit(0);
   } else {
     console.log("FAILURES DETECTED.");
