@@ -92,8 +92,8 @@
     var detailPanel = null;  // right-column detail container (title + description + action buttons)
     // Quick Match "Select Multiple": when ON, the right panel shows a checkbox list over the
     // multi-capable games and ONE Quick Match button that searches all ticked games at once
-    // (server /api/mquick pairs on set intersection). Durak is excluded (it needs its own room
-    // flow). State persists across card selection so the mode stays put while browsing.
+    // (server /api/mquick pairs on set intersection). A Durak match is always a two-seat pair
+    // and switches into its normal dealer room. State persists while browsing.
     var multiSelect = false;
     var multiChecked = {};   // { gameId: true } - games ticked for the multi-search
     // Time control (§8 commit 2.3), chess/checkers only. selectedTimeControl = seconds per side:
@@ -118,10 +118,9 @@
     var selectedVariant = "any";                    // host's pick (persists while browsing); default "Any"
     function hasVariant(id) { return !!CV_GAMES[id]; }
     function concreteVariant(v) { return v === "any" ? CV_ANY_DEFAULT : v; }
-    // Games supported by the public multi-quick endpoint. Durak (3) deliberately stays out:
-    // its online path is a private room rather than public matchmaking. It remains available
-    // through the normal single-game Create flow.
-    var MULTI_GAME_IDS = [1, 2, 4, 5];
+    // Games supported by the public multi-quick endpoint. Durak (3) participates heads-up;
+    // Poker remains private-table only.
+    var MULTI_GAME_IDS = [1, 2, 3, 4, 5];
 
     function isMultiGame(id) { for (var i = 0; i < MULTI_GAME_IDS.length; i++) if (MULTI_GAME_IDS[i] === id) return true; return false; }
 
@@ -831,10 +830,9 @@
         // Durak public Quick is heads-up; private Create/Join uses the dedicated 2–4-seat room.
         var onlineReady = true;
 
-        // "Select multiple games" toggle - ALWAYS visible (even on durak), a single check.
-        // When ON, you TICK games directly on the LEFT picker (a corner check); Quick Match
-        // searches the whole ticked set and Create picks a random one from it. Durak can't
-        // join a multi-quick (its own room flow) so it's never ticked, but the toggle stays.
+        // "Select multiple games" toggle - ALWAYS visible, a single check. When ON, you TICK
+        // games directly on the LEFT picker; Quick Match searches the whole set and Create picks
+        // a random one. Durak may be ticked and resolves to a heads-up auto-start dealer room.
         var toggleRow = $.CreatePanel("Panel", detailPanel, "");
         toggleRow.AddClass("mg-multi-toggle-row");
         var toggle = $.CreatePanel("Button", toggleRow, "");
@@ -1561,6 +1559,7 @@
     //   codeCaption, hint,       // code box; omitted entirely when `searching` is set
     //   searching,               // public matchmaking: show this line instead of a code
     //   startLabel,              // "Start" / "Deal"
+    //   autoStartOnly,           // hide host button when a full quick pair starts server-side
     //   startingMsg, startVerb,  // "Starting Durak…" / "deal"
     //   waitHost, waitJoiner,    // status while waiting
     //   readyMsg,                // fn(players) → host status once ≥2 are seated
@@ -1610,7 +1609,7 @@
 
         var row = $.CreatePanel("Panel", modalBody, "");
         row.AddClass("mg-actions");
-        if (isHost) {
+        if (isHost && !cfg.autoStartOnly) {
             var startBtn = $.CreatePanel("Button", row, "");
             startBtn.AddClass("mg-btn"); startBtn.AddClass("mg-btn-primary");
             var sl = $.CreatePanel("Label", startBtn, ""); sl.text = cfg.startLabel;
@@ -1668,19 +1667,21 @@
         tick();
     }
 
-    // 2-seat durak room, reached from Quick Match (public) or a generic join of a durak lobby.
+    // 2-seat Durak room reached from single- or multi-Quick. Matchmaking fills both declared
+    // seats, so the server starts it automatically; there is no need to flash a Start button.
     function renderRoom(code, isHost, isPublic, ctx) {
         renderLobbyRoom({
             code: code, isHost: isHost, ctx: ctx, gameId: 3, cap: 2, seat: isHost ? 0 : 1,
             title: "Durak Room", joinedTitle: "Joined Durak Room",
             searching: isPublic
-                ? (isHost ? "Waiting for a Durak opponent…" : "Matched. Waiting for host start…")
+                ? (isHost ? "Waiting for a Durak opponent…" : "Matched. Starting Durak…")
                 : null,
             codeCaption: "Durak lobby code:",
-            hint: "2-player online Durak. Host starts after the second player joins.",
+            hint: "2-player online Durak. Starts automatically when matched.",
             startLabel: "Start", startingMsg: "Starting Durak…", startVerb: "start",
-            waitHost: "Waiting for player 2…", waitJoiner: "Waiting for host to start…",
-            readyMsg: function () { return "Player 2 joined. Press Start."; },
+            autoStartOnly: true,
+            waitHost: "Waiting for player 2…", waitJoiner: "Match found. Starting Durak…",
+            readyMsg: function () { return "Player 2 joined. Starting Durak…"; },
             roomApi: MG.Api.room, startApi: MG.Api.start,
             closedMsg: "Lobby closed."
         });
@@ -1692,10 +1693,10 @@
             code: code, isHost: isHost, ctx: ctx, gameId: 6, cap: cap, seat: mySeat,
             title: "Poker Table", joinedTitle: "Joined Poker Table",
             codeCaption: "Poker table code:",
-            hint: cap + "-seat No-Limit Hold'em. Host deals once everyone's in.",
+            hint: cap + "-seat No-Limit Hold'em. Auto-deals when full; host may deal early.",
             startLabel: "Deal", startingMsg: "Dealing…", startVerb: "deal",
             waitHost: "Waiting for players…", waitJoiner: "Waiting for the host to deal…",
-            readyMsg: function (n) { return n + "/" + cap + " seated. Press Deal."; },
+            readyMsg: function (n) { return n + "/" + cap + " seated. Press Deal or wait until full."; },
             roomApi: MG.Api.proom, startApi: MG.Api.pstart,
             closedMsg: "Table closed."
         });
@@ -1708,10 +1709,10 @@
             code: code, isHost: isHost, ctx: ctx, gameId: 3, cap: cap, seat: seat,
             title: "Durak Table", joinedTitle: "Joined Durak Table",
             codeCaption: "Durak table code:",
-            hint: cap + "-player online Durak. Host starts once everyone's in.",
+            hint: cap + "-player online Durak. Auto-starts when full; host may start early.",
             startLabel: "Start", startingMsg: "Starting Durak…", startVerb: "start",
             waitHost: "Waiting for players…", waitJoiner: "Waiting for the host to start…",
-            readyMsg: function (n) { return n + "/" + cap + " seated. Press Start."; },
+            readyMsg: function (n) { return n + "/" + cap + " seated. Press Start or wait until full."; },
             roomApi: MG.Api.droom, startApi: MG.Api.start,
             closedMsg: "Table closed."
         });
@@ -1899,6 +1900,11 @@
                 if (token !== statusPollToken || (ctx && !actionAlive(ctx))) return;
                 if (st.gone) { renderMenu(); setStatus("⚠ Lobby closed."); return; }
                 if (st.players === 2 && st.game > 0) {
+                    ctx.gameId = st.game;
+                    if (isDurakOnlineGame(st.game)) {
+                        renderRoom(code, isHost, true, ctx);
+                        return;
+                    }
                     mountOnlineGame(st.game, code, isHost, {}, ctx);
                     return;
                 }

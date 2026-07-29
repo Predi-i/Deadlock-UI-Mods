@@ -3,7 +3,8 @@
 Online mini-games played inside Deadlock's pause (Esc) menu. **Checkers** (Russian
 draughts), **Tic-Tac-Toe**, **Chess** and **Connect Four** support online play and bots.
 **Durak** and **Poker** support 2–4-player bot games and private online tables backed by
-an authoritative dealer; public Durak matchmaking remains heads-up. **Pixel Battle** is
+an authoritative dealer; full private tables auto-start, while public Durak matchmaking
+remains heads-up. **Pixel Battle** is
 a persistent shared canvas, while **Wordle** is fully offline.
 
 Four ways to play:
@@ -12,7 +13,8 @@ Four ways to play:
   who pressed Quick Match. No code needed.
 - **Quick Match → Select Multiple** — tick several eligible games at once; the server pairs
   you with anyone whose ticked set overlaps yours and fixes the shared lobby to a matched
-  game. Durak and Poker use their dedicated dealer/lobby flows and are not in this pool.
+  game. Durak participates as a heads-up-only option and auto-starts after matching; Poker
+  remains private-table only.
 - **Create Game / Join** — private match with a friend: one player clicks **Create Game**
   and reads out the 4-digit code, the other clicks **Join** and types it in.
 - **Play vs Bot** — offline, no server.

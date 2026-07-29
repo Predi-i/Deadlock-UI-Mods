@@ -759,19 +759,17 @@ async function main() {
         ok(ft.w === 9 && ft.h === 3, "c4: foreign token → (9,3) bad-token");
     })();
 
-    // ── durak: authoritative dealer (2 players), private deal + public log ──
+    // ── durak: authoritative dealer (2 players), automatic deal + public log ──
     await (async function () {
         var L = await seatedLobby(3, "DHOST123", "DJOIN123");   // create(game=3) + join → seats 0/1
-        // Waiting room: both seated, not started yet.
+        // The declared two-seat room starts atomically when the joiner fills it.
         var rm = await req(L.hub, "/api/room.png?code=" + L.code);
-        ok(rm.w === 2 && rm.h === 1, "durak: room shows 2 players, not started");
-        // Only the host (seat 0) may start.
-        var badStart = await req(L.hub, "/api/start.png?code=" + L.code + "&tok=DJOIN123");
-        ok(badStart.w === 9 && badStart.h === 1, "durak: non-host start → (9,1)");
+        ok(rm.w === 2 && rm.h === 2, "durak: full 2-seat room auto-starts");
+        // A repeated host start is harmless/idempotent.
         var st = await req(L.hub, "/api/start.png?code=" + L.code + "&tok=DHOST123");
-        ok(st.w === 1 && st.h === 1, "durak: host start deals the game");
+        ok(st.w === 1 && st.h === 1, "durak: host start after auto-start is idempotent");
         var rm2 = await req(L.hub, "/api/room.png?code=" + L.code);
-        ok(rm2.w === 2 && rm2.h === 2, "durak: room now shows started");
+        ok(rm2.w === 2 && rm2.h === 2, "durak: room remains started");
         // Public log: TRUMP, OPEN, DRAW(0,6), DRAW(1,6).
         var e0 = await req(L.hub, "/api/dlog.png?code=" + L.code + "&since=0");
         ok(e0.w === 2 && e0.h >= 2 && e0.h <= 37, "durak: dlog[0] = TRUMP (2, trumpCard+1)");
@@ -830,22 +828,23 @@ async function main() {
         ok(j1.w === 3 && j1.h === 2, "durak-N: djoin → cap 3, seat index 1");
         var j1b = await req(hub, "/api/djoin.png?code=" + code + "&tok=DKPLR201");
         ok(j1b.w === 3 && j1b.h === 2, "durak-N: djoin re-join idempotent");
+        // Before the table is full, only seat 0 may choose to start early.
+        var badStart = await req(hub, "/api/start.png?code=" + code + "&tok=DKPLR201");
+        ok(badStart.w === 9 && badStart.h === 1, "durak-N: non-host cannot start a partial table");
         var j2 = await req(hub, "/api/djoin.png?code=" + code + "&tok=DKPLR301");
         ok(j2.w === 3 && j2.h === 3, "durak-N: djoin → cap 3, seat index 2");
         // Simulate a lost response: seat 1 retries only after seat 2 has joined. The response
         // must still carry seat 1, not the table's current player count.
         var j1c = await req(hub, "/api/djoin.png?code=" + code + "&tok=DKPLR201");
         ok(j1c.w === 3 && j1c.h === 2, "durak-N: late re-join preserves the original seat index");
-        // Table now full: a 4th join is refused.
+        // Table is already running: an existing seat may retry, but a new token is refused.
         var j3 = await req(hub, "/api/djoin.png?code=" + code + "&tok=DKPLR401");
-        ok(j3.w === 21, "durak-N: djoin into a full table → (21,1)");
-        // Only the host (seat 0) starts, and dealing sets started + numPlayers=3.
-        var badStart = await req(hub, "/api/start.png?code=" + code + "&tok=DKPLR201");
-        ok(badStart.w === 9 && badStart.h === 1, "durak-N: non-host start → (9,1)");
+        ok(j3.w === 22 && j3.h === 1, "durak-N: new join after automatic start → (22,1)");
+        // Filling the declared cap deals immediately; an explicit host start remains idempotent.
         var st = await req(hub, "/api/start.png?code=" + code + "&tok=DKHOST01");
-        ok(st.w === 1 && st.h === 1, "durak-N: host start deals the game");
+        ok(st.w === 1 && st.h === 1, "durak-N: host start after auto-start is idempotent");
         var dr2 = await req(hub, "/api/droom.png?code=" + code);
-        ok(dr2.w === 53 && dr2.h === 3, "durak-N: droom now shows started (players 3, +50 band)");
+        ok(dr2.w === 53 && dr2.h === 3, "durak-N: full declared cap auto-starts (players 3, +50 band)");
         // Three DRAW events (one per seat) confirm a 3-hand deal, plus TRUMP + OPEN up front.
         var e0 = await req(hub, "/api/dlog.png?code=" + code + "&since=0");
         ok(e0.w === 2, "durak-N: dlog[0] = TRUMP");
@@ -972,19 +971,17 @@ async function main() {
         // Room shows 1 seated, cap 2, not started.
         var pr = await req(hub, "/api/proom.png?code=" + code);
         ok(pr.w === 1 && pr.h === 2, "poker: proom shows 1 player, cap 2, not started");
-        // A second player joins → learns its own seat (1) and the cap (2).
+        // A second player joins, learns its seat, and fills the declared cap.
         var pj = await req(hub, "/api/pjoin.png?code=" + code + "&tok=PJOIN123");
         ok(pj.w === 2 && pj.h === 2, "poker: pjoin → cap 2, seat index 1");
         // Re-join is idempotent (poll safety).
         var pj2 = await req(hub, "/api/pjoin.png?code=" + code + "&tok=PJOIN123");
         ok(pj2.w === 2 && pj2.h === 2, "poker: pjoin re-join idempotent");
-        // Only the host (seat 0) starts.
-        var badStart = await req(hub, "/api/pstart.png?code=" + code + "&tok=PJOIN123");
-        ok(badStart.w === 9 && badStart.h === 1, "poker: non-host start → (9,1)");
-        var ps = await req(hub, "/api/pstart.png?code=" + code + "&tok=PHOST123");
-        ok(ps.w === 1 && ps.h === 1, "poker: host start deals the first hand");
         var pr2 = await req(hub, "/api/proom.png?code=" + code);
-        ok(pr2.w === 52 && pr2.h === 2, "poker: proom now shows started (players 2, started band +50)");
+        ok(pr2.w === 52 && pr2.h === 2, "poker: full declared cap auto-deals (players 2, +50 band)");
+        // A repeated host deal is harmless/idempotent.
+        var ps = await req(hub, "/api/pstart.png?code=" + code + "&tok=PHOST123");
+        ok(ps.w === 1 && ps.h === 1, "poker: host deal after auto-deal is idempotent");
         // Public log opens with a HAND event (2, button+1).
         var h0 = await req(hub, "/api/plog.png?code=" + code + "&since=0");
         ok(h0.w === 2 && (h0.h === 1 || h0.h === 2), "poker: plog[0] = HAND (2, button+1)");
@@ -1174,6 +1171,29 @@ async function main() {
         // The fixed lobby is a real chess game: white e2-e4 is accepted.
         var mv = await req(hm, "/api/move.png?code=" + mc + "&from=" + sq(6, 4) + "&to=" + sq(4, 4) + "&end=1&tok=MQHOST01");
         ok(mv.w === 1 && mv.h === 1, "mquick: fixed game plays chess (e2-e4 accepted)");
+    })();
+
+    // ── mquick: Durak resolves to one heads-up pair and auto-starts its dealer flow ──
+    await (async function () {
+        var hm = new Hub({ storage: new FakeStorage() });
+        var mh = await req(hm, "/api/mquick.png?games=2,3&tok=MQDHOST1");
+        var mc = decCode(mh);
+        ok(codeHost(mh), "mquick/durak: first caller waits as host");
+        var mj = await req(hm, "/api/mquick.png?games=3&tok=MQDJOIN1");
+        ok(!codeHost(mj) && decCode(mj) === mc,
+            "mquick/durak: intersecting caller joins the same lobby");
+        var ms = await req(hm, "/api/status.png?code=" + mc);
+        ok(ms.w === 2 && ms.h === 4,
+            "mquick/durak: match resolves to game 3 with exactly two players");
+        var room = await req(hm, "/api/room.png?code=" + mc);
+        ok(room.w === 2 && room.h === 2,
+            "mquick/durak: filled two-seat room starts automatically");
+        var first = await req(hm, "/api/dlog.png?code=" + mc + "&since=0");
+        ok(first.w === 2 && first.h >= 2 && first.h <= 37,
+            "mquick/durak: authoritative deal begins with TRUMP");
+        var third = await req(hm, "/api/quick.png?game=3&tok=MQDTHIRD");
+        ok(codeHost(third) && decCode(third) !== mc,
+            "mquick/durak: a third caller opens a new pair instead of joining the running match");
     })();
 
     // ── mquick: non-intersecting sets do NOT pair ──
@@ -1489,7 +1509,7 @@ async function main() {
         // F) Start with an unfilled hole: the deal must run and fold the empty seat out, so the
         // remaining players get a live game instead of a table that waits on a ghost.
         var ghub = new Hub({ storage: new FakeStorage() });
-        var gc = await req(ghub, "/api/dcreate.png?n=3&tok=GAPHOST1");
+        var gc = await req(ghub, "/api/dcreate.png?n=4&tok=GAPHOST1");
         var gcode = decCode(gc);
         await req(ghub, "/api/djoin.png?code=" + gcode + "&tok=GAPJ0001");
         await req(ghub, "/api/djoin.png?code=" + gcode + "&tok=GAPJ0002");
@@ -1507,11 +1527,13 @@ async function main() {
         ok(sawGapLeft, "gap: the empty seat is folded out via a LEFT event");
         // Poker takes the same route, but a hole just starts with a zero stack (newHand sits it out).
         var qhub = new Hub({ storage: new FakeStorage() });
-        var qc = await req(qhub, "/api/pcreate.png?n=3&tok=GAPPHST1");
+        var qc = await req(qhub, "/api/pcreate.png?n=4&tok=GAPPHST1");
         var qcode = decCode(qc);
         await req(qhub, "/api/pjoin.png?code=" + qcode + "&tok=GAPPJ001");
         await req(qhub, "/api/pjoin.png?code=" + qcode + "&tok=GAPPJ002");
         await req(qhub, "/api/leave.png?code=" + qcode + "&tok=GAPPJ001");
+        var qbad = await req(qhub, "/api/pstart.png?code=" + qcode + "&tok=GAPPJ002");
+        ok(qbad.w === 9 && qbad.h === 1, "gap: non-host cannot deal a partial poker table");
         var qst = await req(qhub, "/api/pstart.png?code=" + qcode + "&tok=GAPPHST1");
         ok(qst.w === 1 && qst.h === 1, "gap: host can deal a poker table with a hole in it");
         ok((await req(qhub, "/api/proom.png?code=" + qcode)).w >= 50, "gap: poker table reports started");
@@ -1526,7 +1548,7 @@ async function main() {
         // Poker reuses and restores a pre-start hole exactly like Durak. A later leave must count
         // the replacement as live rather than deleting the table out from under it.
         var pHoleHub = new Hub({ storage: new FakeStorage() });
-        var pHoleCreate = await req(pHoleHub, "/api/pcreate.png?n=3&tok=PHOLHOST");
+        var pHoleCreate = await req(pHoleHub, "/api/pcreate.png?n=4&tok=PHOLHOST");
         var pHoleCode = decCode(pHoleCreate);
         await req(pHoleHub, "/api/pjoin.png?code=" + pHoleCode + "&tok=PHOLPLR1");
         await req(pHoleHub, "/api/pjoin.png?code=" + pHoleCode + "&tok=PHOLPLR2");

@@ -700,6 +700,7 @@ export class Hub {
         lobby.seats = lobby.seats || [null, null];
         lobby.seats[1] = { tok: q.get("tok") || "" }; // joiner takes seat 1
         initClock(lobby);                          // arm the bank now that both seats are present
+        autoStartDealerIfFull(lobby);              // a private heads-up Durak room is now full
         await this.storage.put("l:" + code, lobby);
         // height carries the time-control INDEX+1 (0..4 → 1..5) so the joiner learns the host's
         // chosen bank without picking it. Index (not raw seconds) keeps it inside one level dim.
@@ -977,10 +978,10 @@ export class Hub {
         if (!validTok(q.get("tok"))) return d(9, 3);
         const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
         if (!lobby || lobby.game !== 3 || !lobby.cap) return d(20, 1); // missing / not an N-seat durak lobby
-        if (lobby.state && lobby.state.started) return d(22, 1);       // already started
         const existingSeat = seatOf(lobby, q.get("tok"));
         if (existingSeat >= 0)                                           // idempotent re-join (poll safety)
           return d(lobby.cap, existingSeat + 1);                         // preserve the caller's seat
+        if (lobby.state && lobby.state.started) return d(22, 1);       // already started
         if (presentCount(lobby) >= lobby.cap) return d(21, 1);        // full
         // Reuse a hole a pre-start leave left behind before growing the table, so a 3-seat lobby
         // whose seat 1 walked away can be refilled instead of overflowing past `cap`.
@@ -991,6 +992,7 @@ export class Hub {
         }
         else { lobby.seats.push({ tok: q.get("tok") || "" }); lobby.players++; }
         lobby.t = nowSeq();
+        autoStartDealerIfFull(lobby);
         await this.storage.put("l:" + code, lobby);
         // width = cap, height = the seat index this joiner took +1 (so it learns its seat)
         return d(lobby.cap, (holeD >= 0 ? holeD : lobby.seats.length - 1) + 1);
@@ -1028,10 +1030,10 @@ export class Hub {
         if (!validTok(q.get("tok"))) return d(9, 3);
         const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
         if (!lobby || lobby.game !== 6) return d(20, 1);   // missing / not a poker lobby
-        if (lobby.state && lobby.state.started) return d(22, 1); // already started
         const existingSeat = seatOf(lobby, q.get("tok"));
         if (existingSeat >= 0)                                // idempotent re-join (poll safety)
           return d(lobby.cap || 4, existingSeat + 1);          // preserve the caller's seat
+        if (lobby.state && lobby.state.started) return d(22, 1); // already started
         if (presentCount(lobby) >= (lobby.cap || 4)) return d(21, 1); // full
         // Reuse a hole a pre-start leave left behind before growing the table (see /api/djoin).
         const holeP = seatHole(lobby);
@@ -1041,6 +1043,7 @@ export class Hub {
         }
         else { lobby.seats.push({ tok: q.get("tok") || "" }); lobby.players++; }
         lobby.t = nowSeq();
+        autoStartDealerIfFull(lobby);
         await this.storage.put("l:" + code, lobby);
         // width = cap, height = the seat index this joiner took +1 (so it learns its seat)
         return d(lobby.cap || 4, (holeP >= 0 ? holeP : lobby.seats.length - 1) + 1);
@@ -1156,6 +1159,7 @@ export class Hub {
     w.seats[1] = { tok: tok || "" };           // joiner takes seat 1
     initClock(w);                              // (re)anchor the bank to the JOIN moment, so a host that
                                                // waited in the public queue isn't billed for idle matchmaking
+    autoStartDealerIfFull(w);                  // heads-up Durak starts as soon as matchmaking fills it
     await this.storage.put("l:" + waitCode, w);
     await this.clearQueuesFor(w, waitCode);
   }
@@ -1292,10 +1296,10 @@ const THROTTLED_ROUTES = {
 // create/quick reject it up front and move never relays it.
 const SUPPORTED_GAMES = { 1: 1, 2: 1, 3: 1, 4: 1, 5: 1 };
 
-// Games eligible for MULTI-select quick match. Durak (3) is excluded: it uses a wholly
-// separate route set (room/start/dact/…), so it can't share the 2-int move/poll lobby a
-// multi-lobby becomes. Parse "1,2,4,5" → a de-duplicated, sorted array of valid ids.
-const MQUICK_GAMES = { 1: 1, 2: 1, 4: 1, 5: 1 };
+// Games eligible for MULTI-select quick match. Durak (3) is safe here because every mquick
+// lobby is a two-seat pair: once resolved it switches to the normal room/dlog/ddraw dealer
+// flow and auto-starts. Poker remains private-table only. Parse "1,2,3,4,5" into a sorted set.
+const MQUICK_GAMES = { 1: 1, 2: 1, 3: 1, 4: 1, 5: 1 };
 function parseGameSet(raw) {
   if (!raw) return [];
   const parts = String(raw).split(",");
@@ -1474,6 +1478,19 @@ function liveSeatCount(lobby) {
     n++;
   }
   return n;
+}
+
+// Dealer rooms may start early by host request, but once every DECLARED seat is occupied there
+// is nothing left to wait for. Start server-side so all clients observe one atomic state change;
+// this also covers heads-up Durak quick/mquick lobbies, whose implicit cap is two.
+function autoStartDealerIfFull(lobby) {
+  if (!lobby || !lobby.state || lobby.state.started) return false;
+  const cap = lobby.cap || (lobby.game === 3 ? 2 : 0);
+  if (cap < 2 || liveSeatCount(lobby) < cap) return false;
+  const result = lobby.game === 3 ? durakStart(lobby, 0)
+    : lobby.game === 6 ? pokerStart(lobby, 0)
+    : null;
+  return !!(result && result.ok);
 }
 
 // A pre-start replacement inherits a vacated index, not the previous occupant's departure.

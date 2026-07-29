@@ -117,8 +117,12 @@ const pixel = source("mg_pixelbattle.js");
 const durak = source("mg_durak.js");
 const poker = source("mg_poker.js");
 
-assert(/var MULTI_GAME_IDS = \[1, 2, 4, 5\];/.test(ui),
-    "multi-quick tick set must mirror the server and exclude Durak");
+assert(/var MULTI_GAME_IDS = \[1, 2, 3, 4, 5\];/.test(ui),
+    "multi-quick tick set must include heads-up Durak");
+assert(/function waitForMultiMatch[\s\S]*?isDurakOnlineGame\(st\.game\)[\s\S]*?renderRoom\(code, isHost, true, ctx\)/.test(ui),
+    "a multi-quick Durak result must enter its two-seat dealer room");
+assert(/function renderRoom[\s\S]*?autoStartOnly:\s*true/.test(ui),
+    "a matched heads-up Durak room must rely on server auto-start");
 assert(/function checkUpdates[\s\S]*?MG\.Net\.loadImage\(url,/.test(ui),
     "update marker must load through the shared MG.Net FIFO");
 assert(!/function checkUpdates[\s\S]*?img\.SetImage\(url\)/.test(ui),

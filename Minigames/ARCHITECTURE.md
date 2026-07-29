@@ -34,8 +34,10 @@ Picker cards show a custom **`.vtex` image** (drawn by the maintainer, compiled 
 drawn by a child `<Image>` via `setFace()` in `renderMenu` (trap 14) — `s2r://panorama/
 images/cards/<key>.vtex`. Missing art falls back to a plain dark card.
 
-Three ways to play (see `mg_ui.js`):
+Four ways to play (see `mg_ui.js`):
 - **Quick Match** — public matchmaking; server pairs you with anyone else who pressed it.
+- **Quick Match → Select Multiple** — one search may offer game ids 1–5 and pairs on set
+  intersection. A Durak result always resolves to a two-seat dealer room and auto-starts.
 - **Create / Join** — private match via a shared 4-digit code.
 - **Play vs Bot** — fully offline, no server, no network calls at all.
 
@@ -750,10 +752,8 @@ the codec); the client derives it by replaying the shared rules on the same boar
 ## 8.6 Durak internals (mg_durak.js)
 
 Durak is the first game that does NOT fit the 2-player, "a move is two small ints"
-transport, so it is being built in **stages**. Stage 1 (shipping) is **offline vs bot
-only** — no server touched at all, exactly like the other games' bot mode. Online 2–4
-player play is Stage 2 and needs a different transport (see below); the pure rules are
-written once and reused by both.
+transport. It ships both offline-vs-bot and authoritative online play for 2–4 players;
+the pure rules are shared by both paths.
 
 - **Two-section file, like chess.** `// ── durak: pure rules ──` … `// ── durak
   controller ──`. The pure section is self-contained (no `$`, no `MG`) so
@@ -818,10 +818,14 @@ written once and reused by both.
   the table is public), pulls its own card identities from `ddraw`, and sends its own actions
   via `dact` **without** optimistic local mutation (the echoed event is the single source of
   truth, so a rejected action simply never lands — no rollback). Roles rotate deterministically
-  after each bout (2-player: Bito swaps attacker/defender, Take keeps them). The online buttons
+  after each bout (2-player: Bito swaps attacker/defender, Take keeps them). Private 2–4-seat
+  rooms auto-start when their declared cap is filled; the host may still start early once at
+  least two live seats exist. Public quick/multi-quick is always heads-up and auto-starts as
+  soon as its second player is matched. The online buttons
   are enabled in `mg_ui.js`: public Quick enters a 2-seat room, while private Create/Join uses
   the dedicated `dcreate`/`djoin`/`droom` routes and a host-selected 2–4-seat room. The host
-  starts the dealer once at least two seats are present; unfilled seats become inactive holes.
+  may start the dealer early once at least two seats are present; unfilled seats become
+  inactive holes.
   The offline bot branch is unchanged.
   Verified in Node: server routes/privacy/encoding (`mg_server_test`), client↔server rule parity
   (`mg_parity_test`). Reasoned only (needs in-game repack): the online render/slide/sync itself.
@@ -894,8 +898,9 @@ is built but **not yet in-game verified**.
   action row (Fold / Check / Call <amt> / Bet-or-Raise-to <target>).
 - **Online (worker-as-dealer).** Routes mirror durak: `pcreate/pjoin/proom/pstart/pact/plog` plus a
   token-gated private deal channel. A poker lobby carries `cap` (2–4, chosen at create), grows via
-  `pjoin` up to cap, and the host fires `pstart` (`pokerStart`) when ready; a mid-match leave folds
-  the seat out (`pokerLeave`). The client (`createPoker`, online branch) holds NO authority — it
+  `pjoin` up to cap, auto-deals when the declared cap is filled, and also lets the host fire
+  `pstart` (`pokerStart`) early once at least two live seats exist; a mid-match leave folds the
+  seat out (`pokerLeave`). The client (`createPoker`, online branch) holds NO authority — it
   rebuilds state from `plog` and pulls its own hole cards from the private channel, sending actions
   via `pact` without optimistic mutation (the echoed event is the single source of truth).
 - **Bot** (`rules/poker.js` `botAction`, driven from the controller): `preflopStrength` /
