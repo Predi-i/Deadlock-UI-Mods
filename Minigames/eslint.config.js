@@ -141,7 +141,12 @@ module.exports = [
     // worker.js is the generated artifact → ignored above. Same Node/Worker globals, but
     // sourceType:module so the top-level `export` parses.
     {
-        files: ["server/worker.core.js", "server/admin_panel.js"],
+        files: [
+            "server/worker.core.js",
+            "server/admin_panel.js",
+            "server/node_server.js",
+            "server/node_storage.js",
+        ],
         languageOptions: {
             ecmaVersion: 2021,
             sourceType: "module",

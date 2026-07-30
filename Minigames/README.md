@@ -35,10 +35,12 @@ protocol and `panorama/scripts/mg_net.js` for the client facade.
 ## Files
 
 ```
-server/                     Cloudflare Worker (the relay) + deploy guide
-  worker.js                 lobby store + PNG responder
-  wrangler.jsonc
-  README.md                 ← deploy steps + protocol reference
+server/                     Node/SQLite VPS relay + deploy configuration
+  worker.js                 generated authoritative routes + shared rules
+  node_server.js            HTTP adapter + serialized Hub runtime
+  node_storage.js           SQLite persistence adapter
+  deploy/                   systemd, Nginx, TLS, backup and hardening files
+  README.md                 ← production operations + protocol notes
 panorama/
   layout/base_hud.xml       override that loads the scripts + styles
   styles/mg.css
@@ -50,10 +52,10 @@ panorama/
 
 ## Setup
 
-1. **Deploy the server** — follow `server/README.md` (≈3 min, free Cloudflare plan).
-   Re-run `npx wrangler deploy` after any `server/worker.js` change (e.g. new routes).
-2. **Point the client at it** — paste your `workers.dev` URL into `BASE_URL` at the top
-   of `panorama/scripts/mg_net.js`.
+1. **Deploy the server** — follow `server/README.md`. Production runs directly on the
+   Aéza VPS with Nginx, Node 24 and SQLite; no Cloudflare Worker is involved.
+2. **Point the client at it** — set `BASE_URL` at the top of
+   `panorama/scripts/mg_net.js` to the VPS HTTPS origin.
 3. **Build the VPK** and launch. Press **Esc** in a match → **Minigames**.
 
 > Until `BASE_URL` is set, the overlay opens but shows a "server not configured" warning.

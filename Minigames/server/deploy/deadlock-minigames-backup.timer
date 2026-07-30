@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily Deadlock Minigames database backup
+
+[Timer]
+OnCalendar=*-*-* 04:15:00 UTC
+RandomizedDelaySec=45m
+Persistent=true
+Unit=deadlock-minigames-backup.service
+
+[Install]
+WantedBy=timers.target

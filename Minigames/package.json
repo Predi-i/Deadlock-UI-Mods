@@ -6,8 +6,8 @@
   "scripts": {
     "build:wordle-words": "node tools/build_wordle_words.js",
     "build:worker": "node tools/build_worker.js",
-    "lint": "eslint panorama/scripts server/worker.core.js server/admin_panel.js tools",
-    "test": "node tools/build_worker.js --check && node tools/mg_chess_test.js && node tools/mg_rules_test.js && node tools/mg_connectfour_test.js && node tools/mg_durak_test.js && node tools/mg_poker_test.js && node tools/mg_wordle_test.js && node tools/mg_pixelbattle_palette_test.js && node tools/mg_server_test.js && node tools/mg_parity_test.js && node tools/mg_widgets_test.js && node tools/mg_timer_test.js && node tools/mg_uiscale_test.js && node tools/mg_update_marker_test.js && node tools/mg_release_ui_regression_test.js"
+    "lint": "eslint panorama/scripts server/worker.core.js server/admin_panel.js server/node_server.js server/node_storage.js tools",
+    "test": "node tools/build_worker.js --check && node tools/mg_chess_test.js && node tools/mg_rules_test.js && node tools/mg_connectfour_test.js && node tools/mg_durak_test.js && node tools/mg_poker_test.js && node tools/mg_wordle_test.js && node tools/mg_pixelbattle_palette_test.js && node tools/mg_server_test.js && node tools/mg_vps_server_test.js && node tools/mg_parity_test.js && node tools/mg_widgets_test.js && node tools/mg_timer_test.js && node tools/mg_uiscale_test.js && node tools/mg_update_marker_test.js && node tools/mg_release_ui_regression_test.js"
   },
   "devDependencies": {
     "eslint": "9.15.0"

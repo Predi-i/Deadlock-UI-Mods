@@ -1,183 +1,156 @@
-# Deadlock Minigames — relay server (Cloudflare Workers)
+# Deadlock Minigames — VPS relay
 
-This is the tiny backend that lets two Deadlock clients talk to each other.
-It stores lobby state and answers every request with a **PNG image whose width ×
-height encode the response** — because Panorama UI can only read data back through
-an image's pixel size (no fetch, no websockets).
+This directory contains the authoritative backend for the in-game minigames. Production runs
+directly on the Aéza VPS at `https://178.236.246.13`; Cloudflare Workers and Durable Objects are
+no longer in the request path.
 
-The whole thing runs on the **free** Cloudflare Workers plan (Durable Objects with
-the SQLite backend are included for free).
+Panorama still uses the same image side-channel protocol: every game API request returns a PNG
+whose intrinsic width and height encode two integers. The migration changes hosting and storage,
+not the client protocol or the shared game rules.
 
----
+## Runtime layout
 
-## One-time deploy (≈3 minutes)
+- `worker.core.js` — authored routes, validation, matchmaking, Pixel Battle and PNG encoding.
+- `worker.js` — generated rules + map + admin assets + `worker.core.js`; never edit by hand.
+- `node_server.js` — Node HTTP adapter, trusted Nginx client-IP injection and serialized Hub execution.
+- `node_storage.js` — Durable Object storage-compatible SQLite adapter.
+- `package.json` — marks this directory as ESM and pins the minimum Node major.
+- `deploy/` — systemd, Nginx, backup, certificate-renewal and hardening configuration.
+- `wrangler.jsonc` — retained only as historical/rollback configuration; production does not use it.
 
-You need Node.js installed.
+The Node adapter calls the same exported Worker entry point used previously. Its local `HUB`
+binding owns one `Hub` instance and serializes requests exactly as the single Durable Object did.
+Values are stored in SQLite using V8 structured serialization, so typed Pixel Battle tiles and
+plain lobby objects round-trip without JSON conversion.
+
+Production paths:
+
+```text
+/opt/deadlock-minigames/                         immutable application files
+/var/lib/deadlock-minigames/minigames.sqlite    live SQLite database
+/var/backups/deadlock-minigames/                 daily compressed backups (14-day retention)
+/etc/deadlock-minigames.env                      optional GitHub OAuth secrets
+/etc/letsencrypt/live/178.236.246.13/            short-lived IP certificate
+```
+
+## Build and verify
+
+From the repository root:
 
 ```bash
-# 0. Build the deploy artifact (server/worker.js) from its sources. This concatenates
-#    the SHARED rule engines (panorama/scripts/rules/*.js — the exact files the client
-#    runs) in front of the authored core (server/worker.core.js), so the server validates
-#    every move with byte-for-byte the same rules the client predicts with. Re-run this
-#    whenever you edit worker.core.js OR any rules/*.js file.
-node tools/build_worker.js
-
-cd Minigames/server
-
-# 1. Log in to Cloudflare (opens a browser). Free account is fine.
-npx wrangler login
-
-# 2. Deploy.
-npx wrangler deploy
+npm run build:worker
+npm run lint
+npm test
 ```
 
-> **Sources vs artifact.** Edit `server/worker.core.js` (the relay + PNG encoder) and
-> `panorama/scripts/rules/*.js` (the shared game rules). `server/worker.js` is a
-> GENERATED file (it carries a "DO NOT EDIT" banner) — never hand-edit it; run the build.
+`npm test` includes `mg_vps_server_test.js`, which starts the real Node HTTP adapter against a
+temporary SQLite file and verifies protocol dimensions, restart persistence, Pixel Battle state
+and fail-closed admin authentication.
 
+## Production service
 
-After deploy, wrangler prints your URL, e.g.:
+The app listens only on `127.0.0.1:8787`. Nginx owns public ports 80/443, redirects normal HTTP to
+HTTPS and forwards HTTPS requests to Node. The service is intentionally a single Node process:
+the original Hub is a single consistency domain, and its small state updates benefit more from
+strict ordering than from multiple workers contending over the same SQLite file.
+Nginx overwrites `X-Real-IP` from the public socket; Node accepts it only from a loopback peer and
+replaces any caller-supplied `CF-Connecting-IP`, keeping per-IP abuse controls trustworthy.
 
-```
-https://deadlock-minigames.<your-subdomain>.workers.dev
-```
+Useful commands:
 
-**Copy that URL.** Then open `Minigames/panorama/scripts/mg_net.js` and paste it into
-the `BASE_URL` constant at the top:
+```bash
+systemctl status deadlock-minigames
+journalctl -u deadlock-minigames -f
+systemctl restart deadlock-minigames
 
-```js
-var BASE_URL = "https://deadlock-minigames.YOURNAME.workers.dev";
-```
-
-That's it. Redeploys later are just `npx wrangler deploy` again.
-
----
-
-## Private Pixel Battle admin panel
-
-The Worker serves a browser UI at `<URL>/admin`, but it deliberately fails closed until
-GitHub OAuth and four deployment secrets are configured. There is no password, GitHub
-token, allowed login, or secret URL in this repository.
-
-1. Open **GitHub → Settings → Developer settings → OAuth Apps → New OAuth App**. Set:
-
-   - Homepage URL: your Worker URL, for example
-     `https://deadlock-minigames.<your-subdomain>.workers.dev`
-   - Authorization callback URL: `<URL>/admin/auth/callback`
-
-   The callback must match exactly. The app needs no extra OAuth scopes.
-
-2. Find your stable numeric GitHub user ID. One simple way is to open
-   `https://api.github.com/users/<your-login>` and copy the numeric `id` field. The Worker
-   authorizes this ID, not a mutable login or email.
-
-3. Store the OAuth App client ID, client secret, numeric ID, and a new random session-signing
-   secret of at least 32 characters as Worker secrets:
-
-   ```bash
-   cd Minigames/server
-   npx wrangler secret put GITHUB_CLIENT_ID
-   npx wrangler secret put GITHUB_CLIENT_SECRET
-   npx wrangler secret put ADMIN_GITHUB_ID
-   npx wrangler secret put ADMIN_SESSION_SECRET
-   npx wrangler deploy
-   ```
-
-4. Open `<URL>/admin`. The Worker redirects to GitHub, uses OAuth `state` plus PKCE, fetches
-   the authenticated GitHub account, compares its exact numeric ID, discards the short-lived
-   OAuth token, and issues its own eight-hour HttpOnly/Secure HMAC-signed session cookie.
-
-The panel can paint unrestricted batches, inspect accepted actions by Steam32, and undo
-them. A normal undo skips pixels overwritten by newer actions; **Force** is available when
-overwriting those newer pixels is intentional. Admin mutations are also same-origin/CSRF
-checked, and every admin paint/undo is itself audited. **Ban** blocks a Steam32 account at
-the Worker and changes the in-game Pixel Battle button to a red `YOU ARE BANNED` state.
-An already-open client sees the ban on its next version poll and stops all Pixel Battle
-requests. Unbanning takes effect after that player reloads the mod.
-
-Every paint row has an on-demand **Preview**: the editor zooms to its bounds and renders the
-exact safe-undo result, marking newer conflicting pixels red before anything is changed.
-**Inspect pixel** turns the canvas into an attribution tool; clicking a coordinate shows the
-last action, Steam32/admin identity, timestamp, colour, and direct Preview/User actions/Ban
-controls. New uploads update a compact attribution index per touched 32×32 tile. Old audited
-pixels are resolved from the action log on their first inspection and cached.
-
-This metadata does not add Panorama requests or change Pixel Battle polling. It adds at most
-one internal Durable Object attribution read and write per 32×32 tile already touched by an
-accepted upload. Preview and Inspect each make one admin request only when the owner clicks
-them; action-list responses stay small because full pixel details are loaded on demand.
-
-Steam32 is discovered and sent by the Panorama client; it is not a cryptographically
-authenticated Steam identity. A modified client can therefore spoof another Steam32, and
-any request still reaches Cloudflare before the Worker can reject it. Strong protection
-against that requires an external edge gate or a verifiable Steam authentication ticket,
-neither of which Panorama currently provides. The implementation still rejects every banned
-write server-side and makes the normal client stop after its single access preflight.
-
----
-
-## Verify it works (in a normal browser)
-
-- `<URL>/api/probe` → a **600×1000** PNG. This one is LITERAL pixels: it is the calibration
-  reference the client measures the UI scale against. Its all-zero payload is pre-compressed
-  to well under 2 KiB; the large dimensions do not imply a large download.
-- `<URL>/api/ping` → the encoding of `(1, 1)`, i.e. **24×24** (see below). If you get that, the
-  Worker is up.
-
-Every OTHER route answers a *level-encoded* PNG, so the dimensions are not the values:
-
-```
-dim = level * 9 + 15        (STEP = 9, BASE = 15)
+curl -fsS https://178.236.246.13/api/ping.png -o /dev/null
+sqlite3 /var/lib/deadlock-minigames/minigames.sqlite 'PRAGMA integrity_check;'
 ```
 
-So level 0 → 15px, level 1 → 24px, level 63 → 582px; the client decodes back with
-`round((dim - 15) / 9)`. Reading a create/status response by eye means undoing that first — a
-lobby code arrives as two 6-bit halves in a banded width plus a height, not as
-`width*100 + height`.
+Deployment of a source update:
 
----
+```bash
+scp server/{worker.js,node_server.js,node_storage.js,package.json} \
+  root@178.236.246.13:/opt/deadlock-minigames/
+ssh root@178.236.246.13 'systemctl restart deadlock-minigames'
+```
 
-## Protocol reference
+The generated `worker.js` must always be rebuilt when a rule module, Pixel Battle map/admin asset
+or `worker.core.js` changes.
 
-**The authoritative reference is the header comment of `worker.core.js`** — the route table,
-every `(w, h)` reply, every `(9, x)` rejection code, and the durak/poker public event logs.
-§5 of `../ARCHITECTURE.md` mirrors it.
+## HTTPS directly on the IP
 
-This file used to inline a route table of its own. It described the ORIGINAL `dim = int + 1`
-encoding with a `+100` host flag and 4-digit codes in the 1000..9999 range — all three were
-replaced on 2026-07-20 by the level encoding above, 10-bit codes in 0..1023, and dedicated
-width bands for the host/joiner roles. Rather than keep a third copy that drifts again, it is
-gone: read the source, which is also what `tools/mg_server_test.js` asserts against.
+Let’s Encrypt issues publicly trusted IPv4 certificates using its `shortlived` profile. They are
+valid for about six days and free of charge. Certbot checks twice daily and Nginx reloads only
+after a successful renewal.
 
-Two things worth knowing before poking at routes by hand:
+```bash
+systemctl status deadlock-minigames-certbot.timer
+systemctl start deadlock-minigames-certbot.service
 
-- Always append a random query parameter to defeat the engine's image cache.
-- Every state-changing route carries a per-seat token that only ever travels upward, in the
-  query string. The server binds each seat to its token, so a guessed lobby code alone cannot
-  act on a match. See §5.1 of `../ARCHITECTURE.md`.
+# Safe end-to-end renewal simulation:
+/opt/certbot/bin/certbot renew --dry-run --run-deploy-hooks \
+  --no-random-sleep-on-renew
+```
 
----
+The ACME challenge remains available over port 80 at
+`/.well-known/acme-challenge/`; every other HTTP path redirects to HTTPS.
 
-## Data & limits
+## Database and backups
 
-- Lobbies live in one Durable Object, keyed `l:<code>` over the 0..1023 code space. An
-  opportunistic sweep (at most once a minute, and only off the lobby-creation paths) drops
-  anything idle for over 30 minutes and clears its public matchmaking-queue slots.
-- Authenticated `status`/`room` polling refreshes a waiting lobby at most once per five minutes;
-  anonymous code probes cannot keep a guessed lobby alive.
-- Abuse controls are temporary throttles, never IP bans. One IP may touch sixteen distinct lobby
-  codes per minute while retrying the same real code is free. Pixel Battle permits six complete
-  fresh 100-pixel banks per IP in a burst and then refills 120 pixels/minute. Expensive uncached
-  map views allow a burst of twelve and one new frame/second; cache hits remain free.
-- Pixel Battle audit actions are append-only for 180 days. Cleanup removes expired action and
-  per-user index records in bounded 512-action batches; every new action runs another batch until
-  caught up, then cleanup returns to a daily cadence. This is an internal deletion batch size,
-  **not** a player/game/action limit. Player/admin paint and undo commit their tiles/version,
-  audit, and ownership in one storage transaction.
-- A lobby's move/event log is capped (`MOVE_CAP`) well below the Durable Object's 128 KiB
-  per-value limit. No honest game comes close; the cap exists so deliberate bloating can't push
-  a lobby past that limit, which would wedge it permanently.
-- Free plan: 100k requests/day, shared between Worker and Durable Object requests. The in-game
-  poll cadence is adaptive (fast for the first few empty polls, then slower) and the side clocks
-  are interpolated locally rather than polled — that is what keeps a match in the low hundreds
-  of requests rather than thousands.
+SQLite runs in WAL mode with `synchronous=NORMAL` and a five-second busy timeout. The process
+keeps the original all-or-nothing Pixel Battle transactions and serializes all Hub requests, so
+no second writer can interleave a lobby or tile update.
+
+The daily backup timer uses SQLite's online `.backup` command, compresses the result and retains
+14 days:
+
+```bash
+systemctl status deadlock-minigames-backup.timer
+systemctl start deadlock-minigames-backup.service
+ls -lh /var/backups/deadlock-minigames/
+```
+
+Do not copy only the live `.sqlite` file with plain `cp` while the service is running; use the
+backup command or stop the service first so WAL state cannot be missed.
+
+## Admin OAuth
+
+The browser admin remains fail-closed until `/etc/deadlock-minigames.env` supplies:
+
+```text
+GITHUB_CLIENT_ID=...
+GITHUB_CLIENT_SECRET=...
+ADMIN_GITHUB_ID=...
+ADMIN_SESSION_SECRET=at-least-32-random-characters
+```
+
+The GitHub OAuth App callback is:
+
+```text
+https://178.236.246.13/admin/auth/callback
+```
+
+After changing the file:
+
+```bash
+chmod 0640 /etc/deadlock-minigames.env
+chown root:minigames /etc/deadlock-minigames.env
+systemctl restart deadlock-minigames
+```
+
+Never commit or paste these secrets into source files.
+
+## Security and capacity notes
+
+- UFW exposes only SSH, HTTP and HTTPS.
+- SSH password authentication is disabled; root accepts the dedicated deployment key only.
+- fail2ban protects SSH.
+- The Node listener is loopback-only and overwrites `CF-Connecting-IP` with the real socket IP,
+  so a direct caller cannot bypass per-IP rate limits with a forged header.
+- A 1 GiB swap file with low swappiness protects the 2 GiB VPS from transient OOM conditions.
+- Dimension-only PNGs use native synchronous zlib on Node. This reduced a typical clock response
+  from roughly 81 KiB to about 449 bytes and raised the measured clock-route throughput from
+  about 89 to 872 requests/second on the NLs-1 VPS.
+- Pixel Battle starts with a clean database after the Cloudflare migration; old Worker canvas,
+  audit, bank and ban records were deliberately not imported.

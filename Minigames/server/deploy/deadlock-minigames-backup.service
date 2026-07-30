@@ -1,0 +1,9 @@
+[Unit]
+Description=Back up the Deadlock Minigames SQLite database
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/deadlock-minigames-backup
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7

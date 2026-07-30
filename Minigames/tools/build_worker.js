@@ -8,13 +8,13 @@
  * from there. This is what makes the server authority and the client predictor run
  * byte-for-byte identical rules - no hand-copied second source of truth.
  *
- * Run: node tools/build_worker.js   (then `npx wrangler deploy` from server/).
+ * Run: node tools/build_worker.js   (then restart the Node VPS service after deployment).
  * Run: node tools/build_worker.js --check   to VERIFY the committed worker.js matches its
  * sources without writing anything (exit 1 on drift). `npm test` does this first, because a
  * stale worker.js is otherwise invisible: the rule tests read the sources directly and the
  * server test reads only the generated file, so neither notices a missed rebuild.
  * The generated worker.js carries a "DO NOT EDIT" banner and is committed so a clone
- * can deploy without the build step, but the SOURCE of truth is worker.core.js + rules.
+ * can run without the build step, but the SOURCE of truth is worker.core.js + rules.
  */
 const fs = require("fs");
 const path = require("path");

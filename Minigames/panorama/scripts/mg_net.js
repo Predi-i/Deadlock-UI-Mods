@@ -50,9 +50,8 @@
     if (MG.Net) return; // already initialised
 
     // ─────────────────────────────────────────────────────────────────────────
-    // CONFIG: after `npx wrangler deploy`, paste your workers.dev URL here.
-    // e.g. "https://deadlock-minigames.yourname.workers.dev"
-    var BASE_URL = "https://deadlock-minigames.predi.workers.dev";
+    // Production backend: direct HTTPS to the Aéza VPS (no Cloudflare Worker/proxy).
+    var BASE_URL = "https://178.236.246.13";
     // ─────────────────────────────────────────────────────────────────────────
 
     var REQ_TIMEOUT_MS = 8000;
@@ -61,17 +60,17 @@
     // ── shared opponent-poll cadence (single source of truth for all games) ──
     // Every online game polls /api/poll to learn the opponent's move. Polling is the
     // dominant request cost of a match, so the cadence is tuned here once and reused by
-    // checkers/chess/TTT/Connect-Four. Model: poll FAST for the first few checks after
-    // it becomes the opponent's turn (a quick reply feels responsive), then BACK OFF to a
-    // slower steady rate while they think - a long think shouldn't cost ~2.5 req/s.
+    // every online game. The direct VPS lets the active tiers be much quicker than the old
+    // Worker-budget cadence, but the idle tier still backs off: on the shared 1-vCPU plan,
+    // 300 clients at an unbounded 3-4 req/s would consume the whole measured throughput.
     //   misses 0..(FAST_POLLS-1) → POLL_FAST_S ; then POLL_SLOW_S ; a long think → POLL_IDLE_S
     // `misses` = consecutive empty ("nothing new") polls this turn; reset to 0 on each real
     // move so the next wait starts fast again. Transport errors reuse the same schedule.
-    var POLL_FAST_S = 1.0, POLL_SLOW_S = 1.6, POLL_IDLE_S = 2.5, FAST_POLLS = 4, SLOW_POLLS = 12;
+    var POLL_FAST_S = 0.5, POLL_SLOW_S = 0.9, POLL_IDLE_S = 1.5, FAST_POLLS = 6, SLOW_POLLS = 18;
     function pollDelay(misses) {
-        if (misses < FAST_POLLS) return POLL_FAST_S;   // snappy for the first ~4s after their turn
-        if (misses < SLOW_POLLS) return POLL_SLOW_S;   // steady while they think
-        return POLL_IDLE_S;                            // long think (>~15s): don't burn requests
+        if (misses < FAST_POLLS) return POLL_FAST_S;   // first ~3s: rapid replies surface quickly
+        if (misses < SLOW_POLLS) return POLL_SLOW_S;   // steady through the rest of a normal turn
+        return POLL_IDLE_S;                            // long think: retain capacity for 200-300 users
     }
 
     // ── shared WAITING-ROOM cadence (lobbies, rematch, matchmaking) ──────────

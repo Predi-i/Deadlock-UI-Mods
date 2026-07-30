@@ -1,0 +1,8 @@
+[Unit]
+Description=Renew the short-lived HTTPS certificate for the VPS IP
+After=network-online.target nginx.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/certbot/bin/certbot renew --quiet --deploy-hook "/usr/bin/systemctl reload nginx"

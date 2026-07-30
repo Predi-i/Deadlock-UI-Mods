@@ -1,0 +1,11 @@
+{
+  "name": "deadlock-minigames-server",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "start": "node node_server.js"
+  }
+}

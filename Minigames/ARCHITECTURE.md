@@ -112,10 +112,14 @@ panorama/
     mg_ui.js               Esc-menu button injection + full-screen lobby overlay ($.MG.UI); header
                            UI-scale + volume dropdowns; seat/time-control/variant pickers.
 
-server/                    Cloudflare Worker (dev-only, NOT packed into the VPK)
+server/                    Authoritative backend sources + Node/SQLite VPS runtime
   admin_panel.js           Browser admin HTML/CSS/JS assets (no credentials; GitHub-authenticated).
   worker.core.js           AUTHORED relay + validators + PNG encoder (edit this)
   worker.js                GENERATED (rules/*.js + worker.core.js via tools/build_worker.js) — deploy artifact
+  node_server.js           Node HTTP adapter; serialized Hub execution + trusted client-IP injection
+  node_storage.js          Durable-Object-compatible SQLite storage adapter
+  package.json             ESM boundary + production Node version requirement
+  deploy/                  systemd, Nginx, backup, TLS-renewal and host-hardening configuration
   wrangler.jsonc, README.md
 tools/                     dev-only Node test harnesses + build helpers (NOT packed)
   build_worker.js          concatenate the 6 rules/*.js + worker.core.js → server/worker.js
@@ -159,8 +163,20 @@ Everything shared between the scripts hangs off **`$.MG`** — `$` is the single
 object shared across all scripts loaded in the same panel context. Each script guards with
 `if (MG.X) return;` so a double-include is a no-op.
 
-`BASE_URL` at the top of `mg_net.js` must point at the deployed worker. Until it's set the
-overlay opens but shows "server not configured".
+`BASE_URL` at the top of `mg_net.js` must point at the deployed backend. Production is the
+direct Aéza VPS endpoint `https://178.236.246.13`; no Cloudflare Worker or proxy is in the
+request path. Until `BASE_URL` is set, the overlay opens but shows "server not configured".
+
+**Production hosting (2026-07-30 migration).** Nginx terminates HTTPS directly on the public
+IPv4 and proxies to one Node 24 process bound to `127.0.0.1:8787`. Let’s Encrypt's short-lived
+IP certificate is renewed automatically by a twice-daily systemd timer. `node_server.js` calls
+the same generated Worker entry point and presents one serialized local `HUB`, preserving the
+single-consistency-domain behaviour of the old Durable Object. `node_storage.js` persists its
+values in a WAL-mode SQLite database using V8 structured serialization, including typed Pixel
+Battle tiles. Daily online SQLite backups are compressed and retained for 14 days. See
+`server/README.md` for paths, units, smoke checks and recovery commands.
+Nginx overwrites `X-Real-IP`; the loopback-bound Node adapter accepts that header only from its
+local proxy and replaces `CF-Connecting-IP`, so IP rate limits see the actual public client.
 
 ---
 
@@ -261,7 +277,9 @@ Key encoding tricks and **why** (current codec is STEP=9 level-quantisation, 202
 - **Clocks are per-seat** (a bank is 0..600 = 10 bits, needs both dims): width `30 + (sec>>6)`,
   height `sec&63`; caller passes `&seat=0|1` and reads both. Both clients read the SAME server
   clock, so flag-fall is server-decided with no drift.
-- **State is one Durable Object** ("hub") → strongly consistent, no KV lag between players.
+- **State is one serialized Hub backed by SQLite** → strongly consistent, no cross-process or
+  eventually-consistent cache lag between players. The Node adapter deliberately processes Hub
+  requests one at a time, matching the old single Durable Object's ordering.
 
 ### Soft abuse controls and lobby lifetime
 
@@ -1010,7 +1028,7 @@ is built but **not yet in-game verified**.
   colours, marks conflicts red, and zooms to the action bounds. Inspect makes one on-demand admin
   request per clicked coordinate and exposes the owning Steam32, action, user log, and ban path.
 - Steam32 is client-reported, not a cryptographic Steam authentication ticket. A modified client
-  can spoof an unbanned ID, and Worker-side rejection happens only after Cloudflare has received
+  can spoof an unbanned ID, and server-side rejection happens only after the VPS has received
   the request. The ban is therefore authoritative for normal clients and all requests using the
   banned ID, but it cannot be an edge-level request-cost firewall without a separate identity
   service or verifiable Steam ticket.
@@ -1056,18 +1074,21 @@ nothing is polled and no token is used.
 Disconnect signals: `status` returning `(9,1)` while a host waits, or `poll` returning
 `(9,9)`, route to `MG.UI.kickToMenu(reason)`.
 
-**Adaptive poll cadence (request-budget control).** Cloudflare's free tier is ONE shared bucket
-for the whole mod: 100k Worker requests/day AND 100k Durable-Object requests/day (every `/api/*`
-image hits both), reset 00:00 UTC, and blowing it returns **Error 1027 for everyone** until reset.
-So request volume is the release-critical resource, and it's controlled by two DISTINCT cadences,
-both defined ONCE in `mg_net.js`:
+**Adaptive poll cadence (load and latency control).** The direct VPS has no 100k requests/day
+quota—the Cloudflare limit that forced the migration is gone. Polling still dominates active
+traffic, so bounding it protects latency on the single shared vCPU and avoids wasting bandwidth.
+The NLs-1 load test sustained roughly 1,000 empty polls/s; after native-zlib compression of the
+dimension PNGs it sustained roughly 872 clock reads/s (a clock response fell from ~81 KiB to
+~449 bytes). Expected traffic from 200–300 clients is well below both. The two distinct cadences
+remain defined once in `mg_net.js`:
 
 - **`MG.Net.pollDelay(misses)` — IN-GAME opponent polling** (`/api/poll`, `/api/dlog`, `/api/plog`),
-  the dominant cost of an *active* match. `misses < 4` → **1.0s**, `< 12` → **1.6s**, else →
-  **2.5s**. `misses` counts consecutive empty ("nothing new") polls this turn and is reset to 0 on
-  each real move (and in `startPolling`), so a wait starts fast (responsive when the opponent
-  replies quickly) and backs off through two tiers while they think (a long think must not cost
-  ~2.5 req/s). Every game keeps a local `var pollMisses = 0` and passes `pollMisses++` to
+  the dominant cost of an *active* match. `misses < 6` → **0.5s**, `< 18` → **0.9s**, else →
+  **1.5s**. `misses` counts consecutive empty ("nothing new") polls this turn and is reset to 0 on
+  each real move (and in `startPolling`), so a quick opponent reply normally appears within roughly
+  half a second plus network/PNG-loader latency. The long-think tier still caps 300 continuously
+  active clients near 200 empty polls/s instead of consuming most of the measured ~1,000 polls/s.
+  Every game keeps a local `var pollMisses = 0` and passes `pollMisses++` to
   `pollDelay` in both the "nothing new" and transport-error branches.
 - **`MG.Net.waitDelay(misses)` — WAITING-ROOM polling** (lobby/room fill, rematch accept, quick /
   multi matchmaking). Totally different cost profile: nobody's mid-move, latency is irrelevant (a
@@ -1108,7 +1129,7 @@ Two DIFFERENT time widgets, both built in `mg_games.js` and exposed on `MG.Widge
     once-a-second poll issued **2 requests/second for the whole game**, which (a) swamped the strictly
     one-at-a-time image queue in `mg_net.js` and stalled the move-poll so an opponent's move surfaced
     many seconds late (the "20s to see a move" / "his clock ticks on my turn" desync), and (b) burned
-    the request budget — ~2 short games ran up ~1200 Cloudflare requests almost entirely from this
+    backend load — ~2 short games ran up ~1200 requests almost entirely from this
     loop. Local interpolation keeps the display live for ~free; the 8s resync corrects drift.
 - **Per-turn countdown timer** (`createTurnTimer`) — a `TURN_SECS = 25` budget per turn in
   **durak, poker, TTT & Connect Four**. The controller calls `start(onExpire)` when the LOCAL human
@@ -1168,7 +1189,7 @@ npm test                                       # the whole harness suite, in one
                                                #   update marker          release-marker decoding
 ```
 If `build_worker --check` reports the worker is stale, run `npm run build:worker` and commit the
-regenerated `server/worker.js` with your change — it is the deploy artifact.
+regenerated `server/worker.js` with your change — the Node VPS imports this deploy artifact.
 
 A Public build additionally goes through `../tools/build_mod_strip_comments.ps1` (see §3), which
 strips comments from a throwaway copy and refuses to build if stripping broke any script.
@@ -1200,7 +1221,8 @@ catches the above) plus a handful of always-safe correctness rules (`no-unreacha
 `no-dupe-keys`, `no-duplicate-case`, `use-isnan`, `valid-typeof`, …). No stylistic rules, so the
 output is signal, not noise, and it stays green on the working, in-game-verified code. The config
 declares the Panorama globals (`$`, `Game`, `GameUI`, …) as read-only so real engine bridges don't
-false-positive; the `server/` block is `sourceType: module` (Cloudflare Worker), tools are CommonJS.
+false-positive; the `server/` block is `sourceType: module` (Worker-compatible core plus the Node
+VPS adapter), tools are CommonJS.
 
 **It still can't render.** Lint proves every referenced name exists and a few structural invariants
 hold; it says NOTHING about layout, animation, drag/drop, timing, or whether a move looks right.

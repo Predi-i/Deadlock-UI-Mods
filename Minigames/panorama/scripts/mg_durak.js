@@ -970,7 +970,11 @@
                 onlineStatus();
                 if (gameOver) { finishGame(); return; }
                 pollLoop(gen);                                       // drain any burst immediately
-            }, function () { if (!destroyed && gen === pollGen) $.Schedule(1.0, function () { pollLoop(gen); }); });
+            }, function () {
+                if (!destroyed && gen === pollGen) {
+                    $.Schedule(MG.Net.pollDelay(pollMisses++), function () { pollLoop(gen); });
+                }
+            });
         }
         // Send one action; the server validates and (on success) appends the event we'll read
         // back on the next poll. We do NOT mutate `st` here - the echo is authoritative.

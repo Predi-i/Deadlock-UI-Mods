@@ -57,6 +57,13 @@ const $ = {
 
 new Function("$", source("mg_net.js"))($);
 
+assert($.MG.Net.pollDelay(0) === 0.5 && $.MG.Net.pollDelay(5) === 0.5 &&
+    $.MG.Net.pollDelay(6) === 0.9 && $.MG.Net.pollDelay(17) === 0.9 &&
+    $.MG.Net.pollDelay(18) === 1.5,
+    "active-game polling must use the bounded 0.5s/0.9s/1.5s VPS cadence");
+assert($.MG.Net.waitDelay(0) === 1.5 && $.MG.Net.waitDelay(99) === 5,
+    "waiting-room polling must retain its separate conservative cadence");
+
 let firstLoaded = null;
 let secondLoaded = null;
 const display = makePanel("Panel", context, "display");
@@ -134,6 +141,8 @@ assert(/clocks:\s*function[\s\S]*?w === 9 && h === 8/.test(net) &&
     "clock transport/server failures must reach createClock's retry callback");
 assert(/function resyncTick[\s\S]*?function \(\) \{ if \(!stopped\) \$\.Schedule/.test(games),
     "createClock must retain a retry path for transient authoritative-clock failures");
+assert(/var RESYNC_S = 8;/.test(games),
+    "authoritative clock resync must stay infrequent so it cannot crowd out move traffic");
 assert(/status:\s*function \(code, tok, cb, err\)[\s\S]{0,150}tok:\s*tok \|\| ""/.test(net) &&
     /room:\s*function \(code, tok, cb, err\)/.test(net) &&
     /droom:\s*function \(code, tok, cb, err\)/.test(net) &&

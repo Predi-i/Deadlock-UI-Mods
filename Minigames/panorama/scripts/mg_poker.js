@@ -561,7 +561,11 @@
                 onlineStatus();
                 if (gameOver) { finishOnline(); return; }
                 pollLoop(gen);                                 // drain any burst immediately
-            }, function () { if (!destroyed && gen === pollGen) $.Schedule(1.0, function () { pollLoop(gen); }); });
+            }, function () {
+                if (!destroyed && gen === pollGen) {
+                    $.Schedule(MG.Net.pollDelay(pollMisses++), function () { pollLoop(gen); });
+                }
+            });
         }
 
         function finishOnline() {
