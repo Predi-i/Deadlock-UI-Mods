@@ -1081,6 +1081,10 @@ is built but **not yet in-game verified**.
 - `/api/geoview` is authenticated with the lobby seat token and proxies the current open-licensed
   Wikimedia Commons image through the VPS. The bounded in-memory cache means Panorama never needs
   direct access to an arbitrary third-party URL and user input can never select an upstream target.
+- `MG.Net.loadImage` reports the request panel's **layout** dimensions, not necessarily the source
+  image's intrinsic dimensions. Its 640px host clamps a 1920×960 panorama to a reported 640×960,
+  so GeoGuesser must not aspect-check those values. `MG.Net.isLevelEncodedSize` instead detects the
+  calibrated 0..63 Worker error-PNG range; every successful curated panorama lies outside it.
 - Panorama has no projection shader available to this mod. The client therefore displays a clipped
   2:1 equirectangular strip three times side by side and translates the strip to wrap heading at
   360 degrees. This is a useful panoramic lookout, but it is not rectilinear lens projection.

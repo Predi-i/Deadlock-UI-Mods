@@ -649,8 +649,14 @@
                 var art = $.CreatePanel("Panel", card, "");
                 art.AddClass("mg-card-art");
                 // Custom card image (compiled .vtex). soon1-4 have no art → plain bg.
-                if (g.key.indexOf("soon") !== 0)
-                    setFace(art, "s2r://panorama/images/cards/" + g.key + ".vtex");
+                if (g.key.indexOf("soon") !== 0) {
+                    // GeoGuesser has no dedicated compiled card yet; reuse its shipped map
+                    // instead of requesting a missing cards/geoguesser.vtex_c every menu open.
+                    var artUrl = g.id === 9
+                        ? "s2r://panorama/images/pixelbattle/world_map.vtex"
+                        : "s2r://panorama/images/cards/" + g.key + ".vtex";
+                    setFace(art, artUrl);
+                }
 
                 var bar = $.CreatePanel("Panel", card, "");
                 bar.AddClass("mg-card-namebar");

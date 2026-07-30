@@ -118,6 +118,15 @@ assert(startedUrls.length === 2, "protocol work must still wait while pxview com
 runScheduled(); // FIFO release frame starts the calibration probe queued by MG.Net.request
 assert(startedUrls.length === 3 && startedUrls[2].includes("/api/probe.png"),
     "dimension-encoded protocol traffic must share the external-image FIFO");
+const probePanel = findPanel(context, panel => panel.url && panel.url.includes("/api/probe.png"));
+assert(probePanel, "calibration probe panel was not created");
+probePanel.actuallayoutwidth = 600;
+probePanel.actuallayoutheight = 1000;
+runScheduled(); // finish calibration before exercising its ordinary-image discriminator
+assert($.MG.Net.isLevelEncodedSize(69, 582),
+    "ordinary-image consumers must recognize a calibrated Worker error sentinel");
+assert(!$.MG.Net.isLevelEncodedSize(640, 960),
+    "a host-clamped 1920x960 panorama must not be mistaken for a protocol image");
 
 const ui = source("mg_ui.js");
 const pixel = source("mg_pixelbattle.js");
@@ -169,6 +178,9 @@ assert(!/crispImage\.SetImage\(MG\.Net\.getBaseUrl\(\)/.test(pixel),
     "Pixel Battle must not bypass the FIFO with a direct remote SetImage");
 assert(/function loadPanorama[\s\S]*?MG\.Net\.loadImage\(url,/.test(geo),
     "GeoGuesser's cold panorama load must use the shared MG.Net FIFO");
+assert(/MG\.Net\.isLevelEncodedSize\(loadedW, loadedH\)/.test(geo) &&
+    !/var aspect = shortSide > 0/.test(geo),
+    "GeoGuesser must not validate intrinsic panorama aspect from host-clamped layout dimensions");
 assert(/RegisterEventHandler\("DragStart"[\s\S]*?RegisterEventHandler\("DragEnd"/.test(geo) &&
     /MG\.Widgets\.winPos\(dragGhost\)/.test(geo),
     "GeoGuesser must reuse the proven chess/checkers native drag position channel");

@@ -230,10 +230,11 @@
                     try { image.SetImage(""); image.DeleteAsync(0); } catch (e) {}
                     return;
                 }
-                var shortSide = Math.min(Number(loadedW), Number(loadedH));
-                var longSide = Math.max(Number(loadedW), Number(loadedH));
-                var aspect = shortSide > 0 ? longSide / shortSide : 0;
-                if (aspect < 1.7 || aspect > 2.3) {
+                // The shared request host is 640px wide and clamps a 1920x960 source to a
+                // reported 640x960 layout. That is still a successful image; layout dimensions
+                // cannot validate intrinsic aspect here. Reject only a small level-encoded
+                // Worker error PNG, whose calibrated dimensions are reserved to levels 0..63.
+                if (MG.Net.isLevelEncodedSize(loadedW, loadedH)) {
                     try { image.SetImage(""); image.DeleteAsync(0); } catch (e2) {}
                     loading.text = "Panorama unavailable. Retrying…";
                     $.Schedule(1.5, function () {

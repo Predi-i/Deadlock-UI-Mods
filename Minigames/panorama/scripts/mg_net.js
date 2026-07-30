@@ -16,6 +16,7 @@
  *   $.MG.Net.isConfigured()                     -> false until BASE_URL is set
  *   $.MG.Net.request(path, params, onDone, onErr)  raw (w,h) after swap+scale decode
  *   $.MG.Net.loadImage(url, onDone, onErr, attrs)  ordinary image through the same FIFO
+ *   $.MG.Net.isLevelEncodedSize(w, h)             -> true for a small Worker protocol PNG
  *   $.MG.Session.newToken()                     -> a fresh high-entropy seat token
  *   $.MG.Api.create(game, tok, cb(code), err)
  *   $.MG.Api.quick(game, tok, cb({role,code}), err)   role = "host" | "joiner"
@@ -461,6 +462,18 @@
         return { w: decodeLevel(w, scaleX), h: decodeLevel(hh, scaleY) };
     }
 
+    // Ordinary image loads share the request host with the level-encoded PNG protocol. A wide
+    // panorama is clamped to HOST_W by that host, so its reported layout aspect ratio is NOT its
+    // intrinsic image aspect ratio (a 1920x960 JPEG is observed as 640x960). Protocol responses,
+    // however, always decode into the reserved 0..63 level square. Consumers such as GeoGuesser
+    // use this discriminator to reject an error sentinel without treating host clamping as a bad
+    // photograph. Calibration removes display/UI scale and dimension swapping first.
+    function isLevelEncodedSize(w, hh) {
+        if (!calibrated) return false;
+        var levels = decode(Number(w), Number(hh));
+        return levels.w >= 0 && levels.w <= 63 && levels.h >= 0 && levels.h <= 63;
+    }
+
     function request(path, params, onDone, onError) {
         function go() {
             rawRequest(path, params, function (w, hh) {
@@ -474,6 +487,7 @@
     MG.Net = {
         request: request,
         loadImage: loadImage,
+        isLevelEncodedSize: isLevelEncodedSize,
         clearQueue: function () {
             // Drop pending UI traffic (stale status/poll ticks from a view we just
             // left) - their callers are token-guarded, so silence is fine. Two things
