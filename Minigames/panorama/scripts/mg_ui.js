@@ -924,8 +924,9 @@
             joinBtn.SetPanelEvent("onactivate", function () { renderJoin(); });
         }
 
-        if (!multiSelect && selectedGameId !== 9) {
-            // Offline practice vs the bot (single-game mode only).
+        if (!multiSelect) {
+            // Single-game practice. GeoGuesser's solo run remains server-authoritative because
+            // its hidden target, panorama proxy and scoring cannot safely exist client-side.
             var practiceLbl = $.CreatePanel("Label", detailPanel, "");
             practiceLbl.AddClass("mg-section-label");
             practiceLbl.text = "Practice";
@@ -933,7 +934,8 @@
             botRow.AddClass("mg-btn-row");
             var botBtn = $.CreatePanel("Button", botRow, "");
             botBtn.AddClass("mg-btn"); botBtn.AddClass("mg-btn-solo");
-            var bl = $.CreatePanel("Label", botBtn, ""); bl.text = "PLAY VS BOT";
+            var bl = $.CreatePanel("Label", botBtn, "");
+            bl.text = selectedGameId === 9 ? "PLAY SOLO" : "PLAY VS BOT";
             botBtn.SetPanelEvent("onactivate", function () { startBotGame(); });
         }
 
@@ -1281,9 +1283,32 @@
     // Even count → you're host (white/X, move first); odd → joiner (black/O, bot opens).
     var botGamesStarted = 0;
 
+    function startGeoSolo() {
+        var g = MG.Games.byId(9);
+        if (!g || !g.enabled) { setStatus("GeoGuesser is unavailable."); return; }
+
+        // A finished solo lobby still owns its synthetic second seat. Release it before creating
+        // Play Again's replacement; leaving the menu does the same through cleanupCurrentView().
+        if (currentCode !== null && currentCode !== undefined && view === "game") {
+            try { MG.Api.leave(currentCode, currentTok); } catch (e) {}
+        }
+
+        var ctx = beginOnlineAction(9);
+        setStatus("Starting a solo GeoGuesser run…");
+        log("startGeoSolo base=" + MG.Net.getBaseUrl());
+        MG.Api.create(9, ctx.tok, function (code) {
+            if (!bindActionCode(ctx, code)) { discardStaleSeat(ctx, code, false); return; }
+            renderGame(9, code, true, true, { solo: true }, ctx);
+        }, function () {
+            if (!actionAlive(ctx)) return;
+            setStatus("Couldn't start solo GeoGuesser. Check the server.");
+        }, 0, "", true);
+    }
+
     function startBotGame() {
         var g = MG.Games.byId(selectedGameId);
         if (!g || !g.enabled) { setStatus("Pick an available game."); return; }
+        if (selectedGameId === 9) { startGeoSolo(); return; }
         var iAmHost = (botGamesStarted % 2) === 0;
         botGamesStarted++;
         log("startBotGame game=" + selectedGameId + " iAmHost=" + iAmHost);
@@ -1374,7 +1399,8 @@
         cleanupCurrentView(false);
         view = "game";
         var g = MG.Games.byId(gameId);
-        setTitle((g ? (g.short || g.name) : "Game") + (bot && gameId !== 8 ? " (bot)" : ""));
+        var modeSuffix = bot && gameId === 9 ? " (solo)" : bot && gameId !== 8 ? " (bot)" : "";
+        setTitle((g ? (g.short || g.name) : "Game") + modeSuffix);
         clearBody();
         rematchPollToken++;   // invalidate any handshake from the previous game
 
@@ -1394,6 +1420,7 @@
             code: code,
             isHost: isHost,
             bot: !!bot,
+            solo: !!(opts && opts.solo),
             tok: ctx ? ctx.tok : currentTok, // immutable action token; unused offline
             seat: opts && opts.seat,
             numPlayers: opts && opts.numPlayers,
@@ -1420,6 +1447,10 @@
         var pal = $.CreatePanel("Label", playAgainBtn, ""); pal.text = "Play Again";
         playAgainBtn.SetPanelEvent("onactivate", function () {
             if (bot) {
+                if (gameId === 9) {
+                    startGeoSolo();
+                    return;
+                }
                 // Offline: no server, just re-mount the same game with the side flipped so the
                 // player alternates who moves first (mirrors startBotGame's botGamesStarted parity).
                 renderGame(gameId, 0, !isHost, true, opts);

@@ -5,7 +5,9 @@ const origin = String(process.argv[2] || "https://178.236.246.13").replace(/\/+$
 let nonce = Date.now();
 const hostToken = "liveGeoHost" + nonce;
 const joinToken = "liveGeoJoin" + nonce;
+const soloToken = "liveGeoSolo" + nonce;
 let lobbyCode = "";
+let soloCode = "";
 
 async function get(path, query) {
   const url = new URL(path + ".png", origin);
@@ -79,12 +81,50 @@ try {
     " panorama=" + panoramaType + "/" + panorama.bytes.length +
     " target=" + (target.w - 20) + "," + target.h +
     " hostScore=" + (score.h * 63 + score.w));
+
+  const soloCreated = levels(await get("/api/create", {
+    game: 9, tok: soloToken, solo: 1
+  }), "solo create");
+  soloCode = String((soloCreated.w - 24) * 64 + soloCreated.h).padStart(4, "0");
+  const soloInitial = levels(await get("/api/geostate", {
+    code: soloCode, tok: soloToken
+  }), "solo initial state");
+  if (soloInitial.w !== 1 || soloInitial.h !== 1) {
+    throw new Error("unexpected initial solo Geo state");
+  }
+  const soloGuess = levels(await get("/api/geoguess", {
+    code: soloCode, tok: soloToken, cell: 256
+  }), "solo guess");
+  if (soloGuess.w !== 1) throw new Error("solo guess was rejected");
+  const soloReveal = levels(await get("/api/geostate", {
+    code: soloCode, tok: soloToken
+  }), "solo reveal state");
+  if (soloReveal.w !== 1 || soloReveal.h !== 28) {
+    throw new Error("solo reveal did not open automatically");
+  }
+  const soloNext = levels(await get("/api/geonext", {
+    code: soloCode, tok: soloToken
+  }), "solo next");
+  const soloRoundTwo = levels(await get("/api/geostate", {
+    code: soloCode, tok: soloToken
+  }), "solo round 2");
+  if (soloNext.w !== 1 || soloRoundTwo.w !== 2 || soloRoundTwo.h !== 1) {
+    throw new Error("solo round did not advance automatically");
+  }
+  console.log("LIVE GEO SOLO OK code=" + soloCode);
 } finally {
   if (lobbyCode) {
     try {
       await get("/api/leave", { code: lobbyCode, tok: hostToken });
     } catch (_error) {
       // The live assertion above remains the primary result; a stale smoke lobby expires normally.
+    }
+  }
+  if (soloCode) {
+    try {
+      await get("/api/leave", { code: soloCode, tok: soloToken });
+    } catch (_error) {
+      // Same best-effort cleanup as the two-seat smoke lobby.
     }
   }
 }

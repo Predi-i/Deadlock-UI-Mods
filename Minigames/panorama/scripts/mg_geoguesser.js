@@ -1,5 +1,5 @@
 /*
- * GeoGuesser - five server-authoritative panorama rounds for two online players.
+ * GeoGuesser - five server-authoritative panorama rounds for online or solo play.
  *
  * The VPS chooses the hidden location and proxies a fixed open-licensed 2:1
  * equirectangular image. Panorama has no projection shader, so the view is a
@@ -53,6 +53,7 @@
         var code = session.code;
         var tok = session.tok || "";
         var mySeat = session.isHost ? 0 : 1;
+        var solo = !!session.solo;
         var currentRound = -1;
         var revealRound = -1;
         var selectedCell = -1;
@@ -74,7 +75,8 @@
         stats.AddClass("mg-geo-stats");
         var roundLabel = addLabel(stats, "mg-geo-stat", "Round 1 / " + ROUNDS);
         var viewLabel = addLabel(stats, "mg-geo-view-label", "Drag to look around");
-        var scoreLabel = addLabel(stats, "mg-geo-stat mg-geo-score", "You 0 · Opponent 0");
+        var scoreLabel = addLabel(stats, "mg-geo-stat mg-geo-score",
+            solo ? "Score 0" : "You 0 · Opponent 0");
 
         var viewport = $.CreatePanel("Panel", root, "");
         viewport.AddClass("mg-geo-viewport");
@@ -296,8 +298,8 @@
                     setAction("SUBMIT GUESS", true, submitGuess);
                     return;
                 }
-                prompt.text = "Guess locked. Waiting for the opponent…";
-                setAction("WAITING FOR OPPONENT", false, submitGuess);
+                prompt.text = solo ? "Calculating result…" : "Guess locked. Waiting for the opponent…";
+                setAction(solo ? "CALCULATING…" : "WAITING FOR OPPONENT", false, submitGuess);
                 pollMisses = 0;
             }, function () {
                 if (destroyed) return;
@@ -326,7 +328,8 @@
         }
 
         function updateScoreText() {
-            scoreLabel.text = "You " + scores[mySeat] + " · Opponent " + scores[1 - mySeat];
+            scoreLabel.text = solo ? "Score " + scores[mySeat]
+                : "You " + scores[mySeat] + " · Opponent " + scores[1 - mySeat];
         }
 
         function revealReadDone(round) {
@@ -358,7 +361,7 @@
         function showReveal() {
             if (revealRound === currentRound) return;
             revealRound = currentRound;
-            revealReadsPending = 6;
+            revealReadsPending = solo ? 4 : 6;
             sendingGuess = false;
             prompt.text = "Round complete. Loading the authoritative reveal…";
             setAction("LOADING RESULT…", false, readyNext);
@@ -368,29 +371,34 @@
             readReveal(function (ok, fail) { MG.Api.geoPick(code, tok, mySeat, ok, fail); }, function (point) {
                 markPoint(point, "mg-geo-me");
             });
-            readReveal(function (ok, fail) { MG.Api.geoPick(code, tok, 1 - mySeat, ok, fail); }, function (point) {
-                markPoint(point, "mg-geo-them");
+            if (!solo) {
+                readReveal(function (ok, fail) { MG.Api.geoPick(code, tok, 1 - mySeat, ok, fail); }, function (point) {
+                    markPoint(point, "mg-geo-them");
+                });
+            }
+            readReveal(function (ok, fail) { MG.Api.geoScore(code, tok, mySeat, ok, fail); }, function (score) {
+                scores[mySeat] = score;
             });
-            readReveal(function (ok, fail) { MG.Api.geoScore(code, tok, 0, ok, fail); }, function (score) {
-                scores[0] = score;
-            });
-            readReveal(function (ok, fail) { MG.Api.geoScore(code, tok, 1, ok, fail); }, function (score) {
-                scores[1] = score;
-            });
+            if (!solo) {
+                readReveal(function (ok, fail) { MG.Api.geoScore(code, tok, 1 - mySeat, ok, fail); }, function (score) {
+                    scores[1 - mySeat] = score;
+                });
+            }
             readReveal(function (ok, fail) { MG.Api.geoInfo(code, tok, ok, fail); }, function (index) {
                 var info = INFO[index];
                 if (info) {
                     revealPlace.text = info.place;
                     revealCredit.text = "Photo: " + info.credit + " · Wikimedia Commons";
                 }
-                prompt.text = "Round complete. The exact cell and both guesses are shown.";
+                prompt.text = solo ? "Round complete. The exact cell and your guess are shown."
+                    : "Round complete. The exact cell and both guesses are shown.";
             });
         }
 
         function readyNext() {
             if (sendingNext || finished || revealRound !== currentRound) return;
             sendingNext = true;
-            setAction("WAITING FOR OPPONENT", false, readyNext);
+            setAction(solo ? "LOADING NEXT ROUND…" : "WAITING FOR OPPONENT", false, readyNext);
             MG.Api.geoNext(code, tok, function (result) {
                 if (destroyed) return;
                 if (!result.ok) {
@@ -398,7 +406,7 @@
                     setAction(currentRound + 1 >= ROUNDS ? "FINISH" : "NEXT ROUND", true, readyNext);
                     return;
                 }
-                prompt.text = "Ready. Waiting for the opponent…";
+                prompt.text = solo ? "Loading next round…" : "Ready. Waiting for the opponent…";
                 pollMisses = 0;
             }, function () {
                 if (destroyed) return;
@@ -411,6 +419,14 @@
             if (finished) return;
             finished = true;
             var mine = scores[mySeat], theirs = scores[1 - mySeat];
+            if (solo) {
+                roundLabel.text = "Solo complete";
+                prompt.text = "Final score: " + mine + " / " + (ROUNDS * 750) + ".";
+                setAction("SOLO COMPLETE", false, readyNext);
+                outerStatus("GeoGuesser solo finished: " + mine + " / " + (ROUNDS * 750) + ".");
+                if (session.onGameOver) session.onGameOver("win");
+                return;
+            }
             roundLabel.text = "Match complete";
             prompt.text = mine > theirs ? "You win!" : mine < theirs ? "Opponent wins." : "Draw.";
             setAction("MATCH COMPLETE", false, readyNext);
@@ -425,8 +441,8 @@
             if (state.reveal) {
                 showReveal();
             } else if (state.guessMask & myBit) {
-                prompt.text = "Guess locked. Waiting for the opponent…";
-                setAction("WAITING FOR OPPONENT", false, submitGuess);
+                prompt.text = solo ? "Calculating result…" : "Guess locked. Waiting for the opponent…";
+                setAction(solo ? "CALCULATING…" : "WAITING FOR OPPONENT", false, submitGuess);
             }
         }
 
@@ -490,10 +506,10 @@
         }
 
         updateScoreText();
-        if (session.bot || !code || !tok) {
-            loading.text = "GeoGuesser currently requires Quick Match or a private room.";
-            prompt.text = "Return to the picker and start an online match.";
-            setAction("ONLINE ONLY", false, submitGuess);
+        if (code === null || code === undefined || !tok) {
+            loading.text = "GeoGuesser requires a server-backed session.";
+            prompt.text = "Return to the picker and choose Play Solo, Quick Match or a private room.";
+            setAction("UNAVAILABLE", false, submitGuess);
         } else {
             pollState();
         }

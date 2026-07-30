@@ -574,9 +574,10 @@
 
         // tc = time control in SECONDS (chess/checkers only; server rejects off-menu / other
         // games → untimed). Omit or 0 for an untimed lobby. The joiner learns tc from join().
-        create: function (game, tok, cb, err, tc, cv) {
+        create: function (game, tok, cb, err, tc, cv, solo) {
             var params = { game: game, tok: tok, tc: tc || 0 };
             if (cv) params.cv = cv;                       // "russian"/"english"; checkers only. Joiner learns it via match()
+            if (solo) params.solo = 1;                    // GeoGuesser only: server fills the opponent seat
             request("/api/create", params, function (w, h) {
                 if (w === 9 && h === 4) { if (err) err("busy"); return; } // rate-limited, don't recalibrate
                 var dc = decodeCode(w, h);

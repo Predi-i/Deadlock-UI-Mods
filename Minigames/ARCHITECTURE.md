@@ -22,9 +22,9 @@ support online play and bots. **Durak** (§8.6) and **Poker** (No-Limit Texas Ho
 worker-as-dealer transport; public Durak matchmaking remains heads-up. Those online
 dealer paths are built + Node-tested but not yet in-game verified. **Pixel Battle** is
 one persistent public canvas backed by the Worker (§8.9). **Wordle** is a fully offline
-single-player game (§8.10). **GeoGuesser** is a five-round online game for Quick Match
-or private rooms: the VPS owns the targets, guesses, reveal gate and score, and proxies
-fixed open-licensed equirectangular panoramas (§8.11).
+single-player game (§8.10). **GeoGuesser** is a five-round game for Quick Match, private
+rooms or server-backed Play Solo: the VPS owns the targets, guesses, reveal gate and score,
+and proxies fixed open-licensed equirectangular panoramas (§8.11).
 
 Shared UI features across the games: a **per-turn countdown timer** (§9.1) in durak / poker /
 TTT / Connect Four, **server-authoritative side clocks** (time-control matchmaking) in chess /
@@ -36,12 +36,14 @@ Picker cards show a custom **`.vtex` image** (drawn by the maintainer, compiled 
 drawn by a child `<Image>` via `setFace()` in `renderMenu` (trap 14) — `s2r://panorama/
 images/cards/<key>.vtex`. Missing art falls back to a plain dark card.
 
-Four ways to play (see `mg_ui.js`):
+Ways to play (see `mg_ui.js`):
 - **Quick Match** — public matchmaking; server pairs you with anyone else who pressed it.
 - **Quick Match → Select Multiple** — one search may offer game ids 1–5 and pairs on set
   intersection. A Durak result always resolves to a two-seat dealer room and auto-starts.
 - **Create / Join** — private match via a shared 4-digit code.
 - **Play vs Bot** — fully offline, no server, no network calls at all.
+- **Play Solo** — GeoGuesser-only authoritative session; the VPS fills the second seat so reveal
+  and Next happen immediately after the player's action.
 
 ---
 
@@ -231,7 +233,7 @@ dim. Only `/api/probe` stays **literal pixels** — it's the calibration referen
 |---|---|
 | `/api/probe` | `(600, 1000)` LITERAL px — swap + scale calibration reference |
 | `/api/ping` | `(1, 1)` |
-| `/api/create?game=G&tok=T&tc=..&cv=..` | `dCode(code, host=false)` — new private lobby, host = seat 0 |
+| `/api/create?game=G&tok=T&tc=..&cv=..&solo=1` | `dCode(code, host=false)` — new private lobby; `solo=1` fills GeoGuesser seat 1 on the server |
 | `/api/quick?game=G&tok=T&tc=..&cv=..` | `dCode(code, HOST\|JOINER)` — role is the code **band**, not `+100` |
 | `/api/cancel?code=C` | `(1,1)` |
 | `/api/join?code=C&tok=T` | `(G, tcIndex+1)` ok · `(20,1)` missing · `(21,1)` full · `(9,3)` bad-token |
@@ -244,7 +246,7 @@ dim. Only `/api/probe` stays **literal pixels** — it's the calibration referen
 | `/api/geostate?code=C&tok=T` | current round + authoritative guess/reveal/ready masks |
 | `/api/geoview?code=C&tok=T` | current 2:1 equirectangular image (ordinary JPEG/PNG, not a dimension message) |
 | `/api/geoguess?code=C&tok=T&cell=N` | `(1,1)` accepted · `(9,x)` rejected |
-| `/api/geonext?code=C&tok=T` | `(1,1)` ready; advances only after both players are ready |
+| `/api/geonext?code=C&tok=T` | `(1,1)` ready; advances after both players, or immediately in a solo lobby |
 | `/api/geotarget`, `/api/geopick`, `/api/geoscore`, `/api/geoinfo` | reveal-only target, guesses, totals and attribution |
 
 ### 5.1 Server authority (seats, tokens, validation)
@@ -1071,10 +1073,11 @@ is built but **not yet in-game verified**.
 
 ## 8.11 GeoGuesser (mg_geoguesser.js)
 
-- GeoGuesser is online-only (game id 9) and uses the existing two-seat Quick Match and private-room
-  lifecycle. A match has five rounds. The server selects five non-repeating locations from a fixed
-  curated set, accepts one map-cell guess per seat, calculates distance scores, hides all reveal data
-  until both guesses exist, and advances only after both players press Next.
+- GeoGuesser (game id 9) uses the existing two-seat Quick Match/private-room lifecycle and a
+  server-backed Play Solo variant. A match has five rounds. The server selects five non-repeating
+  locations from a fixed curated set, accepts one map-cell guess per human seat, calculates distance
+  scores, and hides all reveal data until the round is complete. In solo it owns an opaque synthetic
+  seat, fills that seat's guess/ready state, and therefore reveals and advances without a second client.
 - `/api/geoview` is authenticated with the lobby seat token and proxies the current open-licensed
   Wikimedia Commons image through the VPS. The bounded in-memory cache means Panorama never needs
   direct access to an arbitrary third-party URL and user input can never select an upstream target.

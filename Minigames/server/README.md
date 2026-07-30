@@ -47,7 +47,8 @@ npm test
 `npm test` includes `mg_vps_server_test.js`, which starts the real Node HTTP adapter against a
 temporary SQLite file and verifies protocol dimensions, restart persistence, Pixel Battle state
 and fail-closed admin authentication. `mg_server_test.js` covers GeoGuesser's hidden target,
-authenticated image proxy, guess/reveal/score flow and all five ready-gated rounds.
+authenticated image proxy, guess/reveal/score flow, all five ready-gated rounds and server-filled
+Play Solo sessions.
 
 ## Production service
 
@@ -70,7 +71,8 @@ sqlite3 /var/lib/deadlock-minigames/minigames.sqlite 'PRAGMA integrity_check;'
 ```
 
 From the repository root, `node tools/mg_geo_live_smoke.js https://178.236.246.13`
-exercises a real two-seat GeoGuesser lobby, panorama proxy, reveal and cleanup over HTTPS.
+exercises real two-seat and solo GeoGuesser lobbies, panorama proxy, reveal, round advance and
+cleanup over HTTPS.
 
 Deployment of a source update:
 

@@ -36,7 +36,7 @@
  *   /api/pxversion                                -> (version&63, version>>6)     reload only after a change
  *   /api/pxbank?id=STEAM32                        -> (balance&63, balance>>6)     100 cap, +1 / 30 seconds
  *   /api/pxput?id=STEAM32&b=x,y,c;...             -> remaining balance           10..128 unique pixels
- *   /api/create?game=G&tok=T                      -> dCode(code, host=false)     new PRIVATE lobby, host = seat 0
+ *   /api/create?game=G&tok=T[&solo=1]             -> dCode(code, host=false)     new PRIVATE lobby, host = seat 0
  *   /api/quick?game=G&tok=T&tc=..&cv=..            -> dCode(code, JOINER|HOST)   role is the code BAND, not +100
  *   /api/mquick?games=..&tok=T&tc=..&cv=..         -> dCode(code, JOINER|HOST)   multi-select; game fixed on join
  *   /api/cancel?code=C                            -> (1,1)                       drop a still-waiting lobby
@@ -577,6 +577,7 @@ export class Hub {
       if (p === "/api/geoguess") {
         const access = await geoLobbyAccess(this, code, q.get("tok"));
         if (!access.ok) return d(9, access.code);
+        if (access.lobby.solo && access.seat !== 0) return d(9, 3);
         const st = access.lobby.state;
         const cell = Number(q.get("cell"));
         if (!st || st.round < 0 || st.round >= GEO_ROUNDS || st.reveal ||
@@ -585,6 +586,10 @@ export class Hub {
           return st.guesses[access.seat] === cell ? d(1, 1) : d(9, 1);
         }
         st.guesses[access.seat] = cell;
+        if (access.lobby.solo) {
+          const location = GEO_LOCATIONS[st.targets[st.round]];
+          st.guesses[1] = geoLatY(location.lat) * GEO_GRID_W + geoLonX(location.lon);
+        }
         if (st.guesses[0] != null && st.guesses[1] != null) geoRevealRound(st);
         access.lobby.t = nowSeq();
         await this.storage.put("l:" + code, access.lobby);
@@ -593,9 +598,11 @@ export class Hub {
       if (p === "/api/geonext") {
         const access = await geoLobbyAccess(this, code, q.get("tok"));
         if (!access.ok) return d(9, access.code);
+        if (access.lobby.solo && access.seat !== 0) return d(9, 3);
         const st = access.lobby.state;
         if (!st || !st.reveal || st.round < 0 || st.round >= GEO_ROUNDS) return d(9, 2);
         st.ready[access.seat] = 1;
+        if (access.lobby.solo) st.ready[1] = 1;
         if (st.ready[0] && st.ready[1]) geoAdvanceRound(st);
         access.lobby.t = nowSeq();
         await this.storage.put("l:" + code, access.lobby);
@@ -638,12 +645,17 @@ export class Hub {
 
         const tc = clockSecFor(game, q.get("tc"));         // 0 unless chess/checkers with a bank
         const cv = checkersVariantFor(game, q.get("cv"));
+        const solo = game === 9 && q.get("solo") === "1";
         const lobby = {
-          game, players: 1, moves: [], pub: 0, t: nowSeq(),
-          seats: [{ tok: q.get("tok") || "" }, null], // seat 0 = host = white/X/+1, moves first
+          game, players: solo ? 2 : 1, moves: [], pub: 0, t: nowSeq(),
+          seats: [
+            { tok: q.get("tok") || "" },
+            solo ? { tok: randomBase64Url(24) } : null
+          ],                                             // solo GeoGuesser gets an opaque server seat
           turn: 0,                                     // seat index whose turn it is
           tc: tc,                                      // per-seat bank in SECONDS (0 = no clock)
           cv: cv,                                      // Russian or English checkers (empty for other games)
+          solo: solo ? 1 : 0,
           state: initState(game, cv)                   // authoritative board/state
         };
         initClock(lobby);

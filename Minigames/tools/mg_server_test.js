@@ -809,6 +809,30 @@ async function main() {
     ok(lastGeoScores[0] <= 3750 && lastGeoScores[1] <= 3750,
         "geo: cumulative scores fit the collision-free 12-bit score codec");
 
+    // Solo is still a real authoritative lobby: the server owns an opaque synthetic second
+    // seat, supplies its guess/ready state, and never exposes the hidden target to the client.
+    var geoSoloHub = new Hub({ storage: new FakeStorage() });
+    d = await req(geoSoloHub, "/api/create.png?game=9&tok=GEOSOLO01&solo=1");
+    var geoSoloCode = decCode(d);
+    d = await req(geoSoloHub, "/api/status.png?code=" + geoSoloCode);
+    ok(d.w === 2, "geo solo: create immediately forms a server-backed two-seat session");
+    d = await req(geoSoloHub, "/api/join.png?code=" + geoSoloCode + "&tok=GEOSNOOP1");
+    ok(d.w === 21 && d.h === 1, "geo solo: a third party cannot occupy the synthetic seat");
+    d = await req(geoSoloHub, "/api/geotarget.png?code=" + geoSoloCode + "&tok=GEOSOLO01");
+    ok(d.w === 9 && d.h === 1, "geo solo: target remains hidden before the player's guess");
+    d = await req(geoSoloHub, "/api/geoguess.png?code=" + geoSoloCode +
+        "&tok=GEOSOLO01&cell=17");
+    ok(d.w === 1 && d.h === 1, "geo solo: player guess is accepted");
+    d = await req(geoSoloHub, "/api/geostate.png?code=" + geoSoloCode + "&tok=GEOSOLO01");
+    ok(d.w === 1 && d.h === 28, "geo solo: server opens the reveal without waiting for a client opponent");
+    d = await req(geoSoloHub, "/api/geoscore.png?code=" + geoSoloCode +
+        "&tok=GEOSOLO01&seat=0");
+    ok(d.w < 63 && d.h < 63, "geo solo: authoritative player score is readable after reveal");
+    d = await req(geoSoloHub, "/api/geonext.png?code=" + geoSoloCode + "&tok=GEOSOLO01");
+    ok(d.w === 1 && d.h === 1, "geo solo: one ready action advances the server-filled round");
+    d = await req(geoSoloHub, "/api/geostate.png?code=" + geoSoloCode + "&tok=GEOSOLO01");
+    ok(d.w === 2 && d.h === 1, "geo solo: next round starts immediately");
+
     d = await req(hub, "/api/create.png?game=1");                  // no token
     ok(d.w === 9 && d.h === 3, "create with NO token → (9,3) bad-token");
     d = await req(hub, "/api/create.png?game=1&tok=short");        // 5 chars < 8

@@ -125,6 +125,7 @@ const durak = source("mg_durak.js");
 const poker = source("mg_poker.js");
 const geo = source("mg_geoguesser.js");
 const games = source("mg_games.js");
+const worker = fs.readFileSync(path.join(ROOT, "server", "worker.core.js"), "utf8");
 const baseHud = fs.readFileSync(path.join(ROOT, "panorama", "layout", "base_hud.xml"), "utf8");
 
 assert(/var MULTI_GAME_IDS = \[1, 2, 3, 4, 5\];/.test(ui),
@@ -174,9 +175,14 @@ assert(/RegisterEventHandler\("DragStart"[\s\S]*?RegisterEventHandler\("DragEnd"
 assert(/\$\.CreatePanel\("Slider"[\s\S]*?onvaluechanged[\s\S]*?yaw = nextYaw/.test(geo) &&
     /\$\.CreatePanel\("Slider"[\s\S]*?onvaluechanged[\s\S]*?pitch = nextPitch/.test(geo),
     "GeoGuesser must keep a continuous native-slider camera path when image drag updates only on release");
-assert(/revealReadsPending = 6;[\s\S]*?setAction\("LOADING RESULT…", false/.test(geo) &&
+assert(/revealReadsPending = solo \? 4 : 6;[\s\S]*?setAction\("LOADING RESULT…", false/.test(geo) &&
     /revealReadsPending === 0[\s\S]*?setAction\(currentRound/.test(geo),
     "GeoGuesser must not allow next/finish before every authoritative reveal read completes");
+assert(/bl\.text = selectedGameId === 9 \? "PLAY SOLO" : "PLAY VS BOT"/.test(ui) &&
+    /function startGeoSolo\(\)[\s\S]*?MG\.Api\.create\(9,[\s\S]*?\{ solo: true \}/.test(ui) &&
+    /if \(access\.lobby\.solo\) st\.ready\[1\] = 1/.test(worker) &&
+    /code === null \|\| code === undefined \|\| !tok/.test(geo),
+    "GeoGuesser Play Solo must create a server-backed session and advance without a second client");
 assert(/MG\.Games\.register\(\{ id: 9,[\s\S]*?enabled: true \}\)/.test(geo) &&
     /mg_geoguesser\.vjs_c/.test(baseHud),
     "GeoGuesser controller must be registered and loaded before the menu shell");
