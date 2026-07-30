@@ -136,7 +136,8 @@
         connectfour: "Drop your discs down the grid and be the first to line up four in a row.",
         poker:       "No-Limit Texas Hold'em. Read your table, bet your chips, and take the pot.",
         pixelbattle: "One persistent world map. Paint it together, ten or more pixels at a time.",
-        wordle:      "Find the hidden five-letter word in six guesses using colour-coded clues."
+        wordle:      "Find the hidden five-letter word in six guesses using colour-coded clues.",
+        geoguesser:  "Explore a 360° panorama, place your guess, and beat your opponent's score."
     };
 
     // Opens the maintainer's Boosty donate page in the external browser. Proven Panorama
@@ -923,7 +924,7 @@
             joinBtn.SetPanelEvent("onactivate", function () { renderJoin(); });
         }
 
-        if (!multiSelect) {
+        if (!multiSelect && selectedGameId !== 9) {
             // Offline practice vs the bot (single-game mode only).
             var practiceLbl = $.CreatePanel("Label", detailPanel, "");
             practiceLbl.AddClass("mg-section-label");

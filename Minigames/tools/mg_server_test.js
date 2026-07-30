@@ -712,6 +712,103 @@ async function main() {
         restoredOwner.body.action.steamid === "11111111",
         "undo restores both the previous colour and the previous pixel owner");
 
+    // ── GeoGuesser: hidden panorama, authoritative guesses/reveal/scores ──
+    var geo = await seatedLobby(9, "GEOHOST01", "GEOJOIN01");
+    d = await req(geo.hub, "/api/geostate.png?code=" + geo.code + "&tok=GEOHOST01");
+    ok(d.w === 1 && d.h === 1, "geo: round 1 starts unrevealed with no guesses");
+    d = await req(geo.hub, "/api/geostate.png?code=" + geo.code + "&tok=GEOSTRANGER");
+    ok(d.w === 9 && d.h === 3, "geo: foreign token cannot read round state");
+    d = await req(geo.hub, "/api/geotarget.png?code=" + geo.code + "&tok=GEOHOST01");
+    ok(d.w === 9 && d.h === 1, "geo: target is hidden before both players guess");
+
+    var geoFetches = 0;
+    globalThis.MG_GEO_IMAGE_FETCH = async function () {
+        geoFetches++;
+        return new Response(new Uint8Array([0xff, 0xd8, 0xff, 0xd9]), {
+            headers: { "Content-Type": "image/jpeg", "Content-Length": "4" }
+        });
+    };
+    try {
+        d = await req(geo.hub, "/api/geoview.png?code=" + geo.code + "&tok=GEOSTRANGER");
+        ok(d.w === 9 && d.h === 3, "geo: foreign token cannot fetch the hidden panorama");
+        var geoImage = await geo.hub.fetch(new Request(
+            "https://mg.test/api/geoview.png?code=" + geo.code + "&tok=GEOHOST01"));
+        var geoImageBytes = new Uint8Array(await geoImage.arrayBuffer());
+        ok(geoImage.headers.get("content-type") === "image/jpeg" &&
+            geoImageBytes.length === 4 && geoImageBytes[0] === 0xff,
+            "geo: seated player receives the proxied panorama image");
+        await geo.hub.fetch(new Request(
+            "https://mg.test/api/geoview.png?code=" + geo.code + "&tok=GEOJOIN01"));
+        ok(geoFetches === 1, "geo: panorama source is cached once for both players");
+    } finally {
+        delete globalThis.MG_GEO_IMAGE_FETCH;
+    }
+
+    d = await req(geo.hub, "/api/geoguess.png?code=" + geo.code + "&tok=GEOHOST01&cell=999");
+    ok(d.w === 9 && d.h === 2, "geo: out-of-map guess is rejected");
+    d = await req(geo.hub, "/api/geoguess.png?code=" + geo.code + "&tok=GEOHOST01&cell=0");
+    ok(d.w === 1 && d.h === 1, "geo: host guess is accepted");
+    d = await req(geo.hub, "/api/geostate.png?code=" + geo.code + "&tok=GEOHOST01");
+    ok(d.w === 1 && d.h === 2, "geo: state exposes only the host guess mask");
+    d = await req(geo.hub, "/api/geoguess.png?code=" + geo.code + "&tok=GEOHOST01&cell=1");
+    ok(d.w === 9 && d.h === 1, "geo: a seat cannot replace its locked guess");
+    d = await req(geo.hub, "/api/geoguess.png?code=" + geo.code + "&tok=GEOJOIN01&cell=511");
+    ok(d.w === 1 && d.h === 1, "geo: joiner guess is accepted");
+    d = await req(geo.hub, "/api/geostate.png?code=" + geo.code + "&tok=GEOJOIN01");
+    ok(d.w === 1 && d.h === 28, "geo: both guesses atomically open the reveal phase");
+
+    d = await req(geo.hub, "/api/geotarget.png?code=" + geo.code + "&tok=GEOHOST01");
+    ok(d.w >= 20 && d.w < 52 && d.h >= 0 && d.h < 16,
+        "geo: revealed target uses the collision-free map-coordinate band");
+    d = await req(geo.hub, "/api/geopick.png?code=" + geo.code + "&tok=GEOHOST01&seat=0");
+    ok(d.w === 20 && d.h === 0, "geo: host's revealed map pick round-trips");
+    d = await req(geo.hub, "/api/geopick.png?code=" + geo.code + "&tok=GEOHOST01&seat=1");
+    ok(d.w === 51 && d.h === 15, "geo: joiner's revealed map pick round-trips");
+    d = await req(geo.hub, "/api/geoinfo.png?code=" + geo.code + "&tok=GEOHOST01");
+    ok(d.w >= 1 && d.w <= 7 && d.h === 1, "geo: reveal exposes one curated attribution id");
+    var firstGeoScores = [];
+    for (var geoSeat = 0; geoSeat < 2; geoSeat++) {
+        d = await req(geo.hub, "/api/geoscore.png?code=" + geo.code +
+            "&tok=GEOHOST01&seat=" + geoSeat);
+        firstGeoScores[geoSeat] = d.h * 63 + d.w;
+    }
+    ok(firstGeoScores[0] >= 0 && firstGeoScores[0] <= 750 &&
+        firstGeoScores[1] >= 0 && firstGeoScores[1] <= 750,
+        "geo: first-round authoritative scores stay in the 0..750 range");
+
+    await req(geo.hub, "/api/geonext.png?code=" + geo.code + "&tok=GEOHOST01");
+    d = await req(geo.hub, "/api/geostate.png?code=" + geo.code + "&tok=GEOHOST01");
+    ok(d.w === 1 && d.h === 29, "geo: one ready seat cannot advance the round alone");
+    await req(geo.hub, "/api/geonext.png?code=" + geo.code + "&tok=GEOJOIN01");
+    d = await req(geo.hub, "/api/geostate.png?code=" + geo.code + "&tok=GEOJOIN01");
+    ok(d.w === 2 && d.h === 1, "geo: both ready seats advance to round 2");
+
+    var lastGeoScores = firstGeoScores;
+    for (var geoRound = 1; geoRound < 5; geoRound++) {
+        await req(geo.hub, "/api/geoguess.png?code=" + geo.code +
+            "&tok=GEOHOST01&cell=" + geoRound);
+        await req(geo.hub, "/api/geoguess.png?code=" + geo.code +
+            "&tok=GEOJOIN01&cell=" + (511 - geoRound));
+        d = await req(geo.hub, "/api/geostate.png?code=" + geo.code + "&tok=GEOHOST01");
+        ok(d.w === geoRound + 1 && d.h === 28,
+            "geo: round " + (geoRound + 1) + " reveals only after both guesses");
+        var roundScores = [];
+        for (geoSeat = 0; geoSeat < 2; geoSeat++) {
+            d = await req(geo.hub, "/api/geoscore.png?code=" + geo.code +
+                "&tok=GEOHOST01&seat=" + geoSeat);
+            roundScores[geoSeat] = d.h * 63 + d.w;
+        }
+        ok(roundScores[0] >= lastGeoScores[0] && roundScores[1] >= lastGeoScores[1],
+            "geo: cumulative scores never decrease after round " + (geoRound + 1));
+        lastGeoScores = roundScores;
+        await req(geo.hub, "/api/geonext.png?code=" + geo.code + "&tok=GEOHOST01");
+        await req(geo.hub, "/api/geonext.png?code=" + geo.code + "&tok=GEOJOIN01");
+    }
+    d = await req(geo.hub, "/api/geostate.png?code=" + geo.code + "&tok=GEOHOST01");
+    ok(d.w === 6 && d.h === 40, "geo: five completed rounds end the match authoritatively");
+    ok(lastGeoScores[0] <= 3750 && lastGeoScores[1] <= 3750,
+        "geo: cumulative scores fit the collision-free 12-bit score codec");
+
     d = await req(hub, "/api/create.png?game=1");                  // no token
     ok(d.w === 9 && d.h === 3, "create with NO token → (9,3) bad-token");
     d = await req(hub, "/api/create.png?game=1&tok=short");        // 5 chars < 8

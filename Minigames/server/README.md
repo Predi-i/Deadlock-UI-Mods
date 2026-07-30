@@ -4,13 +4,14 @@ This directory contains the authoritative backend for the in-game minigames. Pro
 directly on the Aéza VPS at `https://178.236.246.13`; Cloudflare Workers and Durable Objects are
 no longer in the request path.
 
-Panorama still uses the same image side-channel protocol: every game API request returns a PNG
-whose intrinsic width and height encode two integers. The migration changes hosting and storage,
-not the client protocol or the shared game rules.
+Panorama still uses the same image side-channel protocol: protocol replies are PNGs whose intrinsic
+width and height encode two integers. GeoGuesser's authenticated `/api/geoview` is the deliberate
+exception and returns the current panorama image itself. The migration changes hosting and storage,
+not the shared game rules.
 
 ## Runtime layout
 
-- `worker.core.js` — authored routes, validation, matchmaking, Pixel Battle and PNG encoding.
+- `worker.core.js` — authored routes, validation, matchmaking, Pixel Battle, GeoGuesser and PNG encoding.
 - `worker.js` — generated rules + map + admin assets + `worker.core.js`; never edit by hand.
 - `node_server.js` — Node HTTP adapter, trusted Nginx client-IP injection and serialized Hub execution.
 - `node_storage.js` — Durable Object storage-compatible SQLite adapter.
@@ -45,7 +46,8 @@ npm test
 
 `npm test` includes `mg_vps_server_test.js`, which starts the real Node HTTP adapter against a
 temporary SQLite file and verifies protocol dimensions, restart persistence, Pixel Battle state
-and fail-closed admin authentication.
+and fail-closed admin authentication. `mg_server_test.js` covers GeoGuesser's hidden target,
+authenticated image proxy, guess/reveal/score flow and all five ready-gated rounds.
 
 ## Production service
 
@@ -66,6 +68,9 @@ systemctl restart deadlock-minigames
 curl -fsS https://178.236.246.13/api/ping.png -o /dev/null
 sqlite3 /var/lib/deadlock-minigames/minigames.sqlite 'PRAGMA integrity_check;'
 ```
+
+From the repository root, `node tools/mg_geo_live_smoke.js https://178.236.246.13`
+exercises a real two-seat GeoGuesser lobby, panorama proxy, reveal and cleanup over HTTPS.
 
 Deployment of a source update:
 
@@ -148,9 +153,13 @@ Never commit or paste these secrets into source files.
 - fail2ban protects SSH.
 - The Node listener is loopback-only and overwrites `CF-Connecting-IP` with the real socket IP,
   so a direct caller cannot bypass per-IP rate limits with a forged header.
+- Node resolves outbound hosts IPv4-first because this VPS has IPv4 egress but no routed IPv6;
+  this keeps GeoGuesser's fixed Wikimedia image fetches from selecting an unreachable AAAA record.
 - A 1 GiB swap file with low swappiness protects the 2 GiB VPS from transient OOM conditions.
 - Dimension-only PNGs use native synchronous zlib on Node. This reduced a typical clock response
   from roughly 81 KiB to about 449 bytes and raised the measured clock-route throughput from
   about 89 to 872 requests/second on the NLs-1 VPS.
+- GeoGuesser proxies only seven fixed Wikimedia Commons URLs, validates image type and size, and
+  keeps one bounded in-memory copy per location. No request parameter can become an upstream URL.
 - Pixel Battle starts with a clean database after the Cloudflare migration; old Worker canvas,
   audit, bank and ban records were deliberately not imported.

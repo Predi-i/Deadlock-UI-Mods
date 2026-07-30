@@ -357,7 +357,7 @@
             { id: 6, key: "poker", name: "Poker", short: "Hold'em", enabled: true },
             { id: 7, key: "pixelbattle", name: "Pixel Battle", enabled: false },
             { id: 8, key: "wordle", name: "Wordle", enabled: false },
-            { id: 9, key: "soon4", name: "Coming Soon", enabled: false },
+            { id: 9, key: "geoguesser", name: "GeoGuesser", enabled: true },
             { id: 10, key: "soon5", name: "Coming Soon", enabled: false },
             { id: 11, key: "soon6", name: "Coming Soon", enabled: false },
             { id: 12, key: "soon7", name: "Coming Soon", enabled: false }

@@ -22,7 +22,9 @@ support online play and bots. **Durak** (§8.6) and **Poker** (No-Limit Texas Ho
 worker-as-dealer transport; public Durak matchmaking remains heads-up. Those online
 dealer paths are built + Node-tested but not yet in-game verified. **Pixel Battle** is
 one persistent public canvas backed by the Worker (§8.9). **Wordle** is a fully offline
-single-player game (§8.10).
+single-player game (§8.10). **GeoGuesser** is a five-round online game for Quick Match
+or private rooms: the VPS owns the targets, guesses, reveal gate and score, and proxies
+fixed open-licensed equirectangular panoramas (§8.11).
 
 Shared UI features across the games: a **per-turn countdown timer** (§9.1) in durak / poker /
 TTT / Connect Four, **server-authoritative side clocks** (time-control matchmaking) in chess /
@@ -75,7 +77,7 @@ panorama/
                            include order): mg_net → mg_sound → rules/* (checkers, ttt, chess,
                            connectfour, durak, poker) → mg_games ($.MG.Games + $.MG.Widgets) →
                            mg_checkers → mg_ttt → mg_chess → mg_durak → mg_connectfour → mg_poker
-                           → mg_pixelbattle → mg_wordle → mg_ui. Rule modules load before the controllers that alias them;
+                           → mg_pixelbattle → mg_wordle → mg_geoguesser → mg_ui. Rule modules load before the controllers that alias them;
                            mg_wordle_words.generated loads immediately before mg_wordle;
                            mg_games loads before the per-game controllers (they need MG.Widgets +
                            MG.Games); mg_ui loads last (it drives all views).
@@ -109,6 +111,9 @@ panorama/
                             pinned MIT-licensed ayaanhossain/weldor wordbase.
     mg_wordle.js            Offline Wordle controller + pure duplicate-letter scoring;
                             self-registers game id 8 (§8.10), never touches the Worker.
+    mg_geoguesser.js        Five-round online panorama/map controller; native sliders update
+                            heading/pitch continuously and image drag applies on release;
+                            self-registers game id 9 (§8.11).
     mg_ui.js               Esc-menu button injection + full-screen lobby overlay ($.MG.UI); header
                            UI-scale + volume dropdowns; seat/time-control/variant pickers.
 
@@ -124,6 +129,7 @@ server/                    Authoritative backend sources + Node/SQLite VPS runti
 tools/                     dev-only Node test harnesses + build helpers (NOT packed)
   build_worker.js          concatenate the 6 rules/*.js + worker.core.js → server/worker.js
                            (`--check` verifies the committed worker.js is in sync; first step of `npm test`)
+  mg_geo_live_smoke.js     disposable two-seat production GeoGuesser smoke over HTTPS
   build_pixelbattle_map.js generate the Pixel Battle land mask from the source map image
   build_wordle_words.js    generate the Wordle answer + guess word lists
   gen_soundevents.js       generate the soundevents manifest consumed by mg_sound.js
@@ -209,9 +215,10 @@ bugs and their fixes:
 
 ## 5. The network protocol (mg_net.js ↔ worker.js)
 
-All routes are GET, all return a PNG, all take `&rnd=<random>` to defeat engine caching.
-Client appends `.png` to every path (Panorama's loader only fetches URLs that look like
-images; the worker strips `.png` before routing).
+All routes are GET and all protocol replies return a PNG. `/api/geoview` is the one payload
+exception: it returns the proxied JPEG/PNG panorama itself. All client requests take
+`&rnd=<random>` to defeat engine caching. Client appends `.png` to every path (Panorama's
+loader only fetches URLs that look like images; the worker strips `.png` before routing).
 
 **Downlink is level-quantised (2026-07-20 rewrite).** Every DATA response carries a small
 *level* per dimension, not a raw pixel: `dim = level*STEP + BASE` (`STEP=9, BASE=15`). The old
@@ -234,6 +241,11 @@ dim. Only `/api/probe` stays **literal pixels** — it's the calibration referen
 | `/api/poll?code=C&since=S` | `(from, to)` RAW squares 0..63 · `(1,1)` nothing new |
 | `/api/reset?code=C&game=G&tok=T` | `(1,1)` · `(9,3)` bad-token |
 | `/api/clocks?code=C&seat=S` | `(30 + sec>>6, sec&63)` one seat · `(9,9)` gone · `(9,8)` untimed |
+| `/api/geostate?code=C&tok=T` | current round + authoritative guess/reveal/ready masks |
+| `/api/geoview?code=C&tok=T` | current 2:1 equirectangular image (ordinary JPEG/PNG, not a dimension message) |
+| `/api/geoguess?code=C&tok=T&cell=N` | `(1,1)` accepted · `(9,x)` rejected |
+| `/api/geonext?code=C&tok=T` | `(1,1)` ready; advances only after both players are ready |
+| `/api/geotarget`, `/api/geopick`, `/api/geoscore`, `/api/geoinfo` | reveal-only target, guesses, totals and attribution |
 
 ### 5.1 Server authority (seats, tokens, validation)
 
@@ -1057,6 +1069,31 @@ is built but **not yet in-game verified**.
 
 ---
 
+## 8.11 GeoGuesser (mg_geoguesser.js)
+
+- GeoGuesser is online-only (game id 9) and uses the existing two-seat Quick Match and private-room
+  lifecycle. A match has five rounds. The server selects five non-repeating locations from a fixed
+  curated set, accepts one map-cell guess per seat, calculates distance scores, hides all reveal data
+  until both guesses exist, and advances only after both players press Next.
+- `/api/geoview` is authenticated with the lobby seat token and proxies the current open-licensed
+  Wikimedia Commons image through the VPS. The bounded in-memory cache means Panorama never needs
+  direct access to an arbitrary third-party URL and user input can never select an upstream target.
+- Panorama has no projection shader available to this mod. The client therefore displays a clipped
+  2:1 equirectangular strip three times side by side and translates the strip to wrap heading at
+  360 degrees. This is a useful panoramic lookout, but it is not rectilinear lens projection.
+- Direct image drag reuses the chess/checkers `DragStart`/`DragEnd` + `MG.Widgets.winPos` pattern.
+  Some Panorama builds expose the drag ghost position only at release, so two native `Slider`
+  controls are the continuous path: `onvaluechanged` updates heading and pitch while the thumb moves.
+  Arrow buttons remain an accessible fallback.
+- The guess surface reuses Pixel Battle's compiled world-map image, with a transparent 32×16 button
+  grid above it. The coarse grid is also the authoritative coordinate format, avoiding transmission
+  of hidden latitude/longitude through the two-integer side channel.
+- Server authority and protocol codecs are covered by `mg_server_test.js`; registry/load order and
+  the native-input guards are covered by the release UI regression test. Projection, layout and
+  drag feel still require an in-game VPK check.
+
+---
+
 ## 9. Turn/sync model (the 2-int games)
 
 **Server-authoritative predict-and-confirm.** Each player applies a move locally FIRST for
@@ -1201,7 +1238,7 @@ by the maintainer). Don't present unrendered layout or input behavior as confirm
 ### 10.1 The lint net (why it exists, what it does NOT cover)
 
 The Panorama **controllers** (`mg_checkers`, `mg_ttt`, `mg_chess`, `mg_connectfour`, `mg_durak`,
-`mg_poker`, `mg_pixelbattle`, `mg_wordle`, `mg_ui`) have **almost no automated coverage**: they call
+`mg_poker`, `mg_pixelbattle`, `mg_wordle`, `mg_geoguesser`, `mg_ui`) have **almost no automated coverage**: they call
 `$.CreatePanel` / `$.Schedule` /
 `$.RegisterEventHandler`, so they can't run outside the game. `node --check` only parses
 syntax; the `tools/*_test.js` harnesses exercise the pure engines (`rules/*.js`) + the worker,

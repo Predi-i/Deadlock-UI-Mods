@@ -39,6 +39,10 @@
  *   $.MG.Api.pnext(code, tok, cb({ok,reason}), err)                 Poker deal next hand
  *   $.MG.Api.plog(code, since, cb(event|null), err)                 Poker public event log
  *   $.MG.Api.pdraw(code, tok, index, cb(card|null), err)            Poker private hole-card draw
+ *   $.MG.Api.geoState(code, tok, cb(state), err)                    GeoGuesser round/reveal state
+ *   $.MG.Api.geoGuess(code, tok, cell, cb(result), err)             authoritative map guess
+ *   $.MG.Api.geoNext(code, tok, cb(result), err)                    next-round ready handshake
+ *   $.MG.Api.geoTarget/geoPick/geoScore/geoInfo(...)                reveal-only round data
  *
  * The seat token (tok) is the identity that makes the server authoritative: it flows
  * ONLY upward (query param), never in a response, so it can't leak through the 2-int
@@ -755,6 +759,108 @@
                 }
                 var end = deriveEnd ? (deriveEnd(from, to) ? 1 : 0) : 1;
                 cb({ from: from, to: to, end: end, seq: since + 1 });
+            }, err);
+        },
+
+        // ── GeoGuesser (authoritative target, guesses, score and reveal gate) ──
+        geoState: function (code, tok, cb, err) {
+            request("/api/geostate", { code: code, tok: tok }, function (w, h) {
+                if (w === 9) {
+                    if (h === 9 && MG.UI && MG.UI.kickToMenu) MG.UI.kickToMenu("Opponent left.");
+                    else if (err) err(h === 3 ? "token" : "state");
+                    return;
+                }
+                if (w === 6 && h === 40) {
+                    cb({ done: true, round: 5, reveal: false, guessMask: 3, readyMask: 3 });
+                    return;
+                }
+                if (w < 1 || w > 5) {
+                    suspectDecode("geostate w=" + w + " h=" + h);
+                    if (err) err("decode");
+                    return;
+                }
+                if (h >= 16 && h <= 31) {
+                    var packed = h - 16;
+                    cb({
+                        done: false,
+                        round: w - 1,
+                        reveal: true,
+                        guessMask: packed >> 2,
+                        readyMask: packed & 3
+                    });
+                    return;
+                }
+                if (h >= 1 && h <= 4) {
+                    cb({ done: false, round: w - 1, reveal: false, guessMask: h - 1, readyMask: 0 });
+                    return;
+                }
+                suspectDecode("geostate w=" + w + " h=" + h);
+                if (err) err("decode");
+            }, err);
+        },
+
+        geoGuess: function (code, tok, cell, cb, err) {
+            request("/api/geoguess", { code: code, tok: tok, cell: cell }, function (w, h) {
+                if (!cb) return;
+                cb({ ok: w === 1 && h === 1, reason: w === 9 ? h : 0 });
+            }, err);
+        },
+
+        geoNext: function (code, tok, cb, err) {
+            request("/api/geonext", { code: code, tok: tok }, function (w, h) {
+                if (!cb) return;
+                cb({ ok: w === 1 && h === 1, reason: w === 9 ? h : 0 });
+            }, err);
+        },
+
+        geoTarget: function (code, tok, cb, err) {
+            request("/api/geotarget", { code: code, tok: tok }, function (w, h) {
+                if (w === 9) { if (err) err(h); return; }
+                var x = w - 20;
+                if (x < 0 || x >= 32 || h < 0 || h >= 16) {
+                    suspectDecode("geotarget w=" + w + " h=" + h);
+                    if (err) err("decode");
+                    return;
+                }
+                cb({ x: x, y: h });
+            }, err);
+        },
+
+        geoPick: function (code, tok, seat, cb, err) {
+            request("/api/geopick", { code: code, tok: tok, seat: seat }, function (w, h) {
+                if (w === 9) { if (err) err(h); return; }
+                var x = w - 20;
+                if (x < 0 || x >= 32 || h < 0 || h >= 16) {
+                    suspectDecode("geopick w=" + w + " h=" + h);
+                    if (err) err("decode");
+                    return;
+                }
+                cb({ x: x, y: h });
+            }, err);
+        },
+
+        geoScore: function (code, tok, seat, cb, err) {
+            request("/api/geoscore", { code: code, tok: tok, seat: seat }, function (w, h) {
+                if (h === 63) { if (err) err(w); return; }
+                var score = h * 63 + w;
+                if (w < 0 || w >= 63 || score < 0 || score > 4095) {
+                    suspectDecode("geoscore w=" + w + " h=" + h);
+                    if (err) err("decode");
+                    return;
+                }
+                cb(score);
+            }, err);
+        },
+
+        geoInfo: function (code, tok, cb, err) {
+            request("/api/geoinfo", { code: code, tok: tok }, function (w, h) {
+                if (w === 9) { if (err) err(h); return; }
+                if (w < 1 || w > 7 || h !== 1) {
+                    suspectDecode("geoinfo w=" + w + " h=" + h);
+                    if (err) err("decode");
+                    return;
+                }
+                cb(w - 1);
             }, err);
         },
 

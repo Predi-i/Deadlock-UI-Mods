@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { setDefaultResultOrder } from "node:dns";
 import { isIP } from "node:net";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,6 +8,11 @@ import worker, { Hub } from "./worker.js";
 import { SqliteStorage } from "./node_storage.js";
 
 const DEFAULT_BODY_LIMIT = 512 * 1024;
+
+// The production VPS has working IPv4 egress but no routed IPv6. Node's fetch can otherwise
+// select upload.wikimedia.org's AAAA record first and fail GeoGuesser panorama proxying even
+// though the same URL is reachable over IPv4.
+setDefaultResultOrder("ipv4first");
 
 // worker.core.js remains deployable to Cloudflare, where synchronous zlib does not
 // exist. The VPS runtime supplies it explicitly for dimension-only PNG responses.

@@ -2401,6 +2401,11 @@ function adminAssetResponse(path) {
  *   /api/poll?code=C&since=S                       -> (from, to) RAW squares · (1,1) nothing new
  *   /api/reset?code=C&game=G&tok=T                 -> (1,1)
  *   /api/clocks?code=C&seat=S                      -> (30+sec>>6, sec&63) one seat · (9,9) no lobby · (9,8) untimed
+ *   /api/geostate?code=C&tok=T                     -> round + guess/reveal/ready masks
+ *   /api/geoview?code=C&tok=T                      -> proxied equirectangular panorama image
+ *   /api/geoguess?code=C&tok=T&cell=N              -> (1,1) accepted · (9,x) rejected
+ *   /api/geonext?code=C&tok=T                      -> ready handshake for the next round
+ *   /api/geotarget|geopick|geoscore|geoinfo        -> reveal-only GeoGuesser data
  *
  * CODES are rebased to 0..1023 (was 4-digit 1000..9999) so a code half fits a level. dCode()
  * splits code = hi<<6 | lo: width = BAND + hi (joiner/create band 24, host band 40), height =
@@ -2736,6 +2741,7 @@ export class Hub {
     this.pxTiles = null;          // lazily hydrated sparse 32x32 canvas tiles
     this.pxViewCache = new Map(); // version+origin -> native-size edit viewport PNG
     this.pxCanvasCache = null;    // { version, bytes } for the compatibility canvas route
+    this.geoImageCache = new Map(); // fixed Commons URL -> { bytes, type }; bounded by GEO_LOCATIONS
   }
 
   // Sliding-window rate check for one IP. Returns true if this request is ALLOWED. A null/
@@ -2910,11 +2916,75 @@ export class Hub {
         if (!result.ok) return d(result.reason, 63);
         return pixelBankPng(result.balance);
       }
+      if (p === "/api/geostate") {
+        const access = await geoLobbyAccess(this, code, q.get("tok"));
+        if (!access.ok) return d(9, access.code);
+        return geoStateReply(access.lobby.state);
+      }
+      if (p === "/api/geoview") {
+        const access = await geoLobbyAccess(this, code, q.get("tok"));
+        if (!access.ok) return d(9, access.code);
+        const st = access.lobby.state;
+        if (!st || st.round < 0 || st.round >= GEO_ROUNDS) return d(6, 63);
+        return await geoPanoramaResponse(this, st.targets[st.round]);
+      }
+      if (p === "/api/geoguess") {
+        const access = await geoLobbyAccess(this, code, q.get("tok"));
+        if (!access.ok) return d(9, access.code);
+        const st = access.lobby.state;
+        const cell = Number(q.get("cell"));
+        if (!st || st.round < 0 || st.round >= GEO_ROUNDS || st.reveal ||
+            !Number.isInteger(cell) || cell < 0 || cell >= GEO_GRID_W * GEO_GRID_H) return d(9, 2);
+        if (st.guesses[access.seat] != null) {
+          return st.guesses[access.seat] === cell ? d(1, 1) : d(9, 1);
+        }
+        st.guesses[access.seat] = cell;
+        if (st.guesses[0] != null && st.guesses[1] != null) geoRevealRound(st);
+        access.lobby.t = nowSeq();
+        await this.storage.put("l:" + code, access.lobby);
+        return d(1, 1);
+      }
+      if (p === "/api/geonext") {
+        const access = await geoLobbyAccess(this, code, q.get("tok"));
+        if (!access.ok) return d(9, access.code);
+        const st = access.lobby.state;
+        if (!st || !st.reveal || st.round < 0 || st.round >= GEO_ROUNDS) return d(9, 2);
+        st.ready[access.seat] = 1;
+        if (st.ready[0] && st.ready[1]) geoAdvanceRound(st);
+        access.lobby.t = nowSeq();
+        await this.storage.put("l:" + code, access.lobby);
+        return d(1, 1);
+      }
+      if (p === "/api/geotarget" || p === "/api/geopick" ||
+          p === "/api/geoscore" || p === "/api/geoinfo") {
+        const access = await geoLobbyAccess(this, code, q.get("tok"));
+        if (!access.ok) return p === "/api/geoscore" ? d(access.code, 63) : d(9, access.code);
+        const st = access.lobby.state;
+        if (!st || !st.reveal || st.round < 0 || st.round >= GEO_ROUNDS) {
+          return p === "/api/geoscore" ? d(1, 63) : d(9, 1);
+        }
+        if (p === "/api/geotarget") {
+          const location = GEO_LOCATIONS[st.targets[st.round]];
+          return d(20 + geoLonX(location.lon), geoLatY(location.lat));
+        }
+        if (p === "/api/geoinfo") return d(st.targets[st.round] + 1, 1);
+        const requestedSeat = Number(q.get("seat"));
+        if (!Number.isInteger(requestedSeat) || requestedSeat < 0 || requestedSeat > 1) {
+          return p === "/api/geoscore" ? d(2, 63) : d(9, 2);
+        }
+        if (p === "/api/geopick") {
+          const picked = st.guesses[requestedSeat];
+          return picked == null ? d(9, 1)
+            : d(20 + picked % GEO_GRID_W, Math.floor(picked / GEO_GRID_W));
+        }
+        const score = Math.max(0, Math.min(4095, st.scores[requestedSeat] | 0));
+        return d(score % 63, Math.floor(score / 63));
+      }
 
       if (p === "/api/create") {
         await this.maybeSweep();
         const game = clampInt(q.get("game"), 1, 1, 9);
-        if (!SUPPORTED_GAMES[game]) return d(9, 6);      // unsupported game id (6..9 have no engine)
+        if (!SUPPORTED_GAMES[game]) return d(9, 6);      // unsupported by the generic two-seat lobby
 
         if (!validTok(q.get("tok"))) return d(9, 3);     // reject empty/garbage seat token
         const newCode = await this.freshCode();
@@ -3754,7 +3824,9 @@ const CODE_SCAN_EMPTY_ROUTES = {
 };
 const CODE_SCAN_AUTH_ROUTES = {
   "/api/move": 1, "/api/rematch": 1, "/api/start": 1, "/api/dact": 1,
-  "/api/pstart": 1, "/api/pact": 1, "/api/pnext": 1, "/api/reset": 1
+  "/api/pstart": 1, "/api/pact": 1, "/api/pnext": 1, "/api/reset": 1,
+  "/api/geostate": 1, "/api/geoview": 1, "/api/geoguess": 1, "/api/geonext": 1,
+  "/api/geotarget": 1, "/api/geopick": 1, "/api/geoscore": 1, "/api/geoinfo": 1
 };
 const CODE_SCAN_EXEMPT_ROUTES = {
   "/api/leave": 1, "/api/cancel": 1
@@ -3765,7 +3837,7 @@ const CODE_SCAN_EXEMPT_ROUTES = {
 // owns a fully separate route set (pcreate/pjoin/pstart/pact/…) because the generic lobby is
 // hard-capped at 2 seats and poker seats 2–4. An id outside this set has no engine, so
 // create/quick reject it up front and move never relays it.
-const SUPPORTED_GAMES = { 1: 1, 2: 1, 3: 1, 4: 1, 5: 1 };
+const SUPPORTED_GAMES = { 1: 1, 2: 1, 3: 1, 4: 1, 5: 1, 9: 1 };
 
 // Games eligible for MULTI-select quick match. Durak (3) is safe here because every mquick
 // lobby is a two-seat pair: once resolved it switches to the normal room/dlog/ddraw dealer
@@ -3979,7 +4051,173 @@ function seatHole(lobby) {
   return -1;
 }
 
-// Fresh authoritative state per game. null = no server engine → legacy relay.
+/* ─────────────────────── GeoGuesser authoritative rounds ───────────────────────
+ * Panorama can display a remote equirectangular image, but it cannot run a fragment
+ * shader to project one into a true perspective camera. The client therefore renders
+ * a clipped/wrapped panorama strip and changes yaw/pitch locally. The location, guesses,
+ * reveal gate and scores remain server-owned.
+ *
+ * Sources are fixed, open-licensed Wikimedia Commons photos. They are deliberately
+ * server-proxied: the in-game URL contains only the lobby code/token, not a filename or
+ * coordinate that gives the answer away. The client shows attribution after reveal.
+ */
+const GEO_GRID_W = 32;
+const GEO_GRID_H = 16;
+const GEO_ROUNDS = 5;
+const GEO_LOCATIONS = [
+  {
+    city: "Agra, India", lat: 27.174653, lon: 78.042503,
+    url: "https://upload.wikimedia.org/wikipedia/commons/f/fb/Taj_Mahal_360%C2%B0_View.jpg"
+  },
+  {
+    city: "London, United Kingdom", lat: 51.497123, lon: -0.169618,
+    url: "https://upload.wikimedia.org/wikipedia/commons/thumb/4/4b/Brompton_Oratory_360x180%2C_London%2C_UK_-_Diliff.jpg/1920px-Brompton_Oratory_360x180%2C_London%2C_UK_-_Diliff.jpg"
+  },
+  {
+    city: "Copenhagen, Denmark", lat: 55.672505, lon: 12.590827,
+    url: "https://upload.wikimedia.org/wikipedia/commons/thumb/9/9b/In_times_like_this..._%28360%C2%B0_equirectangular%29_%2849659694937%29.jpg/1920px-In_times_like_this..._%28360%C2%B0_equirectangular%29_%2849659694937%29.jpg"
+  },
+  {
+    city: "Tokyo, Japan", lat: 35.655056, lon: 139.747861,
+    url: "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a6/Shiba-maruyama_Kofun%2C_Top_360-degree.jpg/1920px-Shiba-maruyama_Kofun%2C_Top_360-degree.jpg"
+  },
+  {
+    city: "Sydney, Australia", lat: -33.945081, lon: 151.180222,
+    url: "https://upload.wikimedia.org/wikipedia/commons/thumb/5/5a/Shep%27s_Mound_at_Sydney_Airport_03.jpg/1920px-Shep%27s_Mound_at_Sydney_Airport_03.jpg"
+  },
+  {
+    city: "Mumbai, India", lat: 18.921984, lon: 72.834654,
+    url: "https://upload.wikimedia.org/wikipedia/commons/thumb/b/bc/Pano-20230403-Gateway-of-India.jpg/1920px-Pano-20230403-Gateway-of-India.jpg"
+  },
+  {
+    city: "Moscow, Russia", lat: 55.793815, lon: 37.634482,
+    url: "https://upload.wikimedia.org/wikipedia/commons/thumb/9/95/Moscow_metri_Rzskaya_2023-03_360%C2%B0.jpg/1920px-Moscow_metri_Rzskaya_2023-03_360%C2%B0.jpg"
+  }
+];
+
+function geoNewState() {
+  const targets = [];
+  for (let i = 0; i < GEO_LOCATIONS.length; i++) targets.push(i);
+  for (let i = targets.length - 1; i > 0; i--) {
+    const random = new Uint32Array(1);
+    crypto.getRandomValues(random);
+    const j = random[0] % (i + 1);
+    const tmp = targets[i]; targets[i] = targets[j]; targets[j] = tmp;
+  }
+  return {
+    round: 0,
+    targets: targets.slice(0, GEO_ROUNDS),
+    guesses: [null, null],
+    scores: [0, 0],
+    ready: [0, 0],
+    reveal: 0
+  };
+}
+
+async function geoLobbyAccess(hub, code, tok) {
+  const lobby = code !== "" ? await hub.storage.get("l:" + code) : null;
+  if (!lobby || lobby.game !== 9 || !lobby.state) return { ok: false, code: 9 };
+  const seat = seatOf(lobby, tok);
+  if (seat < 0) return { ok: false, code: 3 };
+  if (presentCount(lobby) < 2) return { ok: false, code: 1 };
+  return { ok: true, lobby: lobby, seat: seat };
+}
+
+function geoGuessMask(st) {
+  return (st.guesses[0] != null ? 1 : 0) | (st.guesses[1] != null ? 2 : 0);
+}
+
+function geoReadyMask(st) {
+  return (st.ready[0] ? 1 : 0) | (st.ready[1] ? 2 : 0);
+}
+
+function geoStateReply(st) {
+  if (!st || st.round >= GEO_ROUNDS) return d(6, 40);
+  const guessMask = geoGuessMask(st);
+  if (st.reveal) return d(st.round + 1, 16 + (guessMask << 2) + geoReadyMask(st));
+  return d(st.round + 1, 1 + guessMask);
+}
+
+function geoLonX(lon) {
+  return Math.max(0, Math.min(GEO_GRID_W - 1, Math.floor((Number(lon) + 180) * GEO_GRID_W / 360)));
+}
+
+function geoLatY(lat) {
+  return Math.max(0, Math.min(GEO_GRID_H - 1, Math.floor((90 - Number(lat)) * GEO_GRID_H / 180)));
+}
+
+function geoCellCoordinate(cell) {
+  const x = cell % GEO_GRID_W;
+  const y = Math.floor(cell / GEO_GRID_W);
+  return {
+    lon: (x + 0.5) * 360 / GEO_GRID_W - 180,
+    lat: 90 - (y + 0.5) * 180 / GEO_GRID_H
+  };
+}
+
+function geoDistanceKm(aLat, aLon, bLat, bLon) {
+  const rad = Math.PI / 180;
+  const p1 = aLat * rad, p2 = bLat * rad;
+  const dp = (bLat - aLat) * rad, dl = (bLon - aLon) * rad;
+  const h = Math.sin(dp / 2) * Math.sin(dp / 2) +
+    Math.cos(p1) * Math.cos(p2) * Math.sin(dl / 2) * Math.sin(dl / 2);
+  return 6371 * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(Math.max(0, 1 - h)));
+}
+
+function geoRoundScore(location, cell) {
+  const guess = geoCellCoordinate(cell);
+  const km = geoDistanceKm(location.lat, location.lon, guess.lat, guess.lon);
+  return Math.max(0, Math.min(750, Math.round(750 * Math.exp(-km / 2500))));
+}
+
+function geoRevealRound(st) {
+  const location = GEO_LOCATIONS[st.targets[st.round]];
+  st.scores[0] += geoRoundScore(location, st.guesses[0]);
+  st.scores[1] += geoRoundScore(location, st.guesses[1]);
+  st.ready = [0, 0];
+  st.reveal = 1;
+}
+
+function geoAdvanceRound(st) {
+  st.round++;
+  st.guesses = [null, null];
+  st.ready = [0, 0];
+  st.reveal = 0;
+}
+
+async function geoPanoramaResponse(hub, locationIndex) {
+  const location = GEO_LOCATIONS[locationIndex];
+  if (!location) return d(6, 63);
+  let cached = hub.geoImageCache.get(location.url);
+  if (!cached) {
+    try {
+      const imageFetch = typeof globalThis.MG_GEO_IMAGE_FETCH === "function"
+        ? globalThis.MG_GEO_IMAGE_FETCH : fetch;
+      const response = await imageFetch(location.url, {
+        headers: { "Accept": "image/jpeg,image/png", "User-Agent": "Deadlock-Minigames/1.0" }
+      });
+      const type = String(response.headers.get("content-type") || "").split(";")[0].toLowerCase();
+      const declared = Number(response.headers.get("content-length") || 0);
+      if (!response.ok || (type !== "image/jpeg" && type !== "image/png") ||
+          declared > 8 * 1024 * 1024) return d(6, 63);
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      if (!bytes.length || bytes.length > 8 * 1024 * 1024) return d(6, 63);
+      cached = { bytes: bytes, type: type };
+      hub.geoImageCache.set(location.url, cached);
+    } catch (error) {
+      return d(6, 63);
+    }
+  }
+  return new Response(cached.bytes, {
+    headers: {
+      "content-type": cached.type,
+      "cache-control": "private, max-age=300",
+      "access-control-allow-origin": "*",
+      "x-content-type-options": "nosniff"
+    }
+  });
+}
+
 // Fresh authoritative state per game. null = no server engine → legacy relay.
 // `seatCount` matters only for durak: its private-card array is per seat, and hard-coding two
 // slots handed a 3-4 seat table a state that ddraw could never index for seats 2/3 (a rematch on
@@ -4001,6 +4239,7 @@ function initState(game, checkersVariant, seatCount) {
   }
   if (game === 5) return { board: R.connectfour.initialBoard() };                                  // connect four
   if (game === 6) return { started: 0, pub: [], priv: [], st: null, stacks: null, button: -1 };    // poker (dealt on /api/pstart)
+  if (game === 9) return geoNewState();                                                            // GeoGuesser
   return null;
 }
 

@@ -123,7 +123,9 @@ const ui = source("mg_ui.js");
 const pixel = source("mg_pixelbattle.js");
 const durak = source("mg_durak.js");
 const poker = source("mg_poker.js");
+const geo = source("mg_geoguesser.js");
 const games = source("mg_games.js");
+const baseHud = fs.readFileSync(path.join(ROOT, "panorama", "layout", "base_hud.xml"), "utf8");
 
 assert(/var MULTI_GAME_IDS = \[1, 2, 3, 4, 5\];/.test(ui),
     "multi-quick tick set must include heads-up Durak");
@@ -164,6 +166,20 @@ assert(/function refreshCrispView[\s\S]*?MG\.Net\.loadImage\(url,/.test(pixel),
     "Pixel Battle viewport must load through the shared MG.Net FIFO");
 assert(!/crispImage\.SetImage\(MG\.Net\.getBaseUrl\(\)/.test(pixel),
     "Pixel Battle must not bypass the FIFO with a direct remote SetImage");
+assert(/function loadPanorama[\s\S]*?MG\.Net\.loadImage\(url,/.test(geo),
+    "GeoGuesser's cold panorama load must use the shared MG.Net FIFO");
+assert(/RegisterEventHandler\("DragStart"[\s\S]*?RegisterEventHandler\("DragEnd"/.test(geo) &&
+    /MG\.Widgets\.winPos\(dragGhost\)/.test(geo),
+    "GeoGuesser must reuse the proven chess/checkers native drag position channel");
+assert(/\$\.CreatePanel\("Slider"[\s\S]*?onvaluechanged[\s\S]*?yaw = nextYaw/.test(geo) &&
+    /\$\.CreatePanel\("Slider"[\s\S]*?onvaluechanged[\s\S]*?pitch = nextPitch/.test(geo),
+    "GeoGuesser must keep a continuous native-slider camera path when image drag updates only on release");
+assert(/revealReadsPending = 6;[\s\S]*?setAction\("LOADING RESULT…", false/.test(geo) &&
+    /revealReadsPending === 0[\s\S]*?setAction\(currentRound/.test(geo),
+    "GeoGuesser must not allow next/finish before every authoritative reveal read completes");
+assert(/MG\.Games\.register\(\{ id: 9,[\s\S]*?enabled: true \}\)/.test(geo) &&
+    /mg_geoguesser\.vjs_c/.test(baseHud),
+    "GeoGuesser controller must be registered and loaded before the menu shell");
 assert(/var aspect = shortSide > 0 \? longSide \/ shortSide : 0;[\s\S]{0,350}Map server is busy/.test(pixel),
     "Pixel Battle must reject and retry the Worker's viewport-throttle image sentinel");
 assert(/lastOuterStatus === "Map server is busy\. Retrying…"[\s\S]{0,100}Shared world loaded/.test(pixel),
