@@ -156,12 +156,18 @@ Never commit or paste these secrets into source files.
 - The Node listener is loopback-only and overwrites `CF-Connecting-IP` with the real socket IP,
   so a direct caller cannot bypass per-IP rate limits with a forged header.
 - Node resolves outbound hosts IPv4-first because this VPS has IPv4 egress but no routed IPv6;
-  this keeps GeoGuesser's fixed Wikimedia image fetches from selecting an unreachable AAAA record.
+  this keeps GeoGuesser's Panoramax catalog/image fetches from selecting an unreachable AAAA record.
 - A 1 GiB swap file with low swappiness protects the 2 GiB VPS from transient OOM conditions.
 - Dimension-only PNGs use native synchronous zlib on Node. This reduced a typical clock response
   from roughly 81 KiB to about 449 bytes and raised the measured clock-route throughput from
   about 89 to 872 requests/second on the NLs-1 VPS.
-- GeoGuesser proxies only seven fixed Wikimedia Commons URLs, validates image type and size, and
-  keeps one bounded in-memory copy per location. No request parameter can become an upstream URL.
+- GeoGuesser needs no paid map API or secret key. New lobbies query Panoramax's public federation
+  for CC-BY-SA 4.0 equirectangular pictures across six broad regions, keep at most one frame from
+  each sequence, and cache the catalog snapshot for ten minutes. The proxy URL is constructed from
+  the catalog's validated UUID; user input can never become an upstream URL. Proxied images are
+  capped at 8 MiB and the in-memory image LRU is capped at 12 entries.
+- Reveal points and guesses use a 64×32 server-owned grid encoded as a linear cell across two
+  base-63 PNG levels (height 63 is reserved for errors). The producer credit is revealed through
+  `/api/geocredit`, preserving Panoramax's attribution requirement.
 - Pixel Battle starts with a clean database after the Cloudflare migration; old Worker canvas,
   audit, bank and ban records were deliberately not imported.

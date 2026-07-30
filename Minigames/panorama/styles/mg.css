@@ -1529,7 +1529,11 @@
     overflow: noclip;
 }
 .mg-pk-me { background-color: #163a2add; border-color: #3f7d5b; }
-.mg-pk-active { border-color: #ffd166; box-shadow: 0px 0px 12px 0px #ffd16688; }
+/* Active seat = gold BORDER only. The old `box-shadow: 0px 0px 12px 0px #ffd16688` was a true
+   outer glow (zero offset + 12px blur) and the house style has none anywhere; the 2px gold
+   hairline already reads as "on the clock". The elevation shadow below is kept: it has a real
+   3px/7px Y offset, so it's a drop shadow, not a halo. */
+.mg-pk-active { border-color: #ffd166; }
 .mg-pk-out { opacity: 0.5; }
 .mg-pk-name {
     font-family: radiance !important; font-weight: semi-bold;
@@ -2230,26 +2234,26 @@
 }
 .mg-geo-stats {
     width: 720px;
-    height: 32px;
+    height: 29px;
     horizontal-align: center;
     flow-children: right;
-    margin-bottom: 6px;
+    margin-bottom: 5px;
 }
 .mg-geo-stat {
     width: 190px;
     vertical-align: center;
     font-family: radiance;
-    font-size: 16px;
+    font-size: 15px;
     font-weight: bold;
-    color: #dce8f7;
+    color: #cbd5df;
 }
 .mg-geo-view-label {
     width: 340px;
     vertical-align: center;
     text-align: center;
     font-family: radiance;
-    font-size: 14px;
-    color: #8294aa;
+    font-size: 13px;
+    color: #718397;
 }
 .mg-geo-score {
     text-align: right;
@@ -2261,19 +2265,19 @@
     flow-children: none;
     overflow: clip;
     background-color: #080d14;
-    border: 2px solid #31445b;
+    border: 1px solid #354453;
 }
 .mg-geo-stage {
-    width: 6480px;
-    height: 1080px;
+    width: 8640px;
+    height: 1440px;
     flow-children: none;
     transition-property: transform;
     transition-duration: 0.04s;
     transition-timing-function: ease-out;
 }
 .mg-geo-pano-image {
-    width: 2160px;
-    height: 1080px;
+    width: 2880px;
+    height: 1440px;
 }
 .mg-geo-loading {
     horizontal-align: center;
@@ -2295,159 +2299,196 @@
     height: 4px;
     opacity: 0.01;
 }
-.mg-geo-camera-sliders {
-    width: 720px;
-    height: 32px;
-    horizontal-align: center;
-    flow-children: right;
-    margin-top: 5px;
-}
-.mg-geo-slider-label {
-    width: 72px;
-    vertical-align: center;
-    font-family: radiance;
-    font-size: 11px;
-    font-weight: bold;
-    color: #8294aa;
-    letter-spacing: 1px;
-}
-.mg-geo-pitch-label {
-    width: 50px;
-    margin-left: 14px;
-}
-.mg-geo-yaw-slider {
-    width: 392px;
-    height: 30px;
-}
-.mg-geo-pitch-slider {
-    width: 190px;
-    height: 30px;
-}
-.mg-geo-camera-sliders #SliderTrack {
-    width: 100%;
-    height: 4px;
-    padding: 10px;
-    vertical-align: center;
-    background-color: #223147;
-    border-radius: 4px;
-}
-.mg-geo-camera-sliders #SliderTrackProgress {
-    width: 100%;
-    height: 4px;
-    background-color: #5b86b4;
-}
-.mg-geo-camera-sliders #SliderThumb {
-    width: 18px;
-    height: 18px;
-    background-color: #dce8f7;
-    border: 2px solid #5b86b4;
-    border-radius: 50%;
-}
 .mg-geo-camera-controls {
     width: 720px;
     height: 38px;
     horizontal-align: center;
     flow-children: right;
-    margin-bottom: 7px;
+    margin-top: 6px;
+    margin-bottom: 8px;
+    padding: 3px 5px 3px 6px;
+    background-color: #0d151f;
+    border: 1px solid #293847;
+}
+.mg-geo-slider-label {
+    width: 38px;
+    vertical-align: center;
+    font-family: radiance;
+    font-size: 10px;
+    font-weight: bold;
+    color: #718397;
+    letter-spacing: 1px;
+}
+.mg-geo-pitch-label {
+    width: 34px;
+    margin-left: 10px;
+}
+.mg-geo-yaw-slider {
+    width: 228px;
+    height: 30px;
+}
+.mg-geo-pitch-slider {
+    width: 112px;
+    height: 30px;
+}
+/* Native Slider de-glow. ⚠ SPECIFICITY: the game's own rules are
+   `Slider.HorizontalSlider #SliderThumb` (type + class + id = 111) and they carry the glow —
+   `#SliderThumb { box-shadow: fill brandGreen&11 0px 0px 16px 1px }` (green) plus
+   `Slider.HorizontalSlider #SliderTrackProgress { box-shadow: offWhite&33 0px 0px 8px 0px }`
+   (white). A plain `.mg-geo-camera-controls #SliderThumb` is only 110, so the game WINS and the
+   glow survives — that is exactly why it was still visible after the first pass. Every selector
+   below therefore repeats the game's own `Slider.HorizontalSlider` prefix to reach 1111, and the
+   controller must keep calling `AddClass("HorizontalSlider")` for these to bind.
+   `box-shadow: none` is the game's own cancel idiom (`ClientUIDialogPanel #SliderThumb`);
+   a transparent `0px 0px 0px 0px` does NOT reliably clear a `fill`-keyword shadow.
+   The radial `gradient()` fills are overridden with flat colours (house style: no gradients). */
+.mg-geo-camera-controls Slider.HorizontalSlider #SliderTrack {
+    width: 100%;
+    height: 3px;
+    padding: 12px 0px 12px 0px;
+    vertical-align: center;
+    background-color: #273645;
+    border-radius: 0px;
+    box-shadow: none;
+}
+.mg-geo-camera-controls Slider.HorizontalSlider #SliderTrackProgress {
+    width: 100%;
+    height: 3px;
+    background-color: #62798d;
+    border-radius: 0px;
+    box-shadow: none;
+}
+.mg-geo-camera-controls Slider.HorizontalSlider #SliderThumb {
+    vertical-align: center;
+    width: 10px;
+    height: 16px;
+    background-color: #a7b3bd;
+    background-image: none;
+    border: 1px solid #d2dae1;
+    border-radius: 0px;
+    box-shadow: none;
+    brightness: 1.0;
+}
+/* Hover/active are separate game rules (`:hover` swaps in a brighter radial + `brightness: 1.5`,
+   `:active` another). Without these three the thumb still flares green on grab. */
+.mg-geo-camera-controls Slider.HorizontalSlider #SliderThumb:hover {
+    background-color: #ccd5dd;
+    background-image: none;
+    box-shadow: none;
+    brightness: 1.0;
+}
+.mg-geo-camera-controls Slider.HorizontalSlider:active #SliderThumb,
+.mg-geo-camera-controls Slider.HorizontalSlider #SliderThumb:active {
+    background-color: #e2e8ed;
+    background-image: none;
+    box-shadow: none;
+    brightness: 1.0;
 }
 .mg-geo-camera-button {
-    width: 136px;
-    height: 34px;
-    margin-right: 8px;
-    background-color: #111b28;
-    border: 1px solid #344b66;
+    width: 31px;
+    height: 28px;
+    margin-right: 4px;
+    vertical-align: center;
+    background-color: #17222d;
+    border: 1px solid #354656;
 }
 .mg-geo-camera-button:hover {
-    background-color: #1b2b3e;
-    border-color: #5b7da4;
+    background-color: #22313e;
+    border-color: #62778a;
+}
+.mg-geo-reset-button {
+    width: 58px;
+    margin-left: 8px;
+    margin-right: 0px;
 }
 .mg-geo-button-label {
     horizontal-align: center;
     vertical-align: center;
     text-align: center;
     font-family: radiance;
-    font-size: 15px;
+    font-size: 13px;
     font-weight: bold;
-    color: #e3edf8;
+    color: #cdd6de;
 }
 .mg-geo-lower {
     width: 860px;
-    height: 240px;
+    height: 250px;
     flow-children: right;
 }
 .mg-geo-map {
-    width: 480px;
-    height: 240px;
+    width: 500px;
+    height: 250px;
     flow-children: none;
     overflow: clip;
-    background-color: #091522;
-    border: 2px solid #31445b;
+    background-color: #0c151f;
+    border: 1px solid #354453;
 }
 .mg-geo-map-image {
-    width: 480px;
-    height: 240px;
-    opacity: 0.82;
+    width: 500px;
+    height: 250px;
+    opacity: 1;
 }
 .mg-geo-grid {
-    width: 480px;
-    height: 240px;
+    width: 500px;
+    height: 250px;
     flow-children: down;
 }
 .mg-geo-grid-row {
-    width: 480px;
-    height: 15px;
+    width: 500px;
+    height: fill-parent-flow(1);
     flow-children: right;
 }
 .mg-geo-cell {
-    width: 15px;
-    height: 15px;
+    width: fill-parent-flow(1);
+    height: 100%;
     background-color: #00000000;
-    border: 1px solid #9fb4ca10;
+    border: 1px solid #00000000;
+    border-radius: 50%;
 }
 .mg-geo-cell:hover {
-    background-color: #ffffff24;
-    border-color: #ffffff66;
+    background-color: #d3c39032;
+    border-color: #d8cda777;
 }
 .mg-geo-selected {
-    background-color: #f4c54299;
-    border-color: #ffe890;
+    background-color: #d7b95ddd;
+    border-color: #fff0b2;
 }
 .mg-geo-me {
-    background-color: #4d9dffcc;
-    border-color: #b6d9ff;
+    background-color: #7199badd;
+    border-color: #c6d8e6;
 }
 .mg-geo-them {
-    background-color: #f05d6dcc;
-    border-color: #ffc0c7;
+    background-color: #a96c70dd;
+    border-color: #e7bdc0;
 }
 .mg-geo-target {
-    border: 3px solid #62f28c;
-    brightness: 1.45;
+    background-color: #a9b88acc;
+    border: 2px solid #e2e9cf;
 }
 .mg-geo-side {
-    width: 362px;
-    height: 240px;
+    width: 342px;
+    height: 250px;
     margin-left: 18px;
     flow-children: down;
 }
 .mg-geo-prompt {
-    width: 362px;
-    height: 70px;
+    width: 342px;
+    height: 66px;
     font-family: radiance;
-    font-size: 17px;
-    color: #c7d3e2;
+    font-size: 16px;
+    color: #bdc8d3;
     white-space: normal;
 }
 .mg-geo-place {
-    width: 362px;
+    width: 342px;
     height: 34px;
     font-family: radiance;
     font-size: 21px;
     font-weight: bold;
-    color: #62f28c;
+    color: #c9d5b6;
 }
 .mg-geo-credit {
-    width: 362px;
+    width: 342px;
     height: 54px;
     font-family: radiance;
     font-size: 13px;
@@ -2455,8 +2496,8 @@
     white-space: normal;
 }
 .mg-geo-action {
-    width: 362px;
-    height: 50px;
+    width: 342px;
+    height: 46px;
     vertical-align: bottom;
 }
 

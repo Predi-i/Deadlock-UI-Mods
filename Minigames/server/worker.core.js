@@ -387,7 +387,9 @@ export class Hub {
     this.pxTiles = null;          // lazily hydrated sparse 32x32 canvas tiles
     this.pxViewCache = new Map(); // version+origin -> native-size edit viewport PNG
     this.pxCanvasCache = null;    // { version, bytes } for the compatibility canvas route
-    this.geoImageCache = new Map(); // fixed Commons URL -> { bytes, type }; bounded by GEO_LOCATIONS
+    this.geoImageCache = new Map(); // Panoramax picture id -> { bytes, type }; bounded LRU
+    this.geoLocationPool = [];      // short-lived public-catalog snapshot, shared by new lobbies
+    this.geoLocationPoolAt = 0;
   }
 
   // Sliding-window rate check for one IP. Returns true if this request is ALLOWED. A null/
@@ -572,7 +574,7 @@ export class Hub {
         if (!access.ok) return d(9, access.code);
         const st = access.lobby.state;
         if (!st || st.round < 0 || st.round >= GEO_ROUNDS) return d(6, 63);
-        return await geoPanoramaResponse(this, st.targets[st.round]);
+        return await geoPanoramaResponse(this, st.locations[st.round]);
       }
       if (p === "/api/geoguess") {
         const access = await geoLobbyAccess(this, code, q.get("tok"));
@@ -587,7 +589,7 @@ export class Hub {
         }
         st.guesses[access.seat] = cell;
         if (access.lobby.solo) {
-          const location = GEO_LOCATIONS[st.targets[st.round]];
+          const location = st.locations[st.round];
           st.guesses[1] = geoLatY(location.lat) * GEO_GRID_W + geoLonX(location.lon);
         }
         if (st.guesses[0] != null && st.guesses[1] != null) geoRevealRound(st);
@@ -609,26 +611,40 @@ export class Hub {
         return d(1, 1);
       }
       if (p === "/api/geotarget" || p === "/api/geopick" ||
-          p === "/api/geoscore" || p === "/api/geoinfo") {
+          p === "/api/geoscore" || p === "/api/geoinfo" || p === "/api/geocredit") {
         const access = await geoLobbyAccess(this, code, q.get("tok"));
-        if (!access.ok) return p === "/api/geoscore" ? d(access.code, 63) : d(9, access.code);
+        const pointRoute = p === "/api/geotarget" || p === "/api/geopick";
+        if (!access.ok) return (p === "/api/geoscore" || pointRoute)
+          ? d(access.code, 63) : d(9, access.code);
         const st = access.lobby.state;
         if (!st || !st.reveal || st.round < 0 || st.round >= GEO_ROUNDS) {
-          return p === "/api/geoscore" ? d(1, 63) : d(9, 1);
+          return (p === "/api/geoscore" || pointRoute) ? d(1, 63) : d(9, 1);
         }
         if (p === "/api/geotarget") {
-          const location = GEO_LOCATIONS[st.targets[st.round]];
-          return d(20 + geoLonX(location.lon), geoLatY(location.lat));
+          const location = st.locations[st.round];
+          return geoPointReply(geoLatY(location.lat) * GEO_GRID_W + geoLonX(location.lon));
         }
-        if (p === "/api/geoinfo") return d(st.targets[st.round] + 1, 1);
+        if (p === "/api/geoinfo") return d(st.locations[st.round].region + 1, 1);
+        if (p === "/api/geocredit") {
+          const text = geoCreditText(st.locations[st.round]);
+          const index = Number(q.get("i"));
+          if (!Number.isInteger(index) || index < 0) return d(0, 62);
+          if (index === 0) return d(text.length, 0);
+          const offset = (index - 1) * 2;
+          if (offset >= text.length) return d(0, 62);
+          return d(
+            GEO_CREDIT_ALPHABET.indexOf(text.charAt(offset)),
+            offset + 1 < text.length
+              ? GEO_CREDIT_ALPHABET.indexOf(text.charAt(offset + 1)) : 0
+          );
+        }
         const requestedSeat = Number(q.get("seat"));
         if (!Number.isInteger(requestedSeat) || requestedSeat < 0 || requestedSeat > 1) {
           return p === "/api/geoscore" ? d(2, 63) : d(9, 2);
         }
         if (p === "/api/geopick") {
           const picked = st.guesses[requestedSeat];
-          return picked == null ? d(9, 1)
-            : d(20 + picked % GEO_GRID_W, Math.floor(picked / GEO_GRID_W));
+          return picked == null ? d(1, 63) : geoPointReply(picked);
         }
         const score = Math.max(0, Math.min(4095, st.scores[requestedSeat] | 0));
         return d(score % 63, Math.floor(score / 63));
@@ -646,6 +662,8 @@ export class Hub {
         const tc = clockSecFor(game, q.get("tc"));         // 0 unless chess/checkers with a bank
         const cv = checkersVariantFor(game, q.get("cv"));
         const solo = game === 9 && q.get("solo") === "1";
+        const geoState = game === 9 ? await geoCreateState(this) : null;
+        if (game === 9 && !geoState) return d(9, 5);
         const lobby = {
           game, players: solo ? 2 : 1, moves: [], pub: 0, t: nowSeq(),
           seats: [
@@ -656,7 +674,7 @@ export class Hub {
           tc: tc,                                      // per-seat bank in SECONDS (0 = no clock)
           cv: cv,                                      // Russian or English checkers (empty for other games)
           solo: solo ? 1 : 0,
-          state: initState(game, cv)                   // authoritative board/state
+          state: geoState || initState(game, cv)       // authoritative board/state
         };
         initClock(lobby);
         await this.storage.put("l:" + newCode, lobby);
@@ -707,6 +725,8 @@ export class Hub {
         const cv = checkersVariantFor(game, rawCv);
         const newCode = await this.freshCode();
         if (newCode < 0) return d(9, 5);                 // all 1024 lobby codes are occupied
+        const geoState = game === 9 ? await geoCreateState(this) : null;
+        if (game === 9 && !geoState) return d(9, 5);
         const lobby = {
           game, players: 1, moves: [], pub: 1, t: nowSeq(),
           seats: [{ tok: q.get("tok") || "" }, null],
@@ -716,7 +736,7 @@ export class Hub {
           cv: cv,
           qcvAny: wantsAnyCheckersVariant(game, rawCv) ? 1 : 0,
           qk: quickQueueKey(game, hostTimeBucket, hostVariantBucket),
-          state: initState(game, cv)
+          state: geoState || initState(game, cv)
         };
         initClock(lobby);
         await this.storage.put("l:" + newCode, lobby);
@@ -1047,7 +1067,13 @@ export class Hub {
               if (departed >= 0 && departed < lobby.seats.length) lobby.seats[departed] = null;
             }
           }
-          lobby.state = initState(lobby.game, lobby.cv, lobby.seats ? lobby.seats.length : 2);
+          if (lobby.game === 9) {
+            const previousLocations = lobby.state && lobby.state.locations
+              ? geoShuffle(lobby.state.locations.slice()) : [];
+            lobby.state = await geoCreateState(this) || geoNewState(previousLocations);
+          } else {
+            lobby.state = initState(lobby.game, lobby.cv, lobby.seats ? lobby.seats.length : 2);
+          }
           initClock(lobby);                        // fresh banks for the rematch
           // Board games are ready immediately after initState. Dealer games are not: their
           // remounted controllers only poll dlog/plog and never call Start again, so deal the
@@ -1339,7 +1365,9 @@ export class Hub {
     delete w.qtcAny; delete w.qcvAny;
     // (Re)initialise the board with the RESOLVED variant. An undecided mquick lobby had no state;
     // a single-quick "Any"-variant host may have been built for the wrong engine, so rebuild it.
-    w.state = initState(w.game, w.cv);
+    if (!(w.game === 9 && w.state && w.state.locations && w.state.locations.length >= GEO_ROUNDS)) {
+      w.state = initState(w.game, w.cv);
+    }
     w.players = 2;
     w.seats = w.seats || [null, null];
     w.seats[1] = { tok: tok || "" };           // joiner takes seat 1
@@ -1484,7 +1512,8 @@ const CODE_SCAN_AUTH_ROUTES = {
   "/api/move": 1, "/api/rematch": 1, "/api/start": 1, "/api/dact": 1,
   "/api/pstart": 1, "/api/pact": 1, "/api/pnext": 1, "/api/reset": 1,
   "/api/geostate": 1, "/api/geoview": 1, "/api/geoguess": 1, "/api/geonext": 1,
-  "/api/geotarget": 1, "/api/geopick": 1, "/api/geoscore": 1, "/api/geoinfo": 1
+  "/api/geotarget": 1, "/api/geopick": 1, "/api/geoscore": 1, "/api/geoinfo": 1,
+  "/api/geocredit": 1
 };
 const CODE_SCAN_EXEMPT_ROUTES = {
   "/api/leave": 1, "/api/cancel": 1
@@ -1715,61 +1744,151 @@ function seatHole(lobby) {
  * a clipped/wrapped panorama strip and changes yaw/pitch locally. The location, guesses,
  * reveal gate and scores remain server-owned.
  *
- * Sources are fixed, open-licensed Wikimedia Commons photos. They are deliberately
- * server-proxied: the in-game URL contains only the lobby code/token, not a filename or
- * coordinate that gives the answer away. The client shows attribution after reveal.
+ * Locations come from Panoramax's public federated STAC catalog. Only reusable CC-BY-SA
+ * equirectangular pictures are accepted. They are deliberately server-proxied: the in-game
+ * URL contains only the lobby code/token, never the picture id or hidden coordinates.
  */
-const GEO_GRID_W = 32;
-const GEO_GRID_H = 16;
+const GEO_GRID_W = 64;
+const GEO_GRID_H = 32;
 const GEO_ROUNDS = 5;
-const GEO_LOCATIONS = [
-  {
-    city: "Agra, India", lat: 27.174653, lon: 78.042503,
-    url: "https://upload.wikimedia.org/wikipedia/commons/f/fb/Taj_Mahal_360%C2%B0_View.jpg"
-  },
-  {
-    city: "London, United Kingdom", lat: 51.497123, lon: -0.169618,
-    url: "https://upload.wikimedia.org/wikipedia/commons/thumb/4/4b/Brompton_Oratory_360x180%2C_London%2C_UK_-_Diliff.jpg/1920px-Brompton_Oratory_360x180%2C_London%2C_UK_-_Diliff.jpg"
-  },
-  {
-    city: "Copenhagen, Denmark", lat: 55.672505, lon: 12.590827,
-    url: "https://upload.wikimedia.org/wikipedia/commons/thumb/9/9b/In_times_like_this..._%28360%C2%B0_equirectangular%29_%2849659694937%29.jpg/1920px-In_times_like_this..._%28360%C2%B0_equirectangular%29_%2849659694937%29.jpg"
-  },
-  {
-    city: "Tokyo, Japan", lat: 35.655056, lon: 139.747861,
-    url: "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a6/Shiba-maruyama_Kofun%2C_Top_360-degree.jpg/1920px-Shiba-maruyama_Kofun%2C_Top_360-degree.jpg"
-  },
-  {
-    city: "Sydney, Australia", lat: -33.945081, lon: 151.180222,
-    url: "https://upload.wikimedia.org/wikipedia/commons/thumb/5/5a/Shep%27s_Mound_at_Sydney_Airport_03.jpg/1920px-Shep%27s_Mound_at_Sydney_Airport_03.jpg"
-  },
-  {
-    city: "Mumbai, India", lat: 18.921984, lon: 72.834654,
-    url: "https://upload.wikimedia.org/wikipedia/commons/thumb/b/bc/Pano-20230403-Gateway-of-India.jpg/1920px-Pano-20230403-Gateway-of-India.jpg"
-  },
-  {
-    city: "Moscow, Russia", lat: 55.793815, lon: 37.634482,
-    url: "https://upload.wikimedia.org/wikipedia/commons/thumb/9/95/Moscow_metri_Rzskaya_2023-03_360%C2%B0.jpg/1920px-Moscow_metri_Rzskaya_2023-03_360%C2%B0.jpg"
-  }
+const GEO_CATALOG = "https://api.panoramax.xyz/api/search";
+const GEO_POOL_TTL_MS = 10 * 60 * 1000;
+const GEO_REGIONS = [
+  { name: "Europe", bbox: "-10,35,30,60" },
+  { name: "North America", bbox: "-130,25,-60,55" },
+  { name: "South America", bbox: "-80,-55,-35,10" },
+  { name: "Africa", bbox: "-20,-35,50,35" },
+  { name: "Asia", bbox: "30,5,150,60" },
+  { name: "Oceania", bbox: "110,-45,180,0" }
 ];
+const GEO_CREDIT_ALPHABET = " ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.";
 
-function geoNewState() {
-  const targets = [];
-  for (let i = 0; i < GEO_LOCATIONS.length; i++) targets.push(i);
-  for (let i = targets.length - 1; i > 0; i--) {
+function geoShuffle(values) {
+  for (let i = values.length - 1; i > 0; i--) {
     const random = new Uint32Array(1);
     crypto.getRandomValues(random);
     const j = random[0] % (i + 1);
-    const tmp = targets[i]; targets[i] = targets[j]; targets[j] = tmp;
+    const tmp = values[i]; values[i] = values[j]; values[j] = tmp;
   }
+  return values;
+}
+
+function geoSafeProvider(value) {
+  return String(value || "Contributor").replace(/[^ A-Za-z0-9.]/g, " ")
+    .replace(/\s+/g, " ").trim().slice(0, 24) || "Contributor";
+}
+
+function geoCreditText(location) {
+  return geoSafeProvider(location && location.provider) + "  Panoramax  CC BY SA 4.0";
+}
+
+function geoCatalogLocation(feature, region) {
+  if (!feature || !/^[0-9a-f-]{36}$/i.test(String(feature.id || ""))) return null;
+  const coordinates = feature.geometry && feature.geometry.coordinates;
+  const orientation = feature.properties && feature.properties["pers:interior_orientation"];
+  const license = String(feature.properties && feature.properties.license || "");
+  if (!Array.isArray(coordinates) || coordinates.length < 2 ||
+      !Number.isFinite(Number(coordinates[0])) || !Number.isFinite(Number(coordinates[1])) ||
+      !orientation || Number(orientation.field_of_view) !== 360 ||
+      license !== "CC-BY-SA-4.0") return null;
+  const providers = Array.isArray(feature.providers) ? feature.providers : [];
+  return {
+    id: String(feature.id),
+    collection: String(feature.collection || feature.id),
+    lat: Number(coordinates[1]),
+    lon: Number(coordinates[0]),
+    region: region,
+    provider: geoSafeProvider(providers[0] && providers[0].name),
+    // The federation endpoint redirects to the owning public instance. Constructing it from
+    // the validated UUID prevents an upstream feature from supplying an arbitrary proxy URL.
+    url: "https://api.panoramax.xyz/api/pictures/" + feature.id + "/sd.jpg"
+  };
+}
+
+async function geoCatalogRegion(fetcher, region, index) {
+  const url = GEO_CATALOG + "?limit=40&filter=" +
+    encodeURIComponent("field_of_view = 360") + "&bbox=" + encodeURIComponent(region.bbox);
+  try {
+    const response = await fetcher(url, {
+      headers: { "Accept": "application/geo+json", "User-Agent": "Deadlock-Minigames/1.0" },
+      signal: AbortSignal.timeout(8000)
+    });
+    if (!response.ok) return [];
+    const body = await response.json();
+    const features = body && Array.isArray(body.features) ? body.features : [];
+    const byCollection = new Map();
+    for (let i = 0; i < features.length; i++) {
+      const location = geoCatalogLocation(features[i], index);
+      if (!location) continue;
+      // A sequence can contain hundreds of near-identical frames. Keep one random frame per
+      // collection so a five-round match cannot become five steps along the same road.
+      if (!byCollection.has(location.collection)) byCollection.set(location.collection, location);
+    }
+    return Array.from(byCollection.values());
+  } catch (error) {
+    return [];
+  }
+}
+
+async function geoLocationsForLobby(hub) {
+  const fresh = Date.now() - hub.geoLocationPoolAt < GEO_POOL_TTL_MS;
+  if (!fresh || hub.geoLocationPool.length < GEO_ROUNDS) {
+    const catalogFetch = typeof globalThis.MG_GEO_CATALOG_FETCH === "function"
+      ? globalThis.MG_GEO_CATALOG_FETCH : fetch;
+    const requests = [];
+    for (let i = 0; i < GEO_REGIONS.length; i++) {
+      requests.push(geoCatalogRegion(catalogFetch, GEO_REGIONS[i], i));
+    }
+    const batches = await Promise.all(requests);
+    const pool = [];
+    for (let i = 0; i < batches.length; i++) {
+      for (let j = 0; j < batches[i].length; j++) pool.push(batches[i][j]);
+    }
+    if (pool.length >= GEO_ROUNDS) {
+      hub.geoLocationPool = pool;
+      hub.geoLocationPoolAt = Date.now();
+    }
+  }
+  if (hub.geoLocationPool.length < GEO_ROUNDS) return null;
+
+  const byRegion = [];
+  for (let i = 0; i < GEO_REGIONS.length; i++) byRegion.push([]);
+  for (let i = 0; i < hub.geoLocationPool.length; i++) {
+    const location = hub.geoLocationPool[i];
+    if (byRegion[location.region]) byRegion[location.region].push(location);
+  }
+  const chosen = [], used = new Set();
+  const regionOrder = geoShuffle(GEO_REGIONS.map(function (_region, index) { return index; }));
+  for (let i = 0; i < regionOrder.length && chosen.length < GEO_ROUNDS; i++) {
+    const candidates = byRegion[regionOrder[i]];
+    if (!candidates.length) continue;
+    geoShuffle(candidates);
+    chosen.push(candidates[0]);
+    used.add(candidates[0].id);
+  }
+  if (chosen.length < GEO_ROUNDS) {
+    const extras = geoShuffle(hub.geoLocationPool.slice());
+    for (let i = 0; i < extras.length && chosen.length < GEO_ROUNDS; i++) {
+      if (!used.has(extras[i].id)) { chosen.push(extras[i]); used.add(extras[i].id); }
+    }
+  }
+  return chosen.length === GEO_ROUNDS ? chosen : null;
+}
+
+function geoNewState(locations) {
   return {
     round: 0,
-    targets: targets.slice(0, GEO_ROUNDS),
+    locations: (locations || []).slice(0, GEO_ROUNDS),
     guesses: [null, null],
     scores: [0, 0],
     ready: [0, 0],
     reveal: 0
   };
+}
+
+async function geoCreateState(hub) {
+  const locations = await geoLocationsForLobby(hub);
+  return locations ? geoNewState(locations) : null;
 }
 
 async function geoLobbyAccess(hub, code, tok) {
@@ -1794,6 +1913,13 @@ function geoStateReply(st) {
   const guessMask = geoGuessMask(st);
   if (st.reveal) return d(st.round + 1, 16 + (guessMask << 2) + geoReadyMask(st));
   return d(st.round + 1, 1 + guessMask);
+}
+
+// A 64x32 point needs 11 bits, so encode its linear cell across two base-63 levels.
+// h=63 stays reserved for an error sentinel, matching the score codec.
+function geoPointReply(cell) {
+  const value = Math.max(0, Math.min(GEO_GRID_W * GEO_GRID_H - 1, cell | 0));
+  return d(value % 63, Math.floor(value / 63));
 }
 
 function geoLonX(lon) {
@@ -1829,7 +1955,7 @@ function geoRoundScore(location, cell) {
 }
 
 function geoRevealRound(st) {
-  const location = GEO_LOCATIONS[st.targets[st.round]];
+  const location = st.locations[st.round];
   st.scores[0] += geoRoundScore(location, st.guesses[0]);
   st.scores[1] += geoRoundScore(location, st.guesses[1]);
   st.ready = [0, 0];
@@ -1843,16 +1969,16 @@ function geoAdvanceRound(st) {
   st.reveal = 0;
 }
 
-async function geoPanoramaResponse(hub, locationIndex) {
-  const location = GEO_LOCATIONS[locationIndex];
+async function geoPanoramaResponse(hub, location) {
   if (!location) return d(6, 63);
-  let cached = hub.geoImageCache.get(location.url);
+  let cached = hub.geoImageCache.get(location.id);
   if (!cached) {
     try {
       const imageFetch = typeof globalThis.MG_GEO_IMAGE_FETCH === "function"
         ? globalThis.MG_GEO_IMAGE_FETCH : fetch;
       const response = await imageFetch(location.url, {
-        headers: { "Accept": "image/jpeg,image/png", "User-Agent": "Deadlock-Minigames/1.0" }
+        headers: { "Accept": "image/jpeg,image/png", "User-Agent": "Deadlock-Minigames/1.0" },
+        signal: AbortSignal.timeout(10000)
       });
       const type = String(response.headers.get("content-type") || "").split(";")[0].toLowerCase();
       const declared = Number(response.headers.get("content-length") || 0);
@@ -1861,7 +1987,11 @@ async function geoPanoramaResponse(hub, locationIndex) {
       const bytes = new Uint8Array(await response.arrayBuffer());
       if (!bytes.length || bytes.length > 8 * 1024 * 1024) return d(6, 63);
       cached = { bytes: bytes, type: type };
-      hub.geoImageCache.set(location.url, cached);
+      if (hub.geoImageCache.size >= 12) {
+        const oldest = hub.geoImageCache.keys().next().value;
+        if (oldest !== undefined) hub.geoImageCache.delete(oldest);
+      }
+      hub.geoImageCache.set(location.id, cached);
     } catch (error) {
       return d(6, 63);
     }
@@ -1897,7 +2027,7 @@ function initState(game, checkersVariant, seatCount) {
   }
   if (game === 5) return { board: R.connectfour.initialBoard() };                                  // connect four
   if (game === 6) return { started: 0, pub: [], priv: [], st: null, stacks: null, button: -1 };    // poker (dealt on /api/pstart)
-  if (game === 9) return geoNewState();                                                            // GeoGuesser
+  if (game === 9) return geoNewState();                                                            // GeoGuesser is normally created asynchronously
   return null;
 }
 

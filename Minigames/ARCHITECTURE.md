@@ -132,6 +132,7 @@ tools/                     dev-only Node test harnesses + build helpers (NOT pac
   build_worker.js          concatenate the 6 rules/*.js + worker.core.js → server/worker.js
                            (`--check` verifies the committed worker.js is in sync; first step of `npm test`)
   mg_geo_live_smoke.js     disposable two-seat production GeoGuesser smoke over HTTPS
+  build_geoguesser_map.js  rasterize the dedicated Natural Earth country map
   build_pixelbattle_map.js generate the Pixel Battle land mask from the source map image
   build_wordle_words.js    generate the Wordle answer + guess word lists
   gen_soundevents.js       generate the soundevents manifest consumed by mg_sound.js
@@ -247,7 +248,7 @@ dim. Only `/api/probe` stays **literal pixels** — it's the calibration referen
 | `/api/geoview?code=C&tok=T` | current 2:1 equirectangular image (ordinary JPEG/PNG, not a dimension message) |
 | `/api/geoguess?code=C&tok=T&cell=N` | `(1,1)` accepted · `(9,x)` rejected |
 | `/api/geonext?code=C&tok=T` | `(1,1)` ready; advances after both players, or immediately in a solo lobby |
-| `/api/geotarget`, `/api/geopick`, `/api/geoscore`, `/api/geoinfo` | reveal-only target, guesses, totals and attribution |
+| `/api/geotarget`, `/api/geopick`, `/api/geoscore`, `/api/geoinfo`, `/api/geocredit` | reveal-only target, guesses, totals, region and Panoramax producer attribution; 64×32 points use a base-63 linear-cell codec |
 
 ### 5.1 Server authority (seats, tokens, validation)
 
@@ -631,6 +632,51 @@ These are the mistakes to NOT repeat. Every one was confirmed against the game's
     per loaded HUD session when the player first presses DL Arcade. The footer button remains a
     manual retry. An outdated result opens a same-class-state popup with no auto-close timer.
     `tools/mg_update_marker_test.js` simulates 50–400% UI scale, swapped axes and ±2px errors.
+
+22. **De-glowing a NATIVE widget needs the game's own selector prefix — and `box-shadow: none`.**
+    The house style has **no outer glow anywhere**, but Deadlock's base stylesheet puts one on every
+    native widget it ships. Two separate facts made the first de-glow pass silently ineffective on
+    the GeoGuesser camera sliders:
+    - **Specificity.** The glow lives on `#SliderThumb { box-shadow: fill brandGreen&11 0px 0px 16px
+      1px }` (green) and `Slider.HorizontalSlider #SliderTrackProgress { box-shadow: offWhite&33 0px
+      0px 8px 0px }` (white) in `citadel_base_styles.css:3506/3540`. A sensible-looking override
+      `.mg-geo-camera-controls #SliderThumb` is **one class + one id = 110**, while the game's rule is
+      **type + class + id = 111** — the game WINS and the glow stays. Our rules must repeat the game's
+      own `Slider.HorizontalSlider` prefix to reach 1111. This binds only while the controller keeps
+      calling `AddClass("HorizontalSlider")`.
+    - **`none`, not a transparent zero.** `box-shadow: 0px 0px 0px 0px #00000000` does not reliably
+      clear a shadow declared with the **`fill` keyword**. The game's own cancel idiom is
+      `box-shadow: none` (`ClientUIDialogPanel #SliderThumb`, `:3516`) — use that.
+    - Also override **`:hover` and `:active`** separately: they are distinct game rules that swap in a
+      brighter radial gradient plus `brightness: 1.5`, so without them the thumb still flares on grab.
+    Other native widgets carry the same glow and are **not yet cleaned**: `DropDown` (`:2836`),
+    `DropDownMenu` (`:2950`), `ToggleButton:selected .TickBox` (`:3151`), `RadioButton .RadioBox`
+    (`:3197`/`:3255`), `.ButtonBevel` (`:3604`), `TextEntryAutocomplete` (`:2450`). The scale/volume
+    dropdowns and Wordle's hidden `TextEntry` are the panels this could still surface on.
+    `mg_release_ui_regression_test.js` now enforces both halves: the four winning slider selectors,
+    and a **repo-wide scan that fails on any zero-offset blurred `box-shadow`** in `mg.css`. The scan
+    tokenises the lengths (a `fill`/colour prefix otherwise shifts the match and reads the SPREAD as
+    the blur), so an offset drop shadow and a zero-blur ring like `.mg-cf-win-disc`'s
+    `0px 0px 0px 3px` both stay legal — only a real halo fails.
+
+23. **Every image load goes through the FIFO — a bare `SetImage` beside it wedges the loader.**
+    §5's "one image load at a time" is not advisory. GeoGuesser's three-copy panorama built its two
+    SIDE copies with its own `$.CreatePanel("Image", …)` + `copy.SetImage(url)`, fired from
+    `$.Schedule` at 0.06s and 0.12s. Those two loads overlapped each other **and** the running
+    poll traffic, which is exactly the documented wedge: the pending loads stall at **dims 0** and
+    never paint. In-game (maintainer's 2026-07-31 screenshots) that read as a **mostly BLACK
+    viewport** with one visible strip, and a nearly empty frame once heading walked onto a copy that
+    did not exist — trivially misdiagnosed as "broken perspective" or a bad seam. It was neither:
+    the seam maths (`PANO_STEP = PANO_W - 2`) were already right, the neighbours were simply absent.
+    **Fix:** route the copies through `MG.Net.loadImage` (same FIFO; the URL is identical so the
+    engine serves them from cache) and **chain** them — left copy, then right copy, then set
+    `panoramaReady` and reveal. The old fixed 0.18s timer declared readiness on faith, with no way
+    to know whether either load had finished. A failed neighbour degrades to "no wrap at that edge"
+    and stays playable rather than erroring.
+    ⚠ Still unfixed by this and NOT a bug: the equirectangular strip is **stretched, not
+    reprojected**. Panorama exposes no shader to this mod, so straight lines still bow near the
+    frame edges. Narrowing the crop (720px of a 2880px strip ≈ 90° instead of 120°) reduces it; only
+    a real rectilinear projection would remove it.
 
 ---
 
@@ -1075,26 +1121,42 @@ is built but **not yet in-game verified**.
 
 - GeoGuesser (game id 9) uses the existing two-seat Quick Match/private-room lifecycle and a
   server-backed Play Solo variant. A match has five rounds. The server selects five non-repeating
-  locations from a fixed curated set, accepts one map-cell guess per human seat, calculates distance
-  scores, and hides all reveal data until the round is complete. In solo it owns an opaque synthetic
-  seat, fills that seat's guess/ready state, and therefore reveals and advances without a second client.
-- `/api/geoview` is authenticated with the lobby seat token and proxies the current open-licensed
-  Wikimedia Commons image through the VPS. The bounded in-memory cache means Panorama never needs
-  direct access to an arbitrary third-party URL and user input can never select an upstream target.
+  locations from Panoramax's public federated catalog, accepts one map-cell guess per human seat,
+  calculates distance scores, and hides all reveal data until the round is complete. In solo it owns
+  an opaque synthetic seat, fills that seat's guess/ready state, and therefore reveals and advances
+  without a second client.
+- New lobbies query six broad world regions for reusable CC-BY-SA 4.0 pictures whose reported field
+  of view is exactly 360°. Only one frame per Panoramax collection/sequence is admitted and the five
+  rounds prefer distinct regions. The resulting pool is cached for ten minutes to avoid abusing the
+  public catalog, but each lobby shuffles its own server-private set. There is no manually curated
+  location list and no Google API key or billing dependency.
+- `/api/geoview` is authenticated with the lobby seat token and proxies the current Panoramax SD
+  image through the VPS. It constructs the federation image route from a validated UUID rather than
+  trusting an arbitrary asset URL. A bounded 12-image LRU protects memory. The picture id, exact
+  coordinates and producer never reach the client before reveal.
 - `MG.Net.loadImage` reports the request panel's **layout** dimensions, not necessarily the source
-  image's intrinsic dimensions. Its 640px host clamps a 1920×960 panorama to a reported 640×960,
-  so GeoGuesser must not aspect-check those values. `MG.Net.isLevelEncodedSize` instead detects the
-  calibrated 0..63 Worker error-PNG range; every successful curated panorama lies outside it.
+  image's intrinsic dimensions. Its 640px request host can clamp the remote Panoramax image before
+  reporting dimensions, so GeoGuesser must not aspect-check those values.
+  `MG.Net.isLevelEncodedSize` instead detects the calibrated 0..63 Worker error-PNG range; every
+  successful panorama lies outside it.
 - Panorama has no projection shader available to this mod. The client therefore displays a clipped
   2:1 equirectangular strip three times side by side and translates the strip to wrap heading at
-  360 degrees. This is a useful panoramic lookout, but it is not rectilinear lens projection.
+  360 degrees. Panoramax SD images are stretched to a fixed 2880×1440 stage, making the 720px
+  viewport a 90-degree crop instead of the original 120-degree strip and reducing edge distortion.
+  Copies use a shared 2878px step (2px overlap), which removes the old 240px black seam. This is
+  still not a rectilinear lens projection.
 - Direct image drag reuses the chess/checkers `DragStart`/`DragEnd` + `MG.Widgets.winPos` pattern.
   Some Panorama builds expose the drag ghost position only at release, so two native `Slider`
   controls are the continuous path: `onvaluechanged` updates heading and pitch while the thumb moves.
   Arrow buttons remain an accessible fallback.
-- The guess surface reuses Pixel Battle's compiled world-map image, with a transparent 32×16 button
-  grid above it. The coarse grid is also the authoritative coordinate format, avoiding transmission
-  of hidden latitude/longitude through the two-integer side channel.
+- The guess surface has its own 1024×512 country map generated by
+  `tools/build_geoguesser_map.js` from Natural Earth's public-domain 1:110m admin-0 GeoJSON.
+  A borderless 64×32 button grid supplies compact circular hover/selection/reveal markers. Its
+  0..2047 linear cell is split across two base-63 levels; height 63 remains the point-error
+  sentinel. This keeps the hidden location server-authoritative without sending latitude/longitude.
+- After reveal `/api/geoinfo` returns one of six broad region ids. `/api/geocredit` transports the
+  sanitized Panoramax producer plus `CC BY-SA 4.0` through a compact two-character-per-request
+  alphabet, so dynamic imagery remains correctly attributed despite Panorama's integer-only channel.
 - Server authority and protocol codecs are covered by `mg_server_test.js`; registry/load order and
   the native-input guards are covered by the release UI regression test. Projection, layout and
   drag feel still require an in-game VPK check.

@@ -830,27 +830,29 @@
 
         geoTarget: function (code, tok, cb, err) {
             request("/api/geotarget", { code: code, tok: tok }, function (w, h) {
-                if (w === 9) { if (err) err(h); return; }
-                var x = w - 20;
-                if (x < 0 || x >= 32 || h < 0 || h >= 16) {
+                if (h === 63) { if (err) err(w); return; }
+                var cell = h * 63 + w;
+                var x = cell % 64, y = Math.floor(cell / 64);
+                if (w < 0 || w >= 63 || x < 0 || x >= 64 || y < 0 || y >= 32) {
                     suspectDecode("geotarget w=" + w + " h=" + h);
                     if (err) err("decode");
                     return;
                 }
-                cb({ x: x, y: h });
+                cb({ x: x, y: y });
             }, err);
         },
 
         geoPick: function (code, tok, seat, cb, err) {
             request("/api/geopick", { code: code, tok: tok, seat: seat }, function (w, h) {
-                if (w === 9) { if (err) err(h); return; }
-                var x = w - 20;
-                if (x < 0 || x >= 32 || h < 0 || h >= 16) {
+                if (h === 63) { if (err) err(w); return; }
+                var cell = h * 63 + w;
+                var x = cell % 64, y = Math.floor(cell / 64);
+                if (w < 0 || w >= 63 || x < 0 || x >= 64 || y < 0 || y >= 32) {
                     suspectDecode("geopick w=" + w + " h=" + h);
                     if (err) err("decode");
                     return;
                 }
-                cb({ x: x, y: h });
+                cb({ x: x, y: y });
             }, err);
         },
 
@@ -870,12 +872,37 @@
         geoInfo: function (code, tok, cb, err) {
             request("/api/geoinfo", { code: code, tok: tok }, function (w, h) {
                 if (w === 9) { if (err) err(h); return; }
-                if (w < 1 || w > 7 || h !== 1) {
+                if (w < 1 || w > 6 || h !== 1) {
                     suspectDecode("geoinfo w=" + w + " h=" + h);
                     if (err) err("decode");
                     return;
                 }
                 cb(w - 1);
+            }, err);
+        },
+
+        geoCredit: function (code, tok, cb, err) {
+            var alphabet = " ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.";
+            request("/api/geocredit", { code: code, tok: tok, i: 0 }, function (w, h) {
+                if (w === 9 || h === 62 || h !== 0 || w < 1 || w > 62) {
+                    if (err) err("credit");
+                    return;
+                }
+                var length = w, chunks = Math.ceil(length / 2), text = "", index = 1;
+                function readChunk() {
+                    request("/api/geocredit", { code: code, tok: tok, i: index }, function (a, b) {
+                        if (a < 0 || a >= alphabet.length || b < 0 || b >= alphabet.length) {
+                            if (err) err("credit");
+                            return;
+                        }
+                        text += alphabet.charAt(a);
+                        if (text.length < length) text += alphabet.charAt(b);
+                        index++;
+                        if (index <= chunks) readChunk();
+                        else cb(text);
+                    }, err);
+                }
+                readChunk();
             }, err);
         },
 

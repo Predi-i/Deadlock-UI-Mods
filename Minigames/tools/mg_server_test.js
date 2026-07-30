@@ -104,6 +104,10 @@ async function adminReq(hub, pathAndQuery, method, body, extraHeaders) {
 // vs joiner is the band, not a +100 flag. codeHost(d) tells them apart.
 function decCode(d) { var band = d.w >= 40 ? 40 : 24; return (d.w - band) * 64 + d.h; }
 function codeHost(d) { return d.w >= 40; }
+function geoPoint(d) {
+    var cell = d.h * 63 + d.w;
+    return { x: cell % 64, y: Math.floor(cell / 64) };
+}
 // Decode one seat's clock reading. The route now returns ONE seat per read as
 // (30+(sec>>6), sec&63); sentinels are (9,9) gone / (9,8) untimed. clkSec(d) → seconds,
 // Clocks are per-seat now: /api/clocks?seat=S → (30 + sec>>6, sec&63). Recover the seconds.
@@ -712,14 +716,38 @@ async function main() {
         restoredOwner.body.action.steamid === "11111111",
         "undo restores both the previous colour and the previous pixel owner");
 
-    // ── GeoGuesser: hidden panorama, authoritative guesses/reveal/scores ──
+    // ── GeoGuesser: dynamic Panoramax pool, hidden panorama and authoritative reveal ──
+    var geoCatalogFetches = 0;
+    globalThis.MG_GEO_CATALOG_FETCH = async function (url) {
+        geoCatalogFetches++;
+        var region = Math.max(0, [
+            "-10%2C35%2C30%2C60", "-130%2C25%2C-60%2C55", "-80%2C-55%2C-35%2C10",
+            "-20%2C-35%2C50%2C35", "30%2C5%2C150%2C60", "110%2C-45%2C180%2C0"
+        ].findIndex(function (bbox) { return String(url).indexOf(bbox) >= 0; }));
+        var suffix = String(region + 1);
+        var feature = {
+            id: "00000000-0000-4000-8000-00000000000" + suffix,
+            collection: "test-collection-" + suffix,
+            type: "Feature",
+            geometry: { type: "Point", coordinates: [-120 + region * 40, -30 + region * 12] },
+            providers: [{ name: "Test Mapper " + suffix }],
+            properties: {
+                license: "CC-BY-SA-4.0",
+                "pers:interior_orientation": { field_of_view: 360 }
+            }
+        };
+        return new Response(JSON.stringify({ features: [feature] }), {
+            headers: { "Content-Type": "application/geo+json" }
+        });
+    };
     var geo = await seatedLobby(9, "GEOHOST01", "GEOJOIN01");
+    ok(geoCatalogFetches === 6, "geo: a new Hub builds its location pool from six world regions");
     d = await req(geo.hub, "/api/geostate.png?code=" + geo.code + "&tok=GEOHOST01");
     ok(d.w === 1 && d.h === 1, "geo: round 1 starts unrevealed with no guesses");
     d = await req(geo.hub, "/api/geostate.png?code=" + geo.code + "&tok=GEOSTRANGER");
     ok(d.w === 9 && d.h === 3, "geo: foreign token cannot read round state");
     d = await req(geo.hub, "/api/geotarget.png?code=" + geo.code + "&tok=GEOHOST01");
-    ok(d.w === 9 && d.h === 1, "geo: target is hidden before both players guess");
+    ok(d.w === 1 && d.h === 63, "geo: target is hidden before both players guess");
 
     var geoFetches = 0;
     globalThis.MG_GEO_IMAGE_FETCH = async function () {
@@ -744,7 +772,7 @@ async function main() {
         delete globalThis.MG_GEO_IMAGE_FETCH;
     }
 
-    d = await req(geo.hub, "/api/geoguess.png?code=" + geo.code + "&tok=GEOHOST01&cell=999");
+    d = await req(geo.hub, "/api/geoguess.png?code=" + geo.code + "&tok=GEOHOST01&cell=9999");
     ok(d.w === 9 && d.h === 2, "geo: out-of-map guess is rejected");
     d = await req(geo.hub, "/api/geoguess.png?code=" + geo.code + "&tok=GEOHOST01&cell=0");
     ok(d.w === 1 && d.h === 1, "geo: host guess is accepted");
@@ -752,20 +780,34 @@ async function main() {
     ok(d.w === 1 && d.h === 2, "geo: state exposes only the host guess mask");
     d = await req(geo.hub, "/api/geoguess.png?code=" + geo.code + "&tok=GEOHOST01&cell=1");
     ok(d.w === 9 && d.h === 1, "geo: a seat cannot replace its locked guess");
-    d = await req(geo.hub, "/api/geoguess.png?code=" + geo.code + "&tok=GEOJOIN01&cell=511");
+    d = await req(geo.hub, "/api/geoguess.png?code=" + geo.code + "&tok=GEOJOIN01&cell=2047");
     ok(d.w === 1 && d.h === 1, "geo: joiner guess is accepted");
     d = await req(geo.hub, "/api/geostate.png?code=" + geo.code + "&tok=GEOJOIN01");
     ok(d.w === 1 && d.h === 28, "geo: both guesses atomically open the reveal phase");
 
     d = await req(geo.hub, "/api/geotarget.png?code=" + geo.code + "&tok=GEOHOST01");
-    ok(d.w >= 20 && d.w < 52 && d.h >= 0 && d.h < 16,
-        "geo: revealed target uses the collision-free map-coordinate band");
+    var revealedGeoTarget = geoPoint(d);
+    ok(d.w >= 0 && d.w < 63 && d.h >= 0 && d.h < 63 &&
+        revealedGeoTarget.x < 64 && revealedGeoTarget.y < 32,
+        "geo: revealed target uses the base-63 high-resolution point codec");
     d = await req(geo.hub, "/api/geopick.png?code=" + geo.code + "&tok=GEOHOST01&seat=0");
-    ok(d.w === 20 && d.h === 0, "geo: host's revealed map pick round-trips");
+    ok(d.w === 0 && d.h === 0, "geo: host's revealed map pick round-trips");
     d = await req(geo.hub, "/api/geopick.png?code=" + geo.code + "&tok=GEOHOST01&seat=1");
-    ok(d.w === 51 && d.h === 15, "geo: joiner's revealed map pick round-trips");
+    ok(d.w === 31 && d.h === 32, "geo: joiner's revealed map pick round-trips");
     d = await req(geo.hub, "/api/geoinfo.png?code=" + geo.code + "&tok=GEOHOST01");
-    ok(d.w >= 1 && d.w <= 7 && d.h === 1, "geo: reveal exposes one curated attribution id");
+    ok(d.w >= 1 && d.w <= 6 && d.h === 1, "geo: reveal exposes the dynamic source region");
+    d = await req(geo.hub, "/api/geocredit.png?code=" + geo.code + "&tok=GEOHOST01&i=0");
+    var creditLength = d.w, creditAlphabet =
+        " ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.";
+    var creditText = "";
+    for (var creditPart = 1; creditText.length < creditLength; creditPart++) {
+        d = await req(geo.hub, "/api/geocredit.png?code=" + geo.code +
+            "&tok=GEOHOST01&i=" + creditPart);
+        creditText += creditAlphabet.charAt(d.w);
+        if (creditText.length < creditLength) creditText += creditAlphabet.charAt(d.h);
+    }
+    ok(/Test Mapper \d  Panoramax  CC BY SA 4\.0/.test(creditText),
+        "geo: reveal transmits the dynamic Panoramax producer attribution");
     var firstGeoScores = [];
     for (var geoSeat = 0; geoSeat < 2; geoSeat++) {
         d = await req(geo.hub, "/api/geoscore.png?code=" + geo.code +
@@ -788,7 +830,7 @@ async function main() {
         await req(geo.hub, "/api/geoguess.png?code=" + geo.code +
             "&tok=GEOHOST01&cell=" + geoRound);
         await req(geo.hub, "/api/geoguess.png?code=" + geo.code +
-            "&tok=GEOJOIN01&cell=" + (511 - geoRound));
+            "&tok=GEOJOIN01&cell=" + (2047 - geoRound));
         d = await req(geo.hub, "/api/geostate.png?code=" + geo.code + "&tok=GEOHOST01");
         ok(d.w === geoRound + 1 && d.h === 28,
             "geo: round " + (geoRound + 1) + " reveals only after both guesses");
@@ -819,7 +861,7 @@ async function main() {
     d = await req(geoSoloHub, "/api/join.png?code=" + geoSoloCode + "&tok=GEOSNOOP1");
     ok(d.w === 21 && d.h === 1, "geo solo: a third party cannot occupy the synthetic seat");
     d = await req(geoSoloHub, "/api/geotarget.png?code=" + geoSoloCode + "&tok=GEOSOLO01");
-    ok(d.w === 9 && d.h === 1, "geo solo: target remains hidden before the player's guess");
+    ok(d.w === 1 && d.h === 63, "geo solo: target remains hidden before the player's guess");
     d = await req(geoSoloHub, "/api/geoguess.png?code=" + geoSoloCode +
         "&tok=GEOSOLO01&cell=17");
     ok(d.w === 1 && d.h === 1, "geo solo: player guess is accepted");
@@ -832,6 +874,7 @@ async function main() {
     ok(d.w === 1 && d.h === 1, "geo solo: one ready action advances the server-filled round");
     d = await req(geoSoloHub, "/api/geostate.png?code=" + geoSoloCode + "&tok=GEOSOLO01");
     ok(d.w === 2 && d.h === 1, "geo solo: next round starts immediately");
+    delete globalThis.MG_GEO_CATALOG_FETCH;
 
     d = await req(hub, "/api/create.png?game=1");                  // no token
     ok(d.w === 9 && d.h === 3, "create with NO token → (9,3) bad-token");

@@ -126,7 +126,9 @@ runScheduled(); // finish calibration before exercising its ordinary-image discr
 assert($.MG.Net.isLevelEncodedSize(69, 582),
     "ordinary-image consumers must recognize a calibrated Worker error sentinel");
 assert(!$.MG.Net.isLevelEncodedSize(640, 960),
-    "a host-clamped 1920x960 panorama must not be mistaken for a protocol image");
+    "an ordinary host-clamped panorama must not be mistaken for a protocol image");
+assert(!$.MG.Net.isLevelEncodedSize(640, 1440),
+    "the 2880x1440 GeoGuesser source must survive a 640px request-host clamp");
 
 const ui = source("mg_ui.js");
 const pixel = source("mg_pixelbattle.js");
@@ -136,6 +138,7 @@ const geo = source("mg_geoguesser.js");
 const games = source("mg_games.js");
 const worker = fs.readFileSync(path.join(ROOT, "server", "worker.core.js"), "utf8");
 const baseHud = fs.readFileSync(path.join(ROOT, "panorama", "layout", "base_hud.xml"), "utf8");
+const css = fs.readFileSync(path.join(ROOT, "panorama", "styles", "mg.css"), "utf8");
 
 assert(/var MULTI_GAME_IDS = \[1, 2, 3, 4, 5\];/.test(ui),
     "multi-quick tick set must include heads-up Durak");
@@ -181,15 +184,75 @@ assert(/function loadPanorama[\s\S]*?MG\.Net\.loadImage\(url,/.test(geo),
 assert(/MG\.Net\.isLevelEncodedSize\(loadedW, loadedH\)/.test(geo) &&
     !/var aspect = shortSide > 0/.test(geo),
     "GeoGuesser must not validate intrinsic panorama aspect from host-clamped layout dimensions");
+assert(/PANO_W = 2880, PANO_H = 1440, PANO_STEP = PANO_W - 2/.test(geo) &&
+    /configurePanoImage\(image, PANO_STEP\)/.test(geo) &&
+    /addCachedCopy\(url, PANO_STEP \* 2, myGen/.test(geo),
+    "GeoGuesser's three panorama strips must share one exact, slightly-overlapped step");
+// The side copies must ride the shared FIFO. A direct `copy.SetImage(url)` overlaps the centre
+// load and the running polls, which wedges Panorama's image loader: both neighbours stall at
+// dims 0 and never paint, leaving a mostly BLACK viewport (and an empty frame once heading walks
+// onto the missing copy). Also assert the reveal is CHAINED off the second copy rather than
+// fired by a fixed timer that can't know whether the loads finished.
+assert(/function addCachedCopy\(url, offset, myGen, done\)[\s\S]{0,600}MG\.Net\.loadImage\(url,/.test(geo) &&
+    !/\$\.CreatePanel\("Image", stage[\s\S]{0,200}SetImage\(url\)/.test(geo) &&
+    /addCachedCopy\(url, 0, myGen, function \(\)[\s\S]{0,400}addCachedCopy\(url, PANO_STEP \* 2, myGen, function \(\)[\s\S]{0,300}panoramaReady = true/.test(geo),
+    "GeoGuesser's side panorama copies must load through the shared FIFO and gate panoramaReady");
+assert(/images\/geoguesser\/world_map\.vtex/.test(geo) &&
+    /var GRID_W = 64, GRID_H = 32/.test(geo),
+    "GeoGuesser must use its dedicated map and fine 64x32 authoritative guess grid");
+// The de-glow overrides only bind if they out-specify the GAME's own `Slider.HorizontalSlider
+// #SliderThumb` (111) — a bare `.mg-geo-camera-controls #SliderThumb` is 110 and loses, which is
+// why the green glow survived the first pass (trap 22). Assert the winning prefix on all three
+// sub-panels plus the hover/active states, and that `none` is used rather than a transparent
+// zero shadow (which does not clear the game's `fill`-keyword glow).
+assert(/\.mg-geo-camera-controls Slider\.HorizontalSlider #SliderThumb\s*\{[\s\S]{0,400}background-image:\s*none;[\s\S]{0,400}box-shadow:\s*none;/.test(css) &&
+    /\.mg-geo-camera-controls Slider\.HorizontalSlider #SliderTrackProgress\s*\{[\s\S]{0,300}box-shadow:\s*none;/.test(css) &&
+    /\.mg-geo-camera-controls Slider\.HorizontalSlider #SliderThumb:hover\s*\{[\s\S]{0,300}box-shadow:\s*none;/.test(css) &&
+    /#SliderThumb:active\s*\{[\s\S]{0,300}box-shadow:\s*none;/.test(css) &&
+    !/\.mg-geo-camera-controls[\s\S]{0,2000}#62f28c/.test(css),
+    "GeoGuesser camera controls must out-specify and suppress the native slider glow (trap 22)");
+// House style has no outer glow anywhere: no rule may carry a zero-offset blurred box-shadow.
+// A hard ring (`0px 0px 0px 3px`, zero blur) and offset drop shadows are both still fine.
+(function () {
+    // Blank out /* … */ comments, PRESERVING newlines so reported line numbers stay accurate.
+    // Needed because the trap-22 note and the .mg-pk-active note both QUOTE the removed glow
+    // declarations verbatim, and a naive scan flags its own documentation.
+    var live = css.replace(/\/\*[\s\S]*?\*\//g, function (m) { return m.replace(/[^\n]/g, " "); });
+    var glow = [];
+    live.split(/\r?\n/).forEach(function (line, i) {
+        var decl = /box-shadow:\s*([^;}]+)/.exec(line);
+        if (!decl) return;
+        // Tokenise instead of pattern-matching the whole value: `fill`/`inset` keywords and colours
+        // (#rrggbbaa, brandGreen&11, rgba(...)) may precede OR follow the lengths, and a single
+        // regex with an optional prefix can silently absorb the first 0px and mistake the SPREAD
+        // for the blur — which is what made `0px 0px 0px 3px` (a hard ring) read as a glow.
+        var lengths = decl[1].split(/\s+/)
+            .filter(function (t) { return /^-?[\d.]+px$/.test(t); })
+            .map(parseFloat);
+        // Glow = no offset in either axis AND a non-zero blur radius. Offset drop shadows and
+        // zero-blur spread rings are both legitimate house style.
+        if (lengths.length >= 3 && lengths[0] === 0 && lengths[1] === 0 && lengths[2] > 0) {
+            glow.push((i + 1) + ": " + line.trim());
+        }
+    });
+    assert(glow.length === 0, "no outer glow allowed in mg.css, found:\n  " + glow.join("\n  "));
+})();
+assert(/\.mg-geo-cell\s*\{[\s\S]{0,250}width:\s*fill-parent-flow\(1\);[\s\S]{0,250}border-radius:\s*50%;/.test(css),
+    "GeoGuesser map selection must render as fine circular markers, not coarse squares");
 assert(/RegisterEventHandler\("DragStart"[\s\S]*?RegisterEventHandler\("DragEnd"/.test(geo) &&
     /MG\.Widgets\.winPos\(dragGhost\)/.test(geo),
     "GeoGuesser must reuse the proven chess/checkers native drag position channel");
 assert(/\$\.CreatePanel\("Slider"[\s\S]*?onvaluechanged[\s\S]*?yaw = nextYaw/.test(geo) &&
     /\$\.CreatePanel\("Slider"[\s\S]*?onvaluechanged[\s\S]*?pitch = nextPitch/.test(geo),
     "GeoGuesser must keep a continuous native-slider camera path when image drag updates only on release");
-assert(/revealReadsPending = solo \? 4 : 6;[\s\S]*?setAction\("LOADING RESULT…", false/.test(geo) &&
+assert(/revealReadsPending = solo \? 5 : 7;[\s\S]*?setAction\("LOADING RESULT…", false/.test(geo) &&
     /revealReadsPending === 0[\s\S]*?setAction\(currentRound/.test(geo),
     "GeoGuesser must not allow next/finish before every authoritative reveal read completes");
+assert(/geoCredit:\s*function[\s\S]*?\/api\/geocredit/.test(net) &&
+    /MG\.Api\.geoCredit\(code, tok/.test(geo) &&
+    /api\.panoramax\.xyz\/api\/search/.test(worker) &&
+    !/const GEO_LOCATIONS =/.test(worker),
+    "GeoGuesser must use the dynamic Panoramax catalog and surface its producer attribution");
 assert(/bl\.text = selectedGameId === 9 \? "PLAY SOLO" : "PLAY VS BOT"/.test(ui) &&
     /function startGeoSolo\(\)[\s\S]*?MG\.Api\.create\(9,[\s\S]*?\{ solo: true \}/.test(ui) &&
     /if \(access\.lobby\.solo\) st\.ready\[1\] = 1/.test(worker) &&

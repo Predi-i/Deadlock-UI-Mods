@@ -45,6 +45,10 @@ const NODE_GLOBALS = {
     TextDecoder: "readonly",
     fetch: "readonly",
     atob: "readonly",
+    // GeoGuesser's Panoramax proxy bounds every outbound fetch with AbortSignal.timeout().
+    // Present in both runtimes the worker targets (Node 18+ and workerd); listed here because
+    // this config declares its globals explicitly rather than via an `env` preset.
+    AbortSignal: "readonly",
 };
 
 // ES built-ins used across BOTH environments. Listed explicitly so the config doesn't depend

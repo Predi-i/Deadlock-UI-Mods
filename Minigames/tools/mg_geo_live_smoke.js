@@ -62,7 +62,7 @@ try {
     code: lobbyCode, tok: hostToken, cell: 0
   }), "host guess");
   const joinGuess = levels(await get("/api/geoguess", {
-    code: lobbyCode, tok: joinToken, cell: 511
+    code: lobbyCode, tok: joinToken, cell: 2047
   }), "joiner guess");
   if (hostGuess.w !== 1 || joinGuess.w !== 1) throw new Error("a guess was rejected");
 
@@ -77,10 +77,18 @@ try {
   const score = levels(await get("/api/geoscore", {
     code: lobbyCode, tok: hostToken, seat: 0
   }), "score");
+  const creditHead = levels(await get("/api/geocredit", {
+    code: lobbyCode, tok: hostToken, i: 0
+  }), "credit");
+  if (creditHead.h !== 0 || creditHead.w < 20 || creditHead.w > 62) {
+    throw new Error("dynamic Panoramax attribution was not exposed");
+  }
+  const targetCell = target.h * 63 + target.w;
   console.log("LIVE GEO OK code=" + lobbyCode +
     " panorama=" + panoramaType + "/" + panorama.bytes.length +
-    " target=" + (target.w - 20) + "," + target.h +
-    " hostScore=" + (score.h * 63 + score.w));
+    " target=" + (targetCell % 64) + "," + Math.floor(targetCell / 64) +
+    " hostScore=" + (score.h * 63 + score.w) +
+    " creditChars=" + creditHead.w);
 
   const soloCreated = levels(await get("/api/create", {
     game: 9, tok: soloToken, solo: 1

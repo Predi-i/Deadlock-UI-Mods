@@ -653,7 +653,7 @@
                     // GeoGuesser has no dedicated compiled card yet; reuse its shipped map
                     // instead of requesting a missing cards/geoguesser.vtex_c every menu open.
                     var artUrl = g.id === 9
-                        ? "s2r://panorama/images/pixelbattle/world_map.vtex"
+                        ? "s2r://panorama/images/geoguesser/world_map.vtex"
                         : "s2r://panorama/images/cards/" + g.key + ".vtex";
                     setFace(art, artUrl);
                 }

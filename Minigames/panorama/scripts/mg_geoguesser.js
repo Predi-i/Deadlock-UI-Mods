@@ -15,18 +15,10 @@
     if (MG.GeoGuesser) return;
     MG.GeoGuesser = {};
 
-    var GRID_W = 32, GRID_H = 16, ROUNDS = 5;
+    var GRID_W = 64, GRID_H = 32, ROUNDS = 5;
     var VIEW_W = 720, VIEW_H = 324;
-    var PANO_W = 2160, PANO_H = 1080;
-    var INFO = [
-        { place: "Agra, India", credit: "Arul Prakasam T · CC BY-SA 4.0" },
-        { place: "London, United Kingdom", credit: "Diliff · CC BY-SA 3.0" },
-        { place: "Copenhagen, Denmark", credit: "Stig Nygaard · CC BY 2.0" },
-        { place: "Tokyo, Japan", credit: "AsPJT · CC0" },
-        { place: "Sydney, Australia", credit: "Bidgee · CC BY-SA 3.0" },
-        { place: "Mumbai, India", credit: "Fuzheado · CC BY-SA 4.0" },
-        { place: "Moscow, Russia", credit: "Svetlov Artem · CC BY-SA 4.0" }
-    ];
+    var PANO_W = 2880, PANO_H = 1440, PANO_STEP = PANO_W - 2;
+    var REGIONS = ["Europe", "North America", "South America", "Africa", "Asia", "Oceania"];
 
     function addLabel(parent, cls, text) {
         var label = $.CreatePanel("Label", parent, "");
@@ -86,32 +78,29 @@
         var dragHandle = $.CreatePanel("Panel", viewport, "");
         dragHandle.AddClass("mg-geo-drag-handle");
 
-        var cameraSliders = $.CreatePanel("Panel", root, "");
-        cameraSliders.AddClass("mg-geo-camera-sliders");
-        addLabel(cameraSliders, "mg-geo-slider-label", "HEADING");
-        var yawSlider = $.CreatePanel("Slider", cameraSliders, "", { direction: "horizontal" });
+        var cameraControls = $.CreatePanel("Panel", root, "");
+        cameraControls.AddClass("mg-geo-camera-controls");
+        addLabel(cameraControls, "mg-geo-slider-label", "LOOK");
+        addButton(cameraControls, "mg-geo-camera-button", "◀", function () { turn(-20, 0); });
+        var yawSlider = $.CreatePanel("Slider", cameraControls, "", { direction: "horizontal" });
         yawSlider.AddClass("HorizontalSlider");
         yawSlider.AddClass("mg-geo-yaw-slider");
         yawSlider.min = 0;
         yawSlider.max = 359;
         yawSlider.value = 0;
-        addLabel(cameraSliders, "mg-geo-slider-label mg-geo-pitch-label", "PITCH");
-        var pitchSlider = $.CreatePanel("Slider", cameraSliders, "", { direction: "horizontal" });
+        addButton(cameraControls, "mg-geo-camera-button", "▶", function () { turn(20, 0); });
+        addLabel(cameraControls, "mg-geo-slider-label mg-geo-pitch-label", "TILT");
+        addButton(cameraControls, "mg-geo-camera-button", "▼", function () { turn(0, -10); });
+        var pitchSlider = $.CreatePanel("Slider", cameraControls, "", { direction: "horizontal" });
         pitchSlider.AddClass("HorizontalSlider");
         pitchSlider.AddClass("mg-geo-pitch-slider");
         pitchSlider.min = -30;
         pitchSlider.max = 30;
         pitchSlider.value = 0;
-
-        var cameraControls = $.CreatePanel("Panel", root, "");
-        cameraControls.AddClass("mg-geo-camera-controls");
-        addButton(cameraControls, "mg-geo-camera-button", "◀", function () { turn(-20, 0); });
         addButton(cameraControls, "mg-geo-camera-button", "▲", function () { turn(0, 10); });
-        addButton(cameraControls, "mg-geo-camera-button", "RESET", function () {
+        addButton(cameraControls, "mg-geo-camera-button mg-geo-reset-button", "RESET", function () {
             yaw = 0; pitch = 0; applyCamera();
         });
-        addButton(cameraControls, "mg-geo-camera-button", "▼", function () { turn(0, -10); });
-        addButton(cameraControls, "mg-geo-camera-button", "▶", function () { turn(20, 0); });
 
         var lower = $.CreatePanel("Panel", root, "");
         lower.AddClass("mg-geo-lower");
@@ -119,7 +108,7 @@
         map.AddClass("mg-geo-map");
         var mapImage = $.CreatePanel("Image", map, "", { scaling: "stretch-to-fit-preserve-aspect" });
         mapImage.AddClass("mg-geo-map-image");
-        mapImage.SetImage("s2r://panorama/images/pixelbattle/world_map.vtex");
+        mapImage.SetImage("s2r://panorama/images/geoguesser/world_map.vtex");
         try { mapImage.SetAttributeString("hittest", "false"); } catch (e0) {}
         var grid = $.CreatePanel("Panel", map, "");
         grid.AddClass("mg-geo-grid");
@@ -170,7 +159,7 @@
             yawSlider.value = Math.round(yaw);
             pitchSlider.value = Math.round(pitch);
             syncingCameraSliders = false;
-            var point = PANO_W + yaw * PANO_W / 360;
+            var point = PANO_STEP + yaw * PANO_STEP / 360;
             var x = VIEW_W / 2 - point;
             var y = -(PANO_H - VIEW_H) / 2 + pitch * 4;
             stage.style.transform = "translate3d(" + Math.round(x) + "px, " + Math.round(y) + "px, 0px)";
@@ -210,11 +199,29 @@
             panoImages.push(image);
         }
 
-        function addCachedCopy(url, offset, myGen) {
+        // The two side copies MUST come through MG.Net.loadImage, i.e. the same strict FIFO as
+        // every other image (§5 "Request discipline"). ⚠ The previous version created its own
+        // <Image> and called SetImage(url) directly: two independent loads fired 60ms and 120ms
+        // after the centre copy, overlapping each other AND the running polls. That is exactly
+        // the documented wedge - the pending loads stall at dims 0 and never paint - so the side
+        // copies were simply absent. Symptom in-game: a mostly BLACK viewport whose visible
+        // strip is only the centre copy, and a near-empty frame once heading walks onto a
+        // missing neighbour (maintainer's 182°/349° screenshots). Not a projection bug.
+        // The URL is identical for all three, so the engine serves the neighbours from cache.
+        function addCachedCopy(url, offset, myGen, done) {
             if (destroyed || myGen !== panoramaGen) return;
-            var copy = $.CreatePanel("Image", stage, "", { scaling: "stretch-to-fit" });
-            configurePanoImage(copy, offset);
-            copy.SetImage(url);
+            MG.Net.loadImage(url, function (copy) {
+                if (destroyed || myGen !== panoramaGen) {
+                    try { copy.SetImage(""); copy.DeleteAsync(0); } catch (e) {}
+                    return;
+                }
+                configurePanoImage(copy, offset);
+                if (done) done();
+            }, function () {
+                // A missing neighbour only costs the wrap at that edge; the round stays playable,
+                // so surface nothing and let the centre copy carry the view.
+                if (!destroyed && myGen === panoramaGen && done) done();
+            }, { scaling: "stretch-to-fit" });
         }
 
         function loadPanorama(round) {
@@ -230,10 +237,10 @@
                     try { image.SetImage(""); image.DeleteAsync(0); } catch (e) {}
                     return;
                 }
-                // The shared request host is 640px wide and clamps a 1920x960 source to a
-                // reported 640x960 layout. That is still a successful image; layout dimensions
-                // cannot validate intrinsic aspect here. Reject only a small level-encoded
-                // Worker error PNG, whose calibrated dimensions are reserved to levels 0..63.
+                // The shared request host is 640px wide and may report its clamped layout rather
+                // than the source's intrinsic size. That is still a successful image;
+                // layout dimensions cannot validate intrinsic aspect here. Reject only a small
+                // level-encoded Worker error PNG, whose calibrated dimensions are 0..63.
                 if (MG.Net.isLevelEncodedSize(loadedW, loadedH)) {
                     try { image.SetImage(""); image.DeleteAsync(0); } catch (e2) {}
                     loading.text = "Panorama unavailable. Retrying…";
@@ -242,25 +249,31 @@
                     });
                     return;
                 }
-                // The intrinsic-size panel is only the cold-load probe. Visible copies stretch
-                // the source's exact 2:1 pixels to the fixed 2160x1080 strip; otherwise 1920px
-                // Commons thumbnails would leave a gap at each wrapped seam.
-                addCachedCopy(url, PANO_W, myGen);
-                try { image.SetImage(""); image.DeleteAsync(0); } catch (e3) {}
-                // Add the wrap copies on later frames so no three panel updates contend even
-                // though the URL is already warm in Panorama's image cache.
-                $.Schedule(0.08, function () { addCachedCopy(url, 0, myGen); });
-                $.Schedule(0.16, function () { addCachedCopy(url, PANO_W * 2, myGen); });
-                panoramaReady = true;
-                loading.style.visibility = "collapse";
-                applyCamera();
+                // Panoramax SD sources are consistently 2:1 and are stretched into the exact
+                // 2880x1440 stage size. Keep the already-loaded panel as the centre copy, then
+                // add two cached neighbours with a 2px overlap. The old 2160px spacing around a
+                // 1920px source created the visible 240px black band at every seam.
+                configurePanoImage(image, PANO_STEP);
+                // Chain the neighbours through the FIFO instead of racing three fixed $.Schedule
+                // timers: the old 0.06/0.12/0.18s ladder assumed each load finished inside its
+                // slot, so `panoramaReady` (and the first applyCamera) fired while the side copies
+                // were still loading - or never loaded at all. Now the left copy is requested,
+                // then the right one, and only then is the viewport revealed.
+                addCachedCopy(url, 0, myGen, function () {
+                    addCachedCopy(url, PANO_STEP * 2, myGen, function () {
+                        if (destroyed || myGen !== panoramaGen) return;
+                        panoramaReady = true;
+                        loading.style.visibility = "collapse";
+                        applyCamera();
+                    });
+                });
             }, function () {
                 if (destroyed || myGen !== panoramaGen) return;
                 loading.text = "Couldn't load panorama. Retrying…";
                 $.Schedule(1.5, function () {
                     if (!destroyed && myGen === panoramaGen) loadPanorama(round);
                 });
-            }, { scaling: "none" });
+            }, { scaling: "stretch-to-fit" });
         }
 
         function clearMapMarkers() {
@@ -283,8 +296,7 @@
             selectedCell = cell;
             for (var i = 0; i < cells.length; i++) cells[i].SetHasClass("mg-geo-selected", i === cell);
             setAction("SUBMIT GUESS", true, submitGuess);
-            prompt.text = "Selected map cell " + (cell % GRID_W + 1) + ", " +
-                (Math.floor(cell / GRID_W) + 1) + ".";
+            prompt.text = "Guess placed. Submit when ready.";
         }
 
         function submitGuess() {
@@ -362,7 +374,7 @@
         function showReveal() {
             if (revealRound === currentRound) return;
             revealRound = currentRound;
-            revealReadsPending = solo ? 4 : 6;
+            revealReadsPending = solo ? 5 : 7;
             sendingGuess = false;
             prompt.text = "Round complete. Loading the authoritative reveal…";
             setAction("LOADING RESULT…", false, readyNext);
@@ -386,13 +398,12 @@
                 });
             }
             readReveal(function (ok, fail) { MG.Api.geoInfo(code, tok, ok, fail); }, function (index) {
-                var info = INFO[index];
-                if (info) {
-                    revealPlace.text = info.place;
-                    revealCredit.text = "Photo: " + info.credit + " · Wikimedia Commons";
-                }
+                revealPlace.text = REGIONS[index] || "Location revealed";
                 prompt.text = solo ? "Round complete. The exact cell and your guess are shown."
                     : "Round complete. The exact cell and both guesses are shown.";
+            });
+            readReveal(function (ok, fail) { MG.Api.geoCredit(code, tok, ok, fail); }, function (text) {
+                revealCredit.text = text;
             });
         }
 
