@@ -104,10 +104,6 @@ async function adminReq(hub, pathAndQuery, method, body, extraHeaders) {
 // vs joiner is the band, not a +100 flag. codeHost(d) tells them apart.
 function decCode(d) { var band = d.w >= 40 ? 40 : 24; return (d.w - band) * 64 + d.h; }
 function codeHost(d) { return d.w >= 40; }
-function geoPoint(d) {
-    var cell = d.h * 63 + d.w;
-    return { x: cell % 64, y: Math.floor(cell / 64) };
-}
 // Decode one seat's clock reading. The route now returns ONE seat per read as
 // (30+(sec>>6), sec&63); sentinels are (9,9) gone / (9,8) untimed. clkSec(d) → seconds,
 // Clocks are per-seat now: /api/clocks?seat=S → (30 + sec>>6, sec&63). Recover the seconds.
@@ -717,20 +713,28 @@ async function main() {
         "undo restores both the previous colour and the previous pixel owner");
 
     // ── GeoGuesser: dynamic Panoramax pool, hidden panorama and authoritative reveal ──
+    // The catalog is now queried per SUB-CELL, not once per region: Panoramax returns frames in
+    // sequence order, so one wide bbox drains a single densely-mapped route (measured: all of
+    // Europe = 1 sequence even at limit=1000). Each cell here answers with its own collection so
+    // the pool's spread is observable.
     var geoCatalogFetches = 0;
+    var geoCellsSeen = {};
     globalThis.MG_GEO_CATALOG_FETCH = async function (url) {
         geoCatalogFetches++;
-        var region = Math.max(0, [
-            "-10%2C35%2C30%2C60", "-130%2C25%2C-60%2C55", "-80%2C-55%2C-35%2C10",
-            "-20%2C-35%2C50%2C35", "30%2C5%2C150%2C60", "110%2C-45%2C180%2C0"
-        ].findIndex(function (bbox) { return String(url).indexOf(bbox) >= 0; }));
-        var suffix = String(region + 1);
+        var bbox = decodeURIComponent(String(url).replace(/^.*[?&]bbox=/, "").replace(/&.*$/, ""));
+        geoCellsSeen[bbox] = (geoCellsSeen[bbox] || 0) + 1;
+        // Region index from the cell's longitude/latitude, so each region still yields a
+        // distinct coordinate band and the round chooser can spread across them.
+        var west = Number(bbox.split(",")[0]) || 0;
+        var south = Number(bbox.split(",")[1]) || 0;
+        var region = Math.abs(Math.round(west / 40) + Math.round(south / 30)) % 6;
+        var suffix = bbox.replace(/[^0-9]/g, "").slice(0, 10) || "0";
         var feature = {
-            id: "00000000-0000-4000-8000-00000000000" + suffix,
+            id: "00000000-0000-4000-8000-" + ("00000000000" + suffix).slice(-12),
             collection: "test-collection-" + suffix,
             type: "Feature",
-            geometry: { type: "Point", coordinates: [-120 + region * 40, -30 + region * 12] },
-            providers: [{ name: "Test Mapper " + suffix }],
+            geometry: { type: "Point", coordinates: [west + 1, south + 1] },
+            providers: [{ name: "Test Mapper " + region }],
             properties: {
                 license: "CC-BY-SA-4.0",
                 "pers:interior_orientation": { field_of_view: 360 }
@@ -741,7 +745,14 @@ async function main() {
         });
     };
     var geo = await seatedLobby(9, "GEOHOST01", "GEOJOIN01");
-    ok(geoCatalogFetches === 6, "geo: a new Hub builds its location pool from six world regions");
+    // One request per sub-cell, each cell queried exactly once. The count is the whole point of
+    // the fix: six wide bboxes drained six dense routes, while 50 cells spread the pool. If a
+    // future edit collapses cells back into one bbox per region this drops to 6 and fails here.
+    var geoCellList = Object.keys(geoCellsSeen);
+    ok(geoCellList.length === 50 && geoCatalogFetches === 50,
+        "geo: the location pool is built from 50 sub-cells, not six wide region bboxes");
+    ok(geoCellList.every(function (bbox) { return geoCellsSeen[bbox] === 1; }),
+        "geo: every sub-cell is queried exactly once per pool build");
     d = await req(geo.hub, "/api/geostate.png?code=" + geo.code + "&tok=GEOHOST01");
     ok(d.w === 1 && d.h === 1, "geo: round 1 starts unrevealed with no guesses");
     d = await req(geo.hub, "/api/geostate.png?code=" + geo.code + "&tok=GEOSTRANGER");

@@ -162,8 +162,11 @@ Never commit or paste these secrets into source files.
   from roughly 81 KiB to about 449 bytes and raised the measured clock-route throughput from
   about 89 to 872 requests/second on the NLs-1 VPS.
 - GeoGuesser needs no paid map API or secret key. New lobbies query Panoramax's public federation
-  for CC-BY-SA 4.0 equirectangular pictures across six broad regions, keep at most one frame from
-  each sequence, and cache the catalog snapshot for ten minutes. The proxy URL is constructed from
+  for CC-BY-SA 4.0 equirectangular pictures across six regions split into 50 sub-cells, keep at
+  most one frame from each sequence, and cache the catalog snapshot for ten minutes. The sub-cells
+  are load-bearing, not cosmetic: Panoramax answers in sequence order, so one wide bbox per region
+  drained a single dense route (all of Europe returned one sequence even at `limit=1000`). Cold
+  pool cost is 50 requests, amortised over the ten-minute cache. The proxy URL is constructed from
   the catalog's validated UUID; user input can never become an upstream URL. Proxied images are
   capped at 8 MiB and the in-memory image LRU is capped at 12 entries.
 - Reveal points and guesses use a 512×256 server-owned grid (~78km per cell). A guess arrives as

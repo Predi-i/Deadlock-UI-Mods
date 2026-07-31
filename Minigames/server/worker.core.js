@@ -1762,13 +1762,50 @@ const GEO_GRID_H = 256;
 const GEO_ROUNDS = 5;
 const GEO_CATALOG = "https://api.panoramax.xyz/api/search";
 const GEO_POOL_TTL_MS = 10 * 60 * 1000;
+// ⚠ Each region is queried as SUB-CELLS, not one big bbox. Panoramax returns frames in
+// upload/sequence order, so a single wide bbox drains one densely-mapped route before reaching
+// anywhere else: measured 2026-07-31, `bbox=-10,35,30,60` (all of Europe) returned exactly ONE
+// sequence even at limit=1000, and one Asia bbox returned 2. Splitting the same areas into cells
+// and taking a frame from each lifted Europe to 11+ sequences and Asia to 57, spread across
+// Turkey, Nepal, Tokyo, India, Bangkok, Manila and Baikal. The coverage was always there; the
+// query shape was hiding it.
+//
+// Two things that do NOT work and should not be re-tried:
+//  - a bigger `limit` (40 -> 1000 kept Europe at one sequence);
+//  - the two-step `/api/collections` then `search?collections=`: that filter IGNORES bbox (an
+//    Oceania cell came back with German coordinates) and returns nothing for `field_of_view`.
 const GEO_REGIONS = [
-  { name: "Europe", bbox: "-10,35,30,60" },
-  { name: "North America", bbox: "-130,25,-60,55" },
-  { name: "South America", bbox: "-80,-55,-35,10" },
-  { name: "Africa", bbox: "-20,-35,50,35" },
-  { name: "Asia", bbox: "30,5,150,60" },
-  { name: "Oceania", bbox: "110,-45,180,0" }
+  {
+    name: "Europe",
+    cells: ["-10,36,0,45", "0,36,10,45", "10,36,22,45", "-10,45,0,55",
+      "0,45,10,55", "10,45,20,55", "20,45,30,55", "5,55,20,60"]
+  },
+  {
+    name: "North America",
+    cells: ["-125,32,-105,45", "-105,32,-90,45", "-90,32,-75,45", "-80,32,-60,45",
+      "-125,45,-100,55", "-100,45,-80,55", "-80,45,-60,55", "-115,25,-95,32"]
+  },
+  {
+    name: "South America",
+    cells: ["-80,-10,-60,5", "-60,-10,-40,5", "-70,-25,-50,-10", "-50,-25,-35,-10",
+      "-75,-40,-55,-25", "-55,-40,-40,-25", "-75,-55,-60,-40", "-70,0,-50,10"]
+  },
+  {
+    name: "Africa",
+    cells: ["-18,5,0,20", "0,5,20,20", "20,5,40,20", "-18,20,10,35",
+      "10,20,35,35", "10,-15,35,5", "10,-35,30,-15", "30,-25,50,-5"]
+  },
+  {
+    name: "Asia",
+    cells: ["30,25,50,45", "50,25,70,45", "70,25,90,45", "110,25,130,45",
+      "130,25,150,45", "70,5,90,25", "90,5,110,25", "110,5,130,25",
+      "90,45,120,60", "60,45,90,60"]
+  },
+  {
+    name: "Oceania",
+    cells: ["113,-35,130,-20", "130,-35,145,-20", "145,-40,155,-25", "165,-47,180,-34",
+      "113,-25,135,-12", "140,-25,155,-12", "145,-45,150,-38", "155,-25,175,-12"]
+  }
 ];
 const GEO_CREDIT_ALPHABET = " ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.";
 
@@ -1814,9 +1851,9 @@ function geoCatalogLocation(feature, region) {
   };
 }
 
-async function geoCatalogRegion(fetcher, region, index) {
-  const url = GEO_CATALOG + "?limit=40&filter=" +
-    encodeURIComponent("field_of_view = 360") + "&bbox=" + encodeURIComponent(region.bbox);
+async function geoCatalogCell(fetcher, bbox, index) {
+  const url = GEO_CATALOG + "?limit=20&filter=" +
+    encodeURIComponent("field_of_view = 360") + "&bbox=" + encodeURIComponent(bbox);
   try {
     const response = await fetcher(url, {
       headers: { "Accept": "application/geo+json", "User-Agent": "Deadlock-Minigames/1.0" },
@@ -1837,6 +1874,26 @@ async function geoCatalogRegion(fetcher, region, index) {
   } catch (error) {
     return [];
   }
+}
+
+// One request per sub-cell. A dead or empty cell simply contributes nothing (geoCatalogCell
+// swallows its own errors), so a regional outage degrades the spread instead of failing the pool.
+async function geoCatalogRegion(fetcher, region, index) {
+  const batches = await Promise.all(region.cells.map(function (bbox) {
+    return geoCatalogCell(fetcher, bbox, index);
+  }));
+  const seen = new Set(), out = [];
+  for (let i = 0; i < batches.length; i++) {
+    for (let j = 0; j < batches[i].length; j++) {
+      const location = batches[i][j];
+      // Cells are drawn not to overlap, but dedupe anyway: a frame on a shared edge would
+      // otherwise get two chances at being picked for a round.
+      if (seen.has(location.collection)) continue;
+      seen.add(location.collection);
+      out.push(location);
+    }
+  }
+  return out;
 }
 
 async function geoLocationsForLobby(hub) {

@@ -1145,11 +1145,23 @@ is built but **not yet in-game verified**.
   calculates distance scores, and hides all reveal data until the round is complete. In solo it owns
   an opaque synthetic seat, fills that seat's guess/ready state, and therefore reveals and advances
   without a second client.
-- New lobbies query six broad world regions for reusable CC-BY-SA 4.0 pictures whose reported field
-  of view is exactly 360°. Only one frame per Panoramax collection/sequence is admitted and the five
-  rounds prefer distinct regions. The resulting pool is cached for ten minutes to avoid abusing the
-  public catalog, but each lobby shuffles its own server-private set. There is no manually curated
-  location list and no Google API key or billing dependency.
+- New lobbies query six world regions **split into 50 sub-cells** for reusable CC-BY-SA 4.0
+  pictures whose reported field of view is exactly 360°. Only one frame per Panoramax
+  collection/sequence is admitted and the five rounds prefer distinct regions. The resulting pool
+  is cached for ten minutes to avoid abusing the public catalog, but each lobby shuffles its own
+  server-private set. There is no manually curated location list and no Google API key or billing
+  dependency.
+- **Trap: one wide bbox per region collapses the pool onto a single street.** Panoramax returns
+  frames in sequence/upload order, so a wide bbox drains one densely-mapped route before reaching
+  anywhere else. Measured 2026-07-31: `bbox=-10,35,30,60` (all of Europe) returned exactly **one**
+  sequence, and a single Asia bbox returned two — which reads like "Panoramax has no coverage
+  there" and is wrong. The coverage was always present; the query shape hid it. Splitting each
+  region into sub-cells and taking a frame from each lifted Europe to 11+ sequences and Asia to 57,
+  spread across Turkey, Nepal, Tokyo, India, Bangkok, Manila and Baikal. Two fixes that do **not**
+  work and should not be re-tried: a bigger `limit` (40 → 1000 kept Europe at one sequence), and
+  the two-step `/api/collections` → `search?collections=` route (collections **ignores** the bbox —
+  an Oceania cell came back with German coordinates — and returns nothing for `field_of_view`).
+  Cost: 50 catalog requests instead of 6 on a cold pool, then ten minutes of cache.
 - `/api/geoview` is authenticated with the lobby seat token and proxies the current Panoramax SD
   image through the VPS. It constructs the federation image route from a validated UUID rather than
   trusting an arbitrary asset URL. A bounded 12-image LRU protects memory. The picture id, exact
