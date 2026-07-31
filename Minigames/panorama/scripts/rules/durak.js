@@ -14,9 +14,9 @@
  */
 
 (function () {
-    var R;
+    let R;
     if (typeof $ !== "undefined" && $) {
-        var MG = ($.MG = $.MG || {});
+        const MG = ($.MG = $.MG || {});
         R = (MG.Rules = MG.Rules || {});
     } else if (typeof globalThis !== "undefined") {
         R = (globalThis.MGRules = globalThis.MGRules || {});
@@ -24,9 +24,9 @@
         R = (this.MGRules = this.MGRules || {});
     }
 
-    var SUIT_CHARS = ["S", "H", "D", "C"];
-    var RANK_CHARS = ["6", "7", "8", "9", "T", "J", "Q", "K", "A"];
-    var DECK_SIZE = 36;
+    const SUIT_CHARS = ["S", "H", "D", "C"];
+    const RANK_CHARS = ["6", "7", "8", "9", "T", "J", "Q", "K", "A"];
+    const DECK_SIZE = 36;
 
     function suitOf(id) { return (id / 9) | 0; }
     function rankOf(id) { return id % 9; }
@@ -34,21 +34,21 @@
     // Deterministic PRNG (mulberry32) so a given seed always deals the same game - the test
     // relies on this, and online the server owns the seed.
     function makeRng(seed) {
-        var s = seed | 0;
+        let s = seed | 0;
         return function () {
             s = (s + 0x6D2B79F5) | 0;
-            var t = Math.imul(s ^ (s >>> 15), 1 | s);
+            let t = Math.imul(s ^ (s >>> 15), 1 | s);
             t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
             return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
         };
     }
 
     function freshDeck(rng) {
-        var d = [];
-        for (var i = 0; i < DECK_SIZE; i++) d.push(i);
-        for (var j = DECK_SIZE - 1; j > 0; j--) {
-            var k = (rng() * (j + 1)) | 0;
-            var t = d[j]; d[j] = d[k]; d[k] = t;
+        const d = [];
+        for (let i = 0; i < DECK_SIZE; i++) d.push(i);
+        for (let j = DECK_SIZE - 1; j > 0; j--) {
+            let k = (rng() * (j + 1)) | 0;
+            let t = d[j]; d[j] = d[k]; d[k] = t;
         }
         return d;
     }
@@ -56,33 +56,33 @@
     // Draw from the FRONT (index 0 = top). The bottom card (last index) is the trump card,
     // drawn last, so it stays put until the deck is nearly empty.
     function deal(deck, numPlayers) {
-        var hands = [];
-        for (var s = 0; s < numPlayers; s++) hands.push([]);
-        var dk = deck.slice();
-        for (var n = 0; n < 6; n++)
-            for (var p = 0; p < numPlayers; p++) hands[p].push(dk.shift());
-        var trumpCard = dk[dk.length - 1];
+        const hands = [];
+        for (let s = 0; s < numPlayers; s++) hands.push([]);
+        const dk = deck.slice();
+        for (let n = 0; n < 6; n++)
+            for (let p = 0; p < numPlayers; p++) hands[p].push(dk.shift());
+        const trumpCard = dk[dk.length - 1];
         return { hands: hands, deck: dk, trumpCard: trumpCard, trump: suitOf(trumpCard) };
     }
 
     // A `def` card beats an `att` card if: same suit and higher rank, OR it is a trump
     // covering a non-trump. Trump-vs-trump is decided by rank (same-suit branch).
     function beats(att, def, trump) {
-        var sa = suitOf(att), sd = suitOf(def);
+        const sa = suitOf(att), sd = suitOf(def);
         if (sd === sa) return rankOf(def) > rankOf(att);
         if (sd === trump && sa !== trump) return true;
         return false;
     }
 
-    function removeCard(hand, id) { var k = hand.indexOf(id); if (k >= 0) hand.splice(k, 1); }
+    function removeCard(hand, id) { let k = hand.indexOf(id); if (k >= 0) hand.splice(k, 1); }
 
     // Lowest trump holder opens the very first attack (classic rule); seat 0 if nobody
     // holds a trump.
     function firstAttacker(st) {
-        var best = -1, bestRank = 99;
-        for (var s = 0; s < st.numPlayers; s++) {
-            var h = st.hands[s];
-            for (var k = 0; k < h.length; k++) {
+        let best = -1, bestRank = 99;
+        for (let s = 0; s < st.numPlayers; s++) {
+            const h = st.hands[s];
+            for (let k = 0; k < h.length; k++) {
                 if (suitOf(h[k]) === st.trump && rankOf(h[k]) < bestRank) { bestRank = rankOf(h[k]); best = s; }
             }
         }
@@ -90,8 +90,8 @@
     }
 
     function nextInPlay(st, seat) {
-        for (var k = 1; k <= st.numPlayers; k++) {
-            var s = (seat + k) % st.numPlayers;
+        for (let k = 1; k <= st.numPlayers; k++) {
+            let s = (seat + k) % st.numPlayers;
             if (!st.out[s]) return s;
         }
         return seat;
@@ -99,8 +99,8 @@
     function firstInPlayFrom(st, seat) { return st.out[seat] ? nextInPlay(st, seat) : seat; }
 
     function newGame(numPlayers, seed) {
-        var dealt = deal(freshDeck(makeRng(seed)), numPlayers);
-        var st = {
+        const dealt = deal(freshDeck(makeRng(seed)), numPlayers);
+        const st = {
             numPlayers: numPlayers,
             trump: dealt.trump,
             trumpCard: dealt.trumpCard,
@@ -122,7 +122,7 @@
             passed: [],
             loser: -1
         };
-        for (var s = 0; s < numPlayers; s++) { st.out.push(false); st.passed.push(false); }
+        for (let s = 0; s < numPlayers; s++) { st.out.push(false); st.passed.push(false); }
         st.attacker = firstAttacker(st);
         st.defender = nextInPlay(st, st.attacker);
         return st;
@@ -130,20 +130,20 @@
 
     // table queries
     function tableRankSet(st) {
-        var set = {};
-        for (var i = 0; i < st.table.length; i++) {
+        const set = {};
+        for (let i = 0; i < st.table.length; i++) {
             set[rankOf(st.table[i].a)] = 1;
             if (st.table[i].d >= 0) set[rankOf(st.table[i].d)] = 1;
         }
         return set;
     }
     function uncoveredCount(st) {
-        var n = 0;
-        for (var i = 0; i < st.table.length; i++) if (st.table[i].d < 0) n++;
+        let n = 0;
+        for (let i = 0; i < st.table.length; i++) if (st.table[i].d < 0) n++;
         return n;
     }
     function firstUncovered(st) {
-        for (var i = 0; i < st.table.length; i++) if (st.table[i].d < 0) return i;
+        for (let i = 0; i < st.table.length; i++) if (st.table[i].d < 0) return i;
         return -1;
     }
 
@@ -161,19 +161,19 @@
         return !!tableRankSet(st)[rankOf(card)];
     }
     function legalAttacks(st, seat) {
-        var out = [], h = st.hands[seat];
-        for (var i = 0; i < h.length; i++) if (canAttackWith(st, seat, h[i])) out.push(h[i]);
+        const out = [], h = st.hands[seat];
+        for (let i = 0; i < h.length; i++) if (canAttackWith(st, seat, h[i])) out.push(h[i]);
         return out;
     }
     function canDefendPair(st, pairIndex, card) {
-        var p = st.table[pairIndex];
+        let p = st.table[pairIndex];
         if (!p || p.d >= 0) return false;
         if (st.hands[st.defender].indexOf(card) < 0) return false;
         return beats(p.a, card, st.trump);
     }
     function legalDefends(st, pairIndex) {
-        var out = [], h = st.hands[st.defender];
-        for (var i = 0; i < h.length; i++) if (canDefendPair(st, pairIndex, h[i])) out.push(h[i]);
+        const out = [], h = st.hands[st.defender];
+        for (let i = 0; i < h.length; i++) if (canDefendPair(st, pairIndex, h[i])) out.push(h[i]);
         return out;
     }
 
@@ -181,7 +181,7 @@
     // card or a cover), because fresh cards can create new throw-in options for a seat that had
     // already passed - so consensus must be re-earned before the bout can be beaten.
     function resetPasses(st) {
-        for (var s = 0; s < st.numPlayers; s++) st.passed[s] = false;
+        for (let s = 0; s < st.numPlayers; s++) st.passed[s] = false;
     }
     // Is `seat` an in-play ATTACKER (not the defender, not out)? Only these seats throw in and
     // vote on ending the bout; the defender's "end" action is Take, handled separately.
@@ -209,7 +209,7 @@
     // consensus: every attacker (human or bot) confirms before the bout ends.
     function canBito(st) {
         if (st.table.length === 0 || uncoveredCount(st) !== 0) return false;
-        for (var s = 0; s < st.numPlayers; s++) if (!attackSeatSettled(st, s)) return false;
+        for (let s = 0; s < st.numPlayers; s++) if (!attackSeatSettled(st, s)) return false;
         return true;
     }
     // First in-play attack seat (turn order from the primary attacker) that has NOT settled - i.e.
@@ -218,8 +218,8 @@
     // the confirm turn walks every attacker, not just those still holding a legal throw-in.
     function firstUnsettled(st) {
         if (uncoveredCount(st) !== 0) return -1;
-        for (var k = 0; k < st.numPlayers; k++) {
-            var s = (st.attacker + k) % st.numPlayers;
+        for (let k = 0; k < st.numPlayers; k++) {
+            let s = (st.attacker + k) % st.numPlayers;
             if (!attackSeatSettled(st, s)) return s;
         }
         return -1;
@@ -228,10 +228,10 @@
     // passed, and holding a matching-rank card), in classic turn order starting from the primary
     // attacker. Empty ⇒ nobody left to add → the bout is ready for Bito.
     function pendingThrowers(st) {
-        var out = [];
+        const out = [];
         if (uncoveredCount(st) !== 0) return out;   // still defending; no throw-in window yet
-        for (var k = 0; k < st.numPlayers; k++) {
-            var s = (st.attacker + k) % st.numPlayers;
+        for (let k = 0; k < st.numPlayers; k++) {
+            let s = (st.attacker + k) % st.numPlayers;
             if (isAttackSeat(st, s) && !st.passed[s] && legalAttacks(st, s).length > 0) out.push(s);
         }
         return out;
@@ -252,34 +252,34 @@
     }
 
     function updateOut(st) {
-        var deckEmpty = st.deck.length === 0;
-        for (var s = 0; s < st.numPlayers; s++) {
+        const deckEmpty = st.deck.length === 0;
+        for (let s = 0; s < st.numPlayers; s++) {
             if (!st.out[s] && st.hands[s].length === 0 && deckEmpty) st.out[s] = true;
         }
     }
     function inPlayCount(st) {
-        var n = 0;
-        for (var s = 0; s < st.numPlayers; s++) if (!st.out[s]) n++;
+        let n = 0;
+        for (let s = 0; s < st.numPlayers; s++) if (!st.out[s]) n++;
         return n;
     }
     // Refill hands to 6, attacker(s) first in turn order, defender LAST (standard).
     function refill(st) {
-        var order = [];
-        for (var k = 0; k < st.numPlayers; k++) {
-            var s = (st.attacker + k) % st.numPlayers;
+        const order = [];
+        for (let k = 0; k < st.numPlayers; k++) {
+            let s = (st.attacker + k) % st.numPlayers;
             if (s === st.defender || st.out[s]) continue;
             order.push(s);
         }
         if (!st.out[st.defender]) order.push(st.defender);
-        for (var i = 0; i < order.length; i++) {
-            var seat = order[i];
+        for (let i = 0; i < order.length; i++) {
+            const seat = order[i];
             while (st.hands[seat].length < 6 && st.deck.length > 0) st.hands[seat].push(st.deck.shift());
         }
     }
     // End the current bout. took=true → defender picks up the whole table; else the table
     // is "beaten" (Bito) and discarded. Then refill and rotate roles.
     function endBout(st, took) {
-        var oldDef = st.defender, i;
+        let oldDef = st.defender, i;
         if (took) {
             for (i = 0; i < st.table.length; i++) {
                 st.hands[oldDef].push(st.table[i].a);
@@ -293,7 +293,7 @@
         refill(st);
         updateOut(st);
         // Successful defense → the defender attacks next. Took → the taker is skipped.
-        var base = firstInPlayFrom(st, took ? nextInPlay(st, oldDef) : oldDef);
+        const base = firstInPlayFrom(st, took ? nextInPlay(st, oldDef) : oldDef);
         st.attacker = base;
         st.defender = nextInPlay(st, base);
         st.phase = "attack";
@@ -311,12 +311,12 @@
         st.hands[seat] = [];
         // Void any open bout: the table's cards go to discard (the defender may be the one leaving,
         // so there's no clean "took"/"beaten" resolution - the bout simply doesn't count).
-        for (var i = 0; i < st.table.length; i++) { st.discard++; if (st.table[i].d >= 0) st.discard++; }
+        for (let i = 0; i < st.table.length; i++) { st.discard++; if (st.table[i].d >= 0) st.discard++; }
         st.table = [];
         resetPasses(st);
         refill(st);                          // survivors top up (attacker-first, defender last)
         updateOut(st);
-        var base = firstInPlayFrom(st, st.attacker);   // skip the leaver if it was the attacker
+        const base = firstInPlayFrom(st, st.attacker);   // skip the leaver if it was the attacker
         st.attacker = base;
         st.defender = nextInPlay(st, base);
         st.phase = "attack";
@@ -331,7 +331,7 @@
         if (inPlayCount(st) <= 1) {
             st.phase = "over";
             st.loser = -1;
-            for (var s = 0; s < st.numPlayers; s++) if (!st.out[s]) st.loser = s;
+            for (let s = 0; s < st.numPlayers; s++) if (!st.out[s]) st.loser = s;
             return true;
         }
         return false;
@@ -346,19 +346,19 @@
     }
     // Returns the card to attack/throw-in with, or -1 to end the bout (Bito).
     function durakBotAttack(st, seat) {
-        var la = sortByValue(legalAttacks(st, seat), st.trump);
+        const la = sortByValue(legalAttacks(st, seat), st.trump);
         if (la.length === 0) return -1;
         if (st.table.length === 0) return la[0];            // opener must play its lowest
-        var lowest = la[0];
+        const lowest = la[0];
         // Throw in only a genuinely cheap non-trump (6/7/8); otherwise stop.
         if (suitOf(lowest) !== st.trump && rankOf(lowest) <= 2) return lowest;
         return -1;
     }
     // Returns { pair, card } to cover the first open attack, or null to take.
     function durakBotDefend(st, seat) {
-        var i = firstUncovered(st);
+        let i = firstUncovered(st);
         if (i < 0) return null;
-        var ld = sortByValue(legalDefends(st, i), st.trump);
+        const ld = sortByValue(legalDefends(st, i), st.trump);
         if (ld.length === 0) return null;                   // can't beat it → must take
         return { pair: i, card: ld[0] };
     }

@@ -2,7 +2,7 @@
 /* global $ */
 (function () {
     "use strict";
-    var MG = $.MG = $.MG || {};
+    const MG = $.MG = $.MG || {};
     MG.PixelBattlePalette = ["#ffffff","#c4c9cc","#5e6670","#000000","#ff4500","#ffa800","#ffd635","#7eed56","#00a368","#51e9f4","#3690ea","#2450a4","#811e9f","#b44ac0","#ff99aa","#9c6926","#183443","#a5ab91"];
     MG.PixelBattlePaletteNames = ["white","light_gray","dark_gray","black","red","orange","yellow","lime","green","cyan","blue","navy","purple","magenta","pink","brown","ocean","land"];
 })();

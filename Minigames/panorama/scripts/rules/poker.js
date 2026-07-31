@@ -22,9 +22,9 @@
  */
 
 (function () {
-    var R;
+    let R;
     if (typeof $ !== "undefined" && $) {
-        var MG = ($.MG = $.MG || {});
+        const MG = ($.MG = $.MG || {});
         R = (MG.Rules = MG.Rules || {});
     } else if (typeof globalThis !== "undefined") {
         R = (globalThis.MGRules = globalThis.MGRules || {});
@@ -32,9 +32,9 @@
         R = (this.MGRules = this.MGRules || {});
     }
 
-    var SUIT_CHARS = ["S", "H", "D", "C"];
-    var RANK_CHARS = ["2", "3", "4", "5", "6", "7", "8", "9", "T", "J", "Q", "K", "A"];
-    var DECK_SIZE = 52;
+    const SUIT_CHARS = ["S", "H", "D", "C"];
+    const RANK_CHARS = ["2", "3", "4", "5", "6", "7", "8", "9", "T", "J", "Q", "K", "A"];
+    const DECK_SIZE = 52;
 
     function suitOf(id) { return (id / 13) | 0; }
     function rankOf(id) { return id % 13; }
@@ -42,21 +42,21 @@
 
     // Deterministic PRNG (mulberry32) - identical to the other engines so seeds line up.
     function makeRng(seed) {
-        var s = seed | 0;
+        let s = seed | 0;
         return function () {
             s = (s + 0x6D2B79F5) | 0;
-            var t = Math.imul(s ^ (s >>> 15), 1 | s);
+            let t = Math.imul(s ^ (s >>> 15), 1 | s);
             t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
             return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
         };
     }
 
     function freshDeck(rng) {
-        var d = [];
-        for (var i = 0; i < DECK_SIZE; i++) d.push(i);
-        for (var j = DECK_SIZE - 1; j > 0; j--) {
-            var k = (rng() * (j + 1)) | 0;
-            var t = d[j]; d[j] = d[k]; d[k] = t;
+        const d = [];
+        for (let i = 0; i < DECK_SIZE; i++) d.push(i);
+        for (let j = DECK_SIZE - 1; j > 0; j--) {
+            let k = (rng() * (j + 1)) | 0;
+            let t = d[j]; d[j] = d[k]; d[k] = t;
         }
         return d;
     }
@@ -65,11 +65,11 @@
     // High card of the best straight in `vals` (array of card values 2..14, dups ok), or 0.
     // Handles the wheel (A-2-3-4-5) by letting the ace also count as 1.
     function straightHigh(vals) {
-        var present = {};
-        for (var i = 0; i < vals.length; i++) present[vals[i]] = 1;
+        const present = {};
+        for (let i = 0; i < vals.length; i++) present[vals[i]] = 1;
         if (present[14]) present[1] = 1;               // ace plays low for the wheel
-        var run = 0;
-        for (var v = 14; v >= 1; v--) {
+        let run = 0;
+        for (let v = 14; v >= 1; v--) {
             if (present[v]) { run++; if (run >= 5) return v + 4; } else run = 0;
         }
         return 0;
@@ -77,49 +77,49 @@
 
     // Score the best 5-card hand out of 5..7 cards. Returns [category, tiebreak…].
     function score(cards) {
-        var byVal = {}, bySuit = [[], [], [], []], i, v, s;
+        let byVal = {}, bySuit = [[], [], [], []], i, v, s;
         for (i = 0; i < cards.length; i++) {
             v = cardVal(cards[i]); s = suitOf(cards[i]);
             byVal[v] = (byVal[v] || 0) + 1;
             bySuit[s].push(v);
         }
         // flush / straight flush
-        var flushVals = null;
+        let flushVals = null;
         for (s = 0; s < 4; s++) if (bySuit[s].length >= 5) flushVals = bySuit[s];
         if (flushVals) {
-            var sfHigh = straightHigh(flushVals);
+            const sfHigh = straightHigh(flushVals);
             if (sfHigh) return [8, sfHigh];
         }
         // grouped by count then value, high to low
-        var groups = [];
-        for (var key in byVal) if (byVal.hasOwnProperty(key)) groups.push([byVal[key], parseInt(key, 10)]);
+        const groups = [];
+        for (const key in byVal) if (byVal.hasOwnProperty(key)) groups.push([byVal[key], parseInt(key, 10)]);
         groups.sort(function (a, b) { return b[0] - a[0] || b[1] - a[1]; });
         // ordered distinct values high→low (kickers)
-        var vals = [];
+        const vals = [];
         for (i = 0; i < groups.length; i++) vals.push(groups[i][1]);
 
-        var c0 = groups[0], c1 = groups[1];
+        const c0 = groups[0], c1 = groups[1];
         if (c0[0] === 4) return [7, c0[1], bestExcluding(cards, [c0[1]])];
         if (c0[0] === 3 && c1 && c1[0] >= 2) return [6, c0[1], c1[1]];
         if (flushVals) { flushVals = flushVals.slice().sort(desc); return [5, flushVals[0], flushVals[1], flushVals[2], flushVals[3], flushVals[4]]; }
-        var st = straightHigh(allVals(cards));
+        const st = straightHigh(allVals(cards));
         if (st) return [4, st];
         if (c0[0] === 3) return [3, c0[1], vals[1], vals[2]];
         if (c0[0] === 2 && c1 && c1[0] === 2) return [2, c0[1], c1[1], bestExcluding(cards, [c0[1], c1[1]])];
         if (c0[0] === 2) return [1, c0[1], vals[1], vals[2], vals[3]];
-        var hv = allVals(cards).sort(desc);
+        const hv = allVals(cards).sort(desc);
         return [0, hv[0], hv[1], hv[2], hv[3], hv[4]];
     }
     function desc(a, b) { return b - a; }
-    function allVals(cards) { var o = []; for (var i = 0; i < cards.length; i++) o.push(cardVal(cards[i])); return o; }
+    function allVals(cards) { const o = []; for (let i = 0; i < cards.length; i++) o.push(cardVal(cards[i])); return o; }
     // Highest card value in `cards` whose value is not in `exclude`. MUST NOT be derived from
     // the `vals` (group) order: groups sort by COUNT first, so a third pair / second pair sits
     // ahead of the genuine high kicker there and picking from it awarded the wrong pot
     // (e.g. AAKK2 2 Q scored its kicker as the 2, not the Q).
     function bestExcluding(cards, exclude) {
-        var best = 0;
-        for (var i = 0; i < cards.length; i++) {
-            var v = cardVal(cards[i]);
+        let best = 0;
+        for (let i = 0; i < cards.length; i++) {
+            let v = cardVal(cards[i]);
             if (exclude.indexOf(v) !== -1) continue;
             if (v > best) best = v;
         }
@@ -127,9 +127,9 @@
     }
 
     function compareScores(a, b) {
-        var n = Math.max(a.length, b.length);
-        for (var i = 0; i < n; i++) {
-            var x = a[i] || 0, y = b[i] || 0;
+        let n = Math.max(a.length, b.length);
+        for (let i = 0; i < n; i++) {
+            const x = a[i] || 0, y = b[i] || 0;
             if (x !== y) return x - y;
         }
         return 0;
@@ -141,28 +141,28 @@
     function nextSeat(st, seat) { return (seat + 1) % st.numPlayers; }
     // Next seat that can still voluntarily act (in the hand, not folded, not all-in, has chips).
     function nextToAct(st, seat) {
-        for (var k = 1; k <= st.numPlayers; k++) {
-            var s = (seat + k) % st.numPlayers;
+        for (let k = 1; k <= st.numPlayers; k++) {
+            let s = (seat + k) % st.numPlayers;
             if (st.inHand[s] && !st.folded[s] && !st.allIn[s] && st.stacks[s] > 0) return s;
         }
         return -1;
     }
     // First seat left of the button that is still in the hand (used to open postflop streets).
     function firstLeftOfButton(st) {
-        for (var k = 1; k <= st.numPlayers; k++) {
-            var s = (st.button + k) % st.numPlayers;
+        for (let k = 1; k <= st.numPlayers; k++) {
+            let s = (st.button + k) % st.numPlayers;
             if (st.inHand[s] && !st.folded[s]) return s;
         }
         return -1;
     }
-    function activeCount(st) { var n = 0; for (var s = 0; s < st.numPlayers; s++) if (st.inHand[s] && !st.folded[s]) n++; return n; }
-    function canActCount(st) { var n = 0; for (var s = 0; s < st.numPlayers; s++) if (st.inHand[s] && !st.folded[s] && !st.allIn[s] && st.stacks[s] > 0) n++; return n; }
+    function activeCount(st) { let n = 0; for (let s = 0; s < st.numPlayers; s++) if (st.inHand[s] && !st.folded[s]) n++; return n; }
+    function canActCount(st) { let n = 0; for (let s = 0; s < st.numPlayers; s++) if (st.inHand[s] && !st.folded[s] && !st.allIn[s] && st.stacks[s] > 0) n++; return n; }
 
     // ── hand lifecycle ────────────────────────────────────────────────────────────
     // Move `amt` chips from a seat's stack into the pot; caps at the stack (all-in) and
     // tracks both this-street bet and the hand-total committed (for side pots).
     function putIn(st, seat, amt) {
-        var pay = Math.min(amt, st.stacks[seat]);
+        const pay = Math.min(amt, st.stacks[seat]);
         st.stacks[seat] -= pay;
         st.bet[seat] += pay;
         st.committed[seat] += pay;
@@ -179,9 +179,9 @@
     // (blinds, currentBet, whose turn) is CARD-INDEPENDENT, so the client's replay of the
     // betting is byte-identical to the server's authority with no deck knowledge at all.
     function newHand(numPlayers, button, stacks, sb, bb, seed) {
-        var online = (seed == null);
-        var deck = online ? [] : freshDeck(makeRng(seed));
-        var st = {
+        const online = (seed == null);
+        const deck = online ? [] : freshDeck(makeRng(seed));
+        const st = {
             numPlayers: numPlayers, button: button, sb: sb, bb: bb, online: online,
             deck: deck, hole: [], board: [],
             stacks: stacks.slice(),
@@ -190,7 +190,7 @@
             toAct: -1, lastAggressor: -1,
             pots: [], result: null
         };
-        for (var s = 0; s < numPlayers; s++) {
+        for (let s = 0; s < numPlayers; s++) {
             st.bet.push(0); st.committed.push(0); st.folded.push(false);
             st.allIn.push(false); st.acted.push(false); st.noReopen.push(false);
             st.inHand.push(stacks[s] > 0);
@@ -203,14 +203,14 @@
         st.button = button;
         // deal 2 hole cards to each in-hand seat (button+1 first, like a real deal). Online the
         // deck is empty and hole cards arrive privately per seat, so skip the deal.
-        if (!online) for (var round = 0; round < 2; round++) {
-            for (var k = 1; k <= numPlayers; k++) {
-                var seat = (button + k) % numPlayers;
+        if (!online) for (let round = 0; round < 2; round++) {
+            for (let k = 1; k <= numPlayers; k++) {
+                const seat = (button + k) % numPlayers;
                 if (st.inHand[seat]) st.hole[seat].push(st.deck.shift());
             }
         }
         // blinds. Heads-up: button posts the small blind and acts first preflop.
-        var sbSeat, bbSeat;
+        let sbSeat, bbSeat;
         if (activeSeatCount(st) === 2) {
             sbSeat = button; bbSeat = nextOccupied(st, button);
         } else {
@@ -238,19 +238,19 @@
         }
         return st;
     }
-    function activeSeatCount(st) { var n = 0; for (var s = 0; s < st.numPlayers; s++) if (st.inHand[s]) n++; return n; }
+    function activeSeatCount(st) { let n = 0; for (let s = 0; s < st.numPlayers; s++) if (st.inHand[s]) n++; return n; }
     function nextOccupied(st, seat) {
-        for (var k = 1; k <= st.numPlayers; k++) { var s = (seat + k) % st.numPlayers; if (st.inHand[s]) return s; }
+        for (let k = 1; k <= st.numPlayers; k++) { let s = (seat + k) % st.numPlayers; if (st.inHand[s]) return s; }
         return seat;
     }
 
     // What can `seat` legally do right now?
     function legalActions(st, seat) {
-        var out = { canFold: false, canCheck: false, canCall: false, callAmount: 0,
+        const out = { canFold: false, canCheck: false, canCall: false, callAmount: 0,
                     canRaise: false, minRaiseTo: 0, maxRaiseTo: 0 };
         if (st.street === "over" || st.street === "showdown") return out;
         if (seat !== st.toAct || !st.inHand[seat] || st.folded[seat] || st.allIn[seat]) return out;
-        var toCall = st.currentBet - st.bet[seat];
+        const toCall = st.currentBet - st.bet[seat];
         out.canFold = true;
         if (toCall <= 0) out.canCheck = true;
         else { out.canCall = true; out.callAmount = Math.min(toCall, st.stacks[seat]); }
@@ -258,7 +258,7 @@
         // capped by the stack (a short stack can shove for less as an all-in). `noReopen`
         // marks seats that had already matched the bet when a SHORT all-in came in: they owe
         // the shove's remainder but standard NLHE does not let them re-raise it.
-        var maxTo = st.bet[seat] + st.stacks[seat];
+        const maxTo = st.bet[seat] + st.stacks[seat];
         if (maxTo > st.currentBet && !(st.noReopen && st.noReopen[seat])) {
             out.canRaise = true;
             out.minRaiseTo = Math.min(maxTo, st.currentBet + st.minRaise);
@@ -271,8 +271,8 @@
     // Returns true on success. Advances the turn, closes the street, and runs showdown as
     // needed. Illegal actions are rejected (return false) so the server can validate.
     function applyAction(st, seat, action) {
-        var la = legalActions(st, seat);
-        var t = action.type;
+        const la = legalActions(st, seat);
+        let t = action.type;
         if (t === "fold") {
             if (!la.canFold) return false;
             st.folded[seat] = true;
@@ -283,11 +283,11 @@
             putIn(st, seat, st.currentBet - st.bet[seat]);
         } else if (t === "raise" || t === "bet") {
             if (!la.canRaise) return false;
-            var to = action.to | 0;
+            const to = action.to | 0;
             // clamp: at least minRaiseTo (unless it's an all-in shove), at most the whole stack
             if (to > la.maxRaiseTo) return false;
             if (to < la.minRaiseTo && to !== la.maxRaiseTo) return false;
-            var raiseSize = to - st.currentBet;
+            const raiseSize = to - st.currentBet;
             putIn(st, seat, to - st.bet[seat]);
             // A full-size raise reopens the action; a short all-in that doesn't reach the
             // min-raise does NOT (matched players don't get to re-raise). Standard NLHE.
@@ -302,7 +302,7 @@
             } else {
                 // Short all-in: only seats that still owe chips must act again, and they may only
                 // call or fold. Seats that already matched the previous currentBet are done.
-                for (var s2 = 0; s2 < st.numPlayers; s2++) {
+                for (let s2 = 0; s2 < st.numPlayers; s2++) {
                     if (s2 === seat) continue;
                     if (st.bet[s2] < st.currentBet) { st.acted[s2] = false; st.noReopen[s2] = true; }
                 }
@@ -315,17 +315,17 @@
         return true;
     }
     function resetActedExcept(st, seat) {
-        for (var s = 0; s < st.numPlayers; s++) if (s !== seat) st.acted[s] = false;
+        for (let s = 0; s < st.numPlayers; s++) if (s !== seat) st.acted[s] = false;
     }
     // Clear the "you may call but not re-raise" marks (set by a short all-in). Called whenever a
     // full-size raise reopens the action and at the start of every new street.
     function clearNoReopen(st) {
-        for (var s = 0; s < st.numPlayers; s++) st.noReopen[s] = false;
+        for (let s = 0; s < st.numPlayers; s++) st.noReopen[s] = false;
     }
 
     // Is the current betting round complete?
     function roundOver(st) {
-        for (var s = 0; s < st.numPlayers; s++) {
+        for (let s = 0; s < st.numPlayers; s++) {
             if (!st.inHand[s] || st.folded[s] || st.allIn[s]) continue;
             if (!st.acted[s]) return false;
             if (st.bet[s] !== st.currentBet) return false;
@@ -339,21 +339,21 @@
         // at most one player can still act → no more betting; run out the board
         if (canActCount(st) <= 1 && roundOver(st)) { runout(st); return; }
         if (roundOver(st)) { nextStreet(st); return; }
-        var nxt = nextToAct(st, st.toAct);
+        const nxt = nextToAct(st, st.toAct);
         st.toAct = nxt;
     }
 
-    var STREETS = { preflop: "flop", flop: "turn", turn: "river", river: "showdown" };
+    const STREETS = { preflop: "flop", flop: "turn", turn: "river", river: "showdown" };
     // Online the deck is empty and the board is filled from the server's BOARD events, so
     // dealing is a no-op here - betting never reads st.board, only the display does.
-    function dealBoard(st, n) { if (st.online) return; for (var i = 0; i < n; i++) st.board.push(st.deck.shift()); }
+    function dealBoard(st, n) { if (st.online) return; for (let i = 0; i < n; i++) st.board.push(st.deck.shift()); }
 
     function nextStreet(st) {
         // clear the street's bets (committed already holds them for side pots)
-        for (var s = 0; s < st.numPlayers; s++) { st.bet[s] = 0; st.acted[s] = false; }
+        for (let s = 0; s < st.numPlayers; s++) { st.bet[s] = 0; st.acted[s] = false; }
         st.currentBet = 0; st.minRaise = st.bb; st.lastAggressor = -1;
         clearNoReopen(st);                  // last street's short-shove restrictions expire
-        var nx = STREETS[st.street];
+        const nx = STREETS[st.street];
         if (nx === "flop") dealBoard(st, 3);
         else if (nx === "turn" || nx === "river") dealBoard(st, 1);
         st.street = nx;
@@ -369,7 +369,7 @@
     // community cards and go to showdown.
     function runout(st) {
         while (st.street !== "showdown") {
-            var nx = STREETS[st.street];
+            const nx = STREETS[st.street];
             if (nx === "flop") dealBoard(st, 3);
             else if (nx === "turn" || nx === "river") dealBoard(st, 1);
             st.street = nx;
@@ -385,12 +385,12 @@
     // so we re-run the same terminal checks `advance` does, but only hand `toAct` forward when the
     // LEAVER was the one on the clock (otherwise the current actor keeps their turn).
     function leaveSeat(st, seat) {
-        var wasLive = st.inHand[seat] && !st.folded[seat];
+        const wasLive = st.inHand[seat] && !st.folded[seat];
         st.stacks[seat] = 0;                       // forfeit remaining chips → out of all future hands
         if (!wasLive) return;
         st.folded[seat] = true;
         st.acted[seat] = true;                     // don't let roundOver wait on a seat that's gone
-        var wasToAct = st.toAct === seat;
+        const wasToAct = st.toAct === seat;
         if (activeCount(st) <= 1) { finish(st); return; }
         if (canActCount(st) <= 1 && roundOver(st)) { runout(st); return; }
         if (roundOver(st)) { nextStreet(st); return; }
@@ -399,9 +399,9 @@
 
     // Single player left (all others folded): they take the pot uncontested, no cards shown.
     function finish(st) {
-        var winner = -1;
+        let winner = -1;
         for (var s = 0; s < st.numPlayers; s++) if (st.inHand[s] && !st.folded[s]) { winner = s; break; }
-        var total = 0;
+        let total = 0;
         for (s = 0; s < st.numPlayers; s++) total += st.committed[s];
         if (winner >= 0) st.stacks[winner] += total;
         st.pots = [{ amount: total, winners: winner >= 0 ? [winner] : [] }];
@@ -417,13 +417,13 @@
     // from committed[] (card-independent) so the deferred resolution is identical to the server.
     function showdown(st) {
         if (st.online && !st._resolving) { st.street = "showdown"; st.toAct = -1; return; }
-        var contribs = st.committed.slice();
-        var pots = [];
+        const contribs = st.committed.slice();
+        const pots = [];
         while (true) {
-            var min = Infinity, any = false, s;
+            let min = Infinity, any = false, s;
             for (s = 0; s < st.numPlayers; s++) if (contribs[s] > 0) { any = true; if (contribs[s] < min) min = contribs[s]; }
             if (!any) break;
-            var amount = 0, eligible = [];
+            let amount = 0, eligible = [];
             for (s = 0; s < st.numPlayers; s++) {
                 if (contribs[s] > 0) {
                     amount += min; contribs[s] -= min;
@@ -433,16 +433,16 @@
             pots.push({ amount: amount, eligible: eligible });
         }
         // evaluate every contender once
-        var scores = {};
+        const scores = {};
         for (var i = 0; i < st.numPlayers; i++)
             if (st.inHand[i] && !st.folded[i]) scores[i] = evalSeat(st.hole[i], st.board);
 
-        var resultPots = [];
+        const resultPots = [];
         for (i = 0; i < pots.length; i++) {
-            var p = pots[i];
-            var best = null, winners = [];
-            for (var j = 0; j < p.eligible.length; j++) {
-                var seat = p.eligible[j], sc = scores[seat];
+            const p = pots[i];
+            let best = null, winners = [];
+            for (let j = 0; j < p.eligible.length; j++) {
+                const seat = p.eligible[j], sc = scores[seat];
                 if (!best || compareScores(sc, best) > 0) { best = sc; winners = [seat]; }
                 else if (compareScores(sc, best) === 0) winners.push(seat);
             }
@@ -457,9 +457,9 @@
     // Split a pot among winners; odd chips go to the first winner left of the button.
     function distribute(st, amount, winners) {
         if (winners.length === 0) return;
-        var each = Math.floor(amount / winners.length);
-        var rem = amount - each * winners.length;
-        var ordered = winners.slice().sort(function (a, b) {
+        const each = Math.floor(amount / winners.length);
+        const rem = amount - each * winners.length;
+        const ordered = winners.slice().sort(function (a, b) {
             return seatOrderFromButton(st, a) - seatOrderFromButton(st, b);
         });
         for (var i = 0; i < ordered.length; i++) st.stacks[ordered[i]] += each;
@@ -467,12 +467,12 @@
     }
     function seatOrderFromButton(st, seat) { return (seat - st.button + st.numPlayers) % st.numPlayers; }
     function mergeWinners(pots) {
-        var set = {}, out = [];
-        for (var i = 0; i < pots.length; i++) for (var j = 0; j < pots[i].winners.length; j++) set[pots[i].winners[j]] = 1;
-        for (var k in set) if (set.hasOwnProperty(k)) out.push(parseInt(k, 10));
+        const set = {}, out = [];
+        for (let i = 0; i < pots.length; i++) for (let j = 0; j < pots[i].winners.length; j++) set[pots[i].winners[j]] = 1;
+        for (let k in set) if (set.hasOwnProperty(k)) out.push(parseInt(k, 10));
         return out;
     }
-    function totalPot(st) { var t = 0; for (var s = 0; s < st.numPlayers; s++) t += st.committed[s]; return t; }
+    function totalPot(st) { let t = 0; for (let s = 0; s < st.numPlayers; s++) t += st.committed[s]; return t; }
 
     // ONLINE showdown resolver: the client calls this after filling st.hole (from SHOW events)
     // and st.board (from BOARD events) for a hand that reached "showdown" via the deferred path
@@ -490,11 +490,11 @@
     // rates its made hand's category. It calls small bets, raises with strength, and folds
     // weak hands to real pressure - plenty for a friendly table, no bluff modelling.
     function preflopStrength(hole) {
-        var a = cardVal(hole[0]), b = cardVal(hole[1]);
-        var hi = Math.max(a, b), lo = Math.min(a, b);
-        var pair = a === b, suited = suitOf(hole[0]) === suitOf(hole[1]);
-        var gap = hi - lo;
-        var s = 0;
+        const a = cardVal(hole[0]), b = cardVal(hole[1]);
+        const hi = Math.max(a, b), lo = Math.min(a, b);
+        const pair = a === b, suited = suitOf(hole[0]) === suitOf(hole[1]);
+        const gap = hi - lo;
+        let s = 0;
         if (pair) s = 0.5 + hi / 28;                       // 0.57 (22) … 1.0 (AA)
         else {
             s = (hi + lo) / 40;                            // high-card weight
@@ -505,28 +505,28 @@
         return s;
     }
     function madeStrength(st, seat) {
-        var sc = evalSeat(st.hole[seat], st.board);
+        const sc = evalSeat(st.hole[seat], st.board);
         return sc[0] / 8 + (sc[1] || 0) / 200;             // category dominates, top rank breaks ties
     }
     function botAction(st, seat, rng) {
-        var la = legalActions(st, seat);
+        const la = legalActions(st, seat);
         if (!la.canFold && !la.canCheck) return { type: "check" };
-        var r = rng ? rng() : 0.5;
-        var strength = (st.street === "preflop") ? preflopStrength(st.hole[seat]) : madeStrength(st, seat);
-        var toCall = la.canCall ? la.callAmount : 0;
-        var pot = totalPot(st);
-        var potOdds = toCall > 0 ? toCall / (pot + toCall) : 0;
+        const r = rng ? rng() : 0.5;
+        const strength = (st.street === "preflop") ? preflopStrength(st.hole[seat]) : madeStrength(st, seat);
+        const toCall = la.canCall ? la.callAmount : 0;
+        const pot = totalPot(st);
+        const potOdds = toCall > 0 ? toCall / (pot + toCall) : 0;
 
         // strong hand → raise sometimes
         if (la.canRaise && strength > 0.6 && r < 0.6) {
-            var target = st.currentBet + Math.max(st.minRaise, Math.floor(pot * (0.5 + strength * 0.5)));
+            let target = st.currentBet + Math.max(st.minRaise, Math.floor(pot * (0.5 + strength * 0.5)));
             target = Math.min(target, la.maxRaiseTo);
             target = Math.max(target, la.minRaiseTo);
             return { type: "raise", to: target };
         }
         if (la.canCheck) {
             if (la.canRaise && strength > 0.72 && r < 0.5) {
-                var t2 = Math.min(la.maxRaiseTo, Math.max(la.minRaiseTo, st.bb * 3));
+                const t2 = Math.min(la.maxRaiseTo, Math.max(la.minRaiseTo, st.bb * 3));
                 return { type: "raise", to: t2 };
             }
             return { type: "check" };

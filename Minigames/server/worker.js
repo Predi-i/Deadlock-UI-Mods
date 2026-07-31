@@ -33,9 +33,9 @@
     // Resolve the shared namespace for this runtime:
     //  - Panorama client: $ is the cross-script shared object → $.MG.Rules
     //  - Worker / Node   : no $, but globalThis exists → globalThis.MGRules
-    var R;
+    let R;
     if (typeof $ !== "undefined" && $) {
-        var MG = ($.MG = $.MG || {});
+        const MG = ($.MG = $.MG || {});
         R = (MG.Rules = MG.Rules || {});
     } else if (typeof globalThis !== "undefined") {
         R = (globalThis.MGRules = globalThis.MGRules || {});
@@ -43,7 +43,7 @@
         R = (this.MGRules = this.MGRules || {});
     }
 
-    var WHITE = "w", BLACK = "b";
+    const WHITE = "w", BLACK = "b";
 
     function idx(r, c) { return r * 8 + c; }
     function rowOf(i) { return (i / 8) | 0; }
@@ -53,13 +53,13 @@
 
     function colorOf(v) { return v === 1 || v === 2 ? WHITE : (v === 3 || v === 4 ? BLACK : null); }
     function isKing(v) { return v === 2 || v === 4; }
-    function isEnemy(v, color) { var c = colorOf(v); return c && c !== color; }
+    function isEnemy(v, color) { let c = colorOf(v); return c && c !== color; }
 
     function initialBoard() {
-        var b = new Array(64);
-        for (var i = 0; i < 64; i++) b[i] = 0;
-        for (var r = 0; r < 8; r++) {
-            for (var c = 0; c < 8; c++) {
+        const b = new Array(64);
+        for (let i = 0; i < 64; i++) b[i] = 0;
+        for (let r = 0; r < 8; r++) {
+            for (let c = 0; c < 8; c++) {
                 if (!isDark(r, c)) continue;
                 if (r <= 2) b[idx(r, c)] = 3;       // black men (top)
                 else if (r >= 5) b[idx(r, c)] = 1;  // white men (bottom)
@@ -69,7 +69,7 @@
     }
 
     // Russian draughts: men move forward only; kings slide any distance along a diagonal ("flying").
-    var ALL_DIRS = [[-1, -1], [-1, 1], [1, -1], [1, 1]];
+    const ALL_DIRS = [[-1, -1], [-1, 1], [1, -1], [1, 1]];
     function moveDirs(v) {
         if (v === 1) return [[-1, -1], [-1, 1]]; // white man: up
         if (v === 3) return [[1, -1], [1, 1]];   // black man: down
@@ -77,13 +77,13 @@
     }
 
     function simpleMoves(b, i) {
-        var v = b[i]; if (!v) return [];
-        var r = rowOf(i), c = colOf(i), out = [];
+        let v = b[i]; if (!v) return [];
+        let r = rowOf(i), c = colOf(i), out = [];
         if (isKing(v)) {
             // Flying king: any number of empty squares along each diagonal.
-            for (var k = 0; k < 4; k++) {
-                var dr = ALL_DIRS[k][0], dc = ALL_DIRS[k][1];
-                var nr = r + dr, nc = c + dc;
+            for (let k = 0; k < 4; k++) {
+                const dr = ALL_DIRS[k][0], dc = ALL_DIRS[k][1];
+                let nr = r + dr, nc = c + dc;
                 while (inBounds(nr, nc) && b[idx(nr, nc)] === 0) {
                     out.push({ to: idx(nr, nc) });
                     nr += dr; nc += dc;
@@ -91,9 +91,9 @@
             }
             return out;
         }
-        var dirs = moveDirs(v); // forward only for men
-        for (var m = 0; m < dirs.length; m++) {
-            var pr = r + dirs[m][0], pc = c + dirs[m][1];
+        const dirs = moveDirs(v); // forward only for men
+        for (let m = 0; m < dirs.length; m++) {
+            const pr = r + dirs[m][0], pc = c + dirs[m][1];
             if (inBounds(pr, pc) && b[idx(pr, pc)] === 0) out.push({ to: idx(pr, pc) });
         }
         return out;
@@ -103,16 +103,16 @@
     // A flying king slides over empties, takes exactly one enemy, and may land on
     // any empty square beyond it.
     function captureMoves(b, i) {
-        var v = b[i]; if (!v) return [];
-        var color = colorOf(v), r = rowOf(i), c = colOf(i), out = [];
+        let v = b[i]; if (!v) return [];
+        let color = colorOf(v), r = rowOf(i), c = colOf(i), out = [];
         if (isKing(v)) {
-            for (var k = 0; k < 4; k++) {
-                var dr = ALL_DIRS[k][0], dc = ALL_DIRS[k][1];
-                var nr = r + dr, nc = c + dc;
+            for (let k = 0; k < 4; k++) {
+                const dr = ALL_DIRS[k][0], dc = ALL_DIRS[k][1];
+                let nr = r + dr, nc = c + dc;
                 while (inBounds(nr, nc) && b[idx(nr, nc)] === 0) { nr += dr; nc += dc; }
                 if (!inBounds(nr, nc) || !isEnemy(b[idx(nr, nc)], color)) continue;
-                var cap = idx(nr, nc);
-                var lr = nr + dr, lc = nc + dc;
+                const cap = idx(nr, nc);
+                let lr = nr + dr, lc = nc + dc;
                 while (inBounds(lr, lc) && b[idx(lr, lc)] === 0) {
                     out.push({ to: idx(lr, lc), cap: cap });
                     lr += dr; lc += dc;
@@ -120,9 +120,9 @@
             }
             return out;
         }
-        for (var k2 = 0; k2 < 4; k2++) {
-            var mr = r + ALL_DIRS[k2][0], mc = c + ALL_DIRS[k2][1];         // enemy square
-            var lr2 = r + 2 * ALL_DIRS[k2][0], lc2 = c + 2 * ALL_DIRS[k2][1]; // landing
+        for (let k2 = 0; k2 < 4; k2++) {
+            const mr = r + ALL_DIRS[k2][0], mc = c + ALL_DIRS[k2][1];         // enemy square
+            const lr2 = r + 2 * ALL_DIRS[k2][0], lc2 = c + 2 * ALL_DIRS[k2][1]; // landing
             if (!inBounds(lr2, lc2) || b[idx(lr2, lc2)] !== 0) continue;
             if (isEnemy(b[idx(mr, mc)], color)) out.push({ to: idx(lr2, lc2), cap: idx(mr, mc) });
         }
@@ -134,21 +134,21 @@
     // capture without needing the captured square passed in (keeps the net protocol
     // just {from,to,end}). Returns {captured, promoted}.
     function applyHop(b, from, to) {
-        var v = b[from];
+        let v = b[from];
         b[from] = 0;
-        var fr = rowOf(from), fc = colOf(from), tr = rowOf(to), tc = colOf(to);
-        var dr = tr > fr ? 1 : -1, dc = tc > fc ? 1 : -1;
-        var captured = false;
+        const fr = rowOf(from), fc = colOf(from), tr = rowOf(to), tc = colOf(to);
+        const dr = tr > fr ? 1 : -1, dc = tc > fc ? 1 : -1;
+        let captured = false;
         // Walk the diagonal, bounded to the board (max 7 steps). The guard is pure
         // insurance: a legal move is always diagonal so it reaches (tr,tc) within 7
         // steps - but a corrupt/desynced hop must never spin the loop forever.
-        var r = fr + dr, c = fc + dc, guard = 0;
+        let r = fr + dr, c = fc + dc, guard = 0;
         while ((r !== tr || c !== tc) && guard++ < 8 && inBounds(r, c)) {
-            var j = idx(r, c);
+            const j = idx(r, c);
             if (b[j] !== 0) { b[j] = 0; captured = true; }
             r += dr; c += dc;
         }
-        var promoted = false;
+        let promoted = false;
         if (v === 1 && tr === 0) { v = 2; promoted = true; }
         else if (v === 3 && tr === 7) { v = 4; promoted = true; }
         b[to] = v;
@@ -158,22 +158,22 @@
     // English draughts: men move and jump forward only. Kings move/jump exactly one
     // square at a time in either direction, rather than flying across a diagonal.
     function englishSimpleMoves(b, i) {
-        var v = b[i]; if (!v) return [];
-        var r = rowOf(i), c = colOf(i), dirs = isKing(v) ? ALL_DIRS : moveDirs(v), out = [];
-        for (var k = 0; k < dirs.length; k++) {
-            var nr = r + dirs[k][0], nc = c + dirs[k][1];
+        let v = b[i]; if (!v) return [];
+        let r = rowOf(i), c = colOf(i), dirs = isKing(v) ? ALL_DIRS : moveDirs(v), out = [];
+        for (let k = 0; k < dirs.length; k++) {
+            let nr = r + dirs[k][0], nc = c + dirs[k][1];
             if (inBounds(nr, nc) && b[idx(nr, nc)] === 0) out.push({ to: idx(nr, nc) });
         }
         return out;
     }
 
     function englishCaptureMoves(b, i) {
-        var v = b[i]; if (!v) return [];
-        var color = colorOf(v), r = rowOf(i), c = colOf(i);
-        var dirs = isKing(v) ? ALL_DIRS : moveDirs(v), out = [];
-        for (var k = 0; k < dirs.length; k++) {
-            var mr = r + dirs[k][0], mc = c + dirs[k][1];
-            var lr = r + 2 * dirs[k][0], lc = c + 2 * dirs[k][1];
+        let v = b[i]; if (!v) return [];
+        let color = colorOf(v), r = rowOf(i), c = colOf(i);
+        const dirs = isKing(v) ? ALL_DIRS : moveDirs(v), out = [];
+        for (let k = 0; k < dirs.length; k++) {
+            const mr = r + dirs[k][0], mc = c + dirs[k][1];
+            let lr = r + 2 * dirs[k][0], lc = c + 2 * dirs[k][1];
             if (!inBounds(lr, lc) || b[idx(lr, lc)] !== 0) continue;
             if (isEnemy(b[idx(mr, mc)], color)) out.push({ to: idx(lr, lc), cap: idx(mr, mc) });
         }
@@ -189,14 +189,14 @@
     // Everything else (turn sequencing, bot) stays in this one factory.
     function makeRules(simpleMovesFor, captureMovesFor, promotionEndsTurn) {
         function anyCaptureFor(b, color) {
-            for (var i = 0; i < 64; i++) {
+            for (let i = 0; i < 64; i++) {
                 if (colorOf(b[i]) === color && captureMovesFor(b, i).length > 0) return true;
             }
             return false;
         }
 
         function hasAnyMove(b, color) {
-            for (var i = 0; i < 64; i++) {
+            for (let i = 0; i < 64; i++) {
                 if (colorOf(b[i]) !== color) continue;
                 if (simpleMovesFor(b, i).length || captureMovesFor(b, i).length) return true;
             }
@@ -217,9 +217,9 @@
         function drawReason(b, idle) {
             if (idle >= 30) return "idle";               // 30 plies = 15 moves per side
             // Bare kings on both sides with nothing to attack: one king each can never force a win.
-            var wk = 0, bk = 0, wm = 0, bm = 0;
-            for (var i = 0; i < 64; i++) {
-                var v = b[i];
+            let wk = 0, bk = 0, wm = 0, bm = 0;
+            for (let i = 0; i < 64; i++) {
+                let v = b[i];
                 if (v === 0) continue;
                 if (v === 1) wm++; else if (v === 2) wk++;
                 else if (v === 3) bm++; else if (v === 4) bk++;
@@ -232,19 +232,19 @@
         // during a capture ends the turn immediately. For Russian (promotionEndsTurn=false) the
         // newly crowned king must keep capturing as a flying king if it can (canon).
         function captureSequencesFrom(b, i) {
-            var caps = captureMovesFor(b, i);
+            const caps = captureMovesFor(b, i);
             if (caps.length === 0) return [];
-            var seqs = [];
-            for (var k = 0; k < caps.length; k++) {
-                var mv = caps[k];
-                var nb = b.slice();
-                var res = applyHop(nb, i, mv.to);
+            const seqs = [];
+            for (let k = 0; k < caps.length; k++) {
+                const mv = caps[k];
+                let nb = b.slice();
+                const res = applyHop(nb, i, mv.to);
                 // English: a promotion ends the turn. Russian: the fresh king (nb already holds
                 // the king value, so captureMovesFor routes to the king generator) keeps capturing.
-                var canContinue = (!res.promoted || !promotionEndsTurn) && captureMovesFor(nb, mv.to).length > 0;
+                const canContinue = (!res.promoted || !promotionEndsTurn) && captureMovesFor(nb, mv.to).length > 0;
                 if (canContinue) {
-                    var tails = captureSequencesFrom(nb, mv.to);
-                    for (var t = 0; t < tails.length; t++) seqs.push([{ from: i, to: mv.to }].concat(tails[t]));
+                    const tails = captureSequencesFrom(nb, mv.to);
+                    for (let t = 0; t < tails.length; t++) seqs.push([{ from: i, to: mv.to }].concat(tails[t]));
                 } else {
                     seqs.push([{ from: i, to: mv.to }]);
                 }
@@ -253,35 +253,35 @@
         }
 
         function legalSequences(b, color) {
-            var i, k, seqs = [], hasCap = false;
+            let i, k, seqs = [], hasCap = false;
             for (i = 0; i < 64; i++) {
                 if (colorOf(b[i]) === color && captureMovesFor(b, i).length) { hasCap = true; break; }
             }
             if (hasCap) {
                 for (i = 0; i < 64; i++) {
                     if (colorOf(b[i]) !== color) continue;
-                    var cs = captureSequencesFrom(b, i);
+                    const cs = captureSequencesFrom(b, i);
                     for (k = 0; k < cs.length; k++) seqs.push(cs[k]);
                 }
                 return seqs;
             }
             for (i = 0; i < 64; i++) {
                 if (colorOf(b[i]) !== color) continue;
-                var sm = simpleMovesFor(b, i);
+                const sm = simpleMovesFor(b, i);
                 for (k = 0; k < sm.length; k++) seqs.push([{ from: i, to: sm[k].to }]);
             }
             return seqs;
         }
 
         function applySequence(b, seq) {
-            for (var h = 0; h < seq.length; h++) applyHop(b, seq[h].from, seq[h].to);
+            for (let h = 0; h < seq.length; h++) applyHop(b, seq[h].from, seq[h].to);
         }
 
         function evalBoard(b, me) {
-            var score = 0;
-            for (var i = 0; i < 64; i++) {
-                var v = b[i]; if (!v) continue;
-                var val = isKing(v) ? 25 : 10;
+            let score = 0;
+            for (let i = 0; i < 64; i++) {
+                let v = b[i]; if (!v) continue;
+                let val = isKing(v) ? 25 : 10;
                 if (v === 1) val += 7 - rowOf(i);
                 else if (v === 3) val += rowOf(i);
                 score += colorOf(v) === me ? val : -val;
@@ -290,12 +290,12 @@
         }
 
         function minimax(b, color, me, depth, alpha, beta) {
-            var seqs = legalSequences(b, color);
+            const seqs = legalSequences(b, color);
             if (seqs.length === 0) return color === me ? -100000 + depth : 100000 - depth;
             if (depth === 0) return evalBoard(b, me);
-            var opp = color === WHITE ? BLACK : WHITE, k, nb, sc;
+            let opp = color === WHITE ? BLACK : WHITE, k, nb, sc;
             if (color === me) {
-                var best = -1e9;
+                let best = -1e9;
                 for (k = 0; k < seqs.length; k++) {
                     nb = b.slice(); applySequence(nb, seqs[k]);
                     sc = minimax(nb, opp, me, depth - 1, alpha, beta);
@@ -305,7 +305,7 @@
                 }
                 return best;
             }
-            var worst = 1e9;
+            let worst = 1e9;
             for (k = 0; k < seqs.length; k++) {
                 nb = b.slice(); applySequence(nb, seqs[k]);
                 sc = minimax(nb, opp, me, depth - 1, alpha, beta);
@@ -317,28 +317,28 @@
         }
 
         function chooseBotMove(b, color) {
-            var seqs = legalSequences(b, color);
+            const seqs = legalSequences(b, color);
             if (seqs.length === 0) return null;
-            var opp = color === WHITE ? BLACK : WHITE;
-            var DEPTH = 5, best = -1e9, pick = seqs[0];
-            for (var k = 0; k < seqs.length; k++) {
-                var nb = b.slice(); applySequence(nb, seqs[k]);
-                var sc = minimax(nb, opp, color, DEPTH - 1, -1e9, 1e9) + Math.random() * 0.5;
+            const opp = color === WHITE ? BLACK : WHITE;
+            let DEPTH = 5, best = -1e9, pick = seqs[0];
+            for (let k = 0; k < seqs.length; k++) {
+                let nb = b.slice(); applySequence(nb, seqs[k]);
+                let sc = minimax(nb, opp, color, DEPTH - 1, -1e9, 1e9) + Math.random() * 0.5;
                 if (sc > best) { best = sc; pick = seqs[k]; }
             }
             return pick;
         }
 
         function chooseBotMovePrep(b, color) {
-            var seqs = legalSequences(b, color);
-            var opp = color === WHITE ? BLACK : WHITE;
-            var DEPTH = 5, i = 0, best = -1e9, pick = seqs.length ? seqs[0] : null;
+            const seqs = legalSequences(b, color);
+            const opp = color === WHITE ? BLACK : WHITE;
+            let DEPTH = 5, i = 0, best = -1e9, pick = seqs.length ? seqs[0] : null;
             return {
                 done: function () { return i >= seqs.length; },
                 step: function () {
                     if (i >= seqs.length) return;
-                    var nb = b.slice(); applySequence(nb, seqs[i]);
-                    var sc = minimax(nb, opp, color, DEPTH - 1, -1e9, 1e9) + Math.random() * 0.5;
+                    let nb = b.slice(); applySequence(nb, seqs[i]);
+                    let sc = minimax(nb, opp, color, DEPTH - 1, -1e9, 1e9) + Math.random() * 0.5;
                     if (sc > best) { best = sc; pick = seqs[i]; }
                     i++;
                 },
@@ -375,9 +375,9 @@
  */
 
 (function () {
-    var R;
+    let R;
     if (typeof $ !== "undefined" && $) {
-        var MG = ($.MG = $.MG || {});
+        const MG = ($.MG = $.MG || {});
         R = (MG.Rules = MG.Rules || {});
     } else if (typeof globalThis !== "undefined") {
         R = (globalThis.MGRules = globalThis.MGRules || {});
@@ -385,7 +385,7 @@
         R = (this.MGRules = this.MGRules || {});
     }
 
-    var TTT_LINES = [
+    const TTT_LINES = [
         [0, 1, 2], [3, 4, 5], [6, 7, 8],   // rows
         [0, 3, 6], [1, 4, 7], [2, 5, 8],   // cols
         [0, 4, 8], [2, 4, 6]               // diagonals
@@ -393,24 +393,24 @@
 
     // Returns { mark, line } for the first completed line, or null.
     function tttWinner(b) {
-        for (var i = 0; i < TTT_LINES.length; i++) {
-            var L = TTT_LINES[i], v = b[L[0]];
+        for (let i = 0; i < TTT_LINES.length; i++) {
+            const L = TTT_LINES[i], v = b[L[0]];
             if (v && v === b[L[1]] && v === b[L[2]]) return { mark: v, line: L };
         }
         return null;
     }
 
     function tttFull(b) {
-        for (var i = 0; i < 9; i++) if (!b[i]) return false;
+        for (let i = 0; i < 9; i++) if (!b[i]) return false;
         return true;
     }
 
     // If `mark` has a one-move win available, return that cell; else -1.
     function tttFindWin(b, mark) {
-        for (var i = 0; i < 9; i++) {
+        for (let i = 0; i < 9; i++) {
             if (b[i]) continue;
             b[i] = mark;
-            var w = tttWinner(b);
+            const w = tttWinner(b);
             b[i] = 0;                      // restore - this must not mutate the board
             if (w && w.mark === mark) return i;
         }
@@ -420,14 +420,14 @@
     // Heuristic bot: win > block > center > corner > side. Strong but not a full
     // minimax, so a sharp human can still fork it - deliberately beatable.
     function tttBotMove(b, mark) {
-        var opp = mark === 1 ? 2 : 1;
-        var pick = tttFindWin(b, mark); if (pick >= 0) return pick;   // 1) take the win
+        const opp = mark === 1 ? 2 : 1;
+        let pick = tttFindWin(b, mark); if (pick >= 0) return pick;   // 1) take the win
         pick = tttFindWin(b, opp);      if (pick >= 0) return pick;   // 2) block theirs
         if (!b[4]) return 4;                                          // 3) center
-        var corners = [0, 2, 6, 8];
-        for (var i = 0; i < 4; i++) if (!b[corners[i]]) return corners[i]; // 4) corner
-        var sides = [1, 3, 5, 7];
-        for (var j = 0; j < 4; j++) if (!b[sides[j]]) return sides[j];     // 5) side
+        const corners = [0, 2, 6, 8];
+        for (let i = 0; i < 4; i++) if (!b[corners[i]]) return corners[i]; // 4) corner
+        const sides = [1, 3, 5, 7];
+        for (let j = 0; j < 4; j++) if (!b[sides[j]]) return sides[j];     // 5) side
         return -1;                                                    // board full
     }
 
@@ -453,9 +453,9 @@
  */
 
 (function () {
-    var R;
+    let R;
     if (typeof $ !== "undefined" && $) {
-        var MG = ($.MG = $.MG || {});
+        const MG = ($.MG = $.MG || {});
         R = (MG.Rules = MG.Rules || {});
     } else if (typeof globalThis !== "undefined") {
         R = (globalThis.MGRules = globalThis.MGRules || {});
@@ -463,12 +463,12 @@
         R = (this.MGRules = this.MGRules || {});
     }
 
-    var C_PAWN = 1, C_KNIGHT = 2, C_BISHOP = 3, C_ROOK = 4, C_QUEEN = 5, C_KING = 6;
-    var KNIGHT_D = [[-2, -1], [-2, 1], [-1, -2], [-1, 2], [1, -2], [1, 2], [2, -1], [2, 1]];
-    var KING_D   = [[-1, -1], [-1, 0], [-1, 1], [0, -1], [0, 1], [1, -1], [1, 0], [1, 1]];
-    var DIAG_D   = [[-1, -1], [-1, 1], [1, -1], [1, 1]];
-    var ORTHO_D  = [[-1, 0], [1, 0], [0, -1], [0, 1]];
-    var QUEEN_D  = DIAG_D.concat(ORTHO_D);
+    const C_PAWN = 1, C_KNIGHT = 2, C_BISHOP = 3, C_ROOK = 4, C_QUEEN = 5, C_KING = 6;
+    const KNIGHT_D = [[-2, -1], [-2, 1], [-1, -2], [-1, 2], [1, -2], [1, 2], [2, -1], [2, 1]];
+    const KING_D   = [[-1, -1], [-1, 0], [-1, 1], [0, -1], [0, 1], [1, -1], [1, 0], [1, 1]];
+    const DIAG_D   = [[-1, -1], [-1, 1], [1, -1], [1, 1]];
+    const ORTHO_D  = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+    const QUEEN_D  = DIAG_D.concat(ORTHO_D);
 
     function cSq(r, c) { return r * 8 + c; }
     function cRow(i) { return (i / 8) | 0; }
@@ -478,10 +478,10 @@
     function cType(v) { return v < 0 ? -v : v; }
 
     function initialChessBoard() {
-        var b = new Array(64);
-        for (var i = 0; i < 64; i++) b[i] = 0;
-        var back = [C_ROOK, C_KNIGHT, C_BISHOP, C_QUEEN, C_KING, C_BISHOP, C_KNIGHT, C_ROOK];
-        for (var c = 0; c < 8; c++) {
+        const b = new Array(64);
+        for (let i = 0; i < 64; i++) b[i] = 0;
+        const back = [C_ROOK, C_KNIGHT, C_BISHOP, C_QUEEN, C_KING, C_BISHOP, C_KNIGHT, C_ROOK];
+        for (let c = 0; c < 8; c++) {
             b[cSq(0, c)] = -back[c];   // black back rank (top)
             b[cSq(1, c)] = -C_PAWN;    // black pawns
             b[cSq(6, c)] = C_PAWN;     // white pawns
@@ -500,16 +500,16 @@
     function cloneChessState(st) { return { ep: st.ep, wK: st.wK, wQ: st.wQ, bK: st.bK, bQ: st.bQ, half: st.half || 0 }; }
 
     function findKing(b, color) {
-        var k = color > 0 ? C_KING : -C_KING;
-        for (var i = 0; i < 64; i++) if (b[i] === k) return i;
+        const k = color > 0 ? C_KING : -C_KING;
+        for (let i = 0; i < 64; i++) if (b[i] === k) return i;
         return -1;
     }
 
     // Is square s attacked by any piece of `byColor` (+1/-1)? Used for check + castling.
     function attacksSquare(b, s, byColor) {
-        var sr = cRow(s), sc = cCol(s), i, r, c, v;
+        let sr = cRow(s), sc = cCol(s), i, r, c, v;
         // pawns: a byColor pawn attacking s sits one row "behind" s (row = sr + byColor).
-        var pr = sr + byColor;
+        const pr = sr + byColor;
         if (pr >= 0 && pr < 8) {
             if (sc > 0 && b[cSq(pr, sc - 1)] === byColor * C_PAWN) return true;
             if (sc < 7 && b[cSq(pr, sc + 1)] === byColor * C_PAWN) return true;
@@ -542,7 +542,7 @@
     }
 
     function inCheck(b, color) {
-        var k = findKing(b, color);
+        const k = findKing(b, color);
         return k >= 0 && attacksSquare(b, k, -color);
     }
 
@@ -550,9 +550,9 @@
     // the network receive path needs only {from,to} (same "derive, don't transmit" trick as
     // checkers applyHop). Returns [newBoard, newState]. Promotion is ALWAYS to a queen (MVP).
     function makeMove(b, st, from, to) {
-        var nb = b.slice(), nst = cloneChessState(st);
-        var piece = b[from], color = cSign(piece), t = cType(piece);
-        var fr = cRow(from), fc = cCol(from), tr = cRow(to), tc = cCol(to);
+        const nb = b.slice(), nst = cloneChessState(st);
+        let piece = b[from], color = cSign(piece), t = cType(piece);
+        const fr = cRow(from), fc = cCol(from), tr = cRow(to), tc = cCol(to);
         // Fifty-move rule: the halfmove clock resets on a capture or ANY pawn move, else ticks.
         // Read b[to] BEFORE the board is mutated below.
         nst.half = (t === C_PAWN || b[to] !== 0) ? 0 : (st.half || 0) + 1;
@@ -578,11 +578,11 @@
     // King castling candidates, appended to `moves`. Blocks castling out of / through / into
     // check and requires the squares between king and rook to be empty + the rook present.
     function addCastles(b, st, color, ksq, moves) {
-        var row = color > 0 ? 7 : 0;
+        const row = color > 0 ? 7 : 0;
         if (ksq !== cSq(row, 4)) return;
         if (attacksSquare(b, ksq, -color)) return;                 // not out of check
-        var kSide = color > 0 ? st.wK : st.bK;
-        var qSide = color > 0 ? st.wQ : st.bQ;
+        const kSide = color > 0 ? st.wK : st.bK;
+        const qSide = color > 0 ? st.wQ : st.bQ;
         if (kSide && b[cSq(row, 5)] === 0 && b[cSq(row, 6)] === 0 && b[cSq(row, 7)] === color * C_ROOK &&
             !attacksSquare(b, cSq(row, 5), -color) && !attacksSquare(b, cSq(row, 6), -color)) {
             moves.push({ from: ksq, to: cSq(row, 6) });
@@ -595,23 +595,23 @@
 
     // Pseudo-legal moves for `color` (own-king-safety NOT yet filtered). Each is {from,to}.
     function pseudoMoves(b, st, color) {
-        var moves = [], i, r, c, v, t, d, nr, nc;
+        let moves = [], i, r, c, v, t, d, nr, nc;
         for (i = 0; i < 64; i++) {
             v = b[i];
             if (v === 0 || cSign(v) !== color) continue;
             t = cType(v); r = cRow(i); c = cCol(i);
             if (t === C_PAWN) {
-                var fwd = -color;                         // white(+1) moves up the board (row-1)
-                var one = r + fwd;
+                const fwd = -color;                         // white(+1) moves up the board (row-1)
+                const one = r + fwd;
                 if (one >= 0 && one < 8 && b[cSq(one, c)] === 0) {
                     moves.push({ from: i, to: cSq(one, c) });
-                    var startRow = color > 0 ? 6 : 1, two = r + 2 * fwd;
+                    const startRow = color > 0 ? 6 : 1, two = r + 2 * fwd;
                     if (r === startRow && b[cSq(two, c)] === 0) moves.push({ from: i, to: cSq(two, c) });
                 }
                 for (d = -1; d <= 1; d += 2) {
                     nc = c + d;
                     if (nc < 0 || nc > 7 || one < 0 || one > 7) continue;
-                    var tsq = cSq(one, nc), tv = b[tsq];
+                    const tsq = cSq(one, nc), tv = b[tsq];
                     if ((tv !== 0 && cSign(tv) === -color) || tsq === st.ep) moves.push({ from: i, to: tsq });
                 }
             } else if (t === C_KNIGHT) {
@@ -626,11 +626,11 @@
                 }
                 addCastles(b, st, color, i, moves);
             } else {
-                var dirs = t === C_BISHOP ? DIAG_D : (t === C_ROOK ? ORTHO_D : QUEEN_D);
+                const dirs = t === C_BISHOP ? DIAG_D : (t === C_ROOK ? ORTHO_D : QUEEN_D);
                 for (d = 0; d < dirs.length; d++) {
                     nr = r + dirs[d][0]; nc = c + dirs[d][1];
                     while (cOn(nr, nc)) {
-                        var sv = b[cSq(nr, nc)];
+                        const sv = b[cSq(nr, nc)];
                         if (sv === 0) moves.push({ from: i, to: cSq(nr, nc) });
                         else { if (cSign(sv) !== color) moves.push({ from: i, to: cSq(nr, nc) }); break; }
                         nr += dirs[d][0]; nc += dirs[d][1];
@@ -643,9 +643,9 @@
 
     // Legal moves = pseudo-legal minus those leaving one's own king in check.
     function legalMoves(b, st, color) {
-        var ps = pseudoMoves(b, st, color), out = [];
-        for (var i = 0; i < ps.length; i++) {
-            var r = makeMove(b, st, ps[i].from, ps[i].to);
+        const ps = pseudoMoves(b, st, color), out = [];
+        for (let i = 0; i < ps.length; i++) {
+            let r = makeMove(b, st, ps[i].from, ps[i].to);
             if (!inCheck(r[0], color)) out.push(ps[i]);
         }
         return out;
@@ -655,23 +655,23 @@
     // insufficient-material cases: K vs K, K+minor vs K, and K+B vs K+B on the same colour.
     // Any pawn, rook or queen (or two minors on one side) can still mate, so those are "ongoing".
     function insufficientMaterial(b) {
-        var minors = { 1: [], "-1": [] };      // bishop/knight squares per colour
-        for (var i = 0; i < 64; i++) {
-            var v = b[i];
+        const minors = { 1: [], "-1": [] };      // bishop/knight squares per colour
+        for (let i = 0; i < 64; i++) {
+            let v = b[i];
             if (v === 0) continue;
-            var t = cType(v);
+            let t = cType(v);
             if (t === C_KING) continue;
             if (t === C_PAWN || t === C_ROOK || t === C_QUEEN) return false;   // mating material
             minors[cSign(v)].push({ t: t, sq: i });
         }
-        var w = minors[1], bl = minors["-1"];
+        const w = minors[1], bl = minors["-1"];
         if (w.length > 1 || bl.length > 1) return false;   // two minors can mate (BB, and BN)
         if (w.length === 0 && bl.length === 0) return true;                    // K vs K
         if (w.length + bl.length === 1) return true;                           // K+minor vs K
         // one minor each: only a draw when both are bishops on the SAME colour complex
         if (w[0].t === C_BISHOP && bl[0].t === C_BISHOP) {
-            var wc = (cRow(w[0].sq) + cCol(w[0].sq)) & 1;
-            var bc = (cRow(bl[0].sq) + cCol(bl[0].sq)) & 1;
+            const wc = (cRow(w[0].sq) + cCol(w[0].sq)) & 1;
+            const bc = (cRow(bl[0].sq) + cCol(bl[0].sq)) & 1;
             return wc === bc;
         }
         return false;
@@ -681,7 +681,7 @@
     // castling rights + en-passant target. Two positions repeat only when ALL of those match
     // (FIDE), so the key must include everything that changes the set of legal continuations.
     function positionKey(b, st, color) {
-        var s = b.join(",");
+        let s = b.join(",");
         return s + "|" + color + "|" + (st.wK ? 1 : 0) + (st.wQ ? 1 : 0) + (st.bK ? 1 : 0) + (st.bQ ? 1 : 0) + "|" + st.ep;
     }
 
@@ -708,13 +708,13 @@
 
     // White-positive static score: material + a small central pull for every piece.
     function evalBoard(b) {
-        var s = 0;
-        for (var i = 0; i < 64; i++) {
-            var v = b[i];
+        let s = 0;
+        for (let i = 0; i < 64; i++) {
+            let v = b[i];
             if (v === 0) continue;
-            var sg = cSign(v);
+            const sg = cSign(v);
             s += sg * pieceValue(cType(v));
-            var center = (3.5 - Math.abs(3.5 - cCol(i))) + (3.5 - Math.abs(3.5 - cRow(i)));
+            const center = (3.5 - Math.abs(3.5 - cCol(i))) + (3.5 - Math.abs(3.5 - cRow(i)));
             s += sg * center * 2;
         }
         return s;
@@ -729,14 +729,14 @@
 
     function negamax(b, st, color, depth, alpha, beta, budget) {
         if (depth === 0) return color * evalBoard(b);
-        var moves = legalMoves(b, st, color);
+        const moves = legalMoves(b, st, color);
         if (moves.length === 0) return inCheck(b, color) ? -100000 - depth : 0;   // mate (deeper = worse) / stalemate
         orderChessMoves(b, moves);
-        var best = -1e9;
-        for (var i = 0; i < moves.length; i++) {
+        let best = -1e9;
+        for (let i = 0; i < moves.length; i++) {
             if (budget.n++ > budget.max) break;                  // node cap: bail with best-so-far
-            var r = makeMove(b, st, moves[i].from, moves[i].to);
-            var sc = -negamax(r[0], r[1], -color, depth - 1, -beta, -alpha, budget);
+            let r = makeMove(b, st, moves[i].from, moves[i].to);
+            const sc = -negamax(r[0], r[1], -color, depth - 1, -beta, -alpha, budget);
             if (sc > best) best = sc;
             if (best > alpha) alpha = best;
             if (alpha >= beta) break;
@@ -747,13 +747,13 @@
     // Pick a move for `color`. Depth/budget tuned to stay responsive in Panorama; if the node
     // budget trips mid-search the best move found so far is used. Tiny jitter avoids repetition.
     function chessBotMove(b, st, color) {
-        var moves = legalMoves(b, st, color);
+        const moves = legalMoves(b, st, color);
         if (moves.length === 0) return null;
         orderChessMoves(b, moves);
-        var budget = { n: 0, max: 120000 }, DEPTH = 3, best = null, bestScore = -1e9;
-        for (var i = 0; i < moves.length; i++) {
-            var r = makeMove(b, st, moves[i].from, moves[i].to);
-            var sc = -negamax(r[0], r[1], -color, DEPTH - 1, -1e9, 1e9, budget) + Math.random() * 8;
+        let budget = { n: 0, max: 120000 }, DEPTH = 3, best = null, bestScore = -1e9;
+        for (let i = 0; i < moves.length; i++) {
+            let r = makeMove(b, st, moves[i].from, moves[i].to);
+            const sc = -negamax(r[0], r[1], -color, DEPTH - 1, -1e9, 1e9, budget) + Math.random() * 8;
             if (sc > bestScore) { bestScore = sc; best = moves[i]; }
         }
         return best;
@@ -766,15 +766,15 @@
     // total work (and playing strength) is unchanged.
     // Usage: var d = chessBotMovePrep(b,st,color); while(!d.done()) d.step(); var mv = d.result();
     function chessBotMovePrep(b, st, color) {
-        var moves = legalMoves(b, st, color);
+        const moves = legalMoves(b, st, color);
         orderChessMoves(b, moves);
-        var budget = { n: 0, max: 120000 }, DEPTH = 3, i = 0, best = null, bestScore = -1e9;
+        let budget = { n: 0, max: 120000 }, DEPTH = 3, i = 0, best = null, bestScore = -1e9;
         return {
             done: function () { return i >= moves.length; },
             step: function () {
                 if (i >= moves.length) return;
-                var r = makeMove(b, st, moves[i].from, moves[i].to);
-                var sc = -negamax(r[0], r[1], -color, DEPTH - 1, -1e9, 1e9, budget) + Math.random() * 8;
+                let r = makeMove(b, st, moves[i].from, moves[i].to);
+                const sc = -negamax(r[0], r[1], -color, DEPTH - 1, -1e9, 1e9, budget) + Math.random() * 8;
                 if (sc > bestScore) { bestScore = sc; best = moves[i]; }
                 i++;
             },
@@ -808,9 +808,9 @@
  */
 
 (function () {
-    var R;
+    let R;
     if (typeof $ !== "undefined" && $) {
-        var MG = ($.MG = $.MG || {});
+        const MG = ($.MG = $.MG || {});
         R = (MG.Rules = MG.Rules || {});
     } else if (typeof globalThis !== "undefined") {
         R = (globalThis.MGRules = globalThis.MGRules || {});
@@ -818,44 +818,44 @@
         R = (this.MGRules = this.MGRules || {});
     }
 
-    var COLS = 7, ROWS = 6, CELLS = COLS * ROWS;
+    const COLS = 7, ROWS = 6, CELLS = COLS * ROWS;
 
     function idx(r, c) { return r * COLS + c; }
-    function initialBoard() { var b = new Array(CELLS); for (var i = 0; i < CELLS; i++) b[i] = 0; return b; }
+    function initialBoard() { const b = new Array(CELLS); for (let i = 0; i < CELLS; i++) b[i] = 0; return b; }
 
     // Columns whose TOP cell is empty (i.e. not full).
     function legalCols(b) {
-        var out = [];
-        for (var c = 0; c < COLS; c++) if (b[idx(0, c)] === 0) out.push(c);
+        const out = [];
+        for (let c = 0; c < COLS; c++) if (b[idx(0, c)] === 0) out.push(c);
         return out;
     }
     // Lowest empty row of a column (where a dropped disc lands), or -1 if the column is full.
     function dropRow(b, col) {
         if (col < 0 || col >= COLS) return -1;
-        for (var r = ROWS - 1; r >= 0; r--) if (b[idx(r, col)] === 0) return r;
+        for (let r = ROWS - 1; r >= 0; r--) if (b[idx(r, col)] === 0) return r;
         return -1;
     }
     // Drop a disc for `player` into `col`. Returns { board, row } with a NEW board (the caller
     // decides whether to keep it), or null if the column is full. Board is copied so callers
     // can use it as a predictor without clobbering their own state.
     function drop(b, col, player) {
-        var r = dropRow(b, col);
+        let r = dropRow(b, col);
         if (r < 0) return null;
-        var nb = b.slice();
+        const nb = b.slice();
         nb[idx(r, col)] = player;
         return { board: nb, row: r };
     }
 
     // First player with four-in-a-row (horizontal, vertical, both diagonals), or 0.
-    var DIRS = [[0, 1], [1, 0], [1, 1], [1, -1]];
+    const DIRS = [[0, 1], [1, 0], [1, 1], [1, -1]];
     function winner(b) {
-        for (var r = 0; r < ROWS; r++) {
-            for (var c = 0; c < COLS; c++) {
-                var v = b[idx(r, c)];
+        for (let r = 0; r < ROWS; r++) {
+            for (let c = 0; c < COLS; c++) {
+                const v = b[idx(r, c)];
                 if (!v) continue;
-                for (var d = 0; d < DIRS.length; d++) {
-                    var dr = DIRS[d][0], dc = DIRS[d][1];
-                    var rr = r + dr * 3, cc = c + dc * 3;
+                for (let d = 0; d < DIRS.length; d++) {
+                    const dr = DIRS[d][0], dc = DIRS[d][1];
+                    let rr = r + dr * 3, cc = c + dc * 3;
                     if (rr < 0 || rr >= ROWS || cc < 0 || cc >= COLS) continue;
                     if (b[idx(r + dr, c + dc)] === v && b[idx(r + dr * 2, c + dc * 2)] === v &&
                         b[idx(rr, cc)] === v) return v;
@@ -864,18 +864,18 @@
         }
         return 0;
     }
-    function isFull(b) { for (var i = 0; i < CELLS; i++) if (b[i] === 0) return false; return true; }
+    function isFull(b) { for (let i = 0; i < CELLS; i++) if (b[i] === 0) return false; return true; }
     function isDraw(b) { return !winner(b) && isFull(b); }
 
     // The four-cell winning line for `player` (row-major cell indices), or null. UI-only -
     // lets the controller highlight the winning discs.
     function winningLine(b, player) {
-        for (var r = 0; r < ROWS; r++) {
-            for (var c = 0; c < COLS; c++) {
+        for (let r = 0; r < ROWS; r++) {
+            for (let c = 0; c < COLS; c++) {
                 if (b[idx(r, c)] !== player) continue;
-                for (var d = 0; d < DIRS.length; d++) {
-                    var dr = DIRS[d][0], dc = DIRS[d][1];
-                    var rr = r + dr * 3, cc = c + dc * 3;
+                for (let d = 0; d < DIRS.length; d++) {
+                    const dr = DIRS[d][0], dc = DIRS[d][1];
+                    let rr = r + dr * 3, cc = c + dc * 3;
                     if (rr < 0 || rr >= ROWS || cc < 0 || cc >= COLS) continue;
                     if (b[idx(r + dr, c + dc)] === player && b[idx(r + dr * 2, c + dc * 2)] === player &&
                         b[idx(rr, cc)] === player)
@@ -898,23 +898,23 @@
     // public drop() still copies (its callers rely on that); only the internal search mutates,
     // and it always restores, so cfBotMove leaves the caller's board untouched. DEPTH trimmed
     // 6 → 5 for extra headroom (the win/block shortcuts below keep it tactically sharp).
-    var CENTER_ORDER = [3, 2, 4, 1, 5, 0, 6];
-    var DEPTH = 5;
+    const CENTER_ORDER = [3, 2, 4, 1, 5, 0, 6];
+    const DEPTH = 5;
 
     // Count windows of 4 and score them: a window with only my discs is good, only theirs bad.
     function evalBoard(b, me) {
-        var opp = me === 1 ? 2 : 1, score = 0, r, c, d;
+        let opp = me === 1 ? 2 : 1, score = 0, r, c, d;
         // centre column preference
         for (r = 0; r < ROWS; r++) if (b[idx(r, 3)] === me) score += 3;
         for (r = 0; r < ROWS; r++) {
             for (c = 0; c < COLS; c++) {
                 for (d = 0; d < DIRS.length; d++) {
-                    var dr = DIRS[d][0], dc = DIRS[d][1];
-                    var rr = r + dr * 3, cc = c + dc * 3;
+                    const dr = DIRS[d][0], dc = DIRS[d][1];
+                    let rr = r + dr * 3, cc = c + dc * 3;
                     if (rr < 0 || rr >= ROWS || cc < 0 || cc >= COLS) continue;
-                    var mine = 0, theirs = 0, k;
+                    let mine = 0, theirs = 0, k;
                     for (k = 0; k < 4; k++) {
-                        var v = b[idx(r + dr * k, c + dc * k)];
+                        const v = b[idx(r + dr * k, c + dc * k)];
                         if (v === me) mine++; else if (v === opp) theirs++;
                     }
                     if (mine && theirs) continue;          // mixed window is dead
@@ -930,8 +930,8 @@
     // THROUGH that cell (O(1)) instead of the whole board - the make/undo search's per-node
     // terminal test. `v` is the mover's colour at (r,c).
     function winsAt(b, r, c, v) {
-        for (var d = 0; d < DIRS.length; d++) {
-            var dr = DIRS[d][0], dc = DIRS[d][1], run = 1, k, rr, cc;
+        for (let d = 0; d < DIRS.length; d++) {
+            let dr = DIRS[d][0], dc = DIRS[d][1], run = 1, k, rr, cc;
             for (k = 1; k < 4; k++) {                      // extend one way
                 rr = r + dr * k; cc = c + dc * k;
                 if (rr < 0 || rr >= ROWS || cc < 0 || cc >= COLS || b[idx(rr, cc)] !== v) break;
@@ -947,7 +947,7 @@
         return false;
     }
     // Lowest empty row of `col` on the CURRENT (mutated) board - search's make step. -1 if full.
-    function landRow(b, col) { for (var r = ROWS - 1; r >= 0; r--) if (b[idx(r, col)] === 0) return r; return -1; }
+    function landRow(b, col) { for (let r = ROWS - 1; r >= 0; r--) if (b[idx(r, col)] === 0) return r; return -1; }
 
     // Negamax on ONE working board via make/undo (no per-node allocation - see the PERF note).
     // `lastWin` = the mover of the PARENT node just won by landing at (lastR,lastC); we detect the
@@ -963,15 +963,15 @@
         if (lastR >= 0 && winsAt(b, lastR, lastC, lastV))
             return -(100000 + depth);
         if (depth === 0) return evalBoard(b, player);
-        var best = -1e9, moved = false;
-        for (var i = 0; i < CENTER_ORDER.length; i++) {
-            var col = CENTER_ORDER[i];
-            var r = landRow(b, col);
+        let best = -1e9, moved = false;
+        for (let i = 0; i < CENTER_ORDER.length; i++) {
+            let col = CENTER_ORDER[i];
+            let r = landRow(b, col);
             if (r < 0) continue;                           // full
             moved = true;
-            var cell = idx(r, col);
+            const cell = idx(r, col);
             b[cell] = player;                              // make
-            var val = -negamax(b, player === 1 ? 2 : 1, depth - 1, -beta, -alpha, r, col, player);
+            const val = -negamax(b, player === 1 ? 2 : 1, depth - 1, -beta, -alpha, r, col, player);
             b[cell] = 0;                                   // undo
             if (val > best) best = val;
             if (val > alpha) alpha = val;
@@ -983,25 +983,25 @@
 
     // Returns the column the bot plays, or -1 if the board is full.
     function cfBotMove(b, player) {
-        var cols = legalCols(b);
+        const cols = legalCols(b);
         if (cols.length === 0) return -1;
-        var opp = player === 1 ? 2 : 1, i, col, r;
+        let opp = player === 1 ? 2 : 1, i, col, r;
         // Work on a private copy so the search's make/undo can never touch the caller's board
         // (make/undo always restores, but a copy makes that guarantee unconditional).
-        var w = b.slice();
+        const w = b.slice();
         // 1) take an immediate win
         for (i = 0; i < cols.length; i++) { col = cols[i]; r = landRow(w, col); w[idx(r, col)] = player; if (winsAt(w, r, col, player)) { w[idx(r, col)] = 0; return col; } w[idx(r, col)] = 0; }
         // 2) block the opponent's immediate win
         for (i = 0; i < cols.length; i++) { col = cols[i]; r = landRow(w, col); w[idx(r, col)] = opp; if (winsAt(w, r, col, opp)) { w[idx(r, col)] = 0; return col; } w[idx(r, col)] = 0; }
         // 3) search
-        var bestCol = cols[0], bestVal = -1e9;
+        let bestCol = cols[0], bestVal = -1e9;
         for (i = 0; i < CENTER_ORDER.length; i++) {
             col = CENTER_ORDER[i];
             r = landRow(w, col);
             if (r < 0) continue;
-            var cell = idx(r, col);
+            const cell = idx(r, col);
             w[cell] = player;                              // make
-            var val = -negamax(w, opp, DEPTH - 1, -1e9, 1e9, r, col, player);
+            const val = -negamax(w, opp, DEPTH - 1, -1e9, 1e9, r, col, player);
             w[cell] = 0;                                   // undo
             if (val > bestVal) { bestVal = val; bestCol = col; }
         }
@@ -1033,9 +1033,9 @@
  */
 
 (function () {
-    var R;
+    let R;
     if (typeof $ !== "undefined" && $) {
-        var MG = ($.MG = $.MG || {});
+        const MG = ($.MG = $.MG || {});
         R = (MG.Rules = MG.Rules || {});
     } else if (typeof globalThis !== "undefined") {
         R = (globalThis.MGRules = globalThis.MGRules || {});
@@ -1043,9 +1043,9 @@
         R = (this.MGRules = this.MGRules || {});
     }
 
-    var SUIT_CHARS = ["S", "H", "D", "C"];
-    var RANK_CHARS = ["6", "7", "8", "9", "T", "J", "Q", "K", "A"];
-    var DECK_SIZE = 36;
+    const SUIT_CHARS = ["S", "H", "D", "C"];
+    const RANK_CHARS = ["6", "7", "8", "9", "T", "J", "Q", "K", "A"];
+    const DECK_SIZE = 36;
 
     function suitOf(id) { return (id / 9) | 0; }
     function rankOf(id) { return id % 9; }
@@ -1053,21 +1053,21 @@
     // Deterministic PRNG (mulberry32) so a given seed always deals the same game - the test
     // relies on this, and online the server owns the seed.
     function makeRng(seed) {
-        var s = seed | 0;
+        let s = seed | 0;
         return function () {
             s = (s + 0x6D2B79F5) | 0;
-            var t = Math.imul(s ^ (s >>> 15), 1 | s);
+            let t = Math.imul(s ^ (s >>> 15), 1 | s);
             t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
             return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
         };
     }
 
     function freshDeck(rng) {
-        var d = [];
-        for (var i = 0; i < DECK_SIZE; i++) d.push(i);
-        for (var j = DECK_SIZE - 1; j > 0; j--) {
-            var k = (rng() * (j + 1)) | 0;
-            var t = d[j]; d[j] = d[k]; d[k] = t;
+        const d = [];
+        for (let i = 0; i < DECK_SIZE; i++) d.push(i);
+        for (let j = DECK_SIZE - 1; j > 0; j--) {
+            let k = (rng() * (j + 1)) | 0;
+            let t = d[j]; d[j] = d[k]; d[k] = t;
         }
         return d;
     }
@@ -1075,33 +1075,33 @@
     // Draw from the FRONT (index 0 = top). The bottom card (last index) is the trump card,
     // drawn last, so it stays put until the deck is nearly empty.
     function deal(deck, numPlayers) {
-        var hands = [];
-        for (var s = 0; s < numPlayers; s++) hands.push([]);
-        var dk = deck.slice();
-        for (var n = 0; n < 6; n++)
-            for (var p = 0; p < numPlayers; p++) hands[p].push(dk.shift());
-        var trumpCard = dk[dk.length - 1];
+        const hands = [];
+        for (let s = 0; s < numPlayers; s++) hands.push([]);
+        const dk = deck.slice();
+        for (let n = 0; n < 6; n++)
+            for (let p = 0; p < numPlayers; p++) hands[p].push(dk.shift());
+        const trumpCard = dk[dk.length - 1];
         return { hands: hands, deck: dk, trumpCard: trumpCard, trump: suitOf(trumpCard) };
     }
 
     // A `def` card beats an `att` card if: same suit and higher rank, OR it is a trump
     // covering a non-trump. Trump-vs-trump is decided by rank (same-suit branch).
     function beats(att, def, trump) {
-        var sa = suitOf(att), sd = suitOf(def);
+        const sa = suitOf(att), sd = suitOf(def);
         if (sd === sa) return rankOf(def) > rankOf(att);
         if (sd === trump && sa !== trump) return true;
         return false;
     }
 
-    function removeCard(hand, id) { var k = hand.indexOf(id); if (k >= 0) hand.splice(k, 1); }
+    function removeCard(hand, id) { let k = hand.indexOf(id); if (k >= 0) hand.splice(k, 1); }
 
     // Lowest trump holder opens the very first attack (classic rule); seat 0 if nobody
     // holds a trump.
     function firstAttacker(st) {
-        var best = -1, bestRank = 99;
-        for (var s = 0; s < st.numPlayers; s++) {
-            var h = st.hands[s];
-            for (var k = 0; k < h.length; k++) {
+        let best = -1, bestRank = 99;
+        for (let s = 0; s < st.numPlayers; s++) {
+            const h = st.hands[s];
+            for (let k = 0; k < h.length; k++) {
                 if (suitOf(h[k]) === st.trump && rankOf(h[k]) < bestRank) { bestRank = rankOf(h[k]); best = s; }
             }
         }
@@ -1109,8 +1109,8 @@
     }
 
     function nextInPlay(st, seat) {
-        for (var k = 1; k <= st.numPlayers; k++) {
-            var s = (seat + k) % st.numPlayers;
+        for (let k = 1; k <= st.numPlayers; k++) {
+            let s = (seat + k) % st.numPlayers;
             if (!st.out[s]) return s;
         }
         return seat;
@@ -1118,8 +1118,8 @@
     function firstInPlayFrom(st, seat) { return st.out[seat] ? nextInPlay(st, seat) : seat; }
 
     function newGame(numPlayers, seed) {
-        var dealt = deal(freshDeck(makeRng(seed)), numPlayers);
-        var st = {
+        const dealt = deal(freshDeck(makeRng(seed)), numPlayers);
+        const st = {
             numPlayers: numPlayers,
             trump: dealt.trump,
             trumpCard: dealt.trumpCard,
@@ -1141,7 +1141,7 @@
             passed: [],
             loser: -1
         };
-        for (var s = 0; s < numPlayers; s++) { st.out.push(false); st.passed.push(false); }
+        for (let s = 0; s < numPlayers; s++) { st.out.push(false); st.passed.push(false); }
         st.attacker = firstAttacker(st);
         st.defender = nextInPlay(st, st.attacker);
         return st;
@@ -1149,20 +1149,20 @@
 
     // table queries
     function tableRankSet(st) {
-        var set = {};
-        for (var i = 0; i < st.table.length; i++) {
+        const set = {};
+        for (let i = 0; i < st.table.length; i++) {
             set[rankOf(st.table[i].a)] = 1;
             if (st.table[i].d >= 0) set[rankOf(st.table[i].d)] = 1;
         }
         return set;
     }
     function uncoveredCount(st) {
-        var n = 0;
-        for (var i = 0; i < st.table.length; i++) if (st.table[i].d < 0) n++;
+        let n = 0;
+        for (let i = 0; i < st.table.length; i++) if (st.table[i].d < 0) n++;
         return n;
     }
     function firstUncovered(st) {
-        for (var i = 0; i < st.table.length; i++) if (st.table[i].d < 0) return i;
+        for (let i = 0; i < st.table.length; i++) if (st.table[i].d < 0) return i;
         return -1;
     }
 
@@ -1180,19 +1180,19 @@
         return !!tableRankSet(st)[rankOf(card)];
     }
     function legalAttacks(st, seat) {
-        var out = [], h = st.hands[seat];
-        for (var i = 0; i < h.length; i++) if (canAttackWith(st, seat, h[i])) out.push(h[i]);
+        const out = [], h = st.hands[seat];
+        for (let i = 0; i < h.length; i++) if (canAttackWith(st, seat, h[i])) out.push(h[i]);
         return out;
     }
     function canDefendPair(st, pairIndex, card) {
-        var p = st.table[pairIndex];
+        let p = st.table[pairIndex];
         if (!p || p.d >= 0) return false;
         if (st.hands[st.defender].indexOf(card) < 0) return false;
         return beats(p.a, card, st.trump);
     }
     function legalDefends(st, pairIndex) {
-        var out = [], h = st.hands[st.defender];
-        for (var i = 0; i < h.length; i++) if (canDefendPair(st, pairIndex, h[i])) out.push(h[i]);
+        const out = [], h = st.hands[st.defender];
+        for (let i = 0; i < h.length; i++) if (canDefendPair(st, pairIndex, h[i])) out.push(h[i]);
         return out;
     }
 
@@ -1200,7 +1200,7 @@
     // card or a cover), because fresh cards can create new throw-in options for a seat that had
     // already passed - so consensus must be re-earned before the bout can be beaten.
     function resetPasses(st) {
-        for (var s = 0; s < st.numPlayers; s++) st.passed[s] = false;
+        for (let s = 0; s < st.numPlayers; s++) st.passed[s] = false;
     }
     // Is `seat` an in-play ATTACKER (not the defender, not out)? Only these seats throw in and
     // vote on ending the bout; the defender's "end" action is Take, handled separately.
@@ -1228,7 +1228,7 @@
     // consensus: every attacker (human or bot) confirms before the bout ends.
     function canBito(st) {
         if (st.table.length === 0 || uncoveredCount(st) !== 0) return false;
-        for (var s = 0; s < st.numPlayers; s++) if (!attackSeatSettled(st, s)) return false;
+        for (let s = 0; s < st.numPlayers; s++) if (!attackSeatSettled(st, s)) return false;
         return true;
     }
     // First in-play attack seat (turn order from the primary attacker) that has NOT settled - i.e.
@@ -1237,8 +1237,8 @@
     // the confirm turn walks every attacker, not just those still holding a legal throw-in.
     function firstUnsettled(st) {
         if (uncoveredCount(st) !== 0) return -1;
-        for (var k = 0; k < st.numPlayers; k++) {
-            var s = (st.attacker + k) % st.numPlayers;
+        for (let k = 0; k < st.numPlayers; k++) {
+            let s = (st.attacker + k) % st.numPlayers;
             if (!attackSeatSettled(st, s)) return s;
         }
         return -1;
@@ -1247,10 +1247,10 @@
     // passed, and holding a matching-rank card), in classic turn order starting from the primary
     // attacker. Empty ⇒ nobody left to add → the bout is ready for Bito.
     function pendingThrowers(st) {
-        var out = [];
+        const out = [];
         if (uncoveredCount(st) !== 0) return out;   // still defending; no throw-in window yet
-        for (var k = 0; k < st.numPlayers; k++) {
-            var s = (st.attacker + k) % st.numPlayers;
+        for (let k = 0; k < st.numPlayers; k++) {
+            let s = (st.attacker + k) % st.numPlayers;
             if (isAttackSeat(st, s) && !st.passed[s] && legalAttacks(st, s).length > 0) out.push(s);
         }
         return out;
@@ -1271,34 +1271,34 @@
     }
 
     function updateOut(st) {
-        var deckEmpty = st.deck.length === 0;
-        for (var s = 0; s < st.numPlayers; s++) {
+        const deckEmpty = st.deck.length === 0;
+        for (let s = 0; s < st.numPlayers; s++) {
             if (!st.out[s] && st.hands[s].length === 0 && deckEmpty) st.out[s] = true;
         }
     }
     function inPlayCount(st) {
-        var n = 0;
-        for (var s = 0; s < st.numPlayers; s++) if (!st.out[s]) n++;
+        let n = 0;
+        for (let s = 0; s < st.numPlayers; s++) if (!st.out[s]) n++;
         return n;
     }
     // Refill hands to 6, attacker(s) first in turn order, defender LAST (standard).
     function refill(st) {
-        var order = [];
-        for (var k = 0; k < st.numPlayers; k++) {
-            var s = (st.attacker + k) % st.numPlayers;
+        const order = [];
+        for (let k = 0; k < st.numPlayers; k++) {
+            let s = (st.attacker + k) % st.numPlayers;
             if (s === st.defender || st.out[s]) continue;
             order.push(s);
         }
         if (!st.out[st.defender]) order.push(st.defender);
-        for (var i = 0; i < order.length; i++) {
-            var seat = order[i];
+        for (let i = 0; i < order.length; i++) {
+            const seat = order[i];
             while (st.hands[seat].length < 6 && st.deck.length > 0) st.hands[seat].push(st.deck.shift());
         }
     }
     // End the current bout. took=true → defender picks up the whole table; else the table
     // is "beaten" (Bito) and discarded. Then refill and rotate roles.
     function endBout(st, took) {
-        var oldDef = st.defender, i;
+        let oldDef = st.defender, i;
         if (took) {
             for (i = 0; i < st.table.length; i++) {
                 st.hands[oldDef].push(st.table[i].a);
@@ -1312,7 +1312,7 @@
         refill(st);
         updateOut(st);
         // Successful defense → the defender attacks next. Took → the taker is skipped.
-        var base = firstInPlayFrom(st, took ? nextInPlay(st, oldDef) : oldDef);
+        const base = firstInPlayFrom(st, took ? nextInPlay(st, oldDef) : oldDef);
         st.attacker = base;
         st.defender = nextInPlay(st, base);
         st.phase = "attack";
@@ -1330,12 +1330,12 @@
         st.hands[seat] = [];
         // Void any open bout: the table's cards go to discard (the defender may be the one leaving,
         // so there's no clean "took"/"beaten" resolution - the bout simply doesn't count).
-        for (var i = 0; i < st.table.length; i++) { st.discard++; if (st.table[i].d >= 0) st.discard++; }
+        for (let i = 0; i < st.table.length; i++) { st.discard++; if (st.table[i].d >= 0) st.discard++; }
         st.table = [];
         resetPasses(st);
         refill(st);                          // survivors top up (attacker-first, defender last)
         updateOut(st);
-        var base = firstInPlayFrom(st, st.attacker);   // skip the leaver if it was the attacker
+        const base = firstInPlayFrom(st, st.attacker);   // skip the leaver if it was the attacker
         st.attacker = base;
         st.defender = nextInPlay(st, base);
         st.phase = "attack";
@@ -1350,7 +1350,7 @@
         if (inPlayCount(st) <= 1) {
             st.phase = "over";
             st.loser = -1;
-            for (var s = 0; s < st.numPlayers; s++) if (!st.out[s]) st.loser = s;
+            for (let s = 0; s < st.numPlayers; s++) if (!st.out[s]) st.loser = s;
             return true;
         }
         return false;
@@ -1365,19 +1365,19 @@
     }
     // Returns the card to attack/throw-in with, or -1 to end the bout (Bito).
     function durakBotAttack(st, seat) {
-        var la = sortByValue(legalAttacks(st, seat), st.trump);
+        const la = sortByValue(legalAttacks(st, seat), st.trump);
         if (la.length === 0) return -1;
         if (st.table.length === 0) return la[0];            // opener must play its lowest
-        var lowest = la[0];
+        const lowest = la[0];
         // Throw in only a genuinely cheap non-trump (6/7/8); otherwise stop.
         if (suitOf(lowest) !== st.trump && rankOf(lowest) <= 2) return lowest;
         return -1;
     }
     // Returns { pair, card } to cover the first open attack, or null to take.
     function durakBotDefend(st, seat) {
-        var i = firstUncovered(st);
+        let i = firstUncovered(st);
         if (i < 0) return null;
-        var ld = sortByValue(legalDefends(st, i), st.trump);
+        const ld = sortByValue(legalDefends(st, i), st.trump);
         if (ld.length === 0) return null;                   // can't beat it → must take
         return { pair: i, card: ld[0] };
     }
@@ -1424,9 +1424,9 @@
  */
 
 (function () {
-    var R;
+    let R;
     if (typeof $ !== "undefined" && $) {
-        var MG = ($.MG = $.MG || {});
+        const MG = ($.MG = $.MG || {});
         R = (MG.Rules = MG.Rules || {});
     } else if (typeof globalThis !== "undefined") {
         R = (globalThis.MGRules = globalThis.MGRules || {});
@@ -1434,9 +1434,9 @@
         R = (this.MGRules = this.MGRules || {});
     }
 
-    var SUIT_CHARS = ["S", "H", "D", "C"];
-    var RANK_CHARS = ["2", "3", "4", "5", "6", "7", "8", "9", "T", "J", "Q", "K", "A"];
-    var DECK_SIZE = 52;
+    const SUIT_CHARS = ["S", "H", "D", "C"];
+    const RANK_CHARS = ["2", "3", "4", "5", "6", "7", "8", "9", "T", "J", "Q", "K", "A"];
+    const DECK_SIZE = 52;
 
     function suitOf(id) { return (id / 13) | 0; }
     function rankOf(id) { return id % 13; }
@@ -1444,21 +1444,21 @@
 
     // Deterministic PRNG (mulberry32) - identical to the other engines so seeds line up.
     function makeRng(seed) {
-        var s = seed | 0;
+        let s = seed | 0;
         return function () {
             s = (s + 0x6D2B79F5) | 0;
-            var t = Math.imul(s ^ (s >>> 15), 1 | s);
+            let t = Math.imul(s ^ (s >>> 15), 1 | s);
             t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
             return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
         };
     }
 
     function freshDeck(rng) {
-        var d = [];
-        for (var i = 0; i < DECK_SIZE; i++) d.push(i);
-        for (var j = DECK_SIZE - 1; j > 0; j--) {
-            var k = (rng() * (j + 1)) | 0;
-            var t = d[j]; d[j] = d[k]; d[k] = t;
+        const d = [];
+        for (let i = 0; i < DECK_SIZE; i++) d.push(i);
+        for (let j = DECK_SIZE - 1; j > 0; j--) {
+            let k = (rng() * (j + 1)) | 0;
+            let t = d[j]; d[j] = d[k]; d[k] = t;
         }
         return d;
     }
@@ -1467,11 +1467,11 @@
     // High card of the best straight in `vals` (array of card values 2..14, dups ok), or 0.
     // Handles the wheel (A-2-3-4-5) by letting the ace also count as 1.
     function straightHigh(vals) {
-        var present = {};
-        for (var i = 0; i < vals.length; i++) present[vals[i]] = 1;
+        const present = {};
+        for (let i = 0; i < vals.length; i++) present[vals[i]] = 1;
         if (present[14]) present[1] = 1;               // ace plays low for the wheel
-        var run = 0;
-        for (var v = 14; v >= 1; v--) {
+        let run = 0;
+        for (let v = 14; v >= 1; v--) {
             if (present[v]) { run++; if (run >= 5) return v + 4; } else run = 0;
         }
         return 0;
@@ -1479,49 +1479,49 @@
 
     // Score the best 5-card hand out of 5..7 cards. Returns [category, tiebreak…].
     function score(cards) {
-        var byVal = {}, bySuit = [[], [], [], []], i, v, s;
+        let byVal = {}, bySuit = [[], [], [], []], i, v, s;
         for (i = 0; i < cards.length; i++) {
             v = cardVal(cards[i]); s = suitOf(cards[i]);
             byVal[v] = (byVal[v] || 0) + 1;
             bySuit[s].push(v);
         }
         // flush / straight flush
-        var flushVals = null;
+        let flushVals = null;
         for (s = 0; s < 4; s++) if (bySuit[s].length >= 5) flushVals = bySuit[s];
         if (flushVals) {
-            var sfHigh = straightHigh(flushVals);
+            const sfHigh = straightHigh(flushVals);
             if (sfHigh) return [8, sfHigh];
         }
         // grouped by count then value, high to low
-        var groups = [];
-        for (var key in byVal) if (byVal.hasOwnProperty(key)) groups.push([byVal[key], parseInt(key, 10)]);
+        const groups = [];
+        for (const key in byVal) if (byVal.hasOwnProperty(key)) groups.push([byVal[key], parseInt(key, 10)]);
         groups.sort(function (a, b) { return b[0] - a[0] || b[1] - a[1]; });
         // ordered distinct values high→low (kickers)
-        var vals = [];
+        const vals = [];
         for (i = 0; i < groups.length; i++) vals.push(groups[i][1]);
 
-        var c0 = groups[0], c1 = groups[1];
+        const c0 = groups[0], c1 = groups[1];
         if (c0[0] === 4) return [7, c0[1], bestExcluding(cards, [c0[1]])];
         if (c0[0] === 3 && c1 && c1[0] >= 2) return [6, c0[1], c1[1]];
         if (flushVals) { flushVals = flushVals.slice().sort(desc); return [5, flushVals[0], flushVals[1], flushVals[2], flushVals[3], flushVals[4]]; }
-        var st = straightHigh(allVals(cards));
+        const st = straightHigh(allVals(cards));
         if (st) return [4, st];
         if (c0[0] === 3) return [3, c0[1], vals[1], vals[2]];
         if (c0[0] === 2 && c1 && c1[0] === 2) return [2, c0[1], c1[1], bestExcluding(cards, [c0[1], c1[1]])];
         if (c0[0] === 2) return [1, c0[1], vals[1], vals[2], vals[3]];
-        var hv = allVals(cards).sort(desc);
+        const hv = allVals(cards).sort(desc);
         return [0, hv[0], hv[1], hv[2], hv[3], hv[4]];
     }
     function desc(a, b) { return b - a; }
-    function allVals(cards) { var o = []; for (var i = 0; i < cards.length; i++) o.push(cardVal(cards[i])); return o; }
+    function allVals(cards) { const o = []; for (let i = 0; i < cards.length; i++) o.push(cardVal(cards[i])); return o; }
     // Highest card value in `cards` whose value is not in `exclude`. MUST NOT be derived from
     // the `vals` (group) order: groups sort by COUNT first, so a third pair / second pair sits
     // ahead of the genuine high kicker there and picking from it awarded the wrong pot
     // (e.g. AAKK2 2 Q scored its kicker as the 2, not the Q).
     function bestExcluding(cards, exclude) {
-        var best = 0;
-        for (var i = 0; i < cards.length; i++) {
-            var v = cardVal(cards[i]);
+        let best = 0;
+        for (let i = 0; i < cards.length; i++) {
+            let v = cardVal(cards[i]);
             if (exclude.indexOf(v) !== -1) continue;
             if (v > best) best = v;
         }
@@ -1529,9 +1529,9 @@
     }
 
     function compareScores(a, b) {
-        var n = Math.max(a.length, b.length);
-        for (var i = 0; i < n; i++) {
-            var x = a[i] || 0, y = b[i] || 0;
+        let n = Math.max(a.length, b.length);
+        for (let i = 0; i < n; i++) {
+            const x = a[i] || 0, y = b[i] || 0;
             if (x !== y) return x - y;
         }
         return 0;
@@ -1543,28 +1543,28 @@
     function nextSeat(st, seat) { return (seat + 1) % st.numPlayers; }
     // Next seat that can still voluntarily act (in the hand, not folded, not all-in, has chips).
     function nextToAct(st, seat) {
-        for (var k = 1; k <= st.numPlayers; k++) {
-            var s = (seat + k) % st.numPlayers;
+        for (let k = 1; k <= st.numPlayers; k++) {
+            let s = (seat + k) % st.numPlayers;
             if (st.inHand[s] && !st.folded[s] && !st.allIn[s] && st.stacks[s] > 0) return s;
         }
         return -1;
     }
     // First seat left of the button that is still in the hand (used to open postflop streets).
     function firstLeftOfButton(st) {
-        for (var k = 1; k <= st.numPlayers; k++) {
-            var s = (st.button + k) % st.numPlayers;
+        for (let k = 1; k <= st.numPlayers; k++) {
+            let s = (st.button + k) % st.numPlayers;
             if (st.inHand[s] && !st.folded[s]) return s;
         }
         return -1;
     }
-    function activeCount(st) { var n = 0; for (var s = 0; s < st.numPlayers; s++) if (st.inHand[s] && !st.folded[s]) n++; return n; }
-    function canActCount(st) { var n = 0; for (var s = 0; s < st.numPlayers; s++) if (st.inHand[s] && !st.folded[s] && !st.allIn[s] && st.stacks[s] > 0) n++; return n; }
+    function activeCount(st) { let n = 0; for (let s = 0; s < st.numPlayers; s++) if (st.inHand[s] && !st.folded[s]) n++; return n; }
+    function canActCount(st) { let n = 0; for (let s = 0; s < st.numPlayers; s++) if (st.inHand[s] && !st.folded[s] && !st.allIn[s] && st.stacks[s] > 0) n++; return n; }
 
     // ── hand lifecycle ────────────────────────────────────────────────────────────
     // Move `amt` chips from a seat's stack into the pot; caps at the stack (all-in) and
     // tracks both this-street bet and the hand-total committed (for side pots).
     function putIn(st, seat, amt) {
-        var pay = Math.min(amt, st.stacks[seat]);
+        const pay = Math.min(amt, st.stacks[seat]);
         st.stacks[seat] -= pay;
         st.bet[seat] += pay;
         st.committed[seat] += pay;
@@ -1581,9 +1581,9 @@
     // (blinds, currentBet, whose turn) is CARD-INDEPENDENT, so the client's replay of the
     // betting is byte-identical to the server's authority with no deck knowledge at all.
     function newHand(numPlayers, button, stacks, sb, bb, seed) {
-        var online = (seed == null);
-        var deck = online ? [] : freshDeck(makeRng(seed));
-        var st = {
+        const online = (seed == null);
+        const deck = online ? [] : freshDeck(makeRng(seed));
+        const st = {
             numPlayers: numPlayers, button: button, sb: sb, bb: bb, online: online,
             deck: deck, hole: [], board: [],
             stacks: stacks.slice(),
@@ -1592,7 +1592,7 @@
             toAct: -1, lastAggressor: -1,
             pots: [], result: null
         };
-        for (var s = 0; s < numPlayers; s++) {
+        for (let s = 0; s < numPlayers; s++) {
             st.bet.push(0); st.committed.push(0); st.folded.push(false);
             st.allIn.push(false); st.acted.push(false); st.noReopen.push(false);
             st.inHand.push(stacks[s] > 0);
@@ -1605,14 +1605,14 @@
         st.button = button;
         // deal 2 hole cards to each in-hand seat (button+1 first, like a real deal). Online the
         // deck is empty and hole cards arrive privately per seat, so skip the deal.
-        if (!online) for (var round = 0; round < 2; round++) {
-            for (var k = 1; k <= numPlayers; k++) {
-                var seat = (button + k) % numPlayers;
+        if (!online) for (let round = 0; round < 2; round++) {
+            for (let k = 1; k <= numPlayers; k++) {
+                const seat = (button + k) % numPlayers;
                 if (st.inHand[seat]) st.hole[seat].push(st.deck.shift());
             }
         }
         // blinds. Heads-up: button posts the small blind and acts first preflop.
-        var sbSeat, bbSeat;
+        let sbSeat, bbSeat;
         if (activeSeatCount(st) === 2) {
             sbSeat = button; bbSeat = nextOccupied(st, button);
         } else {
@@ -1640,19 +1640,19 @@
         }
         return st;
     }
-    function activeSeatCount(st) { var n = 0; for (var s = 0; s < st.numPlayers; s++) if (st.inHand[s]) n++; return n; }
+    function activeSeatCount(st) { let n = 0; for (let s = 0; s < st.numPlayers; s++) if (st.inHand[s]) n++; return n; }
     function nextOccupied(st, seat) {
-        for (var k = 1; k <= st.numPlayers; k++) { var s = (seat + k) % st.numPlayers; if (st.inHand[s]) return s; }
+        for (let k = 1; k <= st.numPlayers; k++) { let s = (seat + k) % st.numPlayers; if (st.inHand[s]) return s; }
         return seat;
     }
 
     // What can `seat` legally do right now?
     function legalActions(st, seat) {
-        var out = { canFold: false, canCheck: false, canCall: false, callAmount: 0,
+        const out = { canFold: false, canCheck: false, canCall: false, callAmount: 0,
                     canRaise: false, minRaiseTo: 0, maxRaiseTo: 0 };
         if (st.street === "over" || st.street === "showdown") return out;
         if (seat !== st.toAct || !st.inHand[seat] || st.folded[seat] || st.allIn[seat]) return out;
-        var toCall = st.currentBet - st.bet[seat];
+        const toCall = st.currentBet - st.bet[seat];
         out.canFold = true;
         if (toCall <= 0) out.canCheck = true;
         else { out.canCall = true; out.callAmount = Math.min(toCall, st.stacks[seat]); }
@@ -1660,7 +1660,7 @@
         // capped by the stack (a short stack can shove for less as an all-in). `noReopen`
         // marks seats that had already matched the bet when a SHORT all-in came in: they owe
         // the shove's remainder but standard NLHE does not let them re-raise it.
-        var maxTo = st.bet[seat] + st.stacks[seat];
+        const maxTo = st.bet[seat] + st.stacks[seat];
         if (maxTo > st.currentBet && !(st.noReopen && st.noReopen[seat])) {
             out.canRaise = true;
             out.minRaiseTo = Math.min(maxTo, st.currentBet + st.minRaise);
@@ -1673,8 +1673,8 @@
     // Returns true on success. Advances the turn, closes the street, and runs showdown as
     // needed. Illegal actions are rejected (return false) so the server can validate.
     function applyAction(st, seat, action) {
-        var la = legalActions(st, seat);
-        var t = action.type;
+        const la = legalActions(st, seat);
+        let t = action.type;
         if (t === "fold") {
             if (!la.canFold) return false;
             st.folded[seat] = true;
@@ -1685,11 +1685,11 @@
             putIn(st, seat, st.currentBet - st.bet[seat]);
         } else if (t === "raise" || t === "bet") {
             if (!la.canRaise) return false;
-            var to = action.to | 0;
+            const to = action.to | 0;
             // clamp: at least minRaiseTo (unless it's an all-in shove), at most the whole stack
             if (to > la.maxRaiseTo) return false;
             if (to < la.minRaiseTo && to !== la.maxRaiseTo) return false;
-            var raiseSize = to - st.currentBet;
+            const raiseSize = to - st.currentBet;
             putIn(st, seat, to - st.bet[seat]);
             // A full-size raise reopens the action; a short all-in that doesn't reach the
             // min-raise does NOT (matched players don't get to re-raise). Standard NLHE.
@@ -1704,7 +1704,7 @@
             } else {
                 // Short all-in: only seats that still owe chips must act again, and they may only
                 // call or fold. Seats that already matched the previous currentBet are done.
-                for (var s2 = 0; s2 < st.numPlayers; s2++) {
+                for (let s2 = 0; s2 < st.numPlayers; s2++) {
                     if (s2 === seat) continue;
                     if (st.bet[s2] < st.currentBet) { st.acted[s2] = false; st.noReopen[s2] = true; }
                 }
@@ -1717,17 +1717,17 @@
         return true;
     }
     function resetActedExcept(st, seat) {
-        for (var s = 0; s < st.numPlayers; s++) if (s !== seat) st.acted[s] = false;
+        for (let s = 0; s < st.numPlayers; s++) if (s !== seat) st.acted[s] = false;
     }
     // Clear the "you may call but not re-raise" marks (set by a short all-in). Called whenever a
     // full-size raise reopens the action and at the start of every new street.
     function clearNoReopen(st) {
-        for (var s = 0; s < st.numPlayers; s++) st.noReopen[s] = false;
+        for (let s = 0; s < st.numPlayers; s++) st.noReopen[s] = false;
     }
 
     // Is the current betting round complete?
     function roundOver(st) {
-        for (var s = 0; s < st.numPlayers; s++) {
+        for (let s = 0; s < st.numPlayers; s++) {
             if (!st.inHand[s] || st.folded[s] || st.allIn[s]) continue;
             if (!st.acted[s]) return false;
             if (st.bet[s] !== st.currentBet) return false;
@@ -1741,21 +1741,21 @@
         // at most one player can still act → no more betting; run out the board
         if (canActCount(st) <= 1 && roundOver(st)) { runout(st); return; }
         if (roundOver(st)) { nextStreet(st); return; }
-        var nxt = nextToAct(st, st.toAct);
+        const nxt = nextToAct(st, st.toAct);
         st.toAct = nxt;
     }
 
-    var STREETS = { preflop: "flop", flop: "turn", turn: "river", river: "showdown" };
+    const STREETS = { preflop: "flop", flop: "turn", turn: "river", river: "showdown" };
     // Online the deck is empty and the board is filled from the server's BOARD events, so
     // dealing is a no-op here - betting never reads st.board, only the display does.
-    function dealBoard(st, n) { if (st.online) return; for (var i = 0; i < n; i++) st.board.push(st.deck.shift()); }
+    function dealBoard(st, n) { if (st.online) return; for (let i = 0; i < n; i++) st.board.push(st.deck.shift()); }
 
     function nextStreet(st) {
         // clear the street's bets (committed already holds them for side pots)
-        for (var s = 0; s < st.numPlayers; s++) { st.bet[s] = 0; st.acted[s] = false; }
+        for (let s = 0; s < st.numPlayers; s++) { st.bet[s] = 0; st.acted[s] = false; }
         st.currentBet = 0; st.minRaise = st.bb; st.lastAggressor = -1;
         clearNoReopen(st);                  // last street's short-shove restrictions expire
-        var nx = STREETS[st.street];
+        const nx = STREETS[st.street];
         if (nx === "flop") dealBoard(st, 3);
         else if (nx === "turn" || nx === "river") dealBoard(st, 1);
         st.street = nx;
@@ -1771,7 +1771,7 @@
     // community cards and go to showdown.
     function runout(st) {
         while (st.street !== "showdown") {
-            var nx = STREETS[st.street];
+            const nx = STREETS[st.street];
             if (nx === "flop") dealBoard(st, 3);
             else if (nx === "turn" || nx === "river") dealBoard(st, 1);
             st.street = nx;
@@ -1787,12 +1787,12 @@
     // so we re-run the same terminal checks `advance` does, but only hand `toAct` forward when the
     // LEAVER was the one on the clock (otherwise the current actor keeps their turn).
     function leaveSeat(st, seat) {
-        var wasLive = st.inHand[seat] && !st.folded[seat];
+        const wasLive = st.inHand[seat] && !st.folded[seat];
         st.stacks[seat] = 0;                       // forfeit remaining chips → out of all future hands
         if (!wasLive) return;
         st.folded[seat] = true;
         st.acted[seat] = true;                     // don't let roundOver wait on a seat that's gone
-        var wasToAct = st.toAct === seat;
+        const wasToAct = st.toAct === seat;
         if (activeCount(st) <= 1) { finish(st); return; }
         if (canActCount(st) <= 1 && roundOver(st)) { runout(st); return; }
         if (roundOver(st)) { nextStreet(st); return; }
@@ -1801,9 +1801,9 @@
 
     // Single player left (all others folded): they take the pot uncontested, no cards shown.
     function finish(st) {
-        var winner = -1;
+        let winner = -1;
         for (var s = 0; s < st.numPlayers; s++) if (st.inHand[s] && !st.folded[s]) { winner = s; break; }
-        var total = 0;
+        let total = 0;
         for (s = 0; s < st.numPlayers; s++) total += st.committed[s];
         if (winner >= 0) st.stacks[winner] += total;
         st.pots = [{ amount: total, winners: winner >= 0 ? [winner] : [] }];
@@ -1819,13 +1819,13 @@
     // from committed[] (card-independent) so the deferred resolution is identical to the server.
     function showdown(st) {
         if (st.online && !st._resolving) { st.street = "showdown"; st.toAct = -1; return; }
-        var contribs = st.committed.slice();
-        var pots = [];
+        const contribs = st.committed.slice();
+        const pots = [];
         while (true) {
-            var min = Infinity, any = false, s;
+            let min = Infinity, any = false, s;
             for (s = 0; s < st.numPlayers; s++) if (contribs[s] > 0) { any = true; if (contribs[s] < min) min = contribs[s]; }
             if (!any) break;
-            var amount = 0, eligible = [];
+            let amount = 0, eligible = [];
             for (s = 0; s < st.numPlayers; s++) {
                 if (contribs[s] > 0) {
                     amount += min; contribs[s] -= min;
@@ -1835,16 +1835,16 @@
             pots.push({ amount: amount, eligible: eligible });
         }
         // evaluate every contender once
-        var scores = {};
+        const scores = {};
         for (var i = 0; i < st.numPlayers; i++)
             if (st.inHand[i] && !st.folded[i]) scores[i] = evalSeat(st.hole[i], st.board);
 
-        var resultPots = [];
+        const resultPots = [];
         for (i = 0; i < pots.length; i++) {
-            var p = pots[i];
-            var best = null, winners = [];
-            for (var j = 0; j < p.eligible.length; j++) {
-                var seat = p.eligible[j], sc = scores[seat];
+            const p = pots[i];
+            let best = null, winners = [];
+            for (let j = 0; j < p.eligible.length; j++) {
+                const seat = p.eligible[j], sc = scores[seat];
                 if (!best || compareScores(sc, best) > 0) { best = sc; winners = [seat]; }
                 else if (compareScores(sc, best) === 0) winners.push(seat);
             }
@@ -1859,9 +1859,9 @@
     // Split a pot among winners; odd chips go to the first winner left of the button.
     function distribute(st, amount, winners) {
         if (winners.length === 0) return;
-        var each = Math.floor(amount / winners.length);
-        var rem = amount - each * winners.length;
-        var ordered = winners.slice().sort(function (a, b) {
+        const each = Math.floor(amount / winners.length);
+        const rem = amount - each * winners.length;
+        const ordered = winners.slice().sort(function (a, b) {
             return seatOrderFromButton(st, a) - seatOrderFromButton(st, b);
         });
         for (var i = 0; i < ordered.length; i++) st.stacks[ordered[i]] += each;
@@ -1869,12 +1869,12 @@
     }
     function seatOrderFromButton(st, seat) { return (seat - st.button + st.numPlayers) % st.numPlayers; }
     function mergeWinners(pots) {
-        var set = {}, out = [];
-        for (var i = 0; i < pots.length; i++) for (var j = 0; j < pots[i].winners.length; j++) set[pots[i].winners[j]] = 1;
-        for (var k in set) if (set.hasOwnProperty(k)) out.push(parseInt(k, 10));
+        const set = {}, out = [];
+        for (let i = 0; i < pots.length; i++) for (let j = 0; j < pots[i].winners.length; j++) set[pots[i].winners[j]] = 1;
+        for (let k in set) if (set.hasOwnProperty(k)) out.push(parseInt(k, 10));
         return out;
     }
-    function totalPot(st) { var t = 0; for (var s = 0; s < st.numPlayers; s++) t += st.committed[s]; return t; }
+    function totalPot(st) { let t = 0; for (let s = 0; s < st.numPlayers; s++) t += st.committed[s]; return t; }
 
     // ONLINE showdown resolver: the client calls this after filling st.hole (from SHOW events)
     // and st.board (from BOARD events) for a hand that reached "showdown" via the deferred path
@@ -1892,11 +1892,11 @@
     // rates its made hand's category. It calls small bets, raises with strength, and folds
     // weak hands to real pressure - plenty for a friendly table, no bluff modelling.
     function preflopStrength(hole) {
-        var a = cardVal(hole[0]), b = cardVal(hole[1]);
-        var hi = Math.max(a, b), lo = Math.min(a, b);
-        var pair = a === b, suited = suitOf(hole[0]) === suitOf(hole[1]);
-        var gap = hi - lo;
-        var s = 0;
+        const a = cardVal(hole[0]), b = cardVal(hole[1]);
+        const hi = Math.max(a, b), lo = Math.min(a, b);
+        const pair = a === b, suited = suitOf(hole[0]) === suitOf(hole[1]);
+        const gap = hi - lo;
+        let s = 0;
         if (pair) s = 0.5 + hi / 28;                       // 0.57 (22) … 1.0 (AA)
         else {
             s = (hi + lo) / 40;                            // high-card weight
@@ -1907,28 +1907,28 @@
         return s;
     }
     function madeStrength(st, seat) {
-        var sc = evalSeat(st.hole[seat], st.board);
+        const sc = evalSeat(st.hole[seat], st.board);
         return sc[0] / 8 + (sc[1] || 0) / 200;             // category dominates, top rank breaks ties
     }
     function botAction(st, seat, rng) {
-        var la = legalActions(st, seat);
+        const la = legalActions(st, seat);
         if (!la.canFold && !la.canCheck) return { type: "check" };
-        var r = rng ? rng() : 0.5;
-        var strength = (st.street === "preflop") ? preflopStrength(st.hole[seat]) : madeStrength(st, seat);
-        var toCall = la.canCall ? la.callAmount : 0;
-        var pot = totalPot(st);
-        var potOdds = toCall > 0 ? toCall / (pot + toCall) : 0;
+        const r = rng ? rng() : 0.5;
+        const strength = (st.street === "preflop") ? preflopStrength(st.hole[seat]) : madeStrength(st, seat);
+        const toCall = la.canCall ? la.callAmount : 0;
+        const pot = totalPot(st);
+        const potOdds = toCall > 0 ? toCall / (pot + toCall) : 0;
 
         // strong hand → raise sometimes
         if (la.canRaise && strength > 0.6 && r < 0.6) {
-            var target = st.currentBet + Math.max(st.minRaise, Math.floor(pot * (0.5 + strength * 0.5)));
+            let target = st.currentBet + Math.max(st.minRaise, Math.floor(pot * (0.5 + strength * 0.5)));
             target = Math.min(target, la.maxRaiseTo);
             target = Math.max(target, la.minRaiseTo);
             return { type: "raise", to: target };
         }
         if (la.canCheck) {
             if (la.canRaise && strength > 0.72 && r < 0.5) {
-                var t2 = Math.min(la.maxRaiseTo, Math.max(la.minRaiseTo, st.bb * 3));
+                const t2 = Math.min(la.maxRaiseTo, Math.max(la.minRaiseTo, st.bb * 3));
                 return { type: "raise", to: t2 };
             }
             return { type: "check" };

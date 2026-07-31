@@ -2,7 +2,7 @@
 /* global $ */
 (function () {
     "use strict";
-    var MG = $.MG = $.MG || {};
+    const MG = $.MG = $.MG || {};
     // Indexed by the place code /api/geoinfo returns: 0..5 = region only, and at 6 and above
     // (place - 6) packs country * 6 + continent (see MG.Api.geoPlace).
     MG.GeoCountries = ["Angola","Argentina","Armenia","Australia","Austria","Azerbaijan","Bahamas","Bangladesh","Belarus","Belgium","Benin","Bolivia","Botswana","Brazil","Bulgaria","Cambodia","Cameroon","Canada","Central African Republic","Chile","China","Colombia","Comoros","Croatia","Cyprus","Czechia","Côte d’Ivoire","Democratic Republic of the Congo","Denmark","Ecuador","Egypt","Estonia","Ethiopia","Fiji","France","Gambia","Georgia","Germany","Ghana","Greece","Guam","Guernsey","Guinea","Guyana","Hong Kong","Hungary","India","Indonesia","Iran","Iraq","Ireland","Israel","Italy","Japan","Kazakhstan","Kenya","Kuwait","Latvia","Liberia","Lithuania","Macao","Madagascar","Malaysia","Malta","Mauritania","Mexico","Moldova","Mongolia","Morocco","Mozambique","Myanmar","Nauru","Nepal","Netherlands","New Caledonia","New Zealand","Nigeria","Norfolk Island","Norway","Oman","Palau","Palestine","Panama","Papua New Guinea","Paraguay","Peru","Philippines","Poland","Portugal","Romania","Russia","Rwanda","Saudi Arabia","Senegal","Serbia","Sierra Leone","Somalia","South Africa","South Korea","South Sudan","Spain","Sri Lanka","Suriname","Sweden","Switzerland","Taiwan","Tajikistan","Tanzania","Thailand","Timor-Leste","Tunisia","Turkey","Uganda","Ukraine","United Arab Emirates","United Kingdom","United States of America","Uruguay","Uzbekistan","Venezuela","Vietnam","Zimbabwe"];

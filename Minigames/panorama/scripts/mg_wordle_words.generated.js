@@ -27,7 +27,7 @@
  * SOFTWARE.
  */
 (function () {
-    var MG = $.MG = $.MG || {};
+    const MG = $.MG = $.MG || {};
     if (MG.WordleWords) return;
     MG.WordleWords = {
         answers: (

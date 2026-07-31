@@ -89,7 +89,7 @@ assert(/viewLeft = panX \* MAP_W \* mapZoomLevel/.test(controller) &&
 
 // Round timer: 60s, not the shared 25s default, and it must be released on destroy or its
 // $.Schedule chain keeps firing at a deleted panel.
-assert(/var ROUND_SECS = 60;/.test(controller) &&
+assert(/\b(?:var|let|const) ROUND_SECS = 60;/.test(controller) &&
     /roundTimer\.start\(onRoundTimeout, ROUND_SECS\)/.test(controller),
     "GeoGuesser must run a 60s per-round timer");
 assert(/if \(selectedCell < 0\) selectedCell = 0;[\s\S]{0,120}submitGuess\(\);/.test(controller),
@@ -108,10 +108,12 @@ assert(/\.mg-geo-marker\s*\{[^}]*border:\s*1px solid #ffffff/.test(css),
 
 // The hit grid stays 64x32 PANELS; zoom is what makes a guess finer. FULL_W/H is the
 // authoritative space and must equal GRID * MAP_ZOOM_MAX, and match the worker.
-assert(/var GRID_W = 64, GRID_H = 32/.test(controller),
+// These assertions pin the VALUES, not the declaration keyword: `(?:var|let|const)` so the
+// ES6 pass (and any later one) cannot break a check that is really about 64x32 / 512x256.
+assert(/\b(?:var|let|const) GRID_W = 64, GRID_H = 32/.test(controller),
     "GeoGuesser hit grid must stay 64x32 panels");
-assert(/var FULL_W = 512, FULL_H = 256;/.test(controller) &&
-    /var MAP_W = 500, MAP_H = 250, MAP_ZOOM_MAX = 8;/.test(controller),
+assert(/\b(?:var|let|const) FULL_W = 512, FULL_H = 256;/.test(controller) &&
+    /\b(?:var|let|const) MAP_W = 500, MAP_H = 250, MAP_ZOOM_MAX = 8;/.test(controller),
     "authoritative guess space must be GRID * MAP_ZOOM_MAX = 512x256");
 const worker = fs.readFileSync(path.join(ROOT, "server", "worker.core.js"), "utf8");
 assert(/const GEO_GRID_W = 512;/.test(worker) && /const GEO_GRID_H = 256;/.test(worker),

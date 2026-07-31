@@ -11,32 +11,32 @@
 (function () {
     "use strict";
 
-    var MG = $.MG = $.MG || {};
+    const MG = $.MG = $.MG || {};
     if (MG.GeoGuesser) return;
     MG.GeoGuesser = {};
 
     // GRID_W/H is the size of the on-screen hit grid (panel count), NOT the guess resolution.
     // At zoom Z it covers 1/Z of the world, so the addressable resolution is GRID_W*Z x GRID_H*Z.
-    var GRID_W = 64, GRID_H = 32, ROUNDS = 5;
+    const GRID_W = 64, GRID_H = 32, ROUNDS = 5;
     // FULL_W/H is the AUTHORITATIVE guess space and must match GEO_GRID_W/H in worker.core.js
     // (mirrored on MG.Net so there is one number to change). GRID_* x MAP_ZOOM_MAX lands exactly
     // here: 64*8 = 512, 32*8 = 256.
-    var FULL_W = 512, FULL_H = 256;
-    var MARKER_SZ = 9;
+    const FULL_W = 512, FULL_H = 256;
+    const MARKER_SZ = 9;
     // ⚠ Must match .mg-geo-viewport in mg.css. The viewport is 860 wide so it lines up with the
     // map row below it (all four GeoGuesser rows are 860).
-    var VIEW_W = 860, VIEW_H = 360;
+    const VIEW_W = 860, VIEW_H = 360;
     // ⚠ Must match .mg-geo-map / .mg-geo-map-zoom.
-    var MAP_W = 500, MAP_H = 250, MAP_ZOOM_MAX = 8;
+    const MAP_W = 500, MAP_H = 250, MAP_ZOOM_MAX = 8;
     // Two clicks inside this window are a double-click. The engine has no ondblclick event.
-    var MULTI_CLICK_MS = 400;
-    var PANO_W = 2880, PANO_H = 1440, PANO_STEP = PANO_W - 2;
+    const MULTI_CLICK_MS = 400;
+    const PANO_W = 2880, PANO_H = 1440, PANO_STEP = PANO_W - 2;
     // ⚠ Declared AFTER PANO_H, not before: `var` hoists the name but not the value, so reading
     // PANO_H one line earlier yields undefined and this constant silently becomes NaN — which
     // would break tilt entirely while every syntax check still passed.
     // The strip is 1440px tall for 180° of pitch, i.e. 8px per degree. The old hard-coded 4
     // moved the image at half the rate the geometry calls for.
-    var PITCH_PX_PER_DEG = PANO_H / 180;
+    const PITCH_PX_PER_DEG = PANO_H / 180;
     // ⚠ `"stretch-to-fit"` is NOT a token this engine accepts. Grepping every <Image> in
     // G:\GameTracking-Deadlock yields only: stretch-to-fit-preserve-aspect (31), cover (4),
     // stretch-to-fit-y-preserve-aspect (3), stretch-to-cover-preserve-aspect (2), contain (2)
@@ -49,34 +49,34 @@
     // strip being exactly PANO_W x PANO_H. For the 2:1 equirectangular sources it is a pixel-exact
     // fill with zero cropping; a preserve-aspect token would re-introduce letterboxing (and this
     // whole class of bug) the instant a source is not exactly 2:1.
-    var PANO_SCALING = "cover";
-    var REGIONS = ["Europe", "North America", "South America", "Africa", "Asia", "Oceania"];
+    const PANO_SCALING = "cover";
+    const REGIONS = ["Europe", "North America", "South America", "Africa", "Asia", "Oceania"];
 
     // Render the reveal's place code (see MG.Api.geoPlace). Codes at or above 6 pack a country
     // index and its display continent, both decided offline at pool build time; below 6 the
     // panorama could not be placed and only the region is known.
     function placeLabel(place) {
         if (place < 6) return REGIONS[place] || "Location revealed";
-        var packed = place - 6;
-        var names = MG.GeoCountries || [];
-        var country = names[Math.floor(packed / 6)];
-        var region = REGIONS[packed % 6];
+        const packed = place - 6;
+        const names = MG.GeoCountries || [];
+        const country = names[Math.floor(packed / 6)];
+        const region = REGIONS[packed % 6];
         if (!country) return region || "Location revealed";
         return region ? region + " · " + country : country;
     }
 
     function addLabel(parent, cls, text) {
-        var label = $.CreatePanel("Label", parent, "");
-        var classes = String(cls || "").split(/\s+/);
-        for (var i = 0; i < classes.length; i++) if (classes[i]) label.AddClass(classes[i]);
+        let label = $.CreatePanel("Label", parent, "");
+        const classes = String(cls || "").split(/\s+/);
+        for (let i = 0; i < classes.length; i++) if (classes[i]) label.AddClass(classes[i]);
         label.text = text || "";
         return label;
     }
 
     function addButton(parent, cls, text, callback) {
-        var button = $.CreatePanel("Button", parent, "");
-        var classes = String(cls || "").split(/\s+/);
-        for (var i = 0; i < classes.length; i++) if (classes[i]) button.AddClass(classes[i]);
+        const button = $.CreatePanel("Button", parent, "");
+        const classes = String(cls || "").split(/\s+/);
+        for (let i = 0; i < classes.length; i++) if (classes[i]) button.AddClass(classes[i]);
         button._mgLabel = addLabel(button, "mg-geo-button-label", text);
         button.SetPanelEvent("onactivate", callback);
         return button;
@@ -84,64 +84,64 @@
 
     function createGeoGuesser(container, session) {
         session = session || {};
-        var destroyed = false;
-        var root = $.CreatePanel("Panel", container, "MG_GeoGuesser");
+        let destroyed = false;
+        const root = $.CreatePanel("Panel", container, "MG_GeoGuesser");
         root.AddClass("mg-geo");
-        var code = session.code;
-        var tok = session.tok || "";
-        var mySeat = session.isHost ? 0 : 1;
-        var solo = !!session.solo;
-        var currentRound = -1;
-        var revealRound = -1;
-        var selectedCell = -1;
-        var yaw = 0, pitch = 0;
-        var panoramaGen = 0;
-        var panoramaReady = false;
-        var pollMisses = 0;
-        var sendingGuess = false;
+        const code = session.code;
+        const tok = session.tok || "";
+        const mySeat = session.isHost ? 0 : 1;
+        const solo = !!session.solo;
+        let currentRound = -1;
+        let revealRound = -1;
+        let selectedCell = -1;
+        let yaw = 0, pitch = 0;
+        let panoramaGen = 0;
+        let panoramaReady = false;
+        let pollMisses = 0;
+        let sendingGuess = false;
         // Set once this seat's guess is accepted by the server. Distinct from sendingGuess (in
         // flight) and from the reveal: between locking in and the opponent answering, the round is
         // still open but this player is done, so the clock must be off.
-        var guessLocked = false;
-        var sendingNext = false;
-        var finished = false;
-        var revealReadsPending = 0;
-        var scores = [0, 0];
-        var cells = [];
-        var panoImages = [];
-        var dragGhost = null, dragStartPos = null;
-        var syncingCameraSliders = false;
-        var lastStageX = null;
-        var mapZoomLevel = 1, clickRun = 0, lastClickAt = 0;
-        var panX = 0, panY = 0;
-        var markers = [];
-        var cityLabels = [];
+        let guessLocked = false;
+        let sendingNext = false;
+        let finished = false;
+        let revealReadsPending = 0;
+        const scores = [0, 0];
+        const cells = [];
+        let panoImages = [];
+        let dragGhost = null, dragStartPos = null;
+        let syncingCameraSliders = false;
+        let lastStageX = null;
+        let mapZoomLevel = 1, clickRun = 0, lastClickAt = 0;
+        let panX = 0, panY = 0;
+        let markers = [];
+        const cityLabels = [];
 
-        var stats = $.CreatePanel("Panel", root, "");
+        const stats = $.CreatePanel("Panel", root, "");
         stats.AddClass("mg-geo-stats");
-        var roundLabel = addLabel(stats, "mg-geo-stat", "Round 1 / " + ROUNDS);
-        var viewLabel = addLabel(stats, "mg-geo-view-label", "Drag to look around");
-        var scoreLabel = addLabel(stats, "mg-geo-stat mg-geo-score",
+        const roundLabel = addLabel(stats, "mg-geo-stat", "Round 1 / " + ROUNDS);
+        const viewLabel = addLabel(stats, "mg-geo-view-label", "Drag to look around");
+        const scoreLabel = addLabel(stats, "mg-geo-stat mg-geo-score",
             solo ? "Score 0" : "You 0 · Opponent 0");
 
-        var viewport = $.CreatePanel("Panel", root, "");
+        const viewport = $.CreatePanel("Panel", root, "");
         viewport.AddClass("mg-geo-viewport");
-        var stage = $.CreatePanel("Panel", viewport, "");
+        const stage = $.CreatePanel("Panel", viewport, "");
         stage.AddClass("mg-geo-stage");
         // Arm the transition a frame after creation, the .mg-piece/.mg-dk-anim idiom: the stage's
         // first committed transform is its baseline and must not slide in from the corner.
         $.Schedule(0.0, function () {
             if (!destroyed && stage && stage.IsValid && stage.IsValid()) stage.AddClass("mg-geo-anim");
         });
-        var loading = addLabel(viewport, "mg-geo-loading", "Loading panorama…");
-        var dragHandle = $.CreatePanel("Panel", viewport, "");
+        const loading = addLabel(viewport, "mg-geo-loading", "Loading panorama…");
+        const dragHandle = $.CreatePanel("Panel", viewport, "");
         dragHandle.AddClass("mg-geo-drag-handle");
 
-        var cameraControls = $.CreatePanel("Panel", root, "");
+        const cameraControls = $.CreatePanel("Panel", root, "");
         cameraControls.AddClass("mg-geo-camera-controls");
         addLabel(cameraControls, "mg-geo-slider-label", "LOOK");
         addButton(cameraControls, "mg-geo-camera-button", "◀", function () { turn(-20, 0); });
-        var yawSlider = $.CreatePanel("Slider", cameraControls, "", { direction: "horizontal" });
+        const yawSlider = $.CreatePanel("Slider", cameraControls, "", { direction: "horizontal" });
         yawSlider.AddClass("HorizontalSlider");
         yawSlider.AddClass("mg-geo-yaw-slider");
         yawSlider.min = 0;
@@ -150,7 +150,7 @@
         addButton(cameraControls, "mg-geo-camera-button", "▶", function () { turn(20, 0); });
         addLabel(cameraControls, "mg-geo-slider-label mg-geo-pitch-label", "TILT");
         addButton(cameraControls, "mg-geo-camera-button", "▼", function () { turn(0, -10); });
-        var pitchSlider = $.CreatePanel("Slider", cameraControls, "", { direction: "horizontal" });
+        const pitchSlider = $.CreatePanel("Slider", cameraControls, "", { direction: "horizontal" });
         pitchSlider.AddClass("HorizontalSlider");
         pitchSlider.AddClass("mg-geo-pitch-slider");
         pitchSlider.min = -30;
@@ -170,16 +170,16 @@
         // and inside the column it would push the panorama down instead of floating beside it.
         // No boardW either - GeoGuesser is 860 wide against an 844 inner zone, so the board-edge
         // shove clamps back to the gutter anyway (poker/durak omit it for the same reason).
-        var ROUND_SECS = 60;
-        var roundTimer = (MG.Widgets && MG.Widgets.createTurnTimer)
+        const ROUND_SECS = 60;
+        const roundTimer = (MG.Widgets && MG.Widgets.createTurnTimer)
             ? MG.Widgets.createTurnTimer(container, {}) : null;
-        var timerOn = false;
+        let timerOn = false;
 
         // On the clock only while this seat can still act: a round is live once the panorama is up
         // and stays live until the guess is in or the reveal lands.
         function refreshTimer() {
             if (!roundTimer) return;
-            var live = !destroyed && !finished && currentRound >= 0 &&
+            const live = !destroyed && !finished && currentRound >= 0 &&
                 revealRound !== currentRound && !sendingGuess && !guessLocked;
             if (live === timerOn) return;
             timerOn = live;
@@ -198,37 +198,37 @@
             submitGuess();
         }
 
-        var lower = $.CreatePanel("Panel", root, "");
+        const lower = $.CreatePanel("Panel", root, "");
         lower.AddClass("mg-geo-lower");
-        var mapCol = $.CreatePanel("Panel", lower, "");
+        const mapCol = $.CreatePanel("Panel", lower, "");
         mapCol.AddClass("mg-geo-map-col");
-        var map = $.CreatePanel("Panel", mapCol, "");
+        const map = $.CreatePanel("Panel", mapCol, "");
         map.AddClass("mg-geo-map");
         // ⚠ ONLY the image, the city labels and the reveal markers live in the zoom wrapper, so
         // they pan and scale with the map. The hit grid is deliberately a SIBLING (below), fixed
         // over the window: if it scaled too, zooming would just enlarge the same 64x32 cells and
         // buy no precision at all — which is exactly how it behaved before.
-        var mapZoom = $.CreatePanel("Panel", map, "");
+        const mapZoom = $.CreatePanel("Panel", map, "");
         mapZoom.AddClass("mg-geo-map-zoom");
-        var mapImage = $.CreatePanel("Image", mapZoom, "", { scaling: "stretch-to-fit-preserve-aspect" });
+        const mapImage = $.CreatePanel("Image", mapZoom, "", { scaling: "stretch-to-fit-preserve-aspect" });
         mapImage.AddClass("mg-geo-map-image");
         mapImage.SetImage("s2r://panorama/images/geoguesser/world_map.vtex");
         try { mapImage.SetAttributeString("hittest", "false"); } catch (e0) {}
-        var labelLayer = $.CreatePanel("Panel", mapZoom, "");
+        const labelLayer = $.CreatePanel("Panel", mapZoom, "");
         labelLayer.AddClass("mg-geo-label-layer");
         try { labelLayer.SetAttributeString("hittest", "false"); } catch (e0b) {}
-        var markerLayer = $.CreatePanel("Panel", mapZoom, "");
+        const markerLayer = $.CreatePanel("Panel", mapZoom, "");
         markerLayer.AddClass("mg-geo-marker-layer");
         try { markerLayer.SetAttributeString("hittest", "false"); } catch (e0c) {}
 
         // The hit grid: 64x32 transparent buttons pinned to the 500x250 window. At zoom Z they
         // span 1/Z of the world, so the addressable resolution is 64Z x 32Z — 512x256 at 8x.
-        var grid = $.CreatePanel("Panel", map, "");
+        const grid = $.CreatePanel("Panel", map, "");
         grid.AddClass("mg-geo-grid");
-        for (var row = 0; row < GRID_H; row++) {
+        for (let row = 0; row < GRID_H; row++) {
             var rowPanel = $.CreatePanel("Panel", grid, "");
             rowPanel.AddClass("mg-geo-grid-row");
-            for (var col = 0; col < GRID_W; col++) {
+            for (let col = 0; col < GRID_W; col++) {
                 (function (r, c) {
                     var hit = $.CreatePanel("Button", rowPanel, "");
                     hit.AddClass("mg-geo-cell");
@@ -237,25 +237,25 @@
                 })(row, col);
             }
         }
-        var mapHint = addLabel(mapCol, "mg-geo-map-hint",
+        const mapHint = addLabel(mapCol, "mg-geo-map-hint",
             "Double-click to zoom in · triple-click to reset");
 
-        var side = $.CreatePanel("Panel", lower, "");
+        const side = $.CreatePanel("Panel", lower, "");
         side.AddClass("mg-geo-side");
-        var prompt = addLabel(side, "mg-geo-prompt", "Explore the panorama, then choose a point on the map.");
-        var revealPlace = addLabel(side, "mg-geo-place", "");
-        var revealCredit = addLabel(side, "mg-geo-credit", "");
+        const prompt = addLabel(side, "mg-geo-prompt", "Explore the panorama, then choose a point on the map.");
+        const revealPlace = addLabel(side, "mg-geo-place", "");
+        const revealCredit = addLabel(side, "mg-geo-credit", "");
         // Eats the slack so the action button still sits on the bottom edge now that the labels
         // above are fit-children (an empty reveal label collapses to zero instead of holding 88px).
         $.CreatePanel("Panel", side, "").AddClass("mg-geo-side-spacer");
-        var actionButton = addButton(side, "mg-btn mg-btn-primary mg-geo-action", "SUBMIT GUESS", submitGuess);
+        const actionButton = addButton(side, "mg-btn mg-btn-primary mg-geo-action", "SUBMIT GUESS", submitGuess);
 
         function outerStatus(text) {
             if (session.onStatus) session.onStatus(text);
         }
 
         function setAction(text, enabled, callback) {
-            var label = actionButton._mgLabel;
+            let label = actionButton._mgLabel;
             if (label) label.text = text;
             actionButton.SetHasClass("mg-btn-inert", !enabled);
             try { actionButton.enabled = !!enabled; } catch (e) {}
@@ -277,14 +277,14 @@
             yawSlider.value = Math.round(yaw);
             pitchSlider.value = Math.round(pitch);
             syncingCameraSliders = false;
-            var point = PANO_STEP + yaw * PANO_STEP / 360;
-            var x = VIEW_W / 2 - point;
-            var y = -(PANO_H - VIEW_H) / 2 + pitch * PITCH_PX_PER_DEG;
+            const point = PANO_STEP + yaw * PANO_STEP / 360;
+            const x = VIEW_W / 2 - point;
+            const y = -(PANO_H - VIEW_H) / 2 + pitch * PITCH_PX_PER_DEG;
             // A 359°→0° step re-centres the strip by a whole PANO_STEP. Left animated, that 2878px
             // slide plays out over the 0.04s transition and looks like a full-speed spin. Detect it
             // by size (any genuine turn moves far less than half a strip) and commit that one frame
             // with the transition class removed.
-            var wrapped = lastStageX !== null && Math.abs(x - lastStageX) > PANO_STEP / 2;
+            const wrapped = lastStageX !== null && Math.abs(x - lastStageX) > PANO_STEP / 2;
             if (wrapped) stage.RemoveClass("mg-geo-anim");
             stage.style.transform = "translate3d(" + Math.round(x) + "px, " + Math.round(y) + "px, 0px)";
             lastStageX = x;
@@ -309,30 +309,30 @@
         }
 
         function cellFromFraction(fx, fy) {
-            var x = Math.max(0, Math.min(FULL_W - 1, Math.floor(fx * FULL_W)));
-            var y = Math.max(0, Math.min(FULL_H - 1, Math.floor(fy * FULL_H)));
+            const x = Math.max(0, Math.min(FULL_W - 1, Math.floor(fx * FULL_W)));
+            const y = Math.max(0, Math.min(FULL_H - 1, Math.floor(fy * FULL_H)));
             return y * FULL_W + x;
         }
 
         // Inverse: where a world cell sits inside the CURRENT window, in grid units. Returns null
         // when it is scrolled out of view, so a marker off-window is simply not drawn.
         function fractionToWindow(fx, fy) {
-            var wx = (fx - panX) * mapZoomLevel;
-            var wy = (fy - panY) * mapZoomLevel;
+            const wx = (fx - panX) * mapZoomLevel;
+            const wy = (fy - panY) * mapZoomLevel;
             if (wx < 0 || wx >= 1 || wy < 0 || wy >= 1) return null;
             return { x: wx * MAP_W, y: wy * MAP_H };
         }
 
         function setMapZoom(level, focusFx, focusFy) {
             mapZoomLevel = Math.max(1, Math.min(MAP_ZOOM_MAX, level));
-            var w = MAP_W * mapZoomLevel, h = MAP_H * mapZoomLevel;
+            const w = MAP_W * mapZoomLevel, h = MAP_H * mapZoomLevel;
             mapZoom.style.width = Math.round(w) + "px";
             mapZoom.style.height = Math.round(h) + "px";
             if (mapZoomLevel <= 1 || focusFx == null) {
                 panX = 0; panY = 0;
             } else {
                 // Centre the focus, then clamp so the window never runs past the map edge.
-                var span = 1 / mapZoomLevel;
+                const span = 1 / mapZoomLevel;
                 panX = Math.max(0, Math.min(1 - span, focusFx - span / 2));
                 panY = Math.max(0, Math.min(1 - span, focusFy - span / 2));
             }
@@ -347,10 +347,10 @@
         }
 
         function clickCell(row, col) {
-            var now = Date.now();
+            const now = Date.now();
             clickRun = (now - lastClickAt < MULTI_CLICK_MS) ? clickRun + 1 : 1;
             lastClickAt = now;
-            var f = worldFractionOf(row, col);
+            const f = worldFractionOf(row, col);
             // Always select first: the guess must respond on the very first click, with no
             // debounce delay waiting to find out whether a second one is coming.
             selectCell(cellFromFraction(f.x, f.y));
@@ -377,37 +377,37 @@
         // Panorama cannot measure a Label before it lays out, so estimate: radiance at 11px runs
         // about 5.6px per character. Only relative sizes matter here - the estimate decides
         // spacing, not painting.
-        var CITY_CHAR_W = 5.6, CITY_LABEL_H = 13, CITY_PAD_X = 3, CITY_PAD_Y = 2;
+        const CITY_CHAR_W = 5.6, CITY_LABEL_H = 13, CITY_PAD_X = 3, CITY_PAD_Y = 2;
 
         function refreshCityLabels() {
-            var list = MG.GeoCities || [];
-            var limit = cityRankLimit();
-            var placed = [];
+            const list = MG.GeoCities || [];
+            const limit = cityRankLimit();
+            const placed = [];
             // The window's own rectangle in the zoom layer's px space. Labels outside it are
             // culled BEFORE the overlap test: the layer is far wider than the 500px window once
             // zoomed, and an off-screen name must not win a slot from a visible one.
-            var viewLeft = panX * MAP_W * mapZoomLevel;
-            var viewTop = panY * MAP_H * mapZoomLevel;
-            var viewRight = viewLeft + MAP_W;
-            var viewBottom = viewTop + MAP_H;
-            for (var i = 0; i < list.length; i++) {
-                var city = list[i];
-                var label = cityLabels[i];
-                var show = city.r <= limit;
-                var left = 0, top = 0;
+            const viewLeft = panX * MAP_W * mapZoomLevel;
+            const viewTop = panY * MAP_H * mapZoomLevel;
+            const viewRight = viewLeft + MAP_W;
+            const viewBottom = viewTop + MAP_H;
+            for (let i = 0; i < list.length; i++) {
+                const city = list[i];
+                let label = cityLabels[i];
+                let show = city.r <= limit;
+                let left = 0, top = 0;
                 if (show) {
                     // The manifest is sorted by rank, so the first fit wins and a more prominent
                     // city always beats a lesser one for the same patch of map.
                     left = city.x * MAP_W * mapZoomLevel + 4;
                     top = city.y * MAP_H * mapZoomLevel - 7;
-                    var right = left + city.n.length * CITY_CHAR_W;
-                    var bottom = top + CITY_LABEL_H;
+                    const right = left + city.n.length * CITY_CHAR_W;
+                    const bottom = top + CITY_LABEL_H;
                     if (right < viewLeft || left > viewRight ||
                         bottom < viewTop || top > viewBottom) {
                         show = false;
                     }
-                    for (var p = 0; show && p < placed.length; p++) {
-                        var other = placed[p];
+                    for (let p = 0; show && p < placed.length; p++) {
+                        const other = placed[p];
                         if (left - CITY_PAD_X < other[2] && right + CITY_PAD_X > other[0] &&
                             top - CITY_PAD_Y < other[3] && bottom + CITY_PAD_Y > other[1]) {
                             show = false;
@@ -447,15 +447,15 @@
         }
 
         function refreshMarkers() {
-            for (var i = 0; i < markers.length; i++) {
-                var m = markers[i];
+            for (let i = 0; i < markers.length; i++) {
+                const m = markers[i];
                 if (!m.panel) {
                     m.panel = $.CreatePanel("Panel", markerLayer, "");
                     m.panel.AddClass("mg-geo-marker");
                     m.panel.AddClass(m.cls);
                     try { m.panel.SetAttributeString("hittest", "false"); } catch (e) {}
                 }
-                var at = fractionToWindow(m.x, m.y);
+                const at = fractionToWindow(m.x, m.y);
                 m.panel.visible = !!at;
                 if (!at) continue;
                 m.panel.style.transform = "translate3d(" +
@@ -465,7 +465,7 @@
         }
 
         function clearMarkers() {
-            for (var i = 0; i < markers.length; i++) {
+            for (let i = 0; i < markers.length; i++) {
                 if (markers[i].panel) { try { markers[i].panel.DeleteAsync(0); } catch (e) {} }
             }
             markers = [];
@@ -473,21 +473,21 @@
 
         yawSlider.SetPanelEvent("onvaluechanged", function () {
             if (syncingCameraSliders || !panoramaReady) return;
-            var nextYaw = Number(yawSlider.value);
+            const nextYaw = Number(yawSlider.value);
             if (!isFinite(nextYaw)) return;
             yaw = nextYaw;
             applyCamera();
         });
         pitchSlider.SetPanelEvent("onvaluechanged", function () {
             if (syncingCameraSliders || !panoramaReady) return;
-            var nextPitch = Number(pitchSlider.value);
+            const nextPitch = Number(pitchSlider.value);
             if (!isFinite(nextPitch)) return;
             pitch = nextPitch;
             applyCamera();
         });
 
         function clearPanorama() {
-            for (var i = 0; i < panoImages.length; i++) {
+            for (let i = 0; i < panoImages.length; i++) {
                 try { panoImages[i].SetImage(""); } catch (e) {}
                 try { panoImages[i].DeleteAsync(0); } catch (e2) {}
             }
@@ -534,8 +534,8 @@
             loading.text = "Loading panorama…";
             loading.style.visibility = "visible";
             clearPanorama();
-            var myGen = ++panoramaGen;
-            var url = MG.Net.getBaseUrl() + "/api/geoview.png?code=" + code +
+            const myGen = ++panoramaGen;
+            const url = MG.Net.getBaseUrl() + "/api/geoview.png?code=" + code +
                 "&tok=" + encodeURIComponent(tok) + "&round=" + round + "&rnd=" + Math.random();
             MG.Net.loadImage(url, function (image, loadedW, loadedH) {
                 if (destroyed || myGen !== panoramaGen) {
@@ -589,7 +589,7 @@
             if (finished || revealRound === currentRound || sendingGuess) return;
             selectedCell = cell;
             // One pending-guess marker at a time; the reveal adds its own on top later.
-            for (var i = markers.length - 1; i >= 0; i--) {
+            for (let i = markers.length - 1; i >= 0; i--) {
                 if (markers[i].cls !== "mg-geo-selected") continue;
                 if (markers[i].panel) { try { markers[i].panel.DeleteAsync(0); } catch (e) {} }
                 markers.splice(i, 1);
@@ -679,7 +679,7 @@
         }
 
         function readReveal(fetcher, apply) {
-            var round = currentRound;
+            const round = currentRound;
             function attempt() {
                 if (destroyed || revealRound !== round || currentRound !== round) return;
                 fetcher(function (value) {
@@ -773,7 +773,7 @@
             if (finished) return;
             finished = true;
             refreshTimer();
-            var mine = scores[mySeat], theirs = scores[1 - mySeat];
+            const mine = scores[mySeat], theirs = scores[1 - mySeat];
             if (solo) {
                 roundLabel.text = "Solo complete";
                 prompt.text = "Final score: " + mine + " / " + (ROUNDS * 750) + ".";
@@ -792,7 +792,7 @@
         function handleState(state) {
             if (state.done) { finishGame(); return; }
             if (state.round !== currentRound) beginRound(state.round);
-            var myBit = 1 << mySeat;
+            const myBit = 1 << mySeat;
             if (state.reveal) {
                 showReveal();
             } else if (state.guessMask & myBit) {
@@ -840,14 +840,14 @@
             });
             $.RegisterEventHandler("DragEnd", dragHandle, function () {
                 if (destroyed || !dragGhost) { cleanupDrag(); return; }
-                var end = MG.Widgets.winPos(dragGhost);
-                var start = dragStartPos;
+                const end = MG.Widgets.winPos(dragGhost);
+                let start = dragStartPos;
                 if (!start) {
-                    var viewPos = MG.Widgets.winPos(viewport);
+                    const viewPos = MG.Widgets.winPos(viewport);
                     if (viewPos) start = { x: viewPos.x + VIEW_W / 2, y: viewPos.y + VIEW_H / 2 };
                 }
                 if (start && end) {
-                    var dx = end.x - start.x, dy = end.y - start.y;
+                    const dx = end.x - start.x, dy = end.y - start.y;
                     if (Math.abs(dx) > 4 || Math.abs(dy) > 4) {
                         // Drag 1:1 with the image: the strip spans 360° over PANO_W px, so one
                         // dragged pixel is exactly 360 / PANO_W degrees, and the grabbed point

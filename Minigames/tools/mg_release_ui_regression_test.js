@@ -144,7 +144,7 @@ const credits = source("mg_geo_credits.generated.js");
 const baseHud = fs.readFileSync(path.join(ROOT, "panorama", "layout", "base_hud.xml"), "utf8");
 const css = fs.readFileSync(path.join(ROOT, "panorama", "styles", "mg.css"), "utf8");
 
-assert(/var MULTI_GAME_IDS = \[1, 2, 3, 4, 5\];/.test(ui),
+assert(/\b(?:var|let|const) MULTI_GAME_IDS = \[1, 2, 3, 4, 5\];/.test(ui),
     "multi-quick tick set must include heads-up Durak");
 assert(/function waitForMultiMatch[\s\S]*?isDurakOnlineGame\(st\.game\)[\s\S]*?renderRoom\(code, isHost, true, ctx\)/.test(ui),
     "a multi-quick Durak result must enter its two-seat dealer room");
@@ -160,7 +160,7 @@ assert(/clocks:\s*function[\s\S]*?w === 9 && h === 8/.test(net) &&
     "clock transport/server failures must reach createClock's retry callback");
 assert(/function resyncTick[\s\S]*?function \(\) \{ if \(!stopped\) \$\.Schedule/.test(games),
     "createClock must retain a retry path for transient authoritative-clock failures");
-assert(/var RESYNC_S = 8;/.test(games),
+assert(/\b(?:var|let|const) RESYNC_S = 8;/.test(games),
     "authoritative clock resync must stay infrequent so it cannot crowd out move traffic");
 assert(/status:\s*function \(code, tok, cb, err\)[\s\S]{0,150}tok:\s*tok \|\| ""/.test(net) &&
     /room:\s*function \(code, tok, cb, err\)/.test(net) &&
@@ -186,7 +186,7 @@ assert(!/crispImage\.SetImage\(MG\.Net\.getBaseUrl\(\)/.test(pixel),
 assert(/function loadPanorama[\s\S]*?MG\.Net\.loadImage\(url,/.test(geo),
     "GeoGuesser's cold panorama load must use the shared MG.Net FIFO");
 assert(/MG\.Net\.isLevelEncodedSize\(loadedW, loadedH\)/.test(geo) &&
-    !/var aspect = shortSide > 0/.test(geo),
+    !/\b(?:var|let|const) aspect = shortSide > 0/.test(geo),
     "GeoGuesser must not validate intrinsic panorama aspect from host-clamped layout dimensions");
 // An <Image> `scaling` token the engine doesn't know is NOT an error — it silently falls back to
 // the native-size default, which letterboxes the bitmap inside the panel. That is what made the
@@ -194,13 +194,13 @@ assert(/MG\.Net\.isLevelEncodedSize\(loadedW, loadedH\)/.test(geo) &&
 // 208px top/bottom) and limited the usable heading to roughly 95°..270° in-game. Whitelist taken
 // from every scaling= token that appears on an <Image> in G:\GameTracking-Deadlock.
 (function () {
-    var VALID = ["stretch-to-fit-preserve-aspect", "stretch-to-fit-y-preserve-aspect",
+    const VALID = ["stretch-to-fit-preserve-aspect", "stretch-to-fit-y-preserve-aspect",
         "stretch-to-fit-x-preserve-aspect", "stretch-to-cover-preserve-aspect",
         "cover", "contain", "none"];
-    var files = { "mg_geoguesser.js": geo, "mg_ui.js": ui, "mg_pixelbattle.js": pixel, "mg_net.js": net };
-    var bad = [];
+    const files = { "mg_geoguesser.js": geo, "mg_ui.js": ui, "mg_pixelbattle.js": pixel, "mg_net.js": net };
+    const bad = [];
     Object.keys(files).forEach(function (name) {
-        var re = /scaling:\s*"([a-z-]+)"/g, m;
+        let re = /scaling:\s*"([a-z-]+)"/g, m;
         while ((m = re.exec(files[name]))) {
             if (VALID.indexOf(m[1]) === -1) bad.push(name + ': "' + m[1] + '"');
         }
@@ -208,7 +208,7 @@ assert(/MG\.Net\.isLevelEncodedSize\(loadedW, loadedH\)/.test(geo) &&
     assert(bad.length === 0,
         "unknown <Image> scaling token (silently falls back to native size):\n  " + bad.join("\n  "));
 })();
-assert(/var PANO_SCALING = "cover"/.test(geo) &&
+assert(/\b(?:var|let|const) PANO_SCALING = "cover"/.test(geo) &&
     !/scaling: *"stretch-to-fit"/.test(geo),
     "GeoGuesser panorama strips must use a scaling token that fills the whole 2880x1440 box");
 assert(/PANO_W = 2880, PANO_H = 1440, PANO_STEP = PANO_W - 2/.test(geo) &&
@@ -236,25 +236,25 @@ assert(/\.mg-geo-stage\s*\{[^}]*\}/.test(css) &&
 // All four stacked rows share one width, or the panorama sits inset above a wider map row and the
 // panel reads as ragged/cut off. VIEW_W/VIEW_H in the controller must match the CSS viewport.
 (function () {
-    var want = ["\\.mg-geo\\s*\\{", "\\.mg-geo-stats\\s*\\{", "\\.mg-geo-viewport\\s*\\{",
+    const want = ["\\.mg-geo\\s*\\{", "\\.mg-geo-stats\\s*\\{", "\\.mg-geo-viewport\\s*\\{",
         "\\.mg-geo-camera-controls\\s*\\{", "\\.mg-geo-lower\\s*\\{"];
     want.forEach(function (sel) {
-        var block = new RegExp(sel + "[^}]*width:\\s*860px;").test(css);
+        const block = new RegExp(sel + "[^}]*width:\\s*860px;").test(css);
         assert(block, "GeoGuesser row " + sel.replace(/\\\\|\\s\*\\\{/g, "") + " must be 860px wide");
     });
-    assert(/var VIEW_W = 860, VIEW_H = 360;/.test(geo) &&
+    assert(/\b(?:var|let|const) VIEW_W = 860, VIEW_H = 360;/.test(geo) &&
         /\.mg-geo-viewport\s*\{[^}]*height:\s*360px;/.test(css),
         "GeoGuesser VIEW_W/VIEW_H must match the CSS viewport box");
 })();
 // Pitch is 8px per degree (1440px strip / 180°). The old hard-coded 4 moved at half rate. And the
 // constant must be declared AFTER PANO_H — `var` hoists the name, not the value, so reading it a
 // line early silently yields NaN and breaks tilt while every syntax check still passes.
-assert(/var PANO_W = 2880, PANO_H = 1440[\s\S]{0,600}var PITCH_PX_PER_DEG = PANO_H \/ 180;/.test(geo) &&
+assert(/\b(?:var|let|const) PANO_W = 2880, PANO_H = 1440[\s\S]{0,600}\b(?:var|let|const) PITCH_PX_PER_DEG = PANO_H \/ 180;/.test(geo) &&
     /pitch \* PITCH_PX_PER_DEG/.test(geo),
     "GeoGuesser pitch must use PITCH_PX_PER_DEG, declared after PANO_H");
 // Map zoom: engine has no ondblclick, so the run is timestamp-keyed, and a new round must reset to
 // the whole world (a leftover 8x zoom would strand the player in an unrelated region).
-assert(/var MULTI_CLICK_MS = 400;/.test(geo) &&
+assert(/\b(?:var|let|const) MULTI_CLICK_MS = 400;/.test(geo) &&
     /clickRun = \(now - lastClickAt < MULTI_CLICK_MS\) \? clickRun \+ 1 : 1;/.test(geo) &&
     /if \(clickRun === 2\) setMapZoom\(mapZoomLevel \* 2, f\.x, f\.y\);/.test(geo) &&
     /else if \(clickRun >= 3\) setMapZoom\(1, null, null\);/.test(geo) &&
@@ -263,7 +263,7 @@ assert(/var MULTI_CLICK_MS = 400;/.test(geo) &&
 // Precision comes from the hit grid NOT scaling with the map: it is a sibling of the zoom
 // wrapper, pinned over the window, so at zoom Z its 64x32 panels address 64Z x 32Z cells. If it
 // were created inside mapZoom again, zooming would just enlarge the same coarse cells.
-assert(/var grid = \$\.CreatePanel\("Panel", map, ""\);/.test(geo) &&
+assert(/\b(?:var|let|const) grid = \$\.CreatePanel\("Panel", map, ""\);/.test(geo) &&
     !/\$\.CreatePanel\("Panel", mapZoom, ""\);\s*\n\s*grid\.AddClass/.test(geo) &&
     /x: panX \+ \(col \+ 0\.5\) \/ \(GRID_W \* mapZoomLevel\)/.test(geo),
     "GeoGuesser hit grid must stay fixed over the window so zoom buys precision");
@@ -281,7 +281,7 @@ assert(/MG\.Api\.geoTarget\(code, tok, axis, ok, fail\)/.test(geo) &&
     /revealReadsPending = solo \? 7 : 10;/.test(geo),
     "GeoGuesser reveal must read each point axis-by-axis and wait for both halves");
 assert(/images\/geoguesser\/world_map\.vtex/.test(geo) &&
-    /var GRID_W = 64, GRID_H = 32/.test(geo),
+    /\b(?:var|let|const) GRID_W = 64, GRID_H = 32/.test(geo),
     "GeoGuesser must use its dedicated map and fine 64x32 authoritative guess grid");
 // The de-glow overrides only bind if they out-specify the GAME's own `Slider.HorizontalSlider
 // #SliderThumb` (111) — a bare `.mg-geo-camera-controls #SliderThumb` is 110 and loses, which is
@@ -300,16 +300,16 @@ assert(/\.mg-geo-camera-controls Slider\.HorizontalSlider #SliderThumb\s*\{[\s\S
     // Blank out /* … */ comments, PRESERVING newlines so reported line numbers stay accurate.
     // Needed because the trap-22 note and the .mg-pk-active note both QUOTE the removed glow
     // declarations verbatim, and a naive scan flags its own documentation.
-    var live = css.replace(/\/\*[\s\S]*?\*\//g, function (m) { return m.replace(/[^\n]/g, " "); });
-    var glow = [];
+    const live = css.replace(/\/\*[\s\S]*?\*\//g, function (m) { return m.replace(/[^\n]/g, " "); });
+    const glow = [];
     live.split(/\r?\n/).forEach(function (line, i) {
-        var decl = /box-shadow:\s*([^;}]+)/.exec(line);
+        const decl = /box-shadow:\s*([^;}]+)/.exec(line);
         if (!decl) return;
         // Tokenise instead of pattern-matching the whole value: `fill`/`inset` keywords and colours
         // (#rrggbbaa, brandGreen&11, rgba(...)) may precede OR follow the lengths, and a single
         // regex with an optional prefix can silently absorb the first 0px and mistake the SPREAD
         // for the blur — which is what made `0px 0px 0px 3px` (a hard ring) read as a glow.
-        var lengths = decl[1].split(/\s+/)
+        const lengths = decl[1].split(/\s+/)
             .filter(function (t) { return /^-?[\d.]+px$/.test(t); })
             .map(parseFloat);
         // Glow = no offset in either axis AND a non-zero blur radius. Offset drop shadows and
@@ -418,7 +418,7 @@ assert(/bl\.text = selectedGameId === 9 \? "PLAY SOLO" : "PLAY VS BOT"/.test(ui)
 assert(/MG\.Games\.register\(\{ id: 9,[\s\S]*?enabled: true \}\)/.test(geo) &&
     /mg_geoguesser\.vjs_c/.test(baseHud),
     "GeoGuesser controller must be registered and loaded before the menu shell");
-assert(/var aspect = shortSide > 0 \? longSide \/ shortSide : 0;[\s\S]{0,350}Map server is busy/.test(pixel),
+assert(/\b(?:var|let|const) aspect = shortSide > 0 \? longSide \/ shortSide : 0;[\s\S]{0,350}Map server is busy/.test(pixel),
     "Pixel Battle must reject and retry the Worker's viewport-throttle image sentinel");
 assert(/lastOuterStatus === "Map server is busy\. Retrying…"[\s\S]{0,100}Shared world loaded/.test(pixel),
     "Pixel Battle must clear the busy status after a successful viewport retry");

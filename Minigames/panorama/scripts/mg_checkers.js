@@ -20,7 +20,7 @@
  */
 
 (function () {
-    var MG = ($.MG = $.MG || {});
+    const MG = ($.MG = $.MG || {});
     if (MG._checkersLoaded) return;
     MG._checkersLoaded = true;
 
@@ -28,61 +28,61 @@
     // names IDENTICAL to the old inline copies in mg_games.js, so the controller body below is
     // byte-for-byte unchanged. The variant switch (Russian vs English) happens per-game inside
     // createCheckers via RCv; RC is the Russian default + the fallback.
-    var RC = MG.Rules.checkers;
-    var WHITE = RC.WHITE, BLACK = RC.BLACK;
-    var idx = RC.idx, rowOf = RC.rowOf, colOf = RC.colOf, isDark = RC.isDark;
-    var colorOf = RC.colorOf, isKing = RC.isKing;
-    var initialBoard = RC.initialBoard;
-    var simpleMoves = RC.simpleMoves, captureMoves = RC.captureMoves;
-    var anyCaptureFor = RC.anyCaptureFor, applyHop = RC.applyHop, hasAnyMove = RC.hasAnyMove;
-    var legalSequences = RC.legalSequences, chooseBotMove = RC.chooseBotMove, chooseBotMovePrep = RC.chooseBotMovePrep;
+    const RC = MG.Rules.checkers;
+    const WHITE = RC.WHITE, BLACK = RC.BLACK;
+    const idx = RC.idx, rowOf = RC.rowOf, colOf = RC.colOf, isDark = RC.isDark;
+    const colorOf = RC.colorOf, isKing = RC.isKing;
+    const initialBoard = RC.initialBoard;
+    const simpleMoves = RC.simpleMoves, captureMoves = RC.captureMoves;
+    const anyCaptureFor = RC.anyCaptureFor, applyHop = RC.applyHop, hasAnyMove = RC.hasAnyMove;
+    const legalSequences = RC.legalSequences, chooseBotMove = RC.chooseBotMove, chooseBotMovePrep = RC.chooseBotMovePrep;
 
     // The two-side game clock lives in mg_games.js and is shared via MG.Widgets (this file
     // can't see that closure). Same handle the old inline createClock returned.
-    var createClock = MG.Widgets.createClock;
+    const createClock = MG.Widgets.createClock;
     // State-free board/nav helpers, likewise shared with mg_chess.js. The rest of the drag and
     // review stacks stay local: they read this controller's own closure (board, cells, history,
     // myColor), and a few that LOOK identical to the chess copies are not (sqName uses colOf vs
     // cCol, clockNames compares against WHITE vs 1).
-    var winPos = MG.Widgets.winPos, parsePx = MG.Widgets.parsePx;
-    var squareFromPanel = MG.Widgets.squareFromPanel;
-    var makeNavBtn = MG.Widgets.makeNavBtn, setNavState = MG.Widgets.setNavState;
+    const winPos = MG.Widgets.winPos, parsePx = MG.Widgets.parsePx;
+    const squareFromPanel = MG.Widgets.squareFromPanel;
+    const makeNavBtn = MG.Widgets.makeNavBtn, setNavState = MG.Widgets.setNavState;
 
     function createCheckers(container, session) {
-        var Api = MG.Api;
-        var code = session.code;
+        const Api = MG.Api;
+        const code = session.code;
         // Pick the rules engine for this game's variant. English draughts (kings step one square,
         // men capture forward only) lives in MG.Rules.checkersEnglish; anything else = Russian.
         // Shadow the module-level aliases with the chosen engine so every helper below (board init,
         // legal moves, bot search) routes through it - the server does the same via lobby.cv.
-        var RCv = (session.variant === "english" && MG.Rules.checkersEnglish) ? MG.Rules.checkersEnglish : RC;
-        var initialBoard = RCv.initialBoard;
-        var simpleMoves = RCv.simpleMoves, captureMoves = RCv.captureMoves;
-        var anyCaptureFor = RCv.anyCaptureFor, applyHop = RCv.applyHop, hasAnyMove = RCv.hasAnyMove;
-        var drawReason = RCv.drawReason;
-        var legalSequences = RCv.legalSequences, chooseBotMove = RCv.chooseBotMove, chooseBotMovePrep = RCv.chooseBotMovePrep;
-        var myColor = session.isHost ? WHITE : BLACK;
-        var board = initialBoard();
-        var turn = WHITE;              // white (host) moves first
+        const RCv = (session.variant === "english" && MG.Rules.checkersEnglish) ? MG.Rules.checkersEnglish : RC;
+        const initialBoard = RCv.initialBoard;
+        const simpleMoves = RCv.simpleMoves, captureMoves = RCv.captureMoves;
+        const anyCaptureFor = RCv.anyCaptureFor, applyHop = RCv.applyHop, hasAnyMove = RCv.hasAnyMove;
+        const drawReason = RCv.drawReason;
+        const legalSequences = RCv.legalSequences, chooseBotMove = RCv.chooseBotMove, chooseBotMovePrep = RCv.chooseBotMovePrep;
+        const myColor = session.isHost ? WHITE : BLACK;
+        let board = initialBoard();
+        let turn = WHITE;              // white (host) moves first
         // Consecutive turns with no capture and no man move - the Russian 15-move draw rule's
         // counter. rules/checkers.js can't track it (it is per-position, not per-game), so the
         // controller owns it and feeds it to drawReason(). Reset by turnResetsIdle().
-        var idleTurns = 0;
-        var appliedSeq = 0;            // total hops consumed from the shared server list
-        var selected = -1;             // selected square during my turn
-        var legalTargets = [];         // [{to, cap}]
-        var chaining = false;          // mid multi-jump
-        var pollToken = 0;             // invalidates stale poll loops
-        var destroyed = false;
-        var gameOver = false;
-        var lastFrom = -1, lastTo = -1; // last COMPLETED move's endpoints (for the last-move wash)
-        var oppSeqFrom = -1;            // first `from` of the opponent's in-progress (multi-hop) turn
+        let idleTurns = 0;
+        let appliedSeq = 0;            // total hops consumed from the shared server list
+        let selected = -1;             // selected square during my turn
+        let legalTargets = [];         // [{to, cap}]
+        let chaining = false;          // mid multi-jump
+        let pollToken = 0;             // invalidates stale poll loops
+        let destroyed = false;
+        let gameOver = false;
+        let lastFrom = -1, lastTo = -1; // last COMPLETED move's endpoints (for the last-move wash)
+        let oppSeqFrom = -1;            // first `from` of the opponent's in-progress (multi-hop) turn
 
         // Time control (§8 commit 2.3). session.timeControl = seconds per side (0 = untimed).
         // The clock is authoritative on the SERVER online; offline (bot) it ticks locally. seat
         // 0 = white/host, seat 1 = black/joiner - the clock indexes by seat, so map colour→seat.
-        var timeControl = session.timeControl || 0;
-        var clock = null;               // createClock handle, built in buildSidePanel
+        const timeControl = session.timeControl || 0;
+        let clock = null;               // createClock handle, built in buildSidePanel
 
         // Move history + local review (§8 commit 2.2). Each finished TURN pushes one entry
         // { from, to, cap, boardAfter, label }. reviewIndex === null means "live" (board shows
@@ -90,29 +90,29 @@
         // 0..history.length-1 = the position right after that turn. Reviewing is read-only -
         // input handlers bail while reviewing and live moves keep updating the model + list
         // silently without disturbing the shown snapshot.
-        var history = [];
-        var reviewIndex = null;
+        let history = [];
+        let reviewIndex = null;
         // Captures accumulate across the multi-hop chain of ONE turn (a turn's label is "x" if
         // any hop in it was a capture). Reset when each side begins a fresh turn.
-        var myTurnCapture = false, oppTurnCapture = false, botTurnCapture = false;
+        let myTurnCapture = false, oppTurnCapture = false, botTurnCapture = false;
 
         // Premove (online only, ONE queued move): while it's the opponent's turn you may click/drag
         // your piece to a square; we remember {from,to}, glow both cells orange, and the instant the
         // opponent's move lands (turn flips to us) we try to play it. It's validated against the NEW
         // position via targetsFor - an illegal queued move (piece captured, target blocked, a forced
         // jump elsewhere) is simply discarded. preSelected holds the from-square mid-selection.
-        var premove = null;            // { from, to } or null
-        var preSelected = -1;          // my piece picked for a premove, awaiting a destination click
+        let premove = null;            // { from, to } or null
+        let preSelected = -1;          // my piece picked for a premove, awaiting a destination click
 
         // Drag-and-drop state (native Panorama drag; recipe proven in QOLLOCK):
         // a piece is a drag SOURCE, each cell a drop TARGET. While dragging, a throwaway
         // "ghost" panel follows the cursor and the real piece is dimmed in place.
-        var dragActive = false;        // a real grab is in flight (ghost exists)
-        var dragGhost = null;          // panel that follows the cursor
-        var dragOverSq = -1;           // square the cursor is currently over (DragEnter / mouseover)
-        var dragEnterCount = 0;        // how many DragEnter events landed this drag (is that channel alive?)
-        var dragSourcePiece = null;    // the real piece being dragged (so we can un-dim it even if it's since been deleted)
-        var dragFromSq = -1;           // square the current drag STARTED on (set in DragStart regardless of turn, so a drag made during the opponent's turn can queue a premove)
+        let dragActive = false;        // a real grab is in flight (ghost exists)
+        let dragGhost = null;          // panel that follows the cursor
+        let dragOverSq = -1;           // square the cursor is currently over (DragEnter / mouseover)
+        let dragEnterCount = 0;        // how many DragEnter events landed this drag (is that channel alive?)
+        let dragSourcePiece = null;    // the real piece being dragged (so we can un-dim it even if it's since been deleted)
+        let dragFromSq = -1;           // square the current drag STARTED on (set in DragStart regardless of turn, so a drag made during the opponent's turn can queue a premove)
 
         // Tear the drag state down from ANY exit path, not just DragEnd. The DragEnd handler is
         // bound to the PIECE panel; if the opponent captures that piece while you hold it (a
@@ -132,7 +132,7 @@
         // produced to the on-screen status line - so ONE in-game test reveals which signal
         // the engine really populates, instead of guessing a 5th time. Flip to false (or
         // delete the status() call in commitDropMultimethod) once drag is confirmed working.
-        var DRAG_DEBUG = false;        // drag confirmed working in-game - silence the per-drop status trace
+        const DRAG_DEBUG = false;        // drag confirmed working in-game - silence the per-drop status trace
 
         function status(t) { if (session.onStatus) session.onStatus(t); }
         function sfx(n) { if (MG.Sound) MG.Sound.play(n); }
@@ -144,38 +144,38 @@
         function toDisplay(i) { return myColor === WHITE ? i : 63 - i; }
         function fromDisplay(i) { return myColor === WHITE ? i : 63 - i; }
 
-        var root = $.CreatePanel("Panel", container, "MG_CheckersRoot");
+        const root = $.CreatePanel("Panel", container, "MG_CheckersRoot");
         root.AddClass("mg-checkers");
         // Two-column game screen: the board on the left, a move-list panel on the right (the
         // modal is 900px, the board only 486px, so ~360px sit unused to its right). The columns
         // flow right; the board keeps its own centred/flow:none internals unchanged.
-        var twoCol = $.CreatePanel("Panel", root, "MG_CheckersCols");
+        const twoCol = $.CreatePanel("Panel", root, "MG_CheckersCols");
         twoCol.AddClass("mg-game-2col");
         // The board grid and the pieces overlay must OCCUPY THE SAME SPACE. Panorama has
         // no `position: absolute`; instead the wrap uses `flow-children: none` so both its
         // children stack at the top-left, and the pieces layer (added last) paints on top.
-        var boardWrap = $.CreatePanel("Panel", twoCol, "MG_BoardWrap");
+        const boardWrap = $.CreatePanel("Panel", twoCol, "MG_BoardWrap");
         boardWrap.AddClass("mg-board-wrap");
-        var boardPanel = $.CreatePanel("Panel", boardWrap, "MG_Board");
+        const boardPanel = $.CreatePanel("Panel", boardWrap, "MG_Board");
         boardPanel.AddClass("mg-board");
         // Move-list side panel (right column): a header, a scrollable list of completed turns,
         // and a Prev/Next/Live navigation bar. renderMoveList() fills the list; the nav buttons
         // step a purely LOCAL review of past positions (see navPrev/navNext/navLive) - the live
         // game keeps running underneath and the model board is never touched by a review.
-        var moveListRows = null, navPrevBtn = null, navNextBtn = null, navLiveBtn = null;
+        let moveListRows = null, navPrevBtn = null, navNextBtn = null, navLiveBtn = null;
         (function buildSidePanel() {
-            var panel = $.CreatePanel("Panel", twoCol, "MG_CheckersMoves");
+            const panel = $.CreatePanel("Panel", twoCol, "MG_CheckersMoves");
             panel.AddClass("mg-movelist");
             // Clocks sit at the TOP of the side panel (opponent above, you below - see clockSeat).
             // secs=0 → the module builds nothing and every call is a no-op, so an untimed game is
             // visually unchanged. Server seat 0 = host = white; clockSeat maps that to my view.
             clock = createClock(panel, timeControl, !session.bot, code, onFlag, clockNames(), clockSeatFor(myColor));
-            var head = $.CreatePanel("Label", panel, "");
+            const head = $.CreatePanel("Label", panel, "");
             head.AddClass("mg-movelist-head");
             head.text = "Moves";
             moveListRows = $.CreatePanel("Panel", panel, "");
             moveListRows.AddClass("mg-movelist-rows");
-            var nav = $.CreatePanel("Panel", panel, "");
+            const nav = $.CreatePanel("Panel", panel, "");
             nav.AddClass("mg-movelist-nav");
             navPrevBtn = makeNavBtn(nav, "< Prev", function () { navPrev(); });
             navLiveBtn = makeNavBtn(nav, "Live", function () { navLive(); });
@@ -194,7 +194,7 @@
         // A side ran out of time: that seat loses, so the OTHER colour wins. seat 0 = white.
         function onFlag(seat) {
             if (gameOver) return;
-            var winnerColor = seat === 0 ? BLACK : WHITE;   // loser is white(0)/black(1) → winner is the other
+            const winnerColor = seat === 0 ? BLACK : WHITE;   // loser is white(0)/black(1) → winner is the other
             finish(winnerColor, "time");
         }
         function syncClockTurn() { if (clock && clock.isTimed) clock.setTurn(clockSeatFor(turn)); }
@@ -202,16 +202,16 @@
 
 
         // ── board geometry (must match mg.css: 60px cells, 46px pieces) ──────
-        var SQ = 60, PIECE_SZ = 46, INSET = (SQ - PIECE_SZ) / 2;
+        const SQ = 60, PIECE_SZ = 46, INSET = (SQ - PIECE_SZ) / 2;
         function transformFor(realIdx) {
-            var d = toDisplay(realIdx);
-            var dr = (d / 8) | 0, dc = d % 8;
+            let d = toDisplay(realIdx);
+            let dr = (d / 8) | 0, dc = d % 8;
             return "translate3d(" + (dc * SQ + INSET) + "px, " + (dr * SQ + INSET) + "px, 0px)";
         }
 
-        var cells = [];
-        var piecesLayer = null;
-        var pieceEls = {};     // realSquare -> piece panel (its current visual position)
+        let cells = [];
+        let piecesLayer = null;
+        let pieceEls = {};     // realSquare -> piece panel (its current visual position)
 
         function buildCells() {
             boardPanel.RemoveAndDeleteChildren();
@@ -219,13 +219,13 @@
             pieceEls = {};
             // Build 8 explicit rows of 8 cells. Row layout can't mis-wrap the grid the
             // way flow:right-wrap does when a border shaves a pixel off the width.
-            for (var dr = 0; dr < 8; dr++) {
-                var rowPanel = $.CreatePanel("Panel", boardPanel, "row_" + dr);
+            for (let dr = 0; dr < 8; dr++) {
+                const rowPanel = $.CreatePanel("Panel", boardPanel, "row_" + dr);
                 rowPanel.AddClass("mg-board-row");
-                for (var dc = 0; dc < 8; dc++) {
-                    var d = dr * 8 + dc;
-                    var i = fromDisplay(d);
-                    var r = rowOf(i), c = colOf(i);
+                for (let dc = 0; dc < 8; dc++) {
+                    let d = dr * 8 + dc;
+                    let i = fromDisplay(d);
+                    const r = rowOf(i), c = colOf(i);
                     var cell = $.CreatePanel("Panel", rowPanel, "cell_" + i);
                     cell.AddClass("mg-cell");
                     cell.AddClass(isDark(r, c) ? "mg-cell-dark" : "mg-cell-light");
@@ -277,14 +277,14 @@
         // Draw the a–h / 1–8 coordinate labels on a dedicated overlay. SQ=60; a label sits in
         // the cell corner (file: bottom-right of the bottom row; rank: top-left of the left col).
         function buildCoords() {
-            var layer = $.CreatePanel("Panel", boardWrap, "MG_CoordsLayer");
+            const layer = $.CreatePanel("Panel", boardWrap, "MG_CoordsLayer");
             layer.AddClass("mg-coords-layer");
             try { layer.SetAttributeString("hittest", "false"); } catch (e) {}
-            for (var d = 0; d < 64; d++) {
-                var dr = (d / 8) | 0, dc = d % 8;
+            for (let d = 0; d < 64; d++) {
+                let dr = (d / 8) | 0, dc = d % 8;
                 if (dr !== 7 && dc !== 0) continue;           // only bottom row + left column
-                var i = fromDisplay(d);
-                var onDark = isDark(rowOf(i), colOf(i));
+                let i = fromDisplay(d);
+                const onDark = isDark(rowOf(i), colOf(i));
                 if (dc === 0) {                                // rank number, top-left corner
                     addCoord(layer, dc * SQ, dr * SQ, String(8 - rowOf(i)), onDark, "rank");
                 }
@@ -294,7 +294,7 @@
             }
         }
         function addCoord(layer, x, y, text, onDark, kind) {
-            var lbl = $.CreatePanel("Label", layer, "");
+            const lbl = $.CreatePanel("Label", layer, "");
             lbl.AddClass("mg-coord");
             lbl.AddClass(onDark ? "mg-coord-ondark" : "mg-coord-onlight");
             lbl.text = text;
@@ -305,15 +305,15 @@
             // the glyph ~20px from that centre - INSIDE the circle - so the piece painted over it and
             // the letter vanished under knights/rooks/bishops (maintainer 2026-07-16: "букв не видно").
             // (51,46) lands the glyph ~32px out, clear of the circle, and still inside the 60px cell.
-            var ox = kind === "file" ? (SQ - 9) : 3;
-            var oy = kind === "file" ? (SQ - 14) : 2;
+            const ox = kind === "file" ? (SQ - 9) : 3;
+            const oy = kind === "file" ? (SQ - 14) : 2;
             lbl.style.transform = "translate3d(" + (x + ox) + "px, " + (y + oy) + "px, 0px)";
         }
 
         // interactive defaults to true (live board). Review renders pass false so the snapshot
         // pieces are inert (no drag/select) - you're looking at a past position, not playing it.
         function makePiece(realIdx, v, interactive) {
-            var piece = $.CreatePanel("Panel", piecesLayer, "");
+            const piece = $.CreatePanel("Panel", piecesLayer, "");
             piece.AddClass("mg-piece");
             piece.AddClass(colorOf(v) === WHITE ? "mg-white" : "mg-black");
             if (isKing(v)) piece.AddClass("mg-king");
@@ -355,7 +355,7 @@
                 // Allow a drag both on my turn (a real move) AND on the opponent's turn (to queue a
                 // premove). Only block it when neither is possible (game over etc.).
                 if (!myTurn() && !canPremove()) return;
-                var sq = piece._sq;
+                const sq = piece._sq;
                 // Only ever start a drag on a square that STILL holds one of MY pieces. A piece
                 // the opponent just captured lingers ~0.22s as a shrinking, still-draggable panel;
                 // grabbing it would (a) build the ghost from board[sq] - now the opponent's piece,
@@ -365,7 +365,7 @@
                 if (colorOf(board[sq]) !== myColor) return;
                 // ALWAYS provide a ghost as the drag visual so the engine never drags the
                 // real piece around (QOLLOCK sets dragEvent.displayPanel for exactly this).
-                var ghost = $.CreatePanel("Panel", piecesLayer, "");
+                const ghost = $.CreatePanel("Panel", piecesLayer, "");
                 ghost.AddClass("mg-piece");
                 ghost.AddClass(colorOf(board[sq]) === WHITE ? "mg-white" : "mg-black");
                 if (isKing(board[sq])) ghost.AddClass("mg-king");
@@ -405,7 +405,7 @@
                 // authoritative when present - this is how QOLLOCK's ql_hero_testing works).
                 if (!myTurn() && canPremove()) {
                     // Dragged during the opponent's turn → queue a PREMOVE to the dropped square.
-                    var pmTo = dropSquare(droppedPanel);
+                    const pmTo = dropSquare(droppedPanel);
                     if (pmTo >= 0 && pmTo !== dragFromSq) {
                         if (premoveGeometryOk(dragFromSq, pmTo)) { premove = { from: dragFromSq, to: pmTo }; preSelected = -1; sfx("Premove"); }
                         else sfx("Illegal");   // impossible shape for this piece - don't queue it
@@ -421,7 +421,7 @@
                 // the "premove teleports back instead of moving" bug. Promote the grab to a live
                 // move: select dragFromSq and let the normal drop path validate + play it.
                 if (selected < 0 && dragFromSq >= 0 && colorOf(board[dragFromSq]) === myColor) {
-                    var liveTg = targetsFor(dragFromSq);
+                    const liveTg = targetsFor(dragFromSq);
                     if (liveTg.length > 0) { selected = dragFromSq; legalTargets = liveTg; }
                 }
                 commitDropMultimethod(droppedPanel);
@@ -439,7 +439,7 @@
 
         // Is `sq` currently a legal target of the selected piece?
         function isLegalTarget(sq) {
-            for (var t = 0; t < legalTargets.length; t++) if (legalTargets[t].to === sq) return true;
+            for (let t = 0; t < legalTargets.length; t++) if (legalTargets[t].to === sq) return true;
             return false;
         }
 
@@ -459,14 +459,14 @@
         // the game nor QOLLOCK reads it from JS, so we measure instead of trusting it (property
         // fallback only if the cell measurement fails).
         function uiScale() {
-            var a = cells[fromDisplay(0)];   // display (row 0, col 0)
-            var b = cells[fromDisplay(7)];   // display (row 0, col 7) - 7 cells to the right
-            var pa = winPos(a), pb = winPos(b);
+            const a = cells[fromDisplay(0)];   // display (row 0, col 0)
+            const b = cells[fromDisplay(7)];   // display (row 0, col 7) - 7 cells to the right
+            const pa = winPos(a), pb = winPos(b);
             if (pa && pb) {
-                var dx = Math.abs(pb.x - pa.x);       // = 7 * SQ * scale in window px
+                const dx = Math.abs(pb.x - pa.x);       // = 7 * SQ * scale in window px
                 if (dx > 1) return dx / (7 * SQ);
             }
-            var s = piecesLayer ? Number(piecesLayer.actualuiscale_x) : NaN;
+            const s = piecesLayer ? Number(piecesLayer.actualuiscale_x) : NaN;
             if (isFinite(s) && s > 0.1 && s < 10) return s;
             return 1;
         }
@@ -476,15 +476,15 @@
         // ghost's half-width in window px = PIECE_SZ * scale (its layout size scaled up). Ghost
         // centre relative to the layer origin ÷ the window cell size → display col/row → real square.
         function squareFromWindow() {
-            var lp = winPos(piecesLayer);
-            var gp = winPos(dragGhost);
+            const lp = winPos(piecesLayer);
+            const gp = winPos(dragGhost);
             if (!lp || !gp) return -1;
-            var scale = uiScale();
-            var cellW = SQ * scale;                 // one cell, in window px
-            var half = (PIECE_SZ * scale) / 2;      // ghost half-width, in window px
-            var cx = (gp.x - lp.x) + half;
-            var cy = (gp.y - lp.y) + half;
-            var dcol = Math.floor(cx / cellW), drow = Math.floor(cy / cellW);
+            const scale = uiScale();
+            const cellW = SQ * scale;                 // one cell, in window px
+            const half = (PIECE_SZ * scale) / 2;      // ghost half-width, in window px
+            const cx = (gp.x - lp.x) + half;
+            const cy = (gp.y - lp.y) + half;
+            const dcol = Math.floor(cx / cellW), drow = Math.floor(cy / cellW);
             if (dcol < 0 || dcol > 7 || drow < 0 || drow > 7) return -1;
             return fromDisplay(drow * 8 + dcol);
         }
@@ -500,25 +500,25 @@
         // what QOLLOCK's ReadPanelPosition reads FIRST, and it's the channel we had never used.
         // actualxoffset is only the fallback.
         function ghostPos() {
-            var g = dragGhost;
+            const g = dragGhost;
             if (!g || (g.IsValid && !g.IsValid())) return null;
             try { if (g.GetParent && g.GetParent() !== piecesLayer) g.SetParent(piecesLayer); } catch (e) {}
-            var sx = parsePx(g.style ? g.style.x : null);
-            var sy = parsePx(g.style ? g.style.y : null);
-            var ax = (typeof g.actualxoffset === "number" && isFinite(g.actualxoffset)) ? g.actualxoffset : null;
-            var ay = (typeof g.actualyoffset === "number" && isFinite(g.actualyoffset)) ? g.actualyoffset : null;
-            var x = (sx !== null) ? sx : ax;
-            var y = (sy !== null) ? sy : ay;
+            const sx = parsePx(g.style ? g.style.x : null);
+            const sy = parsePx(g.style ? g.style.y : null);
+            const ax = (typeof g.actualxoffset === "number" && isFinite(g.actualxoffset)) ? g.actualxoffset : null;
+            const ay = (typeof g.actualyoffset === "number" && isFinite(g.actualyoffset)) ? g.actualyoffset : null;
+            const x = (sx !== null) ? sx : ax;
+            const y = (sy !== null) ? sy : ay;
             if (x === null || y === null) return null;
             return { x: x, y: y, sx: sx, sy: sy, ax: ax, ay: ay };
         }
 
         function squareFromGhost() {
-            var p = ghostPos();
+            const p = ghostPos();
             if (!p) return -1;
             if (p.x === 0 && p.y === 0) return -1; // suspicious origin → let other methods try
-            var cx = p.x + PIECE_SZ / 2, cy = p.y + PIECE_SZ / 2;
-            var dcol = Math.floor(cx / SQ), drow = Math.floor(cy / SQ);
+            const cx = p.x + PIECE_SZ / 2, cy = p.y + PIECE_SZ / 2;
+            const dcol = Math.floor(cx / SQ), drow = Math.floor(cy / SQ);
             if (dcol < 0 || dcol > 7 || drow < 0 || drow > 7) return -1;
             return fromDisplay(drow * 8 + dcol);
         }
@@ -527,9 +527,9 @@
         // premove path, which validates later against the post-opponent board). Same multi-channel
         // geometry as commitDropMultimethod: window position first, then the native drop panel.
         function dropSquare(droppedPanel) {
-            var wSq = squareFromWindow();
+            const wSq = squareFromWindow();
             if (wSq >= 0) return wSq;
-            var aPanel = squareFromPanel(droppedPanel);
+            const aPanel = squareFromPanel(droppedPanel);
             if (aPanel >= 0) return aPanel;
             if (dragOverSq >= 0) return dragOverSq;
             return squareFromGhost();
@@ -544,27 +544,27 @@
             }
             // Capture window positions FIRST, before squareFromGhost() reparents the ghost
             // (reparenting would invalidate the window reading).
-            var lw = winPos(piecesLayer);
-            var gw = winPos(dragGhost);
-            var wSq = squareFromWindow();               // W: absolute window geometry (new primary)
-            var aPanel = squareFromPanel(droppedPanel); // A: native drop panel (proven = the ghost, no id)
-            var bOver = dragOverSq;                     // B: last cell hovered (DragEnter/mouseover - dead in-game)
-            var cGhost = squareFromGhost();             // C: ghost layout geometry (FLT_MAX in-game)
-            var candidates = [wSq, aPanel, bOver, cGhost];
-            var names = ["win", "panel", "over", "ghost"];
-            var matched = -1, via = "none";
-            for (var k = 0; k < candidates.length; k++) {
+            const lw = winPos(piecesLayer);
+            const gw = winPos(dragGhost);
+            const wSq = squareFromWindow();               // W: absolute window geometry (new primary)
+            const aPanel = squareFromPanel(droppedPanel); // A: native drop panel (proven = the ghost, no id)
+            const bOver = dragOverSq;                     // B: last cell hovered (DragEnter/mouseover - dead in-game)
+            const cGhost = squareFromGhost();             // C: ghost layout geometry (FLT_MAX in-game)
+            const candidates = [wSq, aPanel, bOver, cGhost];
+            const names = ["win", "panel", "over", "ghost"];
+            let matched = -1, via = "none";
+            for (let k = 0; k < candidates.length; k++) {
                 if (candidates[k] >= 0 && isLegalTarget(candidates[k])) { matched = candidates[k]; via = names[k]; break; }
             }
 
             if (DRAG_DEBUG) {
-                var dpid = "null";
+                let dpid = "null";
                 try { dpid = droppedPanel ? (droppedPanel.id || "noid") : "null"; } catch (e) { dpid = "err"; }
-                var tg = [];
-                for (var t = 0; t < legalTargets.length; t++) tg.push(legalTargets[t].to);
-                var lwS = lw ? (Math.round(lw.x) + "," + Math.round(lw.y)) : "null";
-                var gwS = gw ? (Math.round(gw.x) + "," + Math.round(gw.y)) : "null";
-                var lwd = (piecesLayer && piecesLayer.actuallayoutwidth) || "?";
+                const tg = [];
+                for (let t = 0; t < legalTargets.length; t++) tg.push(legalTargets[t].to);
+                const lwS = lw ? (Math.round(lw.x) + "," + Math.round(lw.y)) : "null";
+                const gwS = gw ? (Math.round(gw.x) + "," + Math.round(gw.y)) : "null";
+                const lwd = (piecesLayer && piecesLayer.actuallayoutwidth) || "?";
                 status("DROP " + (matched >= 0 ? ("OK via " + via + "->" + matched) : "MISS") +
                     " | win=" + wSq + " g(" + gwS + ") L(" + lwS + ") lw=" + lwd +
                     " | panel=" + dpid + "->" + aPanel + " over=" + bOver + "(" + dragEnterCount + "e) ghost=" + cGhost +
@@ -581,7 +581,7 @@
             clearDrag();                 // a full rebuild deletes the ghost with the layer; also reset the vars
             piecesLayer.RemoveAndDeleteChildren();
             pieceEls = {};
-            for (var i = 0; i < 64; i++) { if (board[i]) makePiece(i, board[i]); }
+            for (let i = 0; i < 64; i++) { if (board[i]) makePiece(i, board[i]); }
         }
 
         // Selection + legal-target highlighting only (cheap; touches no pieces). Suppressed
@@ -589,8 +589,8 @@
         // during a review must not repaint the board the player is studying.
         function refreshHighlights() {
             if (reviewIndex !== null) return;
-            for (var i = 0; i < 64; i++) {
-                var cell = cells[i];
+            for (let i = 0; i < 64; i++) {
+                const cell = cells[i];
                 if (!cell) continue;
                 cell.RemoveClass("mg-sel");
                 cell.RemoveClass("mg-target");
@@ -602,8 +602,8 @@
             if (lastFrom >= 0 && cells[lastFrom]) cells[lastFrom].AddClass("mg-lastmove");
             if (lastTo >= 0 && cells[lastTo]) cells[lastTo].AddClass("mg-lastmove-to");
             if (selected >= 0 && cells[selected]) cells[selected].AddClass("mg-sel");
-            for (var t = 0; t < legalTargets.length; t++) {
-                var tc = cells[legalTargets[t].to];
+            for (let t = 0; t < legalTargets.length; t++) {
+                const tc = cells[legalTargets[t].to];
                 if (tc) tc.AddClass("mg-target");
             }
             // Queued premove (opponent's turn): glow the picked piece and, once a destination is
@@ -629,8 +629,8 @@
             // the previous entry still holds the pre-move board (the first turn's pre-move board is
             // the initial one). pushHistory runs exactly once per COMPLETED turn in all three paths
             // (local, bot, polled), which is precisely the granularity the rule counts.
-            var pre = history.length ? history[history.length - 1].boardAfter : initialBoard();
-            var mover = pre[from];
+            const pre = history.length ? history[history.length - 1].boardAfter : initialBoard();
+            const mover = pre[from];
             idleTurns = (cap || mover === 1 || mover === 3) ? 0 : idleTurns + 1;
             history.push({ from: from, to: to, boardAfter: board.slice(), label: moveLabel(from, to, cap) });
             renderMoveList();
@@ -643,12 +643,12 @@
             if (!moveListRows || !(moveListRows.IsValid && moveListRows.IsValid())) return;
             moveListRows.RemoveAndDeleteChildren();
             if (history.length === 0) {
-                var e = $.CreatePanel("Label", moveListRows, "");
+                const e = $.CreatePanel("Label", moveListRows, "");
                 e.AddClass("mg-move-empty");
                 e.text = "No moves yet.";
             } else {
-                var cur = (reviewIndex === null) ? history.length - 1 : reviewIndex;
-                for (var i = 0; i < history.length; i++) {
+                const cur = (reviewIndex === null) ? history.length - 1 : reviewIndex;
+                for (let i = 0; i < history.length; i++) {
                     (function (idx) {
                         var row = $.CreatePanel("Label", moveListRows, "");
                         row.AddClass("mg-move-row");
@@ -665,7 +665,7 @@
                 // setNavState: shared, see MG.Widgets in mg_games.js
 
         function updateNav() {
-            var shown = (history.length === 0) ? -2 : (reviewIndex === null ? history.length - 1 : reviewIndex);
+            const shown = (history.length === 0) ? -2 : (reviewIndex === null ? history.length - 1 : reviewIndex);
             setNavState(navPrevBtn, shown > -1);           // something earlier to step back to
             setNavState(navNextBtn, reviewIndex !== null); // only meaningful while reviewing
             setNavState(navLiveBtn, reviewIndex !== null);
@@ -677,22 +677,22 @@
             clearDrag();
             piecesLayer.RemoveAndDeleteChildren();
             pieceEls = {};
-            for (var i = 0; i < 64; i++) { if (src[i]) makePiece(i, src[i], false); }
+            for (let i = 0; i < 64; i++) { if (src[i]) makePiece(i, src[i], false); }
         }
 
         // Show the position after review move `idx` (idx === -1 = initial position). Read-only:
         // no selection, only that move's from/to washed. Does NOT touch the live model.
         function renderReview() {
-            var idx = reviewIndex;
-            var snap = (idx < 0) ? initialBoard() : history[idx].boardAfter;
+            const idx = reviewIndex;
+            const snap = (idx < 0) ? initialBoard() : history[idx].boardAfter;
             layoutPiecesFrom(snap);
-            for (var i = 0; i < 64; i++) {
-                var c = cells[i];
+            for (let i = 0; i < 64; i++) {
+                const c = cells[i];
                 if (!c) continue;
                 c.RemoveClass("mg-sel"); c.RemoveClass("mg-target"); c.RemoveClass("mg-lastmove");
             }
             if (idx >= 0) {
-                var e = history[idx];
+                const e = history[idx];
                 if (cells[e.from]) cells[e.from].AddClass("mg-lastmove");
                 if (cells[e.to]) cells[e.to].AddClass("mg-lastmove");
             }
@@ -701,10 +701,10 @@
         function shownIndex() { return reviewIndex === null ? history.length - 1 : reviewIndex; }
         function setReview(idx) { reviewIndex = idx; renderReview(); renderMoveList(); }
         function gotoReview(idx) { if (idx >= 0 && idx < history.length) setReview(idx); }
-        function navPrev() { if (history.length === 0) return; var t = shownIndex() - 1; if (t < -1) return; setReview(t); }
+        function navPrev() { if (history.length === 0) return; let t = shownIndex() - 1; if (t < -1) return; setReview(t); }
         function navNext() {
             if (reviewIndex === null) return;              // already live (latest)
-            var t = reviewIndex + 1;
+            let t = reviewIndex + 1;
             if (t >= history.length - 1) { navLive(); return; }
             setReview(t);
         }
@@ -718,11 +718,11 @@
 
         // Apply a hop to the model AND report the captured square (for the fade fx).
         function applyHopFx(from, to) {
-            var before = board.slice();
-            var res = applyHop(board, from, to);
-            var capIdx = -1;
+            const before = board.slice();
+            const res = applyHop(board, from, to);
+            let capIdx = -1;
             if (res.captured) {
-                for (var i = 0; i < 64; i++) {
+                for (let i = 0; i < 64; i++) {
                     if (before[i] && !board[i] && i !== from && i !== to) { capIdx = i; break; }
                 }
             }
@@ -736,9 +736,9 @@
         // available; otherwise the turn hands off (end=1). Uses a copy so the live board is
         // untouched - the caller applies the real hop itself.
         function deriveMoveEnd(from, to) {
-            var copy = board.slice();
-            var res = applyHop(copy, from, to);
-            var more = res.captured && (!res.promoted || !RCv.promotionEndsTurn) && captureMoves(copy, to).length > 0;
+            const copy = board.slice();
+            const res = applyHop(copy, from, to);
+            const more = res.captured && (!res.promoted || !RCv.promotionEndsTurn) && captureMoves(copy, to).length > 0;
             return more ? 0 : 1;
         }
 
@@ -757,7 +757,7 @@
             // your OWN hop the drag already ended, so dragActive is false and this is a no-op.)
             if (dragActive && capIdx === dragFromSq) { clearPremove(); clearDrag(); }
             if (capIdx >= 0 && pieceEls[capIdx]) {
-                var dead = pieceEls[capIdx];
+                const dead = pieceEls[capIdx];
                 delete pieceEls[capIdx];
                 // Keep the translate3d that holds the piece on its square, and shrink it
                 // IN PLACE with pre-transform-scale2d (the game's idiom - it scales before
@@ -768,7 +768,7 @@
                 dead.style.preTransformScale2d = "0.2";
                 (function (d) { $.Schedule(0.22, function () { try { d.DeleteAsync(0); } catch (e) {} }); })(dead);
             }
-            var piece = pieceEls[from];
+            const piece = pieceEls[from];
             delete pieceEls[from];
             if (!piece || !piece.IsValid || !piece.IsValid()) {
                 if (board[to]) makePiece(to, board[to]); // visual desync guard: rebuild from model
@@ -800,22 +800,22 @@
         // transition eases the amber in/out (mg.css). Squares with a mandatory capture right now, for my colour.
         function mustCaptureSquares() {
             if (!anyCaptureFor(board, myColor)) return [];
-            var out = [];
-            for (var i = 0; i < 64; i++) {
+            const out = [];
+            for (let i = 0; i < 64; i++) {
                 if (colorOf(board[i]) === myColor && captureMoves(board, i).length > 0) out.push(i);
             }
             return out;
         }
-        var mustCapToken = 0;
+        let mustCapToken = 0;
         function flashMustCapture() {
-            var sqs = mustCaptureSquares();
+            const sqs = mustCaptureSquares();
             if (sqs.length === 0) return;
             mustCapToken++;
-            var tok = mustCapToken;
-            for (var k = 0; k < sqs.length; k++) if (cells[sqs[k]]) cells[sqs[k]].AddClass("mg-mustcap");
+            const tok = mustCapToken;
+            for (let k = 0; k < sqs.length; k++) if (cells[sqs[k]]) cells[sqs[k]].AddClass("mg-mustcap");
             $.Schedule(0.9, function () {
                 if (destroyed || tok !== mustCapToken) return;
-                for (var j = 0; j < sqs.length; j++) if (cells[sqs[j]]) cells[sqs[j]].RemoveClass("mg-mustcap");
+                for (let j = 0; j < sqs.length; j++) if (cells[sqs[j]]) cells[sqs[j]].RemoveClass("mg-mustcap");
             });
         }
         // A click/drop that couldn't be a legal move: sound + (if forced) the must-capture flash.
@@ -835,13 +835,13 @@
         // so an impossible shape is rejected up-front (sound feedback) instead of being painted
         // orange only to be silently discarded - the "premove anywhere" complaint.
         function premoveGeometryOk(from, to) {
-            var v = board[from];
+            const v = board[from];
             if (colorOf(v) !== myColor || from === to) return false;
             if (!isDark(rowOf(to), colOf(to))) return false;          // checkers lives on dark squares
-            var dr = rowOf(to) - rowOf(from), dc = colOf(to) - colOf(from);
+            let dr = rowOf(to) - rowOf(from), dc = colOf(to) - colOf(from);
             if (Math.abs(dr) !== Math.abs(dc)) return false;          // off a diagonal → impossible
             if (isKing(v)) return true;                                // flying king: any diagonal distance
-            var dist = Math.abs(dr);
+            const dist = Math.abs(dr);
             if (dist === 2) return true;                               // man capture hop (jumps any direction)
             if (dist === 1) return dr === (v === 1 ? -1 : 1);          // simple step: forward only
             return false;
@@ -860,10 +860,10 @@
         // "pending" wash on the picked cell would survive the turn flip forever (the stuck-orange bug).
         function tryPremove() {
             if (!premove) { if (preSelected >= 0) { preSelected = -1; refreshHighlights(); } return; }
-            var pm = premove; premove = null; preSelected = -1;
+            const pm = premove; premove = null; preSelected = -1;
             if (!myTurn()) { refreshHighlights(); return; }
-            var tg = targetsFor(pm.from);
-            for (var t = 0; t < tg.length; t++) {
+            const tg = targetsFor(pm.from);
+            for (let t = 0; t < tg.length; t++) {
                 if (tg[t].to === pm.to) {
                     selected = pm.from; legalTargets = tg; refreshHighlights();
                     doLocalHop(pm.from, tg[t]);
@@ -879,7 +879,7 @@
 
             // Clicking a legal target of the currently selected piece = execute a hop.
             if (selected >= 0) {
-                for (var t = 0; t < legalTargets.length; t++) {
+                for (let t = 0; t < legalTargets.length; t++) {
                     if (legalTargets[t].to === i) { doLocalHop(selected, legalTargets[t]); return; }
                 }
                 // A selection is up but this square isn't one of its targets. If it's not a
@@ -890,7 +890,7 @@
 
             // Otherwise (re)select one of my pieces that actually has a legal move.
             if (colorOf(board[i]) === myColor) {
-                var tg = targetsFor(i);
+                const tg = targetsFor(i);
                 if (tg.length === 0) { status("That piece has no legal move."); rejectMove(); return; }
                 selected = i;
                 legalTargets = tg;
@@ -902,7 +902,7 @@
         // the piece we're dragging; otherwise it's a no-op and the ghost just snaps back.
         function onCellDrop(i) {
             if (destroyed || reviewIndex !== null || !myTurn() || !dragActive || selected < 0) return;
-            for (var t = 0; t < legalTargets.length; t++) {
+            for (let t = 0; t < legalTargets.length; t++) {
                 if (legalTargets[t].to === i) {
                     doLocalHop(selected, legalTargets[t]);
                     return;
@@ -913,11 +913,11 @@
             rejectMove();
         }
 
-        var pendingHops = [];
+        let pendingHops = [];
 
         function doLocalHop(from, mv) {
             if (pendingHops.length === 0) myTurnCapture = false; // first hop of a fresh turn
-            var res = applyHopFx(from, mv.to);
+            const res = applyHopFx(from, mv.to);
             if (res.captured) myTurnCapture = true;
             animateHop(from, mv.to, res.capIdx, res.promoted);
             sfx(res.promoted ? "Promote" : res.captured ? "Capture" : "MoveSelf");
@@ -925,7 +925,7 @@
 
             // Can the same piece keep jumping? Russian canon: a man crowned mid-capture keeps
             // capturing as a flying king; English: promotion ends the turn (promotionEndsTurn).
-            var more = res.captured && (!res.promoted || !RCv.promotionEndsTurn) && captureMoves(board, mv.to).length > 0;
+            const more = res.captured && (!res.promoted || !RCv.promotionEndsTurn) && captureMoves(board, mv.to).length > 0;
             if (more) {
                 chaining = true;
                 selected = mv.to;
@@ -938,12 +938,12 @@
             // Turn complete - mark last hop as turn-ending and relay the whole sequence.
             chaining = false;
             clearSelection();
-            var hops = pendingHops.slice();
+            const hops = pendingHops.slice();
             pendingHops = [];
             lastFrom = hops[0].from; lastTo = hops[hops.length - 1].to; // first from, last to
             refreshHighlights();
             pushHistory(lastFrom, lastTo, myTurnCapture);
-            for (var h = 0; h < hops.length; h++) hops[h].end = (h === hops.length - 1) ? 1 : 0;
+            for (let h = 0; h < hops.length; h++) hops[h].end = (h === hops.length - 1) ? 1 : 0;
 
             turn = (myColor === WHITE ? BLACK : WHITE); // hand off locally right away
             syncClockTurn();                            // opponent's bank starts draining
@@ -966,17 +966,17 @@
         // premove could be grabbed. Stepping keeps the board live the whole time the bot "thinks".
         function botTurn() {
             if (destroyed || gameOver) return;
-            var botColor = (myColor === WHITE ? BLACK : WHITE);
+            const botColor = (myColor === WHITE ? BLACK : WHITE);
             if (!chooseBotMovePrep) {   // older rules bundle: one-shot fallback
-                var s = chooseBotMove(board, botColor);
+                const s = chooseBotMove(board, botColor);
                 if (!s) { checkEnd(); return; }
                 botTurnCapture = false; applyBotSeq(s, 0); return;
             }
-            var driver = chooseBotMovePrep(board, botColor);
+            const driver = chooseBotMovePrep(board, botColor);
             (function drive() {
                 if (destroyed || gameOver) return;
                 if (!driver.done()) { driver.step(); $.Schedule(0.0, drive); return; }
-                var seq = driver.result();
+                const seq = driver.result();
                 if (!seq) { checkEnd(); return; } // no legal move → checkEnd declares winner
                 botTurnCapture = false;
                 applyBotSeq(seq, 0);
@@ -995,7 +995,7 @@
                 if (!gameOver) { status("Your turn."); tryPremove(); }
                 return;
             }
-            var res = applyHopFx(seq[h].from, seq[h].to);
+            const res = applyHopFx(seq[h].from, seq[h].to);
             if (res.captured) botTurnCapture = true;
             animateHop(seq[h].from, seq[h].to, res.capIdx, res.promoted);
             sfx(res.promoted ? "Promote" : (res.captured ? "Capture" : "MoveOpp"));
@@ -1005,7 +1005,7 @@
         function sendHops(hops, i) {
             if (destroyed) return;
             if (i >= hops.length) { afterTurnSwitch(); return; }
-            var hop = hops[i];
+            const hop = hops[i];
             Api.move(code, hop.from, hop.to, hop.end, session.tok, function (r) {
                 if (r.ok) {
                     appliedSeq++; // our own hop is now in the shared server list
@@ -1065,7 +1065,7 @@
                 }
             }, function () { $.Schedule(0.4, function () { replayAccepted(seq); }); },
             function (from, to) {
-                var fr = (from / 8) | 0, fc = from % 8, tr = (to / 8) | 0, tc = to % 8;
+                const fr = (from / 8) | 0, fc = from % 8, tr = (to / 8) | 0, tc = to % 8;
                 return Math.abs(tr - fr) === Math.abs(tc - fc);
             }, deriveMoveEnd);
         }
@@ -1079,11 +1079,11 @@
 
         // Consecutive empty polls in the CURRENT wait - drives the adaptive cadence
         // (MG.Net.pollDelay): fast for the first few, then slower while the opponent thinks.
-        var pollMisses = 0;
+        let pollMisses = 0;
         function startPolling() {
             pollToken++;
             pollMisses = 0;
-            var myToken = pollToken;
+            const myToken = pollToken;
             pollOnce(myToken);
         }
 
@@ -1095,7 +1095,7 @@
                 if (mv) {
                     pollMisses = 0;                             // real move → next wait starts fast
                     if (oppSeqFrom < 0) oppTurnCapture = false; // first hop of this opponent turn
-                    var res = applyHopFx(mv.from, mv.to);
+                    const res = applyHopFx(mv.from, mv.to);
                     appliedSeq++;
                     animateHop(mv.from, mv.to, res.capIdx, res.promoted);
                     sfx(res.promoted ? "Promote" : res.captured ? "Capture" : "MoveOpp");
@@ -1120,15 +1120,15 @@
             }, function (from, to) {
                 // A real hop is always a diagonal between two board squares; anything
                 // else is a mis-scaled read and must never reach applyHop.
-                var fr = (from / 8) | 0, fc = from % 8, tr = (to / 8) | 0, tc = to % 8;
+                const fr = (from / 8) | 0, fc = from % 8, tr = (to / 8) | 0, tc = to % 8;
                 return Math.abs(tr - fr) === Math.abs(tc - fc);
             }, deriveMoveEnd);
         }
 
         function checkEnd() {
             // count pieces first: no pieces left is terminal for either side regardless of turn
-            var wc = 0, bc = 0;
-            for (var i = 0; i < 64; i++) { if (colorOf(board[i]) === WHITE) wc++; else if (colorOf(board[i]) === BLACK) bc++; }
+            let wc = 0, bc = 0;
+            for (let i = 0; i < 64; i++) { if (colorOf(board[i]) === WHITE) wc++; else if (colorOf(board[i]) === BLACK) bc++; }
             if (wc === 0) { finish(BLACK); return; }
             if (bc === 0) { finish(WHITE); return; }
             // Draughts: you lose when YOU have no move ON YOUR TURN. Testing both colours
@@ -1138,7 +1138,7 @@
             if (!hasAnyMove(board, turn)) { finish(turn === WHITE ? BLACK : WHITE); return; }
             // Draws. Without these a king-vs-king endgame shuffles forever and an untimed game
             // (the default) never ends at all.
-            var dr = drawReason ? drawReason(board, idleTurns) : "";
+            let dr = drawReason ? drawReason(board, idleTurns) : "";
             if (dr === "idle") finishDraw("Draw: 15 moves with no capture.");
             else if (dr === "kings") finishDraw("Draw: king against king.");
         }
@@ -1150,7 +1150,7 @@
             clearSelection();
             refreshHighlights();
             if (clock) clock.stop();
-            var lost = reason === "time" ? " (on time)" : "";
+            const lost = reason === "time" ? " (on time)" : "";
             status(winner === myColor ? ("🏆 You win!" + lost) : ("You lose." + lost));
             sfx("GameEnd");
             if (session.onGameOver) session.onGameOver(winner === myColor ? "win" : "lose");

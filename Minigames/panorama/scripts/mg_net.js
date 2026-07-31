@@ -51,16 +51,16 @@
  */
 
 (function () {
-    var MG = ($.MG = $.MG || {});
+    const MG = ($.MG = $.MG || {});
     if (MG.Net) return; // already initialised
 
     // ─────────────────────────────────────────────────────────────────────────
     // Production backend: direct HTTPS to the Aéza VPS (no Cloudflare Worker/proxy).
-    var BASE_URL = "https://178.236.246.13";
+    const BASE_URL = "https://178.236.246.13";
     // ─────────────────────────────────────────────────────────────────────────
 
-    var REQ_TIMEOUT_MS = 8000;
-    var POLL_STEP = 0.05;   // seconds between dimension checks
+    const REQ_TIMEOUT_MS = 8000;
+    const POLL_STEP = 0.05;   // seconds between dimension checks
 
     // ── shared opponent-poll cadence (single source of truth for all games) ──
     // Every online game polls /api/poll to learn the opponent's move. Polling is the
@@ -71,7 +71,7 @@
     //   misses 0..(FAST_POLLS-1) → POLL_FAST_S ; then POLL_SLOW_S ; a long think → POLL_IDLE_S
     // `misses` = consecutive empty ("nothing new") polls this turn; reset to 0 on each real
     // move so the next wait starts fast again. Transport errors reuse the same schedule.
-    var POLL_FAST_S = 0.5, POLL_SLOW_S = 0.9, POLL_IDLE_S = 1.5, FAST_POLLS = 6, SLOW_POLLS = 18;
+    const POLL_FAST_S = 0.5, POLL_SLOW_S = 0.9, POLL_IDLE_S = 1.5, FAST_POLLS = 6, SLOW_POLLS = 18;
     function pollDelay(misses) {
         if (misses < FAST_POLLS) return POLL_FAST_S;   // first ~3s: rapid replies surface quickly
         if (misses < SLOW_POLLS) return POLL_SLOW_S;   // steady through the rest of a normal turn
@@ -87,9 +87,9 @@
     //   misses:  0    1    2    3    4    5+
     //   delay:  1.5  1.5  3.0  3.0  4.0  5.0   (seconds)
     // Monotonic - a waiting room has no "real move" to reset on; it just resolves when it fills.
-    var WAIT_STEPS = [1.5, 1.5, 3.0, 3.0, 4.0, 5.0];
+    const WAIT_STEPS = [1.5, 1.5, 3.0, 3.0, 4.0, 5.0];
     function waitDelay(misses) {
-        var i = misses < 0 ? 0 : (misses < WAIT_STEPS.length ? misses : WAIT_STEPS.length - 1);
+        let i = misses < 0 ? 0 : (misses < WAIT_STEPS.length ? misses : WAIT_STEPS.length - 1);
         return WAIT_STEPS[i];
     }
 
@@ -103,18 +103,18 @@
     // is never clamped). Proven 720p–8K by tools/mg_simulate_resolutions.js. The probe is
     // NOT level-encoded - it stays a literal 600x1000 and is read via rawRequest, bypassing
     // decode(). See github2/IMAGE_SIDECHANNEL_1PX_BUG.md.
-    var STEP = 9, BASE = 15;
+    const STEP = 9, BASE = 15;
 
     // Host panel styled size (layout units). Parsed by the resolution simulator's drift
     // guard, so the two stay in lockstep. Response images (all <= 582px) never exceed it.
-    var HOST_W = 640, HOST_H = 1020;
+    const HOST_W = 640, HOST_H = 1020;
 
     // Debug logging. Ships OFF. When toggled on (overlay tools → Debug Log) every step is
     // written to Deadlock's dev CONSOLE via $.Msg - no on-screen panel. When OFF, nothing
     // is emitted at all (not even the routine step logs). Lines are still buffered so a
     // later toggle-on can dump recent history to the console.
-    var DEBUG = false;
-    var dbgLines = [];
+    let DEBUG = false;
+    const dbgLines = [];
     function debug(msg) {
         dbgLines.push(msg);
         if (dbgLines.length > 40) dbgLines.shift();
@@ -127,7 +127,7 @@
             // Dump buffered history so turning it on shows what already happened.
             try {
                 $.Msg("[MG] debug ON - recent history:");
-                for (var i = 0; i < dbgLines.length; i++) $.Msg("[MG] " + dbgLines[i]);
+                for (let i = 0; i < dbgLines.length; i++) $.Msg("[MG] " + dbgLines[i]);
             } catch (e) {}
         }
     }
@@ -144,10 +144,10 @@
     // host's size, mis-calibrating the scale and corrupting every decode after it.
     // The panel itself has no background and images render at 2% opacity, so the
     // large footprint stays invisible.
-    var host = null;
+    let host = null;
     function ensureHost() {
         if (host && host.IsValid && host.IsValid()) return host;
-        var ctx = $.GetContextPanel();
+        const ctx = $.GetContextPanel();
         host = $.CreatePanel("Panel", ctx, "MG_NetHost");
         try {
             host.style.position = "2px 2px 0px";
@@ -175,15 +175,15 @@
         host = null;
     }
 
-    var reqCounter = 0;
+    let reqCounter = 0;
 
     // ── request serialization ───────────────────────────────────────────────
     // Panorama's image loader wedges when several <Image> loads are in flight at once
     // (the connections from prior requests don't free up before new ones fire, and every
     // pending load then stalls at dims 0 until it times out). So we run requests strictly
     // ONE AT A TIME through a FIFO queue - the poll loop + user actions can never overlap.
-    var reqQueue = [];
-    var reqActive = false;
+    let reqQueue = [];
+    let reqActive = false;
 
     function rawRequest(path, params, onDone, onError) {
         reqQueue.push({ kind: "protocol", path: path, params: params, onDone: onDone, onError: onError });
@@ -205,10 +205,10 @@
     }
     function drainQueue() {
         if (reqActive) return;
-        var job = reqQueue.shift();
+        const job = reqQueue.shift();
         if (!job) { releaseHost(); return; } // idle: drop the host so it stops covering the menu
         reqActive = true;
-        var success = function (a, b, c) {
+        const success = function (a, b, c) {
             // Keep reqActive latched through the callback and release frame. Callbacks
             // commonly enqueue their next poll synchronously; clearing it here would let
             // that request bypass the intended gap and start inside this callback.
@@ -221,7 +221,7 @@
                 $.Schedule(0.05, function () { reqActive = false; drainQueue(); });
             }
         };
-        var failure = function (e) {
+        const failure = function (e) {
             // The Panorama image loader is intermittently flaky (a URL that loads
             // instantly in a browser sometimes stalls to a timeout here). One silent
             // re-queue at the front of the line recovers most of those. This is a
@@ -247,9 +247,9 @@
     // success does NOT clear/delete the image: the caller receives the loaded
     // panel and owns its remaining lifetime.
     function imageRequestNow(url, attributes, onDone, onError) {
-        var img;
+        let img;
         try {
-            var h = ensureHost();
+            const h = ensureHost();
             img = $.CreatePanel("Image", h, "mgimg_" + (reqCounter++), attributes || {});
             img.style.position = "0px 0px 0px";
             log("→ IMG " + url);
@@ -264,16 +264,16 @@
             return;
         }
 
-        var elapsed = 0;
-        var finished = false;
+        let elapsed = 0;
+        let finished = false;
         function discard() {
             try { img.SetImage(""); } catch (e) {}
             try { img.DeleteAsync(0); } catch (e2) {}
         }
         function check() {
             if (finished) return;
-            var w = Number(img.actuallayoutwidth);
-            var hh = Number(img.actuallayoutheight);
+            let w = Number(img.actuallayoutwidth);
+            let hh = Number(img.actuallayoutheight);
             if (w > 0 && hh > 0) {
                 finished = true;
                 log("← IMG = " + w + "x" + hh + " (" + Math.round(elapsed) + "ms)");
@@ -300,9 +300,9 @@
     // networking. Requests are short, so the worst case is one 8s timeout; stale
     // responses are discarded by the callers' poll tokens.
     function rawRequestNow(path, params, onDone, onError) {
-        var img;
+        let img;
         try {
-            var h = ensureHost();
+            const h = ensureHost();
             img = $.CreatePanel("Image", h, "mgreq_" + (reqCounter++));
             // Do NOT set width/height/scaling: Panorama rejects width:auto and any
             // explicit size would override the intrinsic pixel size we need to read.
@@ -310,9 +310,9 @@
             // the dummyimage test that reported 123x456 correctly).
             img.style.position = "0px 0px 0px";
 
-            var qs = "rnd=" + Math.random() + "x" + reqCounter;
+            let qs = "rnd=" + Math.random() + "x" + reqCounter;
             if (params) {
-                for (var k in params) {
+                for (const k in params) {
                     if (params.hasOwnProperty(k)) {
                         qs += "&" + k + "=" + encodeURIComponent(params[k]);
                     }
@@ -320,7 +320,7 @@
             }
             // NOTE: Panorama's image loader keys off the URL extension - it will
             // silently refuse a URL that doesn't look like an image, so paths end ".png".
-            var fullUrl = BASE_URL + path + ".png?" + qs;
+            const fullUrl = BASE_URL + path + ".png?" + qs;
             log("→ GET " + path + ".png");
             img.SetImage(fullUrl);
         } catch (e) {
@@ -329,8 +329,8 @@
             return;
         }
 
-        var elapsed = 0;
-        var finished = false;
+        let elapsed = 0;
+        let finished = false;
         // Clear the src before deleting so the engine releases the load/connection
         // promptly instead of holding it until the panel is garbage-collected.
         function cleanup() {
@@ -339,8 +339,8 @@
         }
         function check() {
             if (finished) return;
-            var w = img.actuallayoutwidth;
-            var hh = img.actuallayoutheight;
+            let w = img.actuallayoutwidth;
+            let hh = img.actuallayoutheight;
             if (w > 0 && hh > 0) {
                 finished = true;
                 cleanup();
@@ -365,21 +365,21 @@
     // reference makes the derived scale precise, so small returned values (code halves,
     // squares 0..63) decode without rounding drift. This also tells us whether the
     // engine reports width/height swapped.
-    var PROBE_W = 600, PROBE_H = 1000;
-    var swap = false, scaleX = 1, scaleY = 1, calibrated = false, calibrating = false;
-    var calibWaiters = [];
+    const PROBE_W = 600, PROBE_H = 1000;
+    let swap = false, scaleX = 1, scaleY = 1, calibrated = false, calibrating = false;
+    let calibWaiters = [];
 
     function finishCalib() {
         calibrated = true;
         calibrating = false;
-        var ws = calibWaiters; calibWaiters = [];
-        for (var i = 0; i < ws.length; i++) { try { ws[i].go(); } catch (e) {} }
+        const ws = calibWaiters; calibWaiters = [];
+        for (let i = 0; i < ws.length; i++) { try { ws[i].go(); } catch (e) {} }
     }
 
     function failCalib() {
         calibrating = false;
-        var ws = calibWaiters; calibWaiters = [];
-        for (var i = 0; i < ws.length; i++) {
+        const ws = calibWaiters; calibWaiters = [];
+        for (let i = 0; i < ws.length; i++) {
             try { if (ws[i].fail) ws[i].fail("calibration"); } catch (e) {}
         }
     }
@@ -390,7 +390,7 @@
     // pending requests get their error callback. NEVER fall back to scale=1: on a
     // scaled UI that decodes garbage - wrong lobby codes, phantom second players,
     // corrupted moves that eat pieces.
-    var PROBE_ATTEMPTS = 3;
+    const PROBE_ATTEMPTS = 3;
 
     function calibrate(cb, fail) {
         if (cb) calibWaiters.push({ go: cb, fail: fail });
@@ -412,9 +412,9 @@
         rawRequest("/api/probe", null, function (w, hh) {
             // Unswapped ~ (600s, 1000s); swapped ~ (1000s, 600s). 600 < 1000, so
             // width > height means the engine swapped the two dimensions.
-            var sw = false;
-            if (w > hh) { sw = true; var t = w; w = hh; hh = t; }
-            var sx = w / PROBE_W, sy = hh / PROBE_H;
+            let sw = false;
+            if (w > hh) { sw = true; const t = w; w = hh; hh = t; }
+            const sx = w / PROBE_W, sy = hh / PROBE_H;
             // Clamp detector. Panorama scales the whole UI by ONE uniform factor, so a
             // faithfully-read probe always yields sx ≈ sy. If they diverge, the probe
             // image was squeezed to fit a container of a different aspect ratio - the
@@ -422,7 +422,7 @@
             // bogus scale (sx=0.333, sy=0.200) that corrupted every later decode. Reject
             // it and retry rather than calibrate to garbage. (A too-small host is the
             // usual cause; the host is sized > probe precisely to prevent this.)
-            var lo = Math.min(sx, sy), hi = Math.max(sx, sy);
+            const lo = Math.min(sx, sy), hi = Math.max(sx, sy);
             if (!(lo > 0.05) || (hi - lo) / hi > 0.15) {
                 log("⚠ probe distorted: raw " + w + "x" + hh + " => sx=" + sx.toFixed(3) + " sy=" + sy.toFixed(3));
                 retryOrFail("distorted");
@@ -440,10 +440,10 @@
     // (out-of-range code, >2 players, a non-diagonal "move"). That means the scale
     // is stale - bad probe or a resolution change - so re-run it, throttled so a
     // burst of bad reads doesn't stack recalibrations.
-    var lastSuspect = 0;
+    let lastSuspect = 0;
     function suspectDecode(why) {
         log("⚠ suspicious decode: " + why);
-        var now = Date.now();
+        const now = Date.now();
         if (now - lastSuspect < 5000) return;
         lastSuspect = now;
         calibrated = false;
@@ -458,7 +458,7 @@
     // dim=int+1 scheme did, so every decoder downstream is unchanged.
     function decodeLevel(dim, scale) { return Math.round((dim / scale - BASE) / STEP); }
     function decode(w, hh) {
-        if (swap) { var t = w; w = hh; hh = t; }
+        if (swap) { const t = w; w = hh; hh = t; }
         return { w: decodeLevel(w, scaleX), h: decodeLevel(hh, scaleY) };
     }
 
@@ -470,14 +470,14 @@
     // photograph. Calibration removes display/UI scale and dimension swapping first.
     function isLevelEncodedSize(w, hh) {
         if (!calibrated) return false;
-        var levels = decode(Number(w), Number(hh));
+        const levels = decode(Number(w), Number(hh));
         return levels.w >= 0 && levels.w <= 63 && levels.h >= 0 && levels.h <= 63;
     }
 
     function request(path, params, onDone, onError) {
         function go() {
             rawRequest(path, params, function (w, hh) {
-                var d = decode(w, hh);
+                const d = decode(w, hh);
                 onDone(d.w, d.h);
             }, onError);
         }
@@ -500,8 +500,8 @@
             //    true and deadlock every future request;
             //  - the active in-flight request: it finishes naturally (see
             //    rawRequestNow), keeping loads strictly one-at-a-time.
-            var kept = [];
-            for (var i = 0; i < reqQueue.length; i++) {
+            const kept = [];
+            for (let i = 0; i < reqQueue.length; i++) {
                 if (reqQueue[i].path === "/api/probe") kept.push(reqQueue[i]);
             }
             reqQueue = kept;
@@ -530,18 +530,18 @@
             // fall back to the original Math.random mix, which is still far beyond guessable
             // for a friendly relay and never travels downward where it could leak.
             try {
-                var c = (typeof crypto !== "undefined" && crypto) ||
+                const c = (typeof crypto !== "undefined" && crypto) ||
                     (typeof globalThis !== "undefined" && globalThis.crypto) || null;
                 if (c && c.getRandomValues) {
-                    var buf = new Uint8Array(24);
+                    const buf = new Uint8Array(24);
                     c.getRandomValues(buf);
-                    var hex = "";
-                    for (var b = 0; b < buf.length; b++) hex += (buf[b] + 256).toString(16).slice(1);
+                    let hex = "";
+                    for (let b = 0; b < buf.length; b++) hex += (buf[b] + 256).toString(16).slice(1);
                     return hex;
                 }
             } catch (e) { /* fall through to the Math.random mix */ }
-            var s = "";
-            for (var i = 0; i < 5; i++) s += Math.random().toString(36).slice(2, 12);
+            let s = "";
+            for (let i = 0; i < 5; i++) s += Math.random().toString(36).slice(2, 12);
             return (s + Date.now().toString(36)).slice(0, 48);
         }
     };
@@ -551,26 +551,26 @@
     // The BAND both keeps the width clear of every sentinel (1 ok · 9 err · 20/21/22
     // formation) AND encodes the role: 24..39 = joiner/create, 40..55 = host. Returns
     // { code, host } or null if the width isn't in either code band (a stale-scale read).
-    var CODE_BAND_JOIN = 24, CODE_BAND_HOST = 40, CODE_MAX = 1023;
+    const CODE_BAND_JOIN = 24, CODE_BAND_HOST = 40, CODE_MAX = 1023;
     function decodeCode(w, h) {
-        var band = null;
+        let band = null;
         if (w >= CODE_BAND_JOIN && w <= CODE_BAND_JOIN + 15) band = { off: CODE_BAND_JOIN, host: false };
         else if (w >= CODE_BAND_HOST && w <= CODE_BAND_HOST + 15) band = { off: CODE_BAND_HOST, host: true };
         if (!band || h < 0 || h > 63) return null;
-        var code = ((w - band.off) << 6) + h;
+        const code = ((w - band.off) << 6) + h;
         if (code < 0 || code > CODE_MAX) return null;
         return { code: code, host: band.host };
     }
     // Client displays / re-sends a code as a plain decimal string. The server canonicalises
     // (validCode) so zero-padding is irrelevant, but we pad to 4 for a stable on-screen code.
-    function codeStr(code) { var s = "" + code; while (s.length < 4) s = "0" + s; return s; }
+    function codeStr(code) { let s = "" + code; while (s.length < 4) s = "0" + s; return s; }
     // tc index (join height) -> seconds. Mirrors worker tcFromIndex: 0 none · 1..4 = the menu.
-    var TC_SECONDS = [0, 60, 180, 300, 600];
+    const TC_SECONDS = [0, 60, 180, 300, 600];
     function tcFromIndex(i) { return (i >= 0 && i < TC_SECONDS.length) ? TC_SECONDS[i] : 0; }
     // /api/match height codec (mirrors worker): height = tcIndex*2 + variantBit + 1, variantBit
     // english=1 else 0. Recover the bank (seconds) and checkers variant from one height value.
-    function matchTcFromHeight(h) { var v = h - 1; return v >= 0 ? tcFromIndex(v >> 1) : 0; }
-    function matchVariantFromHeight(h) { var v = h - 1; return v >= 0 && (v & 1) ? "english" : "russian"; }
+    function matchTcFromHeight(h) { const v = h - 1; return v >= 0 ? tcFromIndex(v >> 1) : 0; }
+    function matchVariantFromHeight(h) { const v = h - 1; return v >= 0 && (v & 1) ? "english" : "russian"; }
 
     // ── Typed protocol layer ────────────────────────────────────────────────
     // Every decode is range-checked against what the protocol can actually produce.
@@ -583,7 +583,7 @@
         // say nothing about the server. Warm up with one request, time the second.
         ping: function (cb, err) {
             request("/api/ping", null, function () {
-                var start = Date.now();
+                const start = Date.now();
                 request("/api/ping", null, function () {
                     cb(Date.now() - start);
                 }, err);
@@ -593,12 +593,12 @@
         // tc = time control in SECONDS (chess/checkers only; server rejects off-menu / other
         // games → untimed). Omit or 0 for an untimed lobby. The joiner learns tc from join().
         create: function (game, tok, cb, err, tc, cv, solo) {
-            var params = { game: game, tok: tok, tc: tc || 0 };
+            const params = { game: game, tok: tok, tc: tc || 0 };
             if (cv) params.cv = cv;                       // "russian"/"english"; checkers only. Joiner learns it via match()
             if (solo) params.solo = 1;                    // GeoGuesser only: server fills the opponent seat
             request("/api/create", params, function (w, h) {
                 if (w === 9 && h === 4) { if (err) err("busy"); return; } // rate-limited, don't recalibrate
-                var dc = decodeCode(w, h);
+                const dc = decodeCode(w, h);
                 log("create decoded w=" + w + " h=" + h + " => code=" + (dc ? dc.code : "?"));
                 if (!dc) {
                     suspectDecode("create w=" + w + " h=" + h);
@@ -616,12 +616,12 @@
         // non-clock game. The server pools waiters by (game, tc) so banks never force-mismatch;
         // the resolved bank is discovered by both clients from the authoritative /api/clocks.
         quick: function (game, tok, cb, err, tc, cv) {
-            var params = { game: game, tok: tok };
+            const params = { game: game, tok: tok };
             if (tc != null && tc !== 0) params.tc = tc;   // "any" or concrete secs; omit for untimed
             if (cv) params.cv = cv;                       // "any"/"russian"/"english"; checkers only
             request("/api/quick", params, function (w, h) {
                 if (w === 9 && h === 4) { if (err) err("busy"); return; } // rate-limited
-                var dc = decodeCode(w, h);
+                const dc = decodeCode(w, h);
                 if (!dc) {
                     suspectDecode("quick w=" + w + " h=" + h);
                     if (err) err("decode");
@@ -638,8 +638,8 @@
         // can't also carry which game was chosen, so BOTH sides read it from status() (whose
         // height now carries game+1). The caller resolves the game before mounting.
         mquick: function (games, tok, cb, err, tc, cv) {
-            var list = (games || []).join(",");
-            var params = { games: list, tok: tok };
+            const list = (games || []).join(",");
+            const params = { games: list, tok: tok };
             if (tc != null && tc !== 0) params.tc = tc;   // "any" or concrete secs (chess/checkers in the set)
             if (cv) params.cv = cv;                       // "any"/"russian"/"english" (checkers in the set)
             request("/api/mquick", params, function (w, h) {
@@ -649,7 +649,7 @@
                     if (err) err(h === 6 ? "games" : h === 3 ? "token" : "error");
                     return;
                 }
-                var dc = decodeCode(w, h);
+                const dc = decodeCode(w, h);
                 if (!dc) {
                     suspectDecode("mquick w=" + w + " h=" + h);
                     if (err) err("decode");
@@ -743,7 +743,7 @@
                 function (w, h) {
                     if (!cb) return;
                     if (w === 9) {
-                        var reason = h === 1 ? "turn" : h === 2 ? "illegal" : h === 3 ? "token" : "gone";
+                        const reason = h === 1 ? "turn" : h === 2 ? "illegal" : h === 3 ? "token" : "gone";
                         cb({ ok: false, reason: reason });
                     } else {
                         cb({ ok: true });
@@ -768,15 +768,15 @@
                     if (MG.UI && MG.UI.kickToMenu) MG.UI.kickToMenu("Opponent left.");
                     return;
                 }
-                var from = w, to = h;   // RAW squares 0..63 now (worker dropped the +1 / +100)
+                const from = w, to = h;   // RAW squares 0..63 now (worker dropped the +1 / +100)
                 if (from === to) { cb(null); return; }   // (1,1)/(0,0) => nothing new
-                var inRange = from >= 0 && from <= 63 && to >= 0 && to <= 63;
+                const inRange = from >= 0 && from <= 63 && to >= 0 && to <= 63;
                 if (!inRange || (validate && !validate(from, to))) {
                     suspectDecode("poll w=" + w + " h=" + h);
                     if (err) err("decode");
                     return;
                 }
-                var end = deriveEnd ? (deriveEnd(from, to) ? 1 : 0) : 1;
+                const end = deriveEnd ? (deriveEnd(from, to) ? 1 : 0) : 1;
                 cb({ from: from, to: to, end: end, seq: since + 1 });
             }, err);
         },
@@ -799,7 +799,7 @@
                     return;
                 }
                 if (h >= 16 && h <= 31) {
-                    var packed = h - 16;
+                    const packed = h - 16;
                     cb({
                         done: false,
                         round: w - 1,
@@ -839,7 +839,7 @@
         geoPointAxis: function (route, params, limit, cb, err) {
             request(route, params, function (w, h) {
                 if (h === 63) { if (err) err(w); return; }
-                var value = h * 63 + w;
+                const value = h * 63 + w;
                 if (w < 0 || w >= 63 || value < 0 || value >= limit) {
                     suspectDecode(route + " w=" + w + " h=" + h);
                     if (err) err("decode");
@@ -862,7 +862,7 @@
         geoScore: function (code, tok, seat, cb, err) {
             request("/api/geoscore", { code: code, tok: tok, seat: seat }, function (w, h) {
                 if (h === 63) { if (err) err(w); return; }
-                var score = h * 63 + w;
+                const score = h * 63 + w;
                 if (w < 0 || w >= 63 || score < 0 || score > 4095) {
                     suspectDecode("geoscore w=" + w + " h=" + h);
                     if (err) err("decode");
@@ -882,8 +882,8 @@
         geoPlace: function (code, tok, cb, err) {
             request("/api/geoinfo", { code: code, tok: tok }, function (w, h) {
                 if (h === 63) { if (err) err(w); return; }
-                var place = h * 63 + w;
-                var limit = 6 + (MG.GeoCountries ? MG.GeoCountries.length : 0) * 6;
+                const place = h * 63 + w;
+                const limit = 6 + (MG.GeoCountries ? MG.GeoCountries.length : 0) * 6;
                 if (w < 0 || w >= 63 || place < 0 || place >= limit) {
                     suspectDecode("geoinfo w=" + w + " h=" + h);
                     if (err) err("decode");
@@ -899,8 +899,8 @@
         geoCredit: function (code, tok, cb, err) {
             request("/api/geocredit", { code: code, tok: tok }, function (w, h) {
                 if (h === 63) { if (err) err(w); return; }
-                var index = h * 63 + w;
-                var list = MG.GeoCredits || [];
+                const index = h * 63 + w;
+                const list = MG.GeoCredits || [];
                 if (w < 0 || w >= 63 || index < 0 || index >= list.length) {
                     suspectDecode("geocredit w=" + w + " h=" + h);
                     if (err) err("decode");
@@ -933,7 +933,7 @@
                     if (w === 9 && h === 8) { next(null); return; }
                     if (w === 9) { fail(h === 9 ? "gone" : "server"); return; }
                     // Real reading: width is the CLK band (30..39 = 30+hi), height is lo (0..63).
-                    var sec = (w - 30) * 64 + h;
+                    const sec = (w - 30) * 64 + h;
                     if (w < 30 || w > 39 || sec < 0 || sec > 600) {
                         suspectDecode("clocks seat=" + seat + " w=" + w + " h=" + h);
                         fail("decode");
@@ -948,7 +948,7 @@
                     if (s1 === null) { if (cb) cb(null); return; }
                     // The running seat that hits 0 is the flag-fall loser; the server floors it
                     // at 0 and never lets the other tick past it, so at most one seat reads 0.
-                    var flag = s0 === 0 ? 0 : (s1 === 0 ? 1 : -1);
+                    const flag = s0 === 0 ? 0 : (s1 === 0 ? 1 : -1);
                     if (cb) cb({ sec: [s0, s1], flag: flag });
                 });
             });
@@ -994,7 +994,7 @@
                 if (!cb) return;
                 if (w === 1 && h === 1) { cb({ ok: true }); return; }
                 if (w === 9) {
-                    var reason = h === 1 ? "host" : h === 2 ? "players" : h === 3 ? "token" : "gone";
+                    const reason = h === 1 ? "host" : h === 2 ? "players" : h === 3 ? "token" : "gone";
                     cb({ ok: false, reason: reason });
                     return;
                 }
@@ -1008,7 +1008,7 @@
                 if (!cb) return;
                 if (w === 1 && h === 1) { cb({ ok: true }); return; }
                 if (w === 9) {
-                    var reason = h === 1 ? "turn" : h === 2 ? "illegal" : h === 3 ? "token" : "gone";
+                    const reason = h === 1 ? "turn" : h === 2 ? "illegal" : h === 3 ? "token" : "gone";
                     cb({ ok: false, reason: reason });
                     return;
                 }
@@ -1026,7 +1026,7 @@
                 }
                 // Seat ranges span 0..3 (2–4 players). ROLES(4, a*4+d+1) is the server-owned
                 // post-bout rotation; OVER's loser range widens to 0..3 (h = loser+2 → 1..5).
-                var ev = null;
+                let ev = null;
                 if (w === 2 && h >= 1 && h <= 36) ev = { type: "trump", card: h - 1 };
                 else if (w === 3 && h >= 1 && h <= 4) ev = { type: "open", seat: h - 1 };
                 else if (w === 4 && h >= 1 && h <= 16) ev = { type: "roles", attacker: ((h - 1) / 4) | 0, defender: (h - 1) % 4 };
@@ -1069,7 +1069,7 @@
             request("/api/dcreate", { n: cap, tok: tok }, function (w, h) {
                 if (w === 9 && h === 4) { if (err) err("busy"); return; }   // rate-limited
                 if (w === 9 && h === 3) { if (err) err("token"); return; }
-                var dc = decodeCode(w, h);   // host/joiner flag folded into the width band
+                const dc = decodeCode(w, h);   // host/joiner flag folded into the width band
                 if (!dc) {
                     suspectDecode("dcreate w=" + w + " h=" + h);
                     if (err) err("decode");
@@ -1100,8 +1100,8 @@
                 if (w === 9) { if (err) err("transient"); return; }
                 // "started" is folded into the WIDTH as a band offset (was +100, overflows a
                 // level): waiting → players 1..4, started → 51..54. Mirror worker ROOM_STARTED=50.
-                var started = w >= 50;
-                var players = started ? w - 50 : w;
+                const started = w >= 50;
+                const players = started ? w - 50 : w;
                 if (players < 1 || players > 4 || h < 2 || h > 4) {
                     suspectDecode("droom w=" + w + " h=" + h);
                     if (err) err("decode");
@@ -1120,7 +1120,7 @@
             request("/api/pcreate", { n: cap, tok: tok }, function (w, h) {
                 if (w === 9 && h === 4) { if (err) err("busy"); return; }   // rate-limited
                 if (w === 9 && h === 3) { if (err) err("token"); return; }
-                var dc = decodeCode(w, h);   // host/joiner flag folded into the width band
+                const dc = decodeCode(w, h);   // host/joiner flag folded into the width band
                 if (!dc) {
                     suspectDecode("pcreate w=" + w + " h=" + h);
                     if (err) err("decode");
@@ -1151,8 +1151,8 @@
                 if (w === 9) { if (err) err("transient"); return; }
                 // "started" folded into the WIDTH as a band offset (was +100): waiting →
                 // players 1..4, started → 51..54. Mirror worker ROOM_STARTED=50. · height = cap.
-                var started = w >= 50;
-                var players = started ? w - 50 : w;
+                const started = w >= 50;
+                const players = started ? w - 50 : w;
                 if (players < 1 || players > 4 || h < 2 || h > 4) {
                     suspectDecode("proom w=" + w + " h=" + h);
                     if (err) err("decode");
@@ -1167,7 +1167,7 @@
                 if (!cb) return;
                 if (w === 1 && h === 1) { cb({ ok: true }); return; }
                 if (w === 9) {
-                    var reason = h === 1 ? "host" : h === 2 ? "players" : h === 3 ? "token" : "gone";
+                    const reason = h === 1 ? "host" : h === 2 ? "players" : h === 3 ? "token" : "gone";
                     cb({ ok: false, reason: reason });
                     return;
                 }
@@ -1182,7 +1182,7 @@
                 if (!cb) return;
                 if (w === 1 && h === 1) { cb({ ok: true }); return; }
                 if (w === 9) {
-                    var reason = h === 1 ? "turn" : h === 2 ? "illegal" : h === 3 ? "token" : "gone";
+                    const reason = h === 1 ? "turn" : h === 2 ? "illegal" : h === 3 ? "token" : "gone";
                     cb({ ok: false, reason: reason });
                     return;
                 }
@@ -1208,7 +1208,7 @@
                     if (MG.UI && MG.UI.kickToMenu) MG.UI.kickToMenu("Opponent left.");
                     return;
                 }
-                var ev = null;
+                let ev = null;
                 // HAND(2, button+1) · BOARD(5, card+1) · WIN(7,1) · OVER(8,1)
                 if (w === 2 && h >= 1 && h <= 4) ev = { type: "hand", button: h - 1 };
                 else if (w === 5 && h >= 1 && h <= 52) ev = { type: "board", card: h - 1 };

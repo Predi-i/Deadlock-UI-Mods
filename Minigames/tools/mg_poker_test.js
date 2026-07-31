@@ -15,11 +15,11 @@ function ok(cond, msg) { if (!cond) { failures++; console.log("  ✗ " + msg); }
 
 // Build a card id from suit char + rank char, using the engine's own tables.
 function card(s, r) {
-    var suit = M.SUIT_CHARS.indexOf(s), rank = M.RANK_CHARS.indexOf(r);
+    const suit = M.SUIT_CHARS.indexOf(s), rank = M.RANK_CHARS.indexOf(r);
     if (suit < 0 || rank < 0) throw new Error("bad card " + s + r);
     return suit * 13 + rank;
 }
-function hand() { var a = []; for (var i = 0; i < arguments.length; i++) a.push(card(arguments[i][0], arguments[i][1])); return a; }
+function hand() { const a = []; for (let i = 0; i < arguments.length; i++) a.push(card(arguments[i][0], arguments[i][1])); return a; }
 
 console.log("card ids & encoding");
 (function () {
