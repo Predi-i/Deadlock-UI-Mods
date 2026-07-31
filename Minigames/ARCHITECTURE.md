@@ -152,8 +152,13 @@ tools/                     dev-only Node test harnesses + build helpers (NOT pac
   mg_simulate_resolutions.js      side-channel decode across 720p–8K
   es6_codemod.js           one-shot: var -> const/let, and WHY each survivor stayed (§10.2)
   es6_arrows.js            one-shot: anonymous callbacks -> arrows, same reporting
+  es6_templates.js         one-shot: concat -> template literals; only when the LEFTMOST
+                           operand is a string literal (else the first `+` may be arithmetic)
   mg_es6_codemod_test.js   codemod safety fixtures: scope/TDZ/loop-capture hazards
   mg_es6_arrows_test.js    arrow safety fixtures: this/arguments/new + the leading-paren ASI rule
+  mg_es6_templates_test.js template fixtures: arithmetic-vs-concat `+`, escaping, no reflow
+  mg_es6_invariants_test.js STANDING guard on the shipped tree (§10.2), self-tested
+  mg_load_smoke_test.js    evaluates all 23 shipped scripts under a fake $, checks registration
 ```
 
 A Public (non-dev) build ships without comments. That is NOT a step in this repo: run
@@ -1486,20 +1491,31 @@ mod (`D:\GitHub2\QOLLOCK\panorama`) for a proven pattern — do not invent CSS/J
 The Panorama JS runtime accepts `const`/`let`, arrow functions and template literals — not a
 guess: QOLLOCK ships all three into the live HUD (`ql_core.js` uses `const` throughout,
 `ql_hero_testing.js` has `` Cmd(`giveitem ${item}`) `` and `$.Schedule(0.25, () => {…})`).
-Declarations here are `const` by default, `let` when reassigned; anonymous callbacks are arrows.
+Declarations here are `const` by default, `let` when reassigned; anonymous callbacks are arrows;
+string building uses template literals where the leading operand is a string literal.
 
-**Two things are deliberately NOT uniform, and both are load-bearing:**
+**Three things are deliberately NOT uniform, and every one is load-bearing:**
 
-1. **33 surviving `var`s.** Each one would change behaviour if converted, because `var` is
-   function-scoped and `let` is block-scoped: 21 are captured by a closure inside a loop (`let`
-   would hand each iteration a fresh binding, changing what the handler sees), and 12 are used
-   outside the block that would now scope them. If you touch one, you are changing semantics,
-   not style. `tools/es6_codemod.js` reports the exact reason per site.
+1. **33 surviving `var`s** (25 in `panorama/`, 8 in `tools/`). Each one would change behaviour
+   if converted, because `var` is function-scoped and `let` is block-scoped: 21 are captured by
+   a closure inside a loop (`let` would hand each iteration a fresh binding, changing what the
+   handler sees), and 12 are used outside the block that would now scope them. If you touch
+   one, you are changing semantics, not style. `tools/es6_codemod.js` reports the reason per
+   site. (The loop-capture count is low because this code already used the pre-ES6 IIFE
+   capture idiom — `((square) => { … })(i)` — so handlers close over a parameter, not the
+   loop binding.)
 
 2. **253 surviving `function` expressions.** An arrow has no own `this`/`arguments`, no
    `[[Construct]]`, no self-name for recursion, and ignores a `.bind()` receiver. Panorama
    calls some handlers with the panel as the receiver, so object-literal method values and
    anything reading `this` stay `function`. `tools/es6_arrows.js` reports why per site.
+
+3. **862 surviving `+` concatenations.** 775 because the leftmost operand is not a string
+   literal, and that is not fussiness: `a + b + "px"` with numbers sums FIRST ("3px"), while
+   `${a}${b}px` concatenates ("12px"). A template is only equivalent when a leading string
+   literal forces every `+` in the chain to be concatenation. The other 87 span lines, and
+   re-flowing them risks the ASI rule below. `tools/es6_templates.js` reports per site.
+
 
 ⚠ **The minifier rule now extends to a leading `(`.** `operator-linebreak` (§10.1) keeps a
 shipped line from starting with `+ - /`, but an arrow conversion can make a line start with
@@ -1515,4 +1531,25 @@ real specification: each executes a hazard fixture before and after and requires
 output. They are not decoration — the `var` harness caught a generated
 `for (const i = 0; i < 3; i++)` (instant "Assignment to constant variable") that came from
 eslint-scope leaving top-level references unresolved under `sourceType: "script"`.
+
+⚠ Those harnesses test the **tools**, not the shipped code — they would stay green if someone
+hand-wrote an arrow reading `this`. Two further tests cover the code itself:
+
+- **`mg_es6_invariants_test.js`** enforces the four properties above on the shipped tree: no
+  arrow reads `this` or `arguments`, no `new` on an arrow, and no line newly starts with
+  `( [ + - /` (delta against a recorded baseline of 62, since IIFE openers legitimately do).
+  Its detectors **self-test against injected faults first** — the original version silently
+  passed an arrow using `this` because it looked for the first non-arrow "binder" in the
+  enclosing chain, which always finds the controller IIFE. The right question is whether
+  `chain[0]` is an arrow.
+- **`mg_load_smoke_test.js`** evaluates all 23 shipped scripts under a fake `$` in the real
+  `base_hud.xml` order, and asserts each publishes its entry points (the six engines,
+  `Net`/`Api`/`Sound`/`Widgets`, and a real `create()` for all 9 enabled games rather than a
+  silent `createStub()`). This is the first execution coverage the controllers have ever had;
+  it catches "throws on load", which `node --check` cannot see. It still does not render.
+
+Not adopted: `block-scoped-var` and `no-use-before-define` as ESLint errors. They flag 82
+pre-existing benign sites (module-level consts read inside functions that run later, plus the
+25 deliberately-kept `var`s in shipped code), so the noise outweighs the signal.
+
 
