@@ -150,6 +150,10 @@ tools/                     dev-only Node test harnesses + build helpers (NOT pac
   mg_pixelbattle_palette_test.js  palette distance sanity
   mg_update_marker_test.js        update-marker image decoding
   mg_simulate_resolutions.js      side-channel decode across 720p–8K
+  es6_codemod.js           one-shot: var -> const/let, and WHY each survivor stayed (§10.2)
+  es6_arrows.js            one-shot: anonymous callbacks -> arrows, same reporting
+  mg_es6_codemod_test.js   codemod safety fixtures: scope/TDZ/loop-capture hazards
+  mg_es6_arrows_test.js    arrow safety fixtures: this/arguments/new + the leading-paren ASI rule
 ```
 
 A Public (non-dev) build ships without comments. That is NOT a step in this repo: run
@@ -1329,14 +1333,14 @@ remain defined once in `mg_net.js`:
   each real move (and in `startPolling`), so a quick opponent reply normally appears within roughly
   half a second plus network/PNG-loader latency. The long-think tier still caps 300 continuously
   active clients near 200 empty polls/s instead of consuming most of the measured ~1,000 polls/s.
-  Every game keeps a local `var pollMisses = 0` and passes `pollMisses++` to
+  Every game keeps a local `let pollMisses = 0` and passes `pollMisses++` to
   `pollDelay` in both the "nothing new" and transport-error branches.
 - **`MG.Net.waitDelay(misses)` — WAITING-ROOM polling** (lobby/room fill, rematch accept, quick /
   multi matchmaking). Totally different cost profile: nobody's mid-move, latency is irrelevant (a
   chess lobby, not a shooter), and these screens can sit open for MINUTES — so a fixed ~1s poll was
   pure waste that scaled with idle players, not games played. Ramps HARD and monotonically (a
   waiting room has no "real move" to reset on): steps `[1.5, 1.5, 3.0, 3.0, 4.0, 5.0]`s, clamped at
-  5s. Each waiting loop keeps its own `var misses = 0` and passes `misses++` in both branches. The
+  5s. Each waiting loop keeps its own `let misses = 0` and passes `misses++` in both branches. The
   four loops on it: shared `pollLobbyRoom`, `waitForJoiner`, `waitForMultiMatch`, and the rematch
   `tick` (`mg_ui.js`).
 
@@ -1428,6 +1432,9 @@ npm test                                       # the whole harness suite, in one
                                                #   parity                 client predictor ==
                                                #                          server authority
                                                #   update marker          release-marker decoding
+                                               #   es6 codemod / es6 arrows
+                                               #                          the two refactor tools'
+                                               #                          hazard fixtures (§10.2)
 ```
 If `build_worker --check` reports the worker is stale, run `npm run build:worker` and commit the
 regenerated `server/worker.js` with your change — the Node VPS imports this deploy artifact.
@@ -1473,3 +1480,39 @@ are gitignored and dev-only — nothing here is packed into the VPK.
 When in doubt about a Panorama capability, **grep the game's own files**
 (`G:\GameTracking-Deadlock\game\citadel\pak01_dir\panorama\`) or the maintainer's working
 mod (`D:\GitHub2\QOLLOCK\panorama`) for a proven pattern — do not invent CSS/JS API.
+
+### 10.2 ES6 in the shipped scripts (and the `var`s that must stay)
+
+The Panorama JS runtime accepts `const`/`let`, arrow functions and template literals — not a
+guess: QOLLOCK ships all three into the live HUD (`ql_core.js` uses `const` throughout,
+`ql_hero_testing.js` has `` Cmd(`giveitem ${item}`) `` and `$.Schedule(0.25, () => {…})`).
+Declarations here are `const` by default, `let` when reassigned; anonymous callbacks are arrows.
+
+**Two things are deliberately NOT uniform, and both are load-bearing:**
+
+1. **33 surviving `var`s.** Each one would change behaviour if converted, because `var` is
+   function-scoped and `let` is block-scoped: 21 are captured by a closure inside a loop (`let`
+   would hand each iteration a fresh binding, changing what the handler sees), and 12 are used
+   outside the block that would now scope them. If you touch one, you are changing semantics,
+   not style. `tools/es6_codemod.js` reports the exact reason per site.
+
+2. **253 surviving `function` expressions.** An arrow has no own `this`/`arguments`, no
+   `[[Construct]]`, no self-name for recursion, and ignores a `.bind()` receiver. Panorama
+   calls some handlers with the panel as the receiver, so object-literal method values and
+   anything reading `this` stay `function`. `tools/es6_arrows.js` reports why per site.
+
+⚠ **The minifier rule now extends to a leading `(`.** `operator-linebreak` (§10.1) keeps a
+shipped line from starting with `+ - /`, but an arrow conversion can make a line start with
+`(` — `function (a, b) {` at the head of a line becomes `(a, b) => {`. That is in the Valve
+minifier's naive-ASI trigger set (`( [ + - /`), which is what broke a public build at
+mg_games.js:665. ESLint does not cover the paren case, so the codemod does: it skips any
+candidate that opens its line and refuses the file if any line would newly start with one of
+those characters. **If you hand-write a callback, keep the `(` off the start of a line.**
+
+Both codemods are one-shot tools kept for re-runs and for the reasons they record. Their
+harnesses (`mg_es6_codemod_test.js`, `mg_es6_arrows_test.js`) run in `npm test` and are the
+real specification: each executes a hazard fixture before and after and requires identical
+output. They are not decoration — the `var` harness caught a generated
+`for (const i = 0; i < 3; i++)` (instant "Assignment to constant variable") that came from
+eslint-scope leaving top-level references unresolved under `sourceType: "script"`.
+
