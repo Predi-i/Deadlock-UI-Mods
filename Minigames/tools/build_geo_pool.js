@@ -7,6 +7,11 @@
 //   MLY_TOKEN='MLY|...' node tools/build_geo_pool.js
 //   MLY_TOKEN='MLY|...' node tools/build_geo_pool.js --resolve-only
 //   MLY_TOKEN='MLY|...' node tools/build_geo_pool.js --verify-images
+//   node tools/build_geo_pool.js --country-only
+//
+// `--country-only` re-stamps `country`/`continent` on the pool already on disk and writes it back.
+// It is pure local geometry against the vendored Natural Earth set, so it needs no token and makes
+// no network requests - use it after changing lib/country.js.
 //
 // `--verify-images` measures the DELIVERED image for every pooled row and drops anything that is
 // not a 2:1 equirectangular strip. This is not paranoia: Panoramax's `field_of_view = 360` filter
@@ -46,11 +51,19 @@
 // Raw harvest is wildly unbalanced (a Dutch tile can outweigh a continent). Two mechanisms fix
 // that: a hard PER_TILE_CEILING while harvesting, and a round-robin quota across regions when
 // assembling the final pool. Both are load-bearing - without them the pool is ~90% Europe.
+//
+// ── Country, and why `region` is not it ─────────────────────────────────────────────────────
+// Each row also carries a `country` + `continent`, resolved offline from Natural Earth by
+// lib/country.js. `region` is NOT a substitute: it is a coarse bbox used to balance the harvest,
+// and the boxes overlap reality badly (the Canaries fall in the Africa box, Istanbul in the
+// Europe box, Vladivostok in the Asia box). The reveal shows "continent · country" from these
+// fields, so the label is right even where the harvest bbox is not.
 
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const mvt = require("./lib/mvt.js");
+const country = require("./lib/country.js");
 
 const MLY_TOKEN = process.env.MLY_TOKEN || "";
 const MLY_TILE = "https://tiles.mapillary.com/maps/vtp/mly1_public/2";
@@ -106,9 +119,13 @@ function metres(lat1, lon1, lat2, lon2) {
     return 6371000 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+// NOTE the trailing trim: slicing to 24 characters can land mid-word and leave a trailing space
+// ("Planungsgesellschaft RV "), and that space then survived into the pool while every downstream
+// consumer trimmed it independently. Once the credit line became a table lookup, the mismatch
+// meant the reveal could not find its own provider's index. Trim AFTER the slice, always.
 function safeName(value) {
     return String(value || "Contributor").replace(/[^ A-Za-z0-9.]/g, " ")
-        .replace(/\s+/g, " ").trim().slice(0, 24) || "Contributor";
+        .replace(/\s+/g, " ").trim().slice(0, 24).trim() || "Contributor";
 }
 
 // ── Mapillary: one coverage tile ────────────────────────────────────────────────────────────
@@ -452,18 +469,23 @@ async function resolveExisting() {
 }
 
 (async function main() {
-    if (!MLY_TOKEN) {
+    const resolveOnly = process.argv.includes("--resolve-only");
+    const verifyOnly = process.argv.includes("--verify-images");
+    const countryOnly = process.argv.includes("--country-only");
+    // --country-only is pure local geometry against a vendored dataset: no catalog, no token.
+    if (!MLY_TOKEN && !countryOnly) {
         console.error("set MLY_TOKEN (never hardcode it - this repo is public)");
         process.exit(1);
     }
-    const resolveOnly = process.argv.includes("--resolve-only");
-    const verifyOnly = process.argv.includes("--verify-images");
     const previousCount = fs.existsSync(OUT)
         ? (JSON.parse(fs.readFileSync(OUT, "utf8")) || []).length : 0;
 
     let pool;
     if (verifyOnly) {
         pool = await verifyImages(JSON.parse(fs.readFileSync(OUT, "utf8")));
+    } else if (countryOnly) {
+        pool = JSON.parse(fs.readFileSync(OUT, "utf8"));
+        console.log("re-stamping country on " + pool.length + " existing rows (no catalog calls)");
     } else if (resolveOnly) {
         pool = await resolveExisting();
     } else {
@@ -509,6 +531,21 @@ async function resolveExisting() {
             ", panoramax " + panoramax.length + ")");
         pool = await assemble(harvest);
     }
+
+    // Stamp every row with its country + display continent, OFFLINE (Natural Earth, public
+    // domain). Done here rather than in resolveRow so Panoramax rows and --resolve-only runs get
+    // it too. A row that resolves to nothing keeps country "" and the reveal shows its region
+    // name alone: on the committed pool that is 6 of 2334 (4 South Georgia, which Natural Earth
+    // files under "Seven seas", plus 2 genuinely at-sea panoramas).
+    let located = 0;
+    for (const row of pool) {
+        const place = country.resolve(row.lon, row.lat);
+        row.country = place && place.continent >= 0 ? place.country : "";
+        row.continent = place && place.continent >= 0 ? place.continent : -1;
+        if (row.country) located++;
+    }
+    console.log("\ncountry: " + located + "/" + pool.length + " located (" +
+        (pool.length - located) + " at sea or outside the six continents)");
 
     const byRegion = REGIONS.map(function () { return { total: 0, mly: 0, pano: 0 }; });
     for (const row of pool) {
