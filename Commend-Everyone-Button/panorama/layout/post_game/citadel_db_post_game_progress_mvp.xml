@@ -1,9 +1,9 @@
-<!-- xml reconstructed by Source 2 Viewer 17.0.0.0 - https://valveresourceformat.github.io -->
+<!-- xml reconstructed by Source 2 Viewer - https://valveresourceformat.github.io -->
 <root>
 	<styles>
 		<include src="s2r://panorama/styles/citadel_base_styles.vcss_c" />
 		<include src="s2r://panorama/styles/post_game/citadel_db_post_game_progress_mvp.vcss_c" />
-		<include src="s2r://panorama/styles/post_game/citadel_db_page_post_game_new.vcss_c" />
+		<include src="s2r://panorama/styles/post_game/auto_commend.vcss_c" />
 	</styles>
 	<scripts>
 		<include src="s2r://panorama/scripts/async.vts_c" />
@@ -27,7 +27,10 @@
 				<Panel id="Accolades" />
 				<Panel id="Awards" />
 				<Panel class="Footer">
-					<Label class="PlayedBy" text="{s:hero_name}" />
+					<Panel class="HeroNameContainer">
+						<CitadelHeroBadgeIcon id="HeroBadgeIcon" class="PostGame" />
+						<Label class="HeroName" text="{s:hero_name}" />
+					</Panel>
 					<CitadelUserName id="PlayerName" />
 					<Button id="CommendButton" focusonmousedown="false" class="CommendButton" onmouseover="UIShowTextTooltip( &apos;#Citadel_MatchDetails_CommendTooltip&apos; )" onmouseout="UIHideTextTooltip()">
 						<Panel id="commendIcon" />
@@ -45,7 +48,7 @@
 			<Label class="KeyPlayerHeader" text="#Citadel_Post_Game_MVP_KeyPlayers" />
 		</Panel>
 		<Panel class="MVPHeroContainer">
-			<CitadelHeroSpotlight id="MVPHeroSpotlight" hittest="false" />
+			<CitadelHeroSpotlight id="MVPHeroSpotlight" />
 		</Panel>
 		<Panel class="MVPDetails">
 			<Panel class="MVPTrophySet">
@@ -56,7 +59,10 @@
 			<Panel id="MVPAccolades" />
 			<Panel id="MVPAwards" />
 			<Panel class="MVPPlayerIdentity">
-				<CitadelHeroLogo id="MVPHeroLogo" />
+				<Panel class="HeroNameContainer">
+					<CitadelHeroBadgeIcon id="MVPHeroBadgeIcon" class="MVP" />
+					<CitadelHeroLogo id="MVPHeroLogo" />
+				</Panel>
 				<Panel class="PlayerInfo">
 					<Label class="MVPPlayedBy" text="#Citadel_Post_Game_PlayedBy" />
 					<CitadelUserName id="MVPPlayerName" />

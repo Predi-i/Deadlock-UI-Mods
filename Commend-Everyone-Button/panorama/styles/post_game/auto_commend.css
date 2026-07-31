@@ -1,0 +1,41 @@
+.AutoCommendStyle
+{
+	vertical-align: bottom;
+	horizontal-align: center;
+	width: 64px;
+	height: 64px;
+	border-radius: 50%;
+	background-color: offWhite&05;
+	margin-bottom: 110px;
+	transition-property: pre-transform-scale2d, background-color, opacity;
+	transition-duration: 0.1s;
+	opacity: 1;
+	z-index: 100;
+}
+
+.AutoCommendStyle:hover
+{
+	pre-transform-scale2d: 1.1;
+	background-color: offWhite&15;
+}
+
+.AutoCommendStyle:active
+{
+	pre-transform-scale2d: 0.9;
+	sound: "UI.CommendConfirmation";
+}
+
+.AutoCommendIcon
+{
+	width: 32px;
+	height: 32px;
+	vertical-align: center;
+	horizontal-align: center;
+	background-image: url("s2r://panorama/images/icons/icon_thumbsup.vsvg");
+	background-size: contain;
+	background-repeat: no-repeat;
+	background-position: center;
+	wash-color: offWhite&77;
+	transition-property: wash-color;
+	transition-duration: 0.1s;
+}
