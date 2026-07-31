@@ -678,6 +678,26 @@ These are the mistakes to NOT repeat. Every one was confirmed against the game's
     frame edges. Narrowing the crop (720px of a 2880px strip ≈ 90° instead of 120°) reduces it; only
     a real rectilinear projection would remove it.
 
+24. **An unknown `<Image>` `scaling` token silently falls back to NATIVE SIZE, centred.** It does
+    not warn and does not error, so the panel keeps the size you gave it while the bitmap paints
+    small in the middle of it. GeoGuesser passed `scaling: "stretch-to-fit"` — a token this engine
+    does **not** have. Every `<Image>` in `G:\GameTracking-Deadlock` uses only
+    `stretch-to-fit-preserve-aspect` (31), `cover` (4), `stretch-to-fit-y-preserve-aspect` (3),
+    `stretch-to-cover-preserve-aspect` (2) or `contain` (2). (`stretch` exists but only on
+    `MoviePanel`.) With a 2048×1024 Panoramax SD source in the 2880×1440 strip, the fallback left
+    **(2880−2048)/2 = 416px** of dead panel each side and **(1440−1024)/2 = 208px** top and bottom.
+    - **How it presented:** a black-framed viewport, and only roughly **95°–270°** of heading
+      looking correct — everything else black or a thin sliver. That reads like "broken perspective"
+      or "bad seam" and is neither. The maintainer's measured window is what pinned it: content
+      began at stage x ≈ 3290 while the strip was positioned at 2878, and 2878 + 416 = **3294**.
+      Arithmetic identified the cause before any code was changed.
+    - **Fix:** `cover`. The yaw/pitch maths assume the strip is exactly `PANO_W × PANO_H`, and
+      `cover` always fills the box. For a 2:1 source it is a pixel-exact fill with no cropping,
+      whereas any `*-preserve-aspect` token silently letterboxes again the moment a source is not
+      exactly 2:1.
+    - `mg_release_ui_regression_test.js` whitelists the valid tokens across every shipped script,
+      because this failure mode is invisible to `node --check`, to lint and to the rules tests.
+
 ---
 
 ## 7. Checkers internals (mg_checkers.js)

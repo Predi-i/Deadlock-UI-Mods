@@ -18,6 +18,19 @@
     var GRID_W = 64, GRID_H = 32, ROUNDS = 5;
     var VIEW_W = 720, VIEW_H = 324;
     var PANO_W = 2880, PANO_H = 1440, PANO_STEP = PANO_W - 2;
+    // ⚠ `"stretch-to-fit"` is NOT a token this engine accepts. Grepping every <Image> in
+    // G:\GameTracking-Deadlock yields only: stretch-to-fit-preserve-aspect (31), cover (4),
+    // stretch-to-fit-y-preserve-aspect (3), stretch-to-cover-preserve-aspect (2), contain (2)
+    // (`stretch` exists but only on MoviePanel). An unknown token silently falls back to the
+    // DEFAULT — native size, centred in the panel — it does NOT error. With a 2048x1024 Panoramax
+    // SD source in this 2880x1440 box that left a (2880-2048)/2 = 416px dead margin each side and
+    // (1440-1024)/2 = 208px top and bottom: exactly the black frame, and exactly the "only about
+    // 95°..270° looks right" window the maintainer measured in-game (2026-07-31).
+    // `cover` is the right choice: it always fills the box, so the yaw/pitch maths can rely on the
+    // strip being exactly PANO_W x PANO_H. For the 2:1 equirectangular sources it is a pixel-exact
+    // fill with zero cropping; a preserve-aspect token would re-introduce letterboxing (and this
+    // whole class of bug) the instant a source is not exactly 2:1.
+    var PANO_SCALING = "cover";
     var REGIONS = ["Europe", "North America", "South America", "Africa", "Asia", "Oceania"];
 
     function addLabel(parent, cls, text) {
@@ -221,7 +234,7 @@
                 // A missing neighbour only costs the wrap at that edge; the round stays playable,
                 // so surface nothing and let the centre copy carry the view.
                 if (!destroyed && myGen === panoramaGen && done) done();
-            }, { scaling: "stretch-to-fit" });
+            }, { scaling: PANO_SCALING });
         }
 
         function loadPanorama(round) {
@@ -273,7 +286,7 @@
                 $.Schedule(1.5, function () {
                     if (!destroyed && myGen === panoramaGen) loadPanorama(round);
                 });
-            }, { scaling: "stretch-to-fit" });
+            }, { scaling: PANO_SCALING });
         }
 
         function clearMapMarkers() {

@@ -184,6 +184,29 @@ assert(/function loadPanorama[\s\S]*?MG\.Net\.loadImage\(url,/.test(geo),
 assert(/MG\.Net\.isLevelEncodedSize\(loadedW, loadedH\)/.test(geo) &&
     !/var aspect = shortSide > 0/.test(geo),
     "GeoGuesser must not validate intrinsic panorama aspect from host-clamped layout dimensions");
+// An <Image> `scaling` token the engine doesn't know is NOT an error — it silently falls back to
+// the native-size default, which letterboxes the bitmap inside the panel. That is what made the
+// GeoGuesser panorama paint 2048x1024 centred in its 2880x1440 strip (416px of black each side,
+// 208px top/bottom) and limited the usable heading to roughly 95°..270° in-game. Whitelist taken
+// from every scaling= token that appears on an <Image> in G:\GameTracking-Deadlock.
+(function () {
+    var VALID = ["stretch-to-fit-preserve-aspect", "stretch-to-fit-y-preserve-aspect",
+        "stretch-to-fit-x-preserve-aspect", "stretch-to-cover-preserve-aspect",
+        "cover", "contain", "none"];
+    var files = { "mg_geoguesser.js": geo, "mg_ui.js": ui, "mg_pixelbattle.js": pixel, "mg_net.js": net };
+    var bad = [];
+    Object.keys(files).forEach(function (name) {
+        var re = /scaling:\s*"([a-z-]+)"/g, m;
+        while ((m = re.exec(files[name]))) {
+            if (VALID.indexOf(m[1]) === -1) bad.push(name + ': "' + m[1] + '"');
+        }
+    });
+    assert(bad.length === 0,
+        "unknown <Image> scaling token (silently falls back to native size):\n  " + bad.join("\n  "));
+})();
+assert(/var PANO_SCALING = "cover"/.test(geo) &&
+    !/scaling: *"stretch-to-fit"/.test(geo),
+    "GeoGuesser panorama strips must use a scaling token that fills the whole 2880x1440 box");
 assert(/PANO_W = 2880, PANO_H = 1440, PANO_STEP = PANO_W - 2/.test(geo) &&
     /configurePanoImage\(image, PANO_STEP\)/.test(geo) &&
     /addCachedCopy\(url, PANO_STEP \* 2, myGen/.test(geo),
