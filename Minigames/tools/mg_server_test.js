@@ -772,7 +772,7 @@ async function main() {
         delete globalThis.MG_GEO_IMAGE_FETCH;
     }
 
-    d = await req(geo.hub, "/api/geoguess.png?code=" + geo.code + "&tok=GEOHOST01&cell=9999");
+    d = await req(geo.hub, "/api/geoguess.png?code=" + geo.code + "&tok=GEOHOST01&cell=131072");
     ok(d.w === 9 && d.h === 2, "geo: out-of-map guess is rejected");
     d = await req(geo.hub, "/api/geoguess.png?code=" + geo.code + "&tok=GEOHOST01&cell=0");
     ok(d.w === 1 && d.h === 1, "geo: host guess is accepted");
@@ -780,20 +780,33 @@ async function main() {
     ok(d.w === 1 && d.h === 2, "geo: state exposes only the host guess mask");
     d = await req(geo.hub, "/api/geoguess.png?code=" + geo.code + "&tok=GEOHOST01&cell=1");
     ok(d.w === 9 && d.h === 1, "geo: a seat cannot replace its locked guess");
-    d = await req(geo.hub, "/api/geoguess.png?code=" + geo.code + "&tok=GEOJOIN01&cell=2047");
+    d = await req(geo.hub, "/api/geoguess.png?code=" + geo.code + "&tok=GEOJOIN01&cell=131071");
     ok(d.w === 1 && d.h === 1, "geo: joiner guess is accepted");
     d = await req(geo.hub, "/api/geostate.png?code=" + geo.code + "&tok=GEOJOIN01");
     ok(d.w === 1 && d.h === 28, "geo: both guesses atomically open the reveal phase");
 
-    d = await req(geo.hub, "/api/geotarget.png?code=" + geo.code + "&tok=GEOHOST01");
-    var revealedGeoTarget = geoPoint(d);
-    ok(d.w >= 0 && d.w < 63 && d.h >= 0 && d.h < 63 &&
-        revealedGeoTarget.x < 64 && revealedGeoTarget.y < 32,
-        "geo: revealed target uses the base-63 high-resolution point codec");
-    d = await req(geo.hub, "/api/geopick.png?code=" + geo.code + "&tok=GEOHOST01&seat=0");
-    ok(d.w === 0 && d.h === 0, "geo: host's revealed map pick round-trips");
-    d = await req(geo.hub, "/api/geopick.png?code=" + geo.code + "&tok=GEOHOST01&seat=1");
-    ok(d.w === 31 && d.h === 32, "geo: joiner's revealed map pick round-trips");
+    // A point is read one axis per request: the 512x256 grid overflows the two-level base-63
+    // reply, so x and y each get their own round trip.
+    async function geoAxisValue(route, extra) {
+        const xr = await req(geo.hub, route + "&axis=0" + (extra || ""));
+        const yr = await req(geo.hub, route + "&axis=1" + (extra || ""));
+        ok(xr.w >= 0 && xr.w < 63 && yr.w >= 0 && yr.w < 63,
+            "geo: axis reads stay inside the base-63 level range");
+        return { x: xr.h * 63 + xr.w, y: yr.h * 63 + yr.w };
+    }
+
+    var revealedGeoTarget = await geoAxisValue(
+        "/api/geotarget.png?code=" + geo.code + "&tok=GEOHOST01");
+    ok(revealedGeoTarget.x >= 0 && revealedGeoTarget.x < 512 &&
+        revealedGeoTarget.y >= 0 && revealedGeoTarget.y < 256,
+        "geo: revealed target decodes inside the 512x256 authoritative grid");
+    var hostPick = await geoAxisValue(
+        "/api/geopick.png?code=" + geo.code + "&tok=GEOHOST01&seat=0");
+    ok(hostPick.x === 0 && hostPick.y === 0, "geo: host's revealed map pick round-trips");
+    var joinerPick = await geoAxisValue(
+        "/api/geopick.png?code=" + geo.code + "&tok=GEOHOST01&seat=1");
+    ok(joinerPick.x === 511 && joinerPick.y === 255,
+        "geo: joiner's revealed map pick round-trips at the far corner");
     d = await req(geo.hub, "/api/geoinfo.png?code=" + geo.code + "&tok=GEOHOST01");
     ok(d.w >= 1 && d.w <= 6 && d.h === 1, "geo: reveal exposes the dynamic source region");
     d = await req(geo.hub, "/api/geocredit.png?code=" + geo.code + "&tok=GEOHOST01&i=0");

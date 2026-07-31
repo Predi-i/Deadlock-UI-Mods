@@ -62,7 +62,7 @@ try {
     code: lobbyCode, tok: hostToken, cell: 0
   }), "host guess");
   const joinGuess = levels(await get("/api/geoguess", {
-    code: lobbyCode, tok: joinToken, cell: 2047
+    code: lobbyCode, tok: joinToken, cell: 131071
   }), "joiner guess");
   if (hostGuess.w !== 1 || joinGuess.w !== 1) throw new Error("a guess was rejected");
 
@@ -71,9 +71,14 @@ try {
   }), "reveal state");
   if (reveal.w !== 1 || reveal.h < 16) throw new Error("reveal gate did not open");
 
-  const target = levels(await get("/api/geotarget", {
-    code: lobbyCode, tok: hostToken
-  }), "target");
+  // A point is now read one axis per request: the 512x256 grid overflows a two-level base-63
+  // reply, so x and y each get their own round trip.
+  const targetX = levels(await get("/api/geotarget", {
+    code: lobbyCode, tok: hostToken, axis: 0
+  }), "target x");
+  const targetY = levels(await get("/api/geotarget", {
+    code: lobbyCode, tok: hostToken, axis: 1
+  }), "target y");
   const score = levels(await get("/api/geoscore", {
     code: lobbyCode, tok: hostToken, seat: 0
   }), "score");
@@ -83,10 +88,13 @@ try {
   if (creditHead.h !== 0 || creditHead.w < 20 || creditHead.w > 62) {
     throw new Error("dynamic Panoramax attribution was not exposed");
   }
-  const targetCell = target.h * 63 + target.w;
+  const targetCell = { x: targetX.h * 63 + targetX.w, y: targetY.h * 63 + targetY.w };
+  if (targetCell.x >= 512 || targetCell.y >= 256) {
+    throw new Error("target decoded outside the 512x256 authoritative grid");
+  }
   console.log("LIVE GEO OK code=" + lobbyCode +
     " panorama=" + panoramaType + "/" + panorama.bytes.length +
-    " target=" + (targetCell % 64) + "," + Math.floor(targetCell / 64) +
+    " target=" + targetCell.x + "," + targetCell.y +
     " hostScore=" + (score.h * 63 + score.w) +
     " creditChars=" + creditHead.w);
 

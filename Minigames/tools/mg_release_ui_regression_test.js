@@ -252,10 +252,30 @@ assert(/var PANO_W = 2880, PANO_H = 1440[\s\S]{0,600}var PITCH_PX_PER_DEG = PANO
 // the whole world (a leftover 8x zoom would strand the player in an unrelated region).
 assert(/var MULTI_CLICK_MS = 400;/.test(geo) &&
     /clickRun = \(now - lastClickAt < MULTI_CLICK_MS\) \? clickRun \+ 1 : 1;/.test(geo) &&
-    /if \(clickRun === 2\) setMapZoom\(mapZoomLevel \* 2, cell\);/.test(geo) &&
-    /else if \(clickRun >= 3\) setMapZoom\(1, -1\);/.test(geo) &&
-    /clearMapMarkers\(\);[\s\S]{0,400}setMapZoom\(1, -1\);/.test(geo),
+    /if \(clickRun === 2\) setMapZoom\(mapZoomLevel \* 2, f\.x, f\.y\);/.test(geo) &&
+    /else if \(clickRun >= 3\) setMapZoom\(1, null, null\);/.test(geo) &&
+    /clearMapMarkers\(\);[\s\S]{0,400}setMapZoom\(1, null, null\);/.test(geo),
     "GeoGuesser map must zoom on double-click, reset on triple-click, and reset each round");
+// Precision comes from the hit grid NOT scaling with the map: it is a sibling of the zoom
+// wrapper, pinned over the window, so at zoom Z its 64x32 panels address 64Z x 32Z cells. If it
+// were created inside mapZoom again, zooming would just enlarge the same coarse cells.
+assert(/var grid = \$\.CreatePanel\("Panel", map, ""\);/.test(geo) &&
+    !/\$\.CreatePanel\("Panel", mapZoom, ""\);\s*\n\s*grid\.AddClass/.test(geo) &&
+    /x: panX \+ \(col \+ 0\.5\) \/ \(GRID_W \* mapZoomLevel\)/.test(geo),
+    "GeoGuesser hit grid must stay fixed over the window so zoom buys precision");
+// Reveal points are world-anchored panels, not tinted grid buttons: a grid button points
+// somewhere else the moment the window pans. Labels/markers must not eat the grid's clicks.
+assert(/labelLayer\.SetAttributeString\("hittest", "false"\)/.test(geo) &&
+    /markerLayer\.SetAttributeString\("hittest", "false"\)/.test(geo) &&
+    /function addMarker\(cell, cls\)/.test(geo) &&
+    !/function markPoint\(/.test(geo),
+    "GeoGuesser reveal markers must be world-anchored and input-transparent");
+// A 512x256 point overflows the two-level base-63 reply, so each axis is its own request and the
+// marker may only be placed once BOTH halves are in.
+assert(/MG\.Api\.geoTarget\(code, tok, axis, ok, fail\)/.test(geo) &&
+    /function readPoint\(fetch, cls\)[\s\S]{0,400}fetch\(0, ok, fail\)[\s\S]{0,300}fetch\(1, ok2, fail2\)/.test(geo) &&
+    /revealReadsPending = solo \? 7 : 10;/.test(geo),
+    "GeoGuesser reveal must read each point axis-by-axis and wait for both halves");
 assert(/images\/geoguesser\/world_map\.vtex/.test(geo) &&
     /var GRID_W = 64, GRID_H = 32/.test(geo),
     "GeoGuesser must use its dedicated map and fine 64x32 authoritative guess grid");
@@ -304,7 +324,7 @@ assert(/RegisterEventHandler\("DragStart"[\s\S]*?RegisterEventHandler\("DragEnd"
 assert(/\$\.CreatePanel\("Slider"[\s\S]*?onvaluechanged[\s\S]*?yaw = nextYaw/.test(geo) &&
     /\$\.CreatePanel\("Slider"[\s\S]*?onvaluechanged[\s\S]*?pitch = nextPitch/.test(geo),
     "GeoGuesser must keep a continuous native-slider camera path when image drag updates only on release");
-assert(/revealReadsPending = solo \? 5 : 7;[\s\S]*?setAction\("LOADING RESULT…", false/.test(geo) &&
+assert(/revealReadsPending = solo \? 7 : 10;[\s\S]*?setAction\("LOADING RESULT…", false/.test(geo) &&
     /revealReadsPending === 0[\s\S]*?setAction\(currentRound/.test(geo),
     "GeoGuesser must not allow next/finish before every authoritative reveal read completes");
 assert(/geoCredit:\s*function[\s\S]*?\/api\/geocredit/.test(net) &&

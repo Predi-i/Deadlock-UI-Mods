@@ -15,7 +15,14 @@
     if (MG.GeoGuesser) return;
     MG.GeoGuesser = {};
 
+    // GRID_W/H is the size of the on-screen hit grid (panel count), NOT the guess resolution.
+    // At zoom Z it covers 1/Z of the world, so the addressable resolution is GRID_W*Z x GRID_H*Z.
     var GRID_W = 64, GRID_H = 32, ROUNDS = 5;
+    // FULL_W/H is the AUTHORITATIVE guess space and must match GEO_GRID_W/H in worker.core.js
+    // (mirrored on MG.Net so there is one number to change). GRID_* x MAP_ZOOM_MAX lands exactly
+    // here: 64*8 = 512, 32*8 = 256.
+    var FULL_W = 512, FULL_H = 256;
+    var MARKER_SZ = 9;
     // ⚠ Must match .mg-geo-viewport in mg.css. The viewport is 860 wide so it lines up with the
     // map row below it (all four GeoGuesser rows are 860).
     var VIEW_W = 860, VIEW_H = 360;
@@ -89,6 +96,9 @@
         var syncingCameraSliders = false;
         var lastStageX = null;
         var mapZoomLevel = 1, clickRun = 0, lastClickAt = 0;
+        var panX = 0, panY = 0;
+        var markers = [];
+        var cityLabels = [];
 
         var stats = $.CreatePanel("Panel", root, "");
         stats.AddClass("mg-geo-stats");
@@ -140,26 +150,37 @@
         mapCol.AddClass("mg-geo-map-col");
         var map = $.CreatePanel("Panel", mapCol, "");
         map.AddClass("mg-geo-map");
-        // The zoom wrapper carries the image AND the hit grid, so both scale as one and a cell
-        // keeps covering the same piece of world at every level (see .mg-geo-map-zoom).
+        // ⚠ ONLY the image, the city labels and the reveal markers live in the zoom wrapper, so
+        // they pan and scale with the map. The hit grid is deliberately a SIBLING (below), fixed
+        // over the window: if it scaled too, zooming would just enlarge the same 64x32 cells and
+        // buy no precision at all — which is exactly how it behaved before.
         var mapZoom = $.CreatePanel("Panel", map, "");
         mapZoom.AddClass("mg-geo-map-zoom");
         var mapImage = $.CreatePanel("Image", mapZoom, "", { scaling: "stretch-to-fit-preserve-aspect" });
         mapImage.AddClass("mg-geo-map-image");
         mapImage.SetImage("s2r://panorama/images/geoguesser/world_map.vtex");
         try { mapImage.SetAttributeString("hittest", "false"); } catch (e0) {}
-        var grid = $.CreatePanel("Panel", mapZoom, "");
+        var labelLayer = $.CreatePanel("Panel", mapZoom, "");
+        labelLayer.AddClass("mg-geo-label-layer");
+        try { labelLayer.SetAttributeString("hittest", "false"); } catch (e0b) {}
+        var markerLayer = $.CreatePanel("Panel", mapZoom, "");
+        markerLayer.AddClass("mg-geo-marker-layer");
+        try { markerLayer.SetAttributeString("hittest", "false"); } catch (e0c) {}
+
+        // The hit grid: 64x32 transparent buttons pinned to the 500x250 window. At zoom Z they
+        // span 1/Z of the world, so the addressable resolution is 64Z x 32Z — 512x256 at 8x.
+        var grid = $.CreatePanel("Panel", map, "");
         grid.AddClass("mg-geo-grid");
         for (var row = 0; row < GRID_H; row++) {
             var rowPanel = $.CreatePanel("Panel", grid, "");
             rowPanel.AddClass("mg-geo-grid-row");
             for (var col = 0; col < GRID_W; col++) {
-                (function (cell) {
+                (function (r, c) {
                     var hit = $.CreatePanel("Button", rowPanel, "");
                     hit.AddClass("mg-geo-cell");
-                    hit.SetPanelEvent("onactivate", function () { clickCell(cell); });
+                    hit.SetPanelEvent("onactivate", function () { clickCell(r, c); });
                     cells.push(hit);
-                })(row * GRID_W + col);
+                })(row, col);
             }
         }
         var mapHint = addLabel(mapCol, "mg-geo-map-hint",
@@ -221,45 +242,141 @@
             viewLabel.text = "Heading " + Math.round(yaw) + "° · pitch " + Math.round(pitch) + "°";
         }
 
-        // ── map zoom ──────────────────────────────────────────────────────────────────────
-        // The engine exposes no ondblclick, so a click RUN is measured by timestamp. The run is
-        // keyed on time only, deliberately NOT on cell identity: zooming re-centres the clicked
-        // cell under the window, so by the third click a different cell sits under a stationary
-        // cursor and a cell-keyed run could never reach 3.
-        function zoomCellCentre(cell) {
+        // ── map zoom + coordinate mapping ─────────────────────────────────────────────────
+        // panX/panY are the top-left of the visible window in WORLD fractions (0..1). The hit
+        // grid is fixed over the window, so a grid cell (r,c) addresses the world fraction
+        // panX + (c + 0.5) / GRID_W / zoom — i.e. the finer the zoom, the finer the guess.
+        // The authoritative cell index is always in FULL_W x FULL_H space, matching the server.
+        function worldFractionOf(row, col) {
             return {
-                x: ((cell % GRID_W) + 0.5) / GRID_W * MAP_W,
-                y: (Math.floor(cell / GRID_W) + 0.5) / GRID_H * MAP_H
+                x: panX + (col + 0.5) / (GRID_W * mapZoomLevel),
+                y: panY + (row + 0.5) / (GRID_H * mapZoomLevel)
             };
         }
 
-        function setMapZoom(level, focusCell) {
+        function cellFromFraction(fx, fy) {
+            var x = Math.max(0, Math.min(FULL_W - 1, Math.floor(fx * FULL_W)));
+            var y = Math.max(0, Math.min(FULL_H - 1, Math.floor(fy * FULL_H)));
+            return y * FULL_W + x;
+        }
+
+        // Inverse: where a world cell sits inside the CURRENT window, in grid units. Returns null
+        // when it is scrolled out of view, so a marker off-window is simply not drawn.
+        function fractionToWindow(fx, fy) {
+            var wx = (fx - panX) * mapZoomLevel;
+            var wy = (fy - panY) * mapZoomLevel;
+            if (wx < 0 || wx >= 1 || wy < 0 || wy >= 1) return null;
+            return { x: wx * MAP_W, y: wy * MAP_H };
+        }
+
+        function setMapZoom(level, focusFx, focusFy) {
             mapZoomLevel = Math.max(1, Math.min(MAP_ZOOM_MAX, level));
             var w = MAP_W * mapZoomLevel, h = MAP_H * mapZoomLevel;
             mapZoom.style.width = Math.round(w) + "px";
             mapZoom.style.height = Math.round(h) + "px";
-            var tx = 0, ty = 0;
-            if (mapZoomLevel > 1 && focusCell >= 0) {
-                var c = zoomCellCentre(focusCell);
-                // Centre the focused cell, then clamp so the window never shows past the map edge.
-                tx = Math.max(MAP_W - w, Math.min(0, MAP_W / 2 - c.x * mapZoomLevel));
-                ty = Math.max(MAP_H - h, Math.min(0, MAP_H / 2 - c.y * mapZoomLevel));
+            if (mapZoomLevel <= 1 || focusFx == null) {
+                panX = 0; panY = 0;
+            } else {
+                // Centre the focus, then clamp so the window never runs past the map edge.
+                var span = 1 / mapZoomLevel;
+                panX = Math.max(0, Math.min(1 - span, focusFx - span / 2));
+                panY = Math.max(0, Math.min(1 - span, focusFy - span / 2));
             }
-            mapZoom.style.transform = "translate3d(" + Math.round(tx) + "px, " + Math.round(ty) + "px, 0px)";
+            mapZoom.style.transform = "translate3d(" +
+                Math.round(-panX * w) + "px, " + Math.round(-panY * h) + "px, 0px)";
             mapHint.text = mapZoomLevel > 1
-                ? "Zoom " + mapZoomLevel + "× · triple-click to reset"
+                ? "Zoom " + mapZoomLevel + "× · cell ~" + Math.round(40000 / (GRID_W * mapZoomLevel)) +
+                  " km · triple-click to reset"
                 : "Double-click to zoom in · triple-click to reset";
+            refreshCityLabels();
+            refreshMarkers();
         }
 
-        function clickCell(cell) {
+        function clickCell(row, col) {
             var now = Date.now();
             clickRun = (now - lastClickAt < MULTI_CLICK_MS) ? clickRun + 1 : 1;
             lastClickAt = now;
+            var f = worldFractionOf(row, col);
             // Always select first: the guess must respond on the very first click, with no
             // debounce delay waiting to find out whether a second one is coming.
-            selectCell(cell);
-            if (clickRun === 2) setMapZoom(mapZoomLevel * 2, cell);
-            else if (clickRun >= 3) setMapZoom(1, -1);
+            selectCell(cellFromFraction(f.x, f.y));
+            if (clickRun === 2) setMapZoom(mapZoomLevel * 2, f.x, f.y);
+            else if (clickRun >= 3) setMapZoom(1, null, null);
+        }
+
+        // ── city labels ───────────────────────────────────────────────────────────────────
+        // Drawn as Panorama Labels rather than baked into the PNG (the build's encoder has no
+        // font renderer), so the text stays crisp at every zoom. Only the most prominent places
+        // show at 1x; deeper zoom reveals the rest, which keeps the world view uncluttered.
+        function cityRankLimit() {
+            if (mapZoomLevel >= 8) return 9;
+            if (mapZoomLevel >= 4) return 4;
+            if (mapZoomLevel >= 2) return 3;
+            return 1;
+        }
+
+        function refreshCityLabels() {
+            var list = MG.GeoCities || [];
+            var limit = cityRankLimit();
+            for (var i = 0; i < list.length; i++) {
+                var city = list[i];
+                var label = cityLabels[i];
+                var show = city.r <= limit;
+                if (show && !label) {
+                    label = $.CreatePanel("Label", labelLayer, "");
+                    label.AddClass("mg-geo-city");
+                    label.text = city.n;
+                    try { label.SetAttributeString("hittest", "false"); } catch (e) {}
+                    cityLabels[i] = label;
+                }
+                if (!label) continue;
+                label.visible = show;
+                if (!show) continue;
+                // Positioned in the zoom layer's own space, so it pans and scales with the map.
+                label.style.transform = "translate3d(" +
+                    Math.round(city.x * MAP_W * mapZoomLevel + 4) + "px, " +
+                    Math.round(city.y * MAP_H * mapZoomLevel - 7) + "px, 0px)";
+            }
+        }
+
+        // ── markers ───────────────────────────────────────────────────────────────────────
+        // A marker is a world position, not a grid cell: it must stay put when the player zooms
+        // or pans (the old code tagged a grid button, which pointed at a different place the
+        // moment the window moved).
+        function addMarker(cell, cls) {
+            if (cell == null || cell < 0) return;
+            markers.push({
+                x: (cell % FULL_W + 0.5) / FULL_W,
+                y: (Math.floor(cell / FULL_W) + 0.5) / FULL_H,
+                cls: cls,
+                panel: null
+            });
+            refreshMarkers();
+        }
+
+        function refreshMarkers() {
+            for (var i = 0; i < markers.length; i++) {
+                var m = markers[i];
+                if (!m.panel) {
+                    m.panel = $.CreatePanel("Panel", markerLayer, "");
+                    m.panel.AddClass("mg-geo-marker");
+                    m.panel.AddClass(m.cls);
+                    try { m.panel.SetAttributeString("hittest", "false"); } catch (e) {}
+                }
+                var at = fractionToWindow(m.x, m.y);
+                m.panel.visible = !!at;
+                if (!at) continue;
+                m.panel.style.transform = "translate3d(" +
+                    Math.round(m.x * MAP_W * mapZoomLevel - MARKER_SZ / 2) + "px, " +
+                    Math.round(m.y * MAP_H * mapZoomLevel - MARKER_SZ / 2) + "px, 0px)";
+            }
+        }
+
+        function clearMarkers() {
+            for (var i = 0; i < markers.length; i++) {
+                if (markers[i].panel) { try { markers[i].panel.DeleteAsync(0); } catch (e) {} }
+            }
+            markers = [];
         }
 
         yawSlider.SetPanelEvent("onvaluechanged", function () {
@@ -373,24 +490,19 @@
         }
 
         function clearMapMarkers() {
-            for (var i = 0; i < cells.length; i++) {
-                cells[i].RemoveClass("mg-geo-selected");
-                cells[i].RemoveClass("mg-geo-target");
-                cells[i].RemoveClass("mg-geo-me");
-                cells[i].RemoveClass("mg-geo-them");
-            }
-        }
-
-        function markPoint(point, cls) {
-            if (!point) return;
-            var cell = point.y * GRID_W + point.x;
-            if (cell >= 0 && cell < cells.length) cells[cell].AddClass(cls);
+            clearMarkers();
         }
 
         function selectCell(cell) {
             if (finished || revealRound === currentRound || sendingGuess) return;
             selectedCell = cell;
-            for (var i = 0; i < cells.length; i++) cells[i].SetHasClass("mg-geo-selected", i === cell);
+            // One pending-guess marker at a time; the reveal adds its own on top later.
+            for (var i = markers.length - 1; i >= 0; i--) {
+                if (markers[i].cls !== "mg-geo-selected") continue;
+                if (markers[i].panel) { try { markers[i].panel.DeleteAsync(0); } catch (e) {} }
+                markers.splice(i, 1);
+            }
+            addMarker(cell, "mg-geo-selected");
             setAction("SUBMIT GUESS", true, submitGuess);
             prompt.text = "Guess placed. Submit when ready.";
         }
@@ -429,7 +541,7 @@
             clearMapMarkers();
             // A new round must start on the full world map: a leftover 8x zoom from the previous
             // guess would drop the player into an unrelated region with no way to tell.
-            setMapZoom(1, -1);
+            setMapZoom(1, null, null);
             // The next frame is a different location, so there is nothing to animate FROM — clear
             // the wrap reference so the first applyCamera of the round can't be mistaken for a
             // seam crossing (and suppress its own transition for nothing).
@@ -474,23 +586,36 @@
             attempt();
         }
 
+        // A point now costs TWO reads (x then y): the 512x256 grid overflows the two-level
+        // base-63 reply, so each axis comes back on its own request. Chain them so the marker is
+        // only placed once both halves are in — a half-decoded point would land at the equator.
+        function readPoint(fetch, cls) {
+            readReveal(function (ok, fail) { fetch(0, ok, fail); }, function (x) {
+                readReveal(function (ok2, fail2) { fetch(1, ok2, fail2); }, function (y) {
+                    addMarker(y * FULL_W + x, cls);
+                });
+            });
+        }
+
         function showReveal() {
             if (revealRound === currentRound) return;
             revealRound = currentRound;
-            revealReadsPending = solo ? 5 : 7;
+            // Two reads per point now: target (2) + my pick (2) [+ opponent pick (2)] + score
+            // + info + credit.
+            revealReadsPending = solo ? 7 : 10;
             sendingGuess = false;
             prompt.text = "Round complete. Loading the authoritative reveal…";
             setAction("LOADING RESULT…", false, readyNext);
-            readReveal(function (ok, fail) { MG.Api.geoTarget(code, tok, ok, fail); }, function (point) {
-                markPoint(point, "mg-geo-target");
-            });
-            readReveal(function (ok, fail) { MG.Api.geoPick(code, tok, mySeat, ok, fail); }, function (point) {
-                markPoint(point, "mg-geo-me");
-            });
+            readPoint(function (axis, ok, fail) {
+                MG.Api.geoTarget(code, tok, axis, ok, fail);
+            }, "mg-geo-target");
+            readPoint(function (axis, ok, fail) {
+                MG.Api.geoPick(code, tok, mySeat, axis, ok, fail);
+            }, "mg-geo-me");
             if (!solo) {
-                readReveal(function (ok, fail) { MG.Api.geoPick(code, tok, 1 - mySeat, ok, fail); }, function (point) {
-                    markPoint(point, "mg-geo-them");
-                });
+                readPoint(function (axis, ok, fail) {
+                    MG.Api.geoPick(code, tok, 1 - mySeat, axis, ok, fail);
+                }, "mg-geo-them");
             }
             readReveal(function (ok, fail) { MG.Api.geoScore(code, tok, mySeat, ok, fail); }, function (score) {
                 scores[mySeat] = score;

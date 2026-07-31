@@ -2404,8 +2404,11 @@ function adminAssetResponse(path) {
  *   /api/geostate?code=C&tok=T                     -> round + guess/reveal/ready masks
  *   /api/geoview?code=C&tok=T                      -> proxied equirectangular panorama image
  *   /api/geoguess?code=C&tok=T&cell=N              -> (1,1) accepted · (9,x) rejected
+ *                                                     cell is 0..GEO_GRID_W*GEO_GRID_H-1 (512x256)
  *   /api/geonext?code=C&tok=T                      -> ready handshake for the next round
- *   /api/geotarget|geopick|geoscore|geoinfo        -> reveal-only GeoGuesser data
+ *   /api/geotarget|geopick&axis=0|1                -> ONE axis of a reveal point (x, then y):
+ *                                                     512x256 no longer fits two base-63 levels
+ *   /api/geoscore|geoinfo|geocredit                -> reveal-only GeoGuesser data
  *
  * CODES are rebased to 0..1023 (was 4-digit 1000..9999) so a code half fits a level. dCode()
  * splits code = hi<<6 | lo: width = BAND + hi (joiner/create band 24, host band 40), height =
@@ -2976,7 +2979,8 @@ export class Hub {
         }
         if (p === "/api/geotarget") {
           const location = st.locations[st.round];
-          return geoPointReply(geoLatY(location.lat) * GEO_GRID_W + geoLonX(location.lon));
+          return geoPointAxisReply(
+            geoLatY(location.lat) * GEO_GRID_W + geoLonX(location.lon), geoAxis(q));
         }
         if (p === "/api/geoinfo") return d(st.locations[st.round].region + 1, 1);
         if (p === "/api/geocredit") {
@@ -2998,7 +3002,7 @@ export class Hub {
         }
         if (p === "/api/geopick") {
           const picked = st.guesses[requestedSeat];
-          return picked == null ? d(1, 63) : geoPointReply(picked);
+          return picked == null ? d(1, 63) : geoPointAxisReply(picked, geoAxis(q));
         }
         const score = Math.max(0, Math.min(4095, st.scores[requestedSeat] | 0));
         return d(score % 63, Math.floor(score / 63));
@@ -4102,8 +4106,13 @@ function seatHole(lobby) {
  * equirectangular pictures are accepted. They are deliberately server-proxied: the in-game
  * URL contains only the lobby code/token, never the picture id or hidden coordinates.
  */
-const GEO_GRID_W = 64;
-const GEO_GRID_H = 32;
+// The authoritative guess resolution. The CLIENT's hit grid stays 64x32 panels, but it covers
+// only the currently zoomed region, so at its 8x maximum those panels address 64*8 x 32*8 cells
+// — hence 512x256 here. A cell is ~78km at the equator instead of the old 64x32's ~626km.
+// The guess rides UP in the query string, which is unlimited (§2), so the finer resolution costs
+// nothing on that path; only the reveal had to change (see geoPointReply).
+const GEO_GRID_W = 512;
+const GEO_GRID_H = 256;
 const GEO_ROUNDS = 5;
 const GEO_CATALOG = "https://api.panoramax.xyz/api/search";
 const GEO_POOL_TTL_MS = 10 * 60 * 1000;
@@ -4269,11 +4278,21 @@ function geoStateReply(st) {
   return d(st.round + 1, 1 + guessMask);
 }
 
-// A 64x32 point needs 11 bits, so encode its linear cell across two base-63 levels.
+// A point is read one AXIS per request. The downlink carries two base-63 levels = 3969 values,
+// and the 512x256 grid needs 131072, so a linear cell no longer fits in a single reply. x (0..511)
+// and y (0..255) each fit comfortably, so the caller asks twice: &axis=0 for x, &axis=1 for y.
 // h=63 stays reserved for an error sentinel, matching the score codec.
-function geoPointReply(cell) {
-  const value = Math.max(0, Math.min(GEO_GRID_W * GEO_GRID_H - 1, cell | 0));
+function geoPointAxisReply(cell, axis) {
+  const clamped = Math.max(0, Math.min(GEO_GRID_W * GEO_GRID_H - 1, cell | 0));
+  const value = axis === 1
+    ? Math.floor(clamped / GEO_GRID_W)
+    : clamped % GEO_GRID_W;
   return d(value % 63, Math.floor(value / 63));
+}
+
+// Which half of a point this request wants: 1 = y (row), anything else = x (column).
+function geoAxis(q) {
+  return Number(q.get("axis")) === 1 ? 1 : 0;
 }
 
 function geoLonX(lon) {

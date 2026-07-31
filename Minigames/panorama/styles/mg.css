@@ -2457,6 +2457,30 @@
     height: 100%;
     opacity: 1;
 }
+/* Label + marker layers fill the zoom wrapper, so their children's translate3d offsets are in
+   the SCALED map space and therefore pan and zoom with the image. Both get hittest:false in JS
+   so the hit grid, which is a SIBLING of the wrapper and stays fixed over the window, still
+   receives every click. */
+.mg-geo-label-layer,
+.mg-geo-marker-layer {
+    width: 100%;
+    height: 100%;
+    flow-children: none;
+}
+.mg-geo-city {
+    font-family: radiance;
+    font-size: 11px;
+    color: #e2e9f1;
+    text-shadow: 0px 1px 3px 2 #000000;
+}
+/* Markers are world-anchored panels in the zoom layer, NOT tinted grid buttons: a grid button
+   points at a different place as soon as the window pans, which would drift the reveal dots. */
+.mg-geo-marker {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    border: 1px solid #0b1117;
+}
 .mg-geo-grid {
     width: 100%;
     height: 100%;
@@ -2492,7 +2516,7 @@
 }
 .mg-geo-target {
     background-color: #a9b88acc;
-    border: 2px solid #e2e9cf;
+    border-color: #e2e9cf;
 }
 .mg-geo-side {
     width: 342px;

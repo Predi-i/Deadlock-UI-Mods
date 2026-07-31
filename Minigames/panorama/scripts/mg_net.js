@@ -488,6 +488,10 @@
         request: request,
         loadImage: loadImage,
         isLevelEncodedSize: isLevelEncodedSize,
+        // Authoritative guess resolution. MUST match GEO_GRID_W/H in server/worker.core.js: the
+        // client sends a cell index in this space and decodes reveal points against it.
+        GEO_GRID_W: 512,
+        GEO_GRID_H: 256,
         clearQueue: function () {
             // Drop pending UI traffic (stale status/poll ticks from a view we just
             // left) - their callers are token-guarded, so silence is fine. Two things
@@ -828,32 +832,31 @@
             }, err);
         },
 
-        geoTarget: function (code, tok, cb, err) {
-            request("/api/geotarget", { code: code, tok: tok }, function (w, h) {
+        // Reveal points are read ONE AXIS PER REQUEST: the authoritative grid is 512x256 =
+        // 131072 cells, and a reply carries two base-63 levels = 3969 values, so a linear cell
+        // no longer fits. axis 0 -> x (0..511), axis 1 -> y (0..255). The caller issues both and
+        // assembles the pair. h === 63 is still the error sentinel.
+        geoPointAxis: function (route, params, limit, cb, err) {
+            request(route, params, function (w, h) {
                 if (h === 63) { if (err) err(w); return; }
-                var cell = h * 63 + w;
-                var x = cell % 64, y = Math.floor(cell / 64);
-                if (w < 0 || w >= 63 || x < 0 || x >= 64 || y < 0 || y >= 32) {
-                    suspectDecode("geotarget w=" + w + " h=" + h);
+                var value = h * 63 + w;
+                if (w < 0 || w >= 63 || value < 0 || value >= limit) {
+                    suspectDecode(route + " w=" + w + " h=" + h);
                     if (err) err("decode");
                     return;
                 }
-                cb({ x: x, y: y });
+                cb(value);
             }, err);
         },
 
-        geoPick: function (code, tok, seat, cb, err) {
-            request("/api/geopick", { code: code, tok: tok, seat: seat }, function (w, h) {
-                if (h === 63) { if (err) err(w); return; }
-                var cell = h * 63 + w;
-                var x = cell % 64, y = Math.floor(cell / 64);
-                if (w < 0 || w >= 63 || x < 0 || x >= 64 || y < 0 || y >= 32) {
-                    suspectDecode("geopick w=" + w + " h=" + h);
-                    if (err) err("decode");
-                    return;
-                }
-                cb({ x: x, y: y });
-            }, err);
+        geoTarget: function (code, tok, axis, cb, err) {
+            this.geoPointAxis("/api/geotarget", { code: code, tok: tok, axis: axis },
+                axis === 1 ? MG.Net.GEO_GRID_H : MG.Net.GEO_GRID_W, cb, err);
+        },
+
+        geoPick: function (code, tok, seat, axis, cb, err) {
+            this.geoPointAxis("/api/geopick", { code: code, tok: tok, seat: seat, axis: axis },
+                axis === 1 ? MG.Net.GEO_GRID_H : MG.Net.GEO_GRID_W, cb, err);
         },
 
         geoScore: function (code, tok, seat, cb, err) {

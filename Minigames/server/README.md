@@ -166,8 +166,11 @@ Never commit or paste these secrets into source files.
   each sequence, and cache the catalog snapshot for ten minutes. The proxy URL is constructed from
   the catalog's validated UUID; user input can never become an upstream URL. Proxied images are
   capped at 8 MiB and the in-memory image LRU is capped at 12 entries.
-- Reveal points and guesses use a 64×32 server-owned grid encoded as a linear cell across two
-  base-63 PNG levels (height 63 is reserved for errors). The producer credit is revealed through
-  `/api/geocredit`, preserving Panoramax's attribution requirement.
+- Reveal points and guesses use a 512×256 server-owned grid (~78km per cell). A guess arrives as
+  one linear `cell` on the unlimited uplink, but a reveal point exceeds what two base-63 PNG levels
+  can carry, so `/api/geotarget` and `/api/geopick` take an `axis` parameter and return one
+  coordinate per request (height 63 stays reserved for errors). Scoring uses the picture's exact
+  Panoramax coordinates, not the cell. The producer credit is revealed through `/api/geocredit`,
+  preserving Panoramax's attribution requirement.
 - Pixel Battle starts with a clean database after the Cloudflare migration; old Worker canvas,
   audit, bank and ban records were deliberately not imported.
