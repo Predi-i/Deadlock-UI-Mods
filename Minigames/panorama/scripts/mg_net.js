@@ -43,7 +43,7 @@
  *   $.MG.Api.geoState(code, tok, cb(state), err)                    GeoGuesser round/reveal state
  *   $.MG.Api.geoGuess(code, tok, cell, cb(result), err)             authoritative map guess
  *   $.MG.Api.geoNext(code, tok, cb(result), err)                    next-round ready handshake
- *   $.MG.Api.geoTarget/geoPick/geoScore/geoInfo(...)                reveal-only round data
+ *   $.MG.Api.geoTarget/geoPick/geoScore/geoPlace/geoCredit(...)     reveal-only round data
  *
  * The seat token (tok) is the identity that makes the server authoritative: it flows
  * ONLY upward (query param), never in a response, so it can't leak through the 2-int
@@ -872,40 +872,41 @@
             }, err);
         },
 
-        geoInfo: function (code, tok, cb, err) {
+        // Reveal PLACE: one reply carrying a code, not a region id.
+        //   0..5                              a bare region (that panorama could not be placed)
+        //   6 + countryIndex * 6 + continent  "continent · country"
+        // The continent rides along because a country does not imply one: Russia, Turkey,
+        // Kazakhstan, Egypt and Indonesia all straddle a divide and are resolved per point at
+        // build time. Folding all three into one code costs nothing - a reply holds 3969 values
+        // and 122 countries reach 737 - and it means the country needs no extra request.
+        geoPlace: function (code, tok, cb, err) {
             request("/api/geoinfo", { code: code, tok: tok }, function (w, h) {
-                if (w === 9) { if (err) err(h); return; }
-                if (w < 1 || w > 6 || h !== 1) {
+                if (h === 63) { if (err) err(w); return; }
+                var place = h * 63 + w;
+                var limit = 6 + (MG.GeoCountries ? MG.GeoCountries.length : 0) * 6;
+                if (w < 0 || w >= 63 || place < 0 || place >= limit) {
                     suspectDecode("geoinfo w=" + w + " h=" + h);
                     if (err) err("decode");
                     return;
                 }
-                cb(w - 1);
+                cb(place);
             }, err);
         },
 
+        // Reveal CREDIT: one reply carrying an index into MG.GeoCredits, which ships with the mod.
+        // This used to walk the string two characters per request (up to 26 chained round-trips for
+        // one label), and the reveal button waited on all of them.
         geoCredit: function (code, tok, cb, err) {
-            var alphabet = " ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.";
-            request("/api/geocredit", { code: code, tok: tok, i: 0 }, function (w, h) {
-                if (w === 9 || h === 62 || h !== 0 || w < 1 || w > 62) {
-                    if (err) err("credit");
+            request("/api/geocredit", { code: code, tok: tok }, function (w, h) {
+                if (h === 63) { if (err) err(w); return; }
+                var index = h * 63 + w;
+                var list = MG.GeoCredits || [];
+                if (w < 0 || w >= 63 || index < 0 || index >= list.length) {
+                    suspectDecode("geocredit w=" + w + " h=" + h);
+                    if (err) err("decode");
                     return;
                 }
-                var length = w, chunks = Math.ceil(length / 2), text = "", index = 1;
-                function readChunk() {
-                    request("/api/geocredit", { code: code, tok: tok, i: index }, function (a, b) {
-                        if (a < 0 || a >= alphabet.length || b < 0 || b >= alphabet.length) {
-                            if (err) err("credit");
-                            return;
-                        }
-                        text += alphabet.charAt(a);
-                        if (text.length < length) text += alphabet.charAt(b);
-                        index++;
-                        if (index <= chunks) readChunk();
-                        else cb(text);
-                    }, err);
-                }
-                readChunk();
+                cb(list[index]);
             }, err);
         },
 

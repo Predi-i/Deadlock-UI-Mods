@@ -24,8 +24,10 @@ function cloneStored(value) {
 
 let src = fs.readFileSync(path.join(__dirname, "..", "server", "worker.js"), "utf8");
 src = src.replace("export default", "const __workerDefault =").replace("export class Hub", "class Hub");
-src += "\n;return { Hub, Worker: __workerDefault };";
-const { Hub, Worker } = new Function(src)();
+// The reveal tables come out of the SAME bundle the Hub is using. Re-reading the generated file
+// separately would let the two drift and still pass, which is the failure this guards against.
+src += "\n;return { Hub, Worker: __workerDefault, GEO_COUNTRY_NAMES, GEO_CREDIT_KEYS };";
+const { Hub, Worker, GEO_COUNTRY_NAMES, GEO_CREDIT_KEYS } = new Function(src)();
 
 // Minimal Durable-Object storage stand-in.
 class FakeStorage {
@@ -747,17 +749,32 @@ async function main() {
             loc.lat >= -90 && loc.lat <= 90 && loc.lon >= -180 && loc.lon <= 180 &&
             Number.isInteger(loc.region) && loc.region >= 0 && loc.region < 6;
     }), "geo: every pooled location has a known source, sane coordinates and a labelled region");
+    // A drawn row must be nameable by the SHIPPED tables. An empty country is legal (a handful of
+    // panoramas sit at sea and reveal as a region), but a country the table does not list means
+    // geo_pool.generated.js and geo_credit_tables.generated.js were built from different pools -
+    // the reveal would then name the wrong place.
+    ok(geoLobby.state.locations.every(function (loc) {
+        if (!loc.country) return loc.continent === -1;
+        return GEO_COUNTRY_NAMES.indexOf(loc.country) >= 0 &&
+            Number.isInteger(loc.continent) && loc.continent >= 0 && loc.continent < 6;
+    }), "geo: every drawn location's country is present in the shipped country table");
+    ok(geoLobby.state.locations.every(function (loc) {
+        return GEO_CREDIT_KEYS.indexOf((loc.source === 1 ? 1 : 0) + "|" + loc.provider) >= 0;
+    }), "geo: every drawn location's provider is present in the shipped credit table");
 
     // The draw is random, so pin round 1 to a Mapillary row and round 2 to a Panoramax one. Both
     // paths then get asserted deterministically: the URL resolve, the host allowlist and the two
-    // different credit lines.
+    // different credit codes. The providers must be REAL entries from the generated credit table -
+    // the reveal now sends an index into it, so an invented name has no code to send.
+    var geoMlyKey = GEO_CREDIT_KEYS.find(function (key) { return key.charAt(0) === "1"; });
+    var geoPanoKey = GEO_CREDIT_KEYS.find(function (key) { return key.charAt(0) === "0"; });
     geoLobby.state.locations[0] = {
         source: 1, id: "1234567890123456", lat: 48.858, lon: 2.294, region: 0,
-        provider: "Test Mapillary"
+        provider: geoMlyKey.slice(2), country: "France", continent: 0
     };
     geoLobby.state.locations[1] = {
         source: 0, id: "539493be-7921-4607-bb76-b57dea3d4c09", lat: -33.87, lon: 151.21,
-        region: 5, provider: "Test Panoramax"
+        region: 5, provider: geoPanoKey.slice(2), country: "Australia", continent: 5
     };
     await geo.hub.storage.put("l:" + geo.code, geoLobby);
     d = await req(geo.hub, "/api/geostate.png?code=" + geo.code + "&tok=GEOHOST01");
@@ -881,23 +898,21 @@ async function main() {
         "/api/geopick.png?code=" + geo.code + "&tok=GEOHOST01&seat=1");
     ok(joinerPick.x === 511 && joinerPick.y === 255,
         "geo: joiner's revealed map pick round-trips at the far corner");
-    d = await req(geo.hub, "/api/geoinfo.png?code=" + geo.code + "&tok=GEOHOST01");
-    ok(d.w === 1 && d.h === 1, "geo: reveal exposes the pooled location's region (Europe)");
-    var creditAlphabet = " ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.";
-    async function geoCreditFor(tok) {
-        var head = await req(geo.hub, "/api/geocredit.png?code=" + geo.code + "&tok=" + tok + "&i=0");
-        var length = head.w, text = "";
-        for (var part = 1; text.length < length; part++) {
-            var chunk = await req(geo.hub, "/api/geocredit.png?code=" + geo.code +
-                "&tok=" + tok + "&i=" + part);
-            text += creditAlphabet.charAt(chunk.w);
-            if (text.length < length) text += creditAlphabet.charAt(chunk.h);
-        }
-        return text;
+    // Place and credit are single-reply INDICES now (two base-63 levels, h=63 = error), so both
+    // are read with one request instead of walking a string two characters at a time.
+    async function geoLevelValue(route, tok) {
+        var reply = await req(geo.hub, route + "?code=" + geo.code + "&tok=" + tok);
+        return reply.h === 63 ? -1 : reply.h * 63 + reply.w;
     }
-    // Round 1 is the pinned Mapillary row, so the credit must name Mapillary, not Panoramax. The
-    // whole point of tagging the source: crediting the wrong project is a licence problem.
-    ok(await geoCreditFor("GEOHOST01") === "Test Mapillary  Mapillary  CC BY SA 4.0",
+    function geoPlaceFor(country, continent) {
+        return 6 + GEO_COUNTRY_NAMES.indexOf(country) * 6 + continent;
+    }
+    ok(await geoLevelValue("/api/geoinfo.png", "GEOHOST01") === geoPlaceFor("France", 0),
+        "geo: reveal names the pooled location's country and continent (Europe · France)");
+    // Round 1 is the pinned Mapillary row, so the credit must resolve to the Mapillary half of the
+    // table, not the Panoramax one. Crediting the wrong project is a licence problem.
+    ok(await geoLevelValue("/api/geocredit.png", "GEOHOST01") ===
+        GEO_CREDIT_KEYS.indexOf(geoMlyKey),
         "geo: a Mapillary round credits Mapillary and its contributor");
     var firstGeoScores = [];
     for (var geoSeat = 0; geoSeat < 2; geoSeat++) {
@@ -920,10 +935,11 @@ async function main() {
     // name Panoramax, proving the attribution follows the location's source rather than a constant.
     await req(geo.hub, "/api/geoguess.png?code=" + geo.code + "&tok=GEOHOST01&cell=100");
     await req(geo.hub, "/api/geoguess.png?code=" + geo.code + "&tok=GEOJOIN01&cell=200");
-    ok(await geoCreditFor("GEOHOST01") === "Test Panoramax  Panoramax  CC BY SA 4.0",
+    ok(await geoLevelValue("/api/geocredit.png", "GEOHOST01") ===
+        GEO_CREDIT_KEYS.indexOf(geoPanoKey),
         "geo: a Panoramax round credits Panoramax, from the same reveal route");
-    d = await req(geo.hub, "/api/geoinfo.png?code=" + geo.code + "&tok=GEOHOST01");
-    ok(d.w === 6 && d.h === 1, "geo: the region hint follows the pooled row (Oceania)");
+    ok(await geoLevelValue("/api/geoinfo.png", "GEOHOST01") === geoPlaceFor("Australia", 5),
+        "geo: the place hint follows the pooled row (Oceania · Australia)");
     await req(geo.hub, "/api/geonext.png?code=" + geo.code + "&tok=GEOHOST01");
     await req(geo.hub, "/api/geonext.png?code=" + geo.code + "&tok=GEOJOIN01");
     d = await req(geo.hub, "/api/geostate.png?code=" + geo.code + "&tok=GEOHOST01");

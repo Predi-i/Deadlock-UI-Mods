@@ -52,6 +52,19 @@
     var PANO_SCALING = "cover";
     var REGIONS = ["Europe", "North America", "South America", "Africa", "Asia", "Oceania"];
 
+    // Render the reveal's place code (see MG.Api.geoPlace). Codes at or above 6 pack a country
+    // index and its display continent, both decided offline at pool build time; below 6 the
+    // panorama could not be placed and only the region is known.
+    function placeLabel(place) {
+        if (place < 6) return REGIONS[place] || "Location revealed";
+        var packed = place - 6;
+        var names = MG.GeoCountries || [];
+        var country = names[Math.floor(packed / 6)];
+        var region = REGIONS[packed % 6];
+        if (!country) return region || "Location revealed";
+        return region ? region + " · " + country : country;
+    }
+
     function addLabel(parent, cls, text) {
         var label = $.CreatePanel("Label", parent, "");
         var classes = String(cls || "").split(/\s+/);
@@ -699,8 +712,10 @@
             // The round is decided; nothing this seat does can change it, so take them off the
             // clock before the reveal reads start.
             refreshTimer();
-            // Two reads per point now: target (2) + my pick (2) [+ opponent pick (2)] + score
-            // + info + credit.
+            // Reads per reveal: target (2 axes) + my pick (2) [+ opponent pick (2)] + score
+            // + place + credit. Place and credit are ONE request each now - the credit used to
+            // arrive two characters per request, up to 26 chained round-trips, which is what made
+            // this button sit on "LOADING RESULT…".
             revealReadsPending = solo ? 7 : 10;
             sendingGuess = false;
             prompt.text = "Round complete. Loading the authoritative reveal…";
@@ -724,8 +739,8 @@
                     scores[1 - mySeat] = score;
                 });
             }
-            readReveal(function (ok, fail) { MG.Api.geoInfo(code, tok, ok, fail); }, function (index) {
-                revealPlace.text = REGIONS[index] || "Location revealed";
+            readReveal(function (ok, fail) { MG.Api.geoPlace(code, tok, ok, fail); }, function (place) {
+                revealPlace.text = placeLabel(place);
                 prompt.text = solo ? "Round complete. The exact cell and your guess are shown."
                     : "Round complete. The exact cell and both guesses are shown.";
             });

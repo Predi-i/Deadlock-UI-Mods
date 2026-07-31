@@ -1,4 +1,4 @@
-/* global CompressionStream, GEO_POOL_PACKED, PX_ALPHA, PX_LAND_SPANS, PX_PALETTE, PX_VIEW_PALETTE, adminAssetResponse, atob */
+/* global CompressionStream, GEO_COUNTRY_NAMES, GEO_CREDIT_KEYS, GEO_POOL_PACKED, PX_ALPHA, PX_LAND_SPANS, PX_PALETTE, PX_VIEW_PALETTE, adminAssetResponse, atob */
 /**
  * Deadlock Minigames relay - Worker-compatible CORE (authored source).
  *
@@ -54,7 +54,11 @@
  *   /api/geonext?code=C&tok=T                      -> ready handshake for the next round
  *   /api/geotarget|geopick&axis=0|1                -> ONE axis of a reveal point (x, then y):
  *                                                     512x256 no longer fits two base-63 levels
- *   /api/geoscore|geoinfo|geocredit                -> reveal-only GeoGuesser data
+ *   /api/geoscore|geoinfo|geocredit                -> reveal-only GeoGuesser data, each ONE
+ *                                                     reply of two base-63 levels (h=63 = error):
+ *                                                     geoinfo = place code (0..5 region only,
+ *                                                     6+n = country n), geocredit = index into
+ *                                                     the shipped credit table
  *
  * CODES are rebased to 0..1023 (was 4-digit 1000..9999) so a code half fits a level. dCode()
  * splits code = hi<<6 | lo: width = BAND + hi (joiner/create band 24, host band 40), height =
@@ -617,35 +621,35 @@ export class Hub {
       if (p === "/api/geotarget" || p === "/api/geopick" ||
           p === "/api/geoscore" || p === "/api/geoinfo" || p === "/api/geocredit") {
         const access = await geoLobbyAccess(this, code, q.get("tok"));
-        const pointRoute = p === "/api/geotarget" || p === "/api/geopick";
-        if (!access.ok) return (p === "/api/geoscore" || pointRoute)
-          ? d(access.code, 63) : d(9, access.code);
+        // Every route in this group now answers with two base-63 levels and reserves h=63 for
+        // errors. geoinfo/geocredit used to use the (9, code) sentinel instead, which stopped
+        // being safe the moment their success replies became indices: place code 9 is a real
+        // country, so a client could not tell it from "lobby gone".
+        if (!access.ok) return d(access.code, 63);
         const st = access.lobby.state;
         if (!st || !st.reveal || st.round < 0 || st.round >= GEO_ROUNDS) {
-          return (p === "/api/geoscore" || pointRoute) ? d(1, 63) : d(9, 1);
+          return d(1, 63);
         }
         if (p === "/api/geotarget") {
           const location = st.locations[st.round];
           return geoPointAxisReply(
             geoLatY(location.lat) * GEO_GRID_W + geoLonX(location.lon), geoAxis(q));
         }
-        if (p === "/api/geoinfo") return d(st.locations[st.round].region + 1, 1);
+        // Both of these are single-reply INDICES now (two base-63 levels, h=63 = error sentinel,
+        // matching the geoscore codec). The client turns them into text from tables it ships.
+        if (p === "/api/geoinfo") {
+          const place = geoPlaceCode(st.locations[st.round]);
+          return d(place % 63, Math.floor(place / 63));
+        }
         if (p === "/api/geocredit") {
-          const text = geoCreditText(st.locations[st.round]);
-          const index = Number(q.get("i"));
-          if (!Number.isInteger(index) || index < 0) return d(0, 62);
-          if (index === 0) return d(text.length, 0);
-          const offset = (index - 1) * 2;
-          if (offset >= text.length) return d(0, 62);
-          return d(
-            GEO_CREDIT_ALPHABET.indexOf(text.charAt(offset)),
-            offset + 1 < text.length
-              ? GEO_CREDIT_ALPHABET.indexOf(text.charAt(offset + 1)) : 0
-          );
+          const credit = geoCreditCode(st.locations[st.round]);
+          if (credit < 0) return d(3, 63);
+          return d(credit % 63, Math.floor(credit / 63));
         }
         const requestedSeat = Number(q.get("seat"));
+        // Only geoscore and geopick take a seat; geoinfo/geocredit have already returned above.
         if (!Number.isInteger(requestedSeat) || requestedSeat < 0 || requestedSeat > 1) {
-          return p === "/api/geoscore" ? d(2, 63) : d(9, 2);
+          return d(2, 63);
         }
         if (p === "/api/geopick") {
           const picked = st.guesses[requestedSeat];
@@ -1804,13 +1808,23 @@ function geoPool() {
     if (!Number.isFinite(lat) || !Number.isFinite(lon) ||
         !Number.isInteger(region) || region < 0 || region >= GEO_REGION_COUNT) continue;
     if (source === GEO_SRC_MAPILLARY ? !/^[0-9]{5,25}$/.test(id) : !/^[0-9a-f-]{36}$/i.test(id)) continue;
+    // country/continent are the DISPLAY pair; `region` stays the coarse harvest bbox and is not
+    // a substitute (it puts the Canaries in Africa and Vladivostok in Asia-the-bbox). A row the
+    // builder could not place carries an empty country and continent -1, and the reveal then
+    // names the region alone.
+    const country = String(parts[6] || "");
+    const continent = Number(parts[7]);
+    const placed = country !== "" && Number.isInteger(continent) &&
+      continent >= 0 && continent < GEO_REGION_COUNT;
     rows.push({
       source: source,
       id: id,
       lat: lat,
       lon: lon,
       region: region,
-      provider: geoSafeProvider(parts[5])
+      provider: geoSafeProvider(parts[5]),
+      country: placed ? country : "",
+      continent: placed ? continent : -1
     });
   }
   geoPoolRows = rows;
@@ -1818,7 +1832,6 @@ function geoPool() {
 }
 
 const GEO_REGION_COUNT = 6;
-const GEO_CREDIT_ALPHABET = " ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.";
 
 function geoShuffle(values) {
   for (let i = values.length - 1; i > 0; i--) {
@@ -1830,16 +1843,53 @@ function geoShuffle(values) {
   return values;
 }
 
+// Keep in lockstep with safeName() in tools/build_geo_pool.js, INCLUDING the trailing trim: a
+// 24-character slice can end on a space, and that space used to survive into the pool while each
+// consumer trimmed it separately. With the credit line now a table lookup, the untrimmed form has
+// no index and the reveal cannot name its own contributor.
 function geoSafeProvider(value) {
   return String(value || "Contributor").replace(/[^ A-Za-z0-9.]/g, " ")
-    .replace(/\s+/g, " ").trim().slice(0, 24) || "Contributor";
+    .replace(/\s+/g, " ").trim().slice(0, 24).trim() || "Contributor";
 }
 
-function geoCreditText(location) {
-  const provider = geoSafeProvider(location && location.provider);
-  return location && location.source === GEO_SRC_MAPILLARY
-    ? provider + "  Mapillary  CC BY SA 4.0"
-    : provider + "  Panoramax  CC BY SA 4.0";
+// ── Reveal labels are INDICES, not text ─────────────────────────────────────────────────────
+// Both of these used to be prose on the wire. The credit line was transported two characters per
+// request over the image-dimensions side channel: `?i=0` gave the length, then ceil(len/2) more
+// requests each carried two characters. A 49-character line is 26 CHAINED round-trips, and the
+// client held the reveal button on "LOADING RESULT…" until the last one landed - that was the
+// whole reason the post-guess wait felt broken.
+//
+// Nothing about either string is dynamic: both come from fields the pool builder already decided.
+// So the strings ship with the mod (panorama/scripts/mg_geo_credits.generated.js) and the wire
+// carries the index into them. One request each, and the reveal renders instantly.
+//
+// The place code folds region, country AND display continent into ONE reply, since /api/geoinfo
+// had 3969 codes and was spending six of them:
+//
+//   0..5                                  region only (the row could not be placed)
+//   6 + countryIndex * 6 + continent      "continent · country"
+//
+// The continent has to travel too: a country does NOT determine it. Russia spans Europe and Asia
+// (the pool has rows from Kaliningrad to Vladivostok), as do Turkey, Kazakhstan, Egypt and
+// Indonesia, and lib/country.js resolves those per point. With 122 countries the top code is 737.
+function geoPlaceCode(location) {
+  if (!location) return 0;
+  if (!location.country || location.continent < 0) {
+    return Math.max(0, Math.min(GEO_REGION_COUNT - 1, location.region | 0));
+  }
+  const index = GEO_COUNTRY_NAMES.indexOf(location.country);
+  // An unknown country means the two generated artifacts drifted. Degrade to the continent name
+  // rather than name the wrong place.
+  if (index < 0) return Math.max(0, Math.min(GEO_REGION_COUNT - 1, location.continent | 0));
+  return GEO_REGION_COUNT + index * GEO_REGION_COUNT + location.continent;
+}
+
+// Index into GEO_CREDIT_KEYS ("source|provider"), which the client renders as
+// "provider · source · CC BY-SA 4.0". -1 when the pair is missing from the table.
+function geoCreditCode(location) {
+  if (!location) return -1;
+  const source = location.source === GEO_SRC_MAPILLARY ? 1 : 0;
+  return GEO_CREDIT_KEYS.indexOf(source + "|" + geoSafeProvider(location.provider));
 }
 
 // Where the panorama bytes come from. Panoramax builds its URL from the validated UUID. Mapillary

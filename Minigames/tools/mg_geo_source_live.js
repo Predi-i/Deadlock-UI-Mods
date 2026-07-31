@@ -11,8 +11,16 @@
 
 const origin = String(process.argv[2] || "https://178.236.246.13").replace(/\/+$/, "");
 const rounds = Number(process.argv[3] || 6);
-const ALPHABET = " ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.";
 const REGIONS = ["Europe", "North America", "South America", "Africa", "Asia", "Oceania"];
+
+// The reveal sends INDICES into tables that ship with the mod, so this tool has to read the same
+// tables to name what came back. Reading the generated file directly (rather than re-deriving from
+// geo_pool.json) is deliberate: if the deployed relay and these tables disagree, that IS the bug
+// this tool should surface.
+const tables = require("fs").readFileSync(
+    require("path").join(__dirname, "..", "server", "geo_credit_tables.generated.js"), "utf8");
+const COUNTRY_NAMES = JSON.parse(/const GEO_COUNTRY_NAMES = (\[[\s\S]*?\]);/.exec(tables)[1]);
+const CREDIT_KEYS = JSON.parse(/const GEO_CREDIT_KEYS = (\[[\s\S]*?\]);/.exec(tables)[1]);
 
 // ⚠ Dimensions are LEVEL-QUANTISED on the wire: physical = level * 9 + 15. Reading the raw PNG
 // width as the value is wrong and decodes into nonsense (it made an earlier version of this tool
@@ -45,15 +53,25 @@ async function get(path, params, name) {
     return { bytes: bytes, type: type, size: size };
 }
 
-async function credit(code, tok) {
-    const head = await get("/api/geocredit", { code: code, tok: tok, i: 0 }, "credit head");
-    let text = "";
-    for (let part = 1; text.length < head.size.w && part < 64; part++) {
-        const chunk = await get("/api/geocredit", { code: code, tok: tok, i: part }, "credit");
-        text += ALPHABET.charAt(chunk.size.w);
-        if (text.length < head.size.w) text += ALPHABET.charAt(chunk.size.h);
-    }
-    return text;
+// One request each now: both reveal labels are an index into a shipped table. h=63 is the error
+// sentinel, matching the score codec.
+async function creditKey(code, tok) {
+    const reply = await get("/api/geocredit", { code: code, tok: tok }, "credit");
+    if (reply.size.h === 63) return null;
+    return CREDIT_KEYS[reply.size.h * 63 + reply.size.w] || null;
+}
+
+// 0..5 is a bare region; at 6 and above, (place - 6) packs country * 6 + continent.
+async function placeName(code, tok) {
+    const reply = await get("/api/geoinfo", { code: code, tok: tok }, "place");
+    if (reply.size.h === 63) return "?";
+    const place = reply.size.h * 63 + reply.size.w;
+    if (place < 6) return REGIONS[place] || "?";
+    const packed = place - 6;
+    const country = COUNTRY_NAMES[Math.floor(packed / 6)];
+    const region = REGIONS[packed % 6];
+    if (!country) return region || "?";
+    return region ? region + " · " + country : country;
 }
 
 (async function main() {
@@ -76,24 +94,26 @@ async function credit(code, tok) {
         const gotPanorama = isImage && view.bytes.length > 20000;
 
         await get("/api/geoguess", { code: code, tok: tok, cell: 0 }, "guess");
-        const line = await credit(code, tok);
-        const region = await get("/api/geoinfo", { code: code, tok: tok }, "region");
-        const regionName = REGIONS[region.size.w - 1] || "?";
-        regionsSeen[regionName] = (regionsSeen[regionName] || 0) + 1;
+        const key = await creditKey(code, tok);
+        const place = await placeName(code, tok);
+        regionsSeen[place] = (regionsSeen[place] || 0) + 1;
 
-        const source = line.indexOf("Mapillary") !== -1 ? "Mapillary"
-            : line.indexOf("Panoramax") !== -1 ? "Panoramax" : "unknown";
+        // The key's leading digit IS the source (0 = Panoramax, 1 = Mapillary), so this no longer
+        // depends on matching a project name inside a rendered string.
+        const source = key === null ? "unknown"
+            : key.charAt(0) === "1" ? "Mapillary" : "Panoramax";
         sources[source]++;
         if (!gotPanorama) failed++;
 
         console.log("  " + (gotPanorama ? "ok  " : "FAIL") + " create=" + String(createMs) + "ms" +
             "  " + String(Math.round(view.bytes.length / 1024)).padStart(4) + "KiB" +
-            "  " + regionName.padEnd(14) + "  " + line);
+            "  " + place.padEnd(30) + "  " + (key === null ? "(no credit)" : key.slice(2) +
+            " · " + source));
     }
 
     console.log("\nsources: mapillary=" + sources.Mapillary + " panoramax=" + sources.Panoramax +
         " unknown=" + sources.unknown);
-    console.log("regions: " + Object.keys(regionsSeen).map(function (name) {
+    console.log("places: " + Object.keys(regionsSeen).map(function (name) {
         return name + "x" + regionsSeen[name];
     }).join(", "));
     console.log("slowest lobby create: " + slowestCreate + "ms (prebuilt pool means no catalog call)");

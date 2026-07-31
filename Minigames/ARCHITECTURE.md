@@ -250,7 +250,7 @@ dim. Only `/api/probe` stays **literal pixels** — it's the calibration referen
 | `/api/geoview?code=C&tok=T` | current 2:1 equirectangular image (ordinary JPEG/PNG, not a dimension message) |
 | `/api/geoguess?code=C&tok=T&cell=N` | `(1,1)` accepted · `(9,x)` rejected — `cell` is 0..131071 in the 512×256 authoritative grid (the uplink is unlimited, so precision is free here) |
 | `/api/geonext?code=C&tok=T` | `(1,1)` ready; advances after both players, or immediately in a solo lobby |
-| `/api/geotarget?axis=A`, `/api/geopick?seat=S&axis=A`, `/api/geoscore`, `/api/geoinfo`, `/api/geocredit` | reveal-only target, guesses, totals, region and Panoramax producer attribution. **Trap:** a 512×256 point does not fit one downlink reply — two base-63 levels top out at 3968, so each point is read one axis per request (`axis=0` → x, `axis=1` → y) and the client needs 7 reveal reads solo / 10 online |
+| `/api/geotarget?axis=A`, `/api/geopick?seat=S&axis=A`, `/api/geoscore`, `/api/geoinfo`, `/api/geocredit` | reveal-only target, guesses, totals, place and contributor attribution. `geoinfo` returns a **place code** (`0..5` region only, else `6 + country*6 + continent`) and `geocredit` an **index** into the shipped credit table — one request each, both decoded from two base-63 levels with `h=63` as the error sentinel. **Trap:** a 512×256 point does not fit one downlink reply — two base-63 levels top out at 3968, so each point is read one axis per request (`axis=0` → x, `axis=1` → y) and the client needs 7 reveal reads solo / 10 online |
 
 ### 5.1 Server authority (seats, tokens, validation)
 
@@ -1281,9 +1281,17 @@ is built but **not yet in-game verified**.
 - The guess itself never sends latitude/longitude: the client resolves its click to a linear cell
   in the shared 512×256 space and the server converts that back to coordinates, so the hidden
   location stays server-authoritative. Height 63 remains the point-error sentinel.
-- After reveal `/api/geoinfo` returns one of six broad region ids. `/api/geocredit` transports the
-  sanitized Panoramax producer plus `CC BY-SA 4.0` through a compact two-character-per-request
-  alphabet, so dynamic imagery remains correctly attributed despite Panorama's integer-only channel.
+- After reveal the answer is named as `continent · country` (e.g. `Oceania · Australia`). Both the
+  country and the contributor credit are **indices into tables that ship with the mod**
+  (`panorama/scripts/mg_geo_credits.generated.js`), not text on the wire. They are decided offline
+  at pool build time: `tools/lib/country.js` resolves each location against a vendored Natural Earth
+  set (public domain), and `tools/build_geo_credit_tables.js` emits the server and client tables
+  from the same source so their indices cannot drift.
+  **Trap:** the credit used to be transported as text, two characters per request — a 49-character
+  line was 26 chained round-trips, and `showReveal` held the button on `LOADING RESULT…` until the
+  last one landed. That was the whole cause of the long post-guess wait; nothing about the string
+  was ever dynamic. The continent travels with the country because a country does not imply one:
+  Russia, Turkey, Kazakhstan, Egypt and Indonesia straddle a divide and are resolved per point.
 - Server authority and protocol codecs are covered by `mg_server_test.js`; registry/load order and
   the native-input guards are covered by the release UI regression test. Projection, layout and
   drag feel still require an in-game VPK check.

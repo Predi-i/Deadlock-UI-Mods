@@ -189,7 +189,9 @@ Never commit or paste these secrets into source files.
   one linear `cell` on the unlimited uplink, but a reveal point exceeds what two base-63 PNG levels
   can carry, so `/api/geotarget` and `/api/geopick` take an `axis` parameter and return one
   coordinate per request (height 63 stays reserved for errors). Scoring uses the picture's exact
-  coordinates, not the cell. The producer credit is revealed through `/api/geocredit` and names
+  coordinates, not the cell. The place and the producer credit are each ONE reply: `/api/geoinfo`
+  sends a place code (`0..5` region only, else `6 + country*6 + continent`) and `/api/geocredit` an
+  index into the credit table the mod ships, so the reveal renders instantly and still names
   whichever project the location came from, preserving both attribution requirements.
 - Pixel Battle starts with a clean database after the Cloudflare migration; old Worker canvas,
   audit, bank and ban records were deliberately not imported.

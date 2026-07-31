@@ -137,6 +137,10 @@ const poker = source("mg_poker.js");
 const geo = source("mg_geoguesser.js");
 const games = source("mg_games.js");
 const worker = fs.readFileSync(path.join(ROOT, "server", "worker.core.js"), "utf8");
+// The GENERATED bundle, plus the shipped reveal tables. The two are indexed by position, so the
+// GeoGuesser assertions below compare them against each other rather than trusting either alone.
+const workerBuilt = fs.readFileSync(path.join(ROOT, "server", "worker.js"), "utf8");
+const credits = source("mg_geo_credits.generated.js");
 const baseHud = fs.readFileSync(path.join(ROOT, "panorama", "layout", "base_hud.xml"), "utf8");
 const css = fs.readFileSync(path.join(ROOT, "panorama", "styles", "mg.css"), "utf8");
 
@@ -333,9 +337,61 @@ assert(/revealReadsPending = solo \? 7 : 10;[\s\S]*?setAction\("LOADING RESULT鈥
 // hard-coded places.
 assert(/geoCredit:\s*function[\s\S]*?\/api\/geocredit/.test(net) &&
     /MG\.Api\.geoCredit\(code, tok/.test(geo) &&
-    /Mapillary  CC BY SA 4\.0/.test(worker) && /Panoramax  CC BY SA 4\.0/.test(worker) &&
+    / 路 Mapillary 路 CC BY-SA 4\.0/.test(credits) &&
+    / 路 Panoramax 路 CC BY-SA 4\.0/.test(credits) &&
     !/const GEO_LOCATIONS =/.test(worker),
     "GeoGuesser must credit both panorama sources and keep its locations out of a hard-coded list");
+// The credit line must NOT go back to being transported as text. It used to arrive two characters
+// per request (`?i=0` for the length, then ceil(len/2) chained reads - up to 26 for one label) and
+// the reveal button waited on all of them, which is what made the post-guess pause feel broken.
+// Both replies are single indices into tables that ship with the mod.
+assert(!/geocredit"[^)]*i:/.test(net) && !/GEO_CREDIT_ALPHABET/.test(worker) &&
+    !/GEO_CREDIT_ALPHABET/.test(net) &&
+    /MG\.GeoCredits/.test(net) && /MG\.GeoCountries/.test(net),
+    "GeoGuesser reveal labels must be single-request indices, not text walked over the side channel");
+// The two generated artifacts are indexed by position, so a reveal is only correct while they agree.
+(function () {
+    const packed = /const GEO_POOL_PACKED = "([^"]*)"/.exec(workerBuilt);
+    const names = /const GEO_COUNTRY_NAMES = (\[[\s\S]*?\]);/.exec(workerBuilt);
+    const keys = /const GEO_CREDIT_KEYS = (\[[\s\S]*?\]);/.exec(workerBuilt);
+    assert(packed && names && keys,
+        "the generated worker must carry the pool and both reveal tables");
+    const countries = JSON.parse(names[1]);
+    const creditKeys = JSON.parse(keys[1]);
+    const clientCountries = /MG\.GeoCountries = (\[[\s\S]*?\]);/.exec(credits);
+    const clientCredits = /MG\.GeoCredits = (\[[\s\S]*?\]);/.exec(credits);
+    assert(clientCountries && clientCredits,
+        "the shipped credit script must define both reveal tables");
+    assert(JSON.stringify(JSON.parse(clientCountries[1])) === JSON.stringify(countries),
+        "server and client country tables must be identical and identically ordered");
+    assert(JSON.parse(clientCredits[1]).length === creditKeys.length,
+        "server credit keys and client credit lines must be the same length");
+    // Every row the worker can draw has to be nameable by those tables, or the reveal shows the
+    // wrong country. An empty country is legal: a few panoramas sit at sea and reveal as a region.
+    const rows = packed[1].split("\\n").filter(Boolean);
+    let placed = 0;
+    for (const row of rows) {
+        const parts = row.split("|");
+        const country = parts[6] || "";
+        const continent = Number(parts[7]);
+        assert(creditKeys.indexOf(parts[0] + "|" + parts[5]) >= 0,
+            "pooled provider missing from the credit table: " + parts[5]);
+        if (!country) { assert(continent === -1, "an unplaced row must carry continent -1"); continue; }
+        assert(countries.indexOf(country) >= 0,
+            "pooled country missing from the country table: " + country);
+        assert(continent >= 0 && continent < 6, "bad continent for " + country);
+        placed++;
+    }
+    // Almost every row should be placed; a build that suddenly cannot name most of the pool means
+    // the country resolver broke, not that the world changed.
+    assert(placed >= rows.length * 0.95,
+        "most pooled rows must resolve to a country (" + placed + "/" + rows.length + ")");
+    // The place code packs country and continent into one reply: 6 + idx*6 + continent must stay
+    // inside the two-base-63-level range, with h=63 reserved for errors.
+    assert(6 + countries.length * 6 <= 63 * 63,
+        "place codes must fit one downlink reply");
+    assert(creditKeys.length <= 63 * 63, "credit codes must fit one downlink reply");
+})();
 (function () {
     // The pool lives in the GENERATED artifact, not the authored core, so read that one here.
     const built = fs.readFileSync(path.join(ROOT, "server", "worker.js"), "utf8");

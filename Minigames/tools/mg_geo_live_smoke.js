@@ -82,11 +82,19 @@ try {
   const score = levels(await get("/api/geoscore", {
     code: lobbyCode, tok: hostToken, seat: 0
   }), "score");
-  const creditHead = levels(await get("/api/geocredit", {
-    code: lobbyCode, tok: hostToken, i: 0
+  // Credit and place are single-reply indices now (h=63 = error), not text walked two characters
+  // per request. The client renders them from tables it ships.
+  const credit = levels(await get("/api/geocredit", {
+    code: lobbyCode, tok: hostToken
   }), "credit");
-  if (creditHead.h !== 0 || creditHead.w < 20 || creditHead.w > 62) {
-    throw new Error("dynamic Panoramax attribution was not exposed");
+  if (credit.h === 63) {
+    throw new Error("attribution index was not exposed (error sentinel)");
+  }
+  const place = levels(await get("/api/geoinfo", {
+    code: lobbyCode, tok: hostToken
+  }), "place");
+  if (place.h === 63) {
+    throw new Error("place code was not exposed (error sentinel)");
   }
   const targetCell = { x: targetX.h * 63 + targetX.w, y: targetY.h * 63 + targetY.w };
   if (targetCell.x >= 512 || targetCell.y >= 256) {
@@ -96,7 +104,8 @@ try {
     " panorama=" + panoramaType + "/" + panorama.bytes.length +
     " target=" + targetCell.x + "," + targetCell.y +
     " hostScore=" + (score.h * 63 + score.w) +
-    " creditChars=" + creditHead.w);
+    " creditCode=" + (credit.h * 63 + credit.w) +
+    " placeCode=" + (place.h * 63 + place.w));
 
   const soloCreated = levels(await get("/api/create", {
     game: 9, tok: soloToken, solo: 1
