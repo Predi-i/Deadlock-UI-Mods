@@ -76,14 +76,14 @@ async function rawDims(res) {
 }
 function delevel(d) { return { w: Math.round((d.w - BASE) / STEP), h: Math.round((d.h - BASE) / STEP) }; }
 async function reqRaw(hub, pathAndQuery) {
-    const res = await hub.fetch(new Request("https://mg.test" + pathAndQuery));
+    const res = await hub.fetch(new Request(`https://mg.test${pathAndQuery}`));
     return await rawDims(res);
 }
 async function req(hub, pathAndQuery) {
     return delevel(await reqRaw(hub, pathAndQuery));
 }
 async function reqIp(hub, pathAndQuery, ip) {
-    const res = await hub.fetch(new Request("https://mg.test" + pathAndQuery, {
+    const res = await hub.fetch(new Request(`https://mg.test${pathAndQuery}`, {
         headers: { "CF-Connecting-IP": ip }
     }));
     return delevel(await rawDims(res));
@@ -94,7 +94,7 @@ async function adminReq(hub, pathAndQuery, method, body, extraHeaders) {
         "X-MG-Admin": "1",
         "Origin": "https://mg.test"
     }, extraHeaders || {});
-    const response = await hub.fetch(new Request("https://mg.test" + pathAndQuery, {
+    const response = await hub.fetch(new Request(`https://mg.test${pathAndQuery}`, {
         method: method || "GET",
         headers: headers,
         body: body === undefined ? undefined : JSON.stringify(body)
@@ -111,7 +111,7 @@ function codeHost(d) { return d.w >= 40; }
 // Clocks are per-seat now: /api/clocks?seat=S → (30 + sec>>6, sec&63). Recover the seconds.
 // Sentinels (9,9) gone / (9,8) untimed stay at width 9. clkSec reads ONE seat's bank.
 async function clkSec(hub, code, seat) {
-    let d = await req(hub, "/api/clocks.png?code=" + code + "&seat=" + seat);
+    let d = await req(hub, `/api/clocks.png?code=${code}&seat=${seat}`);
     if (d.w === 9) return { sentinel: d.h };            // 9 = gone · 8 = untimed
     return { sec: (d.w - 30) * 64 + d.h };
 }
@@ -123,8 +123,8 @@ function sq(r, c) { return r * 8 + c; }
 
 let passed = 0;
 function ok(cond, msg) {
-    if (!cond) { console.error("  ✗ " + msg); process.exitCode = 1; throw new Error("FAIL: " + msg); }
-    console.log("  ✓ " + msg); passed++;
+    if (!cond) { console.error(`  ✗ ${msg}`); process.exitCode = 1; throw new Error(`FAIL: ${msg}`); }
+    console.log(`  ✓ ${msg}`); passed++;
 }
 
 // Host with token TH, joiner with token TJ, into a fresh private lobby for `game`.
@@ -132,9 +132,9 @@ function ok(cond, msg) {
 // MG_MAPILLARY_TOKEN from it to resolve a (signed, expiring) Mapillary image URL.
 async function seatedLobby(game, TH, TJ, env) {
     const hub = new Hub({ storage: new FakeStorage() }, env);
-    let d = await req(hub, "/api/create.png?game=" + game + "&tok=" + TH);
+    let d = await req(hub, `/api/create.png?game=${game}&tok=${TH}`);
     const code = decCode(d);
-    await req(hub, "/api/join.png?code=" + code + "&tok=" + TJ);
+    await req(hub, `/api/join.png?code=${code}&tok=${TJ}`);
     return { hub, code };
 }
 
@@ -203,12 +203,12 @@ async function main() {
 
     const tooSmall = [];
     for (var pi = 0; pi < 9; pi++) tooSmall.push(pi + ",0,5");
-    d = await req(hub, "/api/pxput.png?id=123456789&b=" + tooSmall.join(";"));
+    d = await req(hub, `/api/pxput.png?id=123456789&b=${tooSmall.join(";")}`);
     ok(d.w === 2 && d.h === 63, "pixel upload rejects batches below 10 unique pixels");
 
     let batch = [];
     for (pi = 0; pi < 10; pi++) batch.push(pi + ",0,5");
-    d = await req(hub, "/api/pxput.png?id=123456789&b=" + batch.join(";"));
+    d = await req(hub, `/api/pxput.png?id=123456789&b=${batch.join(";")}`);
     ok(d.h * 64 + d.w === 90, "10-pixel upload spends 10 from the server bank");
     d = await req(hub, "/api/pxversion.png");
     ok(d.w === 1 && d.h === 0, "accepted upload advances the shared canvas version");
@@ -236,7 +236,7 @@ async function main() {
         ok(vd.h !== 63, "pixel version at the top of its range is not in the error band");
         const wrapBatch = [];
         for (let wi = 0; wi < 10; wi++) wrapBatch.push(wi + ",0,5");
-        await req(vhub, "/api/pxput.png?id=123456789&b=" + wrapBatch.join(";"));
+        await req(vhub, `/api/pxput.png?id=123456789&b=${wrapBatch.join(";")}`);
         vd = await req(vhub, "/api/pxversion.png");
         ok(vd.w === 0 && vd.h === 0, "pixel version wraps to 0 instead of entering the error band");
     })();
@@ -297,7 +297,7 @@ async function main() {
     let previewScalesOk = true;
     for (const previewZoom of [1, 2, 4]) {
         const previewRes = await hub.fetch(new Request(
-            "https://mg.test/api/pxview.png?x=0&y=0&z=" + previewZoom + "&v=1"));
+            `https://mg.test/api/pxview.png?x=0&y=0&z=${previewZoom}&v=1`));
         const previewBytes = new Uint8Array(await previewRes.arrayBuffer());
         previewScalesOk = previewScalesOk &&
             readU32(previewBytes, 16) === 800 && readU32(previewBytes, 20) === 400 &&
@@ -307,7 +307,7 @@ async function main() {
 
     const eraseBatch = [];
     for (pi = 0; pi < 10; pi++) eraseBatch.push(pi + ",0,0");
-    d = await req(hub, "/api/pxput.png?id=123456789&b=" + eraseBatch.join(";"));
+    d = await req(hub, `/api/pxput.png?id=123456789&b=${eraseBatch.join(";")}`);
     ok(d.h * 64 + d.w === 80, "eraser spends pixels and restores the base map");
     ok((await hub.storage.get("px:t:0")) === undefined,
         "fully erased sparse tile is removed from storage");
@@ -323,17 +323,17 @@ async function main() {
             const fullBank = [];
             for (let x = 0; x < 100; x++) fullBank.push(x + "," + accountNo + "," + (accountNo + 1));
             result = await reqIp(budgetHub,
-                "/api/pxput.png?id=" + (31000000 + accountNo) + "&b=" + fullBank.join(";"), budgetIp);
-            ok(result.h !== 63, "pixel IP budget allows full bank for NAT player " + (accountNo + 1));
+                `/api/pxput.png?id=${31000000 + accountNo}&b=${fullBank.join(";")}`, budgetIp);
+            ok(result.h !== 63, `pixel IP budget allows full bank for NAT player ${accountNo + 1}`);
         }
         const seventh = [];
         for (let sx = 0; sx < 100; sx++) seventh.push(sx + ",6,7");
         result = await reqIp(budgetHub,
-            "/api/pxput.png?id=31000006&b=" + seventh.join(";"), budgetIp);
+            `/api/pxput.png?id=31000006&b=${seventh.join(";")}`, budgetIp);
         ok(result.w === 4 && result.h === 63,
             "rotating Steam32 on one IP eventually receives the retryable pixel throttle");
         result = await reqIp(budgetHub,
-            "/api/pxput.png?id=31000006&b=" + seventh.join(";"), "198.51.100.40");
+            `/api/pxput.png?id=31000006&b=${seventh.join(";")}`, "198.51.100.40");
         ok(result.h !== 63, "pixel throttle neither bans nor affects a different IP");
     })();
 
@@ -345,10 +345,10 @@ async function main() {
         let dims;
         for (let vx = 0; vx < 12; vx++) {
             dims = await viewHub.fetch(new Request(
-                "https://mg.test/api/pxview.png?x=" + vx + "&y=0&z=16", {
+                `https://mg.test/api/pxview.png?x=${vx}&y=0&z=16`, {
                     headers: { "CF-Connecting-IP": viewIp }
                 })).then(rawDims);
-            ok(dims.w === 800 && dims.h === 400, "viewport burst frame " + (vx + 1) + " renders");
+            ok(dims.w === 800 && dims.h === 400, `viewport burst frame ${vx + 1} renders`);
         }
         dims = await viewHub.fetch(new Request(
             "https://mg.test/api/pxview.png?x=12&y=0&z=16", {
@@ -377,26 +377,26 @@ async function main() {
         for (let oi = 0; oi < 513; oi++) {
             const oldId = String(oldAt + oi).padStart(13, "0") + "-00000001";
             oldIds.push(oldId);
-            await retentionHub.storage.put("px:a:" + oldId, {
+            await retentionHub.storage.put(`px:a:${oldId}`, {
                 id: oldId, at: oldAt + oi, actor: "player", steamid: "32000000",
                 kind: "paint", deltas: [[0, 0, 0, 1, ""]]
             });
-            await retentionHub.storage.put("px:ua:32000000:" + oldId, true);
+            await retentionHub.storage.put(`px:ua:32000000:${oldId}`, true);
         }
         const retentionBatch = [];
         for (var rx = 0; rx < 10; rx++) retentionBatch.push(rx + ",0,5");
         const retained = await req(retentionHub,
-            "/api/pxput.png?id=32000001&b=" + retentionBatch.join(";"));
+            `/api/pxput.png?id=32000001&b=${retentionBatch.join(";")}`);
         ok(retained.h !== 63, "new pixel action is accepted while retention cleanup runs");
-        ok(!(await retentionHub.storage.get("px:a:" + oldIds[0])) &&
-            !!(await retentionHub.storage.get("px:a:" + oldIds[512])) &&
+        ok(!(await retentionHub.storage.get(`px:a:${oldIds[0]}`)) &&
+            !!(await retentionHub.storage.get(`px:a:${oldIds[512]}`)) &&
             !(await retentionHub.storage.get("px:audit:lastPrune")),
             "pixel audit removes 512 expired actions and stays in catch-up mode");
         const retentionBatch2 = [];
         for (rx = 0; rx < 10; rx++) retentionBatch2.push(rx + ",1,6");
-        await req(retentionHub, "/api/pxput.png?id=32000001&b=" + retentionBatch2.join(";"));
-        ok(!(await retentionHub.storage.get("px:a:" + oldIds[512])) &&
-            !(await retentionHub.storage.get("px:ua:32000000:" + oldIds[512])) &&
+        await req(retentionHub, `/api/pxput.png?id=32000001&b=${retentionBatch2.join(";")}`);
+        ok(!(await retentionHub.storage.get(`px:a:${oldIds[512]}`)) &&
+            !(await retentionHub.storage.get(`px:ua:32000000:${oldIds[512]}`)) &&
             !!(await retentionHub.storage.get("px:audit:lastPrune")),
             "next action finishes audit catch-up before restoring the daily cadence");
     })();
@@ -422,7 +422,7 @@ async function main() {
         const atomicBatch = [];
         for (let ax = 0; ax < 10; ax++) atomicBatch.push(ax + ",0,5");
         const failedAtomic = await req(atomicHub,
-            "/api/pxput.png?id=33000000&b=" + atomicBatch.join(";"));
+            `/api/pxput.png?id=33000000&b=${atomicBatch.join(";")}`);
         ok(failedAtomic.w === 9 && failedAtomic.h === 7,
             "injected Pixel Battle storage failure returns the server-error sentinel");
         ok(!(await atomicStorage.get("px:u:33000000")) &&
@@ -432,7 +432,7 @@ async function main() {
             "failed Pixel Battle transaction rolls bank, tiles, version and audit back together");
         atomicStorage.transaction = normalTransaction;
         const retriedAtomic = await req(atomicHub,
-            "/api/pxput.png?id=33000000&b=" + atomicBatch.join(";"));
+            `/api/pxput.png?id=33000000&b=${atomicBatch.join(";")}`);
         ok(retriedAtomic.h * 64 + retriedAtomic.w === 90,
             "the same Pixel Battle batch succeeds once storage recovers");
     })();
@@ -519,7 +519,7 @@ async function main() {
     let callbackResponse;
     try {
         callbackResponse = await Worker.fetch(new Request(
-            "https://mg.test/admin/auth/callback?code=unit-code&state=" + stateMatch[1], {
+            `https://mg.test/admin/auth/callback?code=unit-code&state=${stateMatch[1]}`, {
                 headers: {
                     "Cookie": "mg_oauth_state=" + stateMatch[1] +
                         "; mg_oauth_verifier=" + verifierMatch[1]
@@ -534,7 +534,7 @@ async function main() {
         oauthCalls[1].url === "https://api.github.com/user",
         "OAuth callback exchanges the code and verifies the authenticated GitHub user");
     const adminPage = await Worker.fetch(new Request("https://mg.test/admin", {
-        headers: { "Cookie": "mg_admin_session=" + sessionMatch[1] }
+        headers: { "Cookie": `mg_admin_session=${sessionMatch[1]}` }
     }), oauthEnv);
     const adminPageHtml = await adminPage.text();
     ok(adminPage.status === 200 &&
@@ -553,7 +553,7 @@ async function main() {
     const tamperedPayload = (sessionParts[0][0] === "A" ? "B" : "A") + sessionParts[0].substring(1);
     const tamperedSession = tamperedPayload + "." + sessionParts[1];
     const tamperedPage = await Worker.fetch(new Request("https://mg.test/admin", {
-        headers: { "Cookie": "mg_admin_session=" + tamperedSession }
+        headers: { "Cookie": `mg_admin_session=${tamperedSession}` }
     }), oauthEnv);
     ok(tamperedPage.status === 302 && tamperedPage.headers.get("Location") === "/admin/login",
         "tampering with the HMAC-signed admin cookie forces a fresh login");
@@ -573,7 +573,7 @@ async function main() {
     let wrongUserResponse;
     try {
         wrongUserResponse = await Worker.fetch(new Request(
-            "https://mg.test/admin/auth/callback?code=wrong-user-code&state=" + stateMatch[1], {
+            `https://mg.test/admin/auth/callback?code=wrong-user-code&state=${stateMatch[1]}`, {
                 headers: {
                     "Cookie": "mg_oauth_state=" + stateMatch[1] +
                         "; mg_oauth_verifier=" + verifierMatch[1]
@@ -587,7 +587,7 @@ async function main() {
 
     batch = [];
     for (pi = 0; pi < 10; pi++) batch.push(pi + ",0,5");
-    d = await req(adminHub, "/api/pxput.png?id=123456789&b=" + batch.join(";"));
+    d = await req(adminHub, `/api/pxput.png?id=123456789&b=${batch.join(";")}`);
     ok(d.h * 64 + d.w === 90, "audited player upload still spends the normal bank");
     let inspectedPixel = await adminReq(adminHub, "/admin/api/pixel?x=0&y=0", "GET");
     ok(inspectedPixel.status === 200 && inspectedPixel.body.action &&
@@ -595,7 +595,7 @@ async function main() {
         "pixel inspector attributes a painted coordinate to its Steam32 account");
     const inspectedActionId = inspectedPixel.body.action.id;
     let actionDetail = await adminReq(adminHub,
-        "/admin/api/action?id=" + encodeURIComponent(inspectedActionId), "GET");
+        `/admin/api/action?id=${encodeURIComponent(inspectedActionId)}`, "GET");
     ok(actionDetail.body.pixels.length === 10 && actionDetail.body.revertible === 10 &&
         actionDetail.body.conflicts === 0,
         "action preview returns exact current/before/after pixels and safe-undo status");
@@ -648,7 +648,7 @@ async function main() {
         "admin filters accepted actions by Steam32 ID");
     const playerActionId = actionList.body.actions[0].id;
     actionDetail = await adminReq(adminHub,
-        "/admin/api/action?id=" + encodeURIComponent(playerActionId), "GET");
+        `/admin/api/action?id=${encodeURIComponent(playerActionId)}`, "GET");
     ok(actionDetail.body.revertible === 9 && actionDetail.body.conflicts === 1,
         "safe-undo preview marks a newer overlapping pixel as a conflict");
     const undoResult = await adminReq(adminHub, "/admin/api/undo", "POST", {
@@ -685,7 +685,7 @@ async function main() {
     d = await req(adminHub, "/api/pxview.png?id=123456789&x=0&y=0&z=16");
     ok(d.w === 5 && d.h === 63, "banned account cannot fetch Pixel Battle map views");
     const beforeBlockedUpload = (await adminHub.storage.get("px:t:0"))[2];
-    d = await req(adminHub, "/api/pxput.png?id=123456789&b=" + batch.join(";"));
+    d = await req(adminHub, `/api/pxput.png?id=123456789&b=${batch.join(";")}`);
     ok(d.w === 5 && d.h === 63 &&
         (await adminHub.storage.get("px:t:0"))[2] === beforeBlockedUpload,
         "server rejects banned uploads before changing any canvas state");
@@ -704,8 +704,8 @@ async function main() {
         ownerBatchA.push(pi + ",0,5");
         ownerBatchB.push(pi + ",0,6");
     }
-    await req(ownerHub, "/api/pxput.png?id=11111111&b=" + ownerBatchA.join(";"));
-    await req(ownerHub, "/api/pxput.png?id=22222222&b=" + ownerBatchB.join(";"));
+    await req(ownerHub, `/api/pxput.png?id=11111111&b=${ownerBatchA.join(";")}`);
+    await req(ownerHub, `/api/pxput.png?id=22222222&b=${ownerBatchB.join(";")}`);
     const ownerActions = await adminReq(ownerHub,
         "/admin/api/actions?steamid=22222222&limit=10", "GET");
     await adminReq(ownerHub, "/admin/api/undo", "POST", {
@@ -739,7 +739,7 @@ async function main() {
         "geo: forming a lobby makes zero catalog requests (pool is prebuilt)");
     // Five rounds drawn from a 2380-row pool must be five DIFFERENT places, and each must carry a
     // source tag so the reveal can credit the right provider.
-    const geoLobby = await geo.hub.storage.get("l:" + geo.code);
+    const geoLobby = await geo.hub.storage.get(`l:${geo.code}`);
     const geoIds = geoLobby.state.locations.map((loc) => { return loc.source + ":" + loc.id; });
     ok(geoIds.length === 5 && new Set(geoIds).size === 5,
         "geo: a match draws five distinct pooled locations");
@@ -776,12 +776,12 @@ async function main() {
         source: 0, id: "539493be-7921-4607-bb76-b57dea3d4c09", lat: -33.87, lon: 151.21,
         region: 5, provider: geoPanoKey.slice(2), country: "Australia", continent: 5
     };
-    await geo.hub.storage.put("l:" + geo.code, geoLobby);
-    d = await req(geo.hub, "/api/geostate.png?code=" + geo.code + "&tok=GEOHOST01");
+    await geo.hub.storage.put(`l:${geo.code}`, geoLobby);
+    d = await req(geo.hub, `/api/geostate.png?code=${geo.code}&tok=GEOHOST01`);
     ok(d.w === 1 && d.h === 1, "geo: round 1 starts unrevealed with no guesses");
-    d = await req(geo.hub, "/api/geostate.png?code=" + geo.code + "&tok=GEOSTRANGER");
+    d = await req(geo.hub, `/api/geostate.png?code=${geo.code}&tok=GEOSTRANGER`);
     ok(d.w === 9 && d.h === 3, "geo: foreign token cannot read round state");
-    d = await req(geo.hub, "/api/geotarget.png?code=" + geo.code + "&tok=GEOHOST01");
+    d = await req(geo.hub, `/api/geotarget.png?code=${geo.code}&tok=GEOHOST01`);
     ok(d.w === 1 && d.h === 63, "geo: target is hidden before both players guess");
 
     let geoFetches = 0;
@@ -794,10 +794,10 @@ async function main() {
         });
     };
     try {
-        d = await req(geo.hub, "/api/geoview.png?code=" + geo.code + "&tok=GEOSTRANGER");
+        d = await req(geo.hub, `/api/geoview.png?code=${geo.code}&tok=GEOSTRANGER`);
         ok(d.w === 9 && d.h === 3, "geo: foreign token cannot fetch the hidden panorama");
         const geoImage = await geo.hub.fetch(new Request(
-            "https://mg.test/api/geoview.png?code=" + geo.code + "&tok=GEOHOST01"));
+            `https://mg.test/api/geoview.png?code=${geo.code}&tok=GEOHOST01`));
         const geoImageBytes = new Uint8Array(await geoImage.arrayBuffer());
         ok(geoImage.headers.get("content-type") === "image/jpeg" &&
             geoImageBytes.length === 4 && geoImageBytes[0] === 0xff,
@@ -812,7 +812,7 @@ async function main() {
         ok(geoImageUrls[0] === "https://scontent-arn2-1.xx.fbcdn.net/test-panorama.jpg",
             "geo: the proxy fetches the resolved Mapillary CDN URL");
         await geo.hub.fetch(new Request(
-            "https://mg.test/api/geoview.png?code=" + geo.code + "&tok=GEOJOIN01"));
+            `https://mg.test/api/geoview.png?code=${geo.code}&tok=GEOJOIN01`));
         ok(geoFetches === 1, "geo: panorama source is cached once for both players");
         ok(geoCatalogFetches === 1,
             "geo: a cached panorama does not re-resolve the signed URL");
@@ -824,11 +824,11 @@ async function main() {
             { MG_MAPILLARY_TOKEN: "MLY|test|token" });
         d = await req(evilHub, "/api/create.png?game=9&tok=GEOEVIL01&solo=1");
         const evilCode = decCode(d);
-        const evilLobby = await evilHub.storage.get("l:" + evilCode);
+        const evilLobby = await evilHub.storage.get(`l:${evilCode}`);
         evilLobby.state.locations[0] = {
             source: 1, id: "9999999999999", lat: 0, lon: 0, region: 0, provider: "Evil"
         };
-        await evilHub.storage.put("l:" + evilCode, evilLobby);
+        await evilHub.storage.put(`l:${evilCode}`, evilLobby);
         let evilResolves = 0;
         globalThis.MG_GEO_CATALOG_FETCH = async function () {
             evilResolves++;
@@ -837,7 +837,7 @@ async function main() {
             }), { headers: { "Content-Type": "application/json" } });
         };
         const evilFetches = geoFetches;
-        d = await req(evilHub, "/api/geoview.png?code=" + evilCode + "&tok=GEOEVIL01");
+        d = await req(evilHub, `/api/geoview.png?code=${evilCode}&tok=GEOEVIL01`);
         ok(evilResolves === 1 && d.w === 6 && d.h === 63 && geoFetches === evilFetches,
             "geo: a resolved URL outside the Mapillary CDN is refused, not proxied");
 
@@ -846,34 +846,34 @@ async function main() {
         const noTokenHub = new Hub({ storage: new FakeStorage() }, {});
         d = await req(noTokenHub, "/api/create.png?game=9&tok=GEONOTOK1&solo=1");
         const noTokenCode = decCode(d);
-        const noTokenLobby = await noTokenHub.storage.get("l:" + noTokenCode);
+        const noTokenLobby = await noTokenHub.storage.get(`l:${noTokenCode}`);
         noTokenLobby.state.locations[0] = {
             source: 1, id: "1234567890123456", lat: 0, lon: 0, region: 0, provider: "Test"
         };
-        await noTokenHub.storage.put("l:" + noTokenCode, noTokenLobby);
+        await noTokenHub.storage.put(`l:${noTokenCode}`, noTokenLobby);
         let noTokenResolves = 0;
         globalThis.MG_GEO_CATALOG_FETCH = async function () {
             noTokenResolves++;
             return new Response("{}", { headers: { "Content-Type": "application/json" } });
         };
-        d = await req(noTokenHub, "/api/geoview.png?code=" + noTokenCode + "&tok=GEONOTOK1");
+        d = await req(noTokenHub, `/api/geoview.png?code=${noTokenCode}&tok=GEONOTOK1`);
         ok(d.w === 6 && d.h === 63 && noTokenResolves === 0,
             "geo: without a Mapillary token the round yields the no-image sentinel and makes no call");
     } finally {
         delete globalThis.MG_GEO_IMAGE_FETCH;
     }
 
-    d = await req(geo.hub, "/api/geoguess.png?code=" + geo.code + "&tok=GEOHOST01&cell=131072");
+    d = await req(geo.hub, `/api/geoguess.png?code=${geo.code}&tok=GEOHOST01&cell=131072`);
     ok(d.w === 9 && d.h === 2, "geo: out-of-map guess is rejected");
-    d = await req(geo.hub, "/api/geoguess.png?code=" + geo.code + "&tok=GEOHOST01&cell=0");
+    d = await req(geo.hub, `/api/geoguess.png?code=${geo.code}&tok=GEOHOST01&cell=0`);
     ok(d.w === 1 && d.h === 1, "geo: host guess is accepted");
-    d = await req(geo.hub, "/api/geostate.png?code=" + geo.code + "&tok=GEOHOST01");
+    d = await req(geo.hub, `/api/geostate.png?code=${geo.code}&tok=GEOHOST01`);
     ok(d.w === 1 && d.h === 2, "geo: state exposes only the host guess mask");
-    d = await req(geo.hub, "/api/geoguess.png?code=" + geo.code + "&tok=GEOHOST01&cell=1");
+    d = await req(geo.hub, `/api/geoguess.png?code=${geo.code}&tok=GEOHOST01&cell=1`);
     ok(d.w === 9 && d.h === 1, "geo: a seat cannot replace its locked guess");
-    d = await req(geo.hub, "/api/geoguess.png?code=" + geo.code + "&tok=GEOJOIN01&cell=131071");
+    d = await req(geo.hub, `/api/geoguess.png?code=${geo.code}&tok=GEOJOIN01&cell=131071`);
     ok(d.w === 1 && d.h === 1, "geo: joiner guess is accepted");
-    d = await req(geo.hub, "/api/geostate.png?code=" + geo.code + "&tok=GEOJOIN01");
+    d = await req(geo.hub, `/api/geostate.png?code=${geo.code}&tok=GEOJOIN01`);
     ok(d.w === 1 && d.h === 28, "geo: both guesses atomically open the reveal phase");
 
     // A point is read one axis per request: the 512x256 grid overflows the two-level base-63
@@ -887,15 +887,15 @@ async function main() {
     }
 
     const revealedGeoTarget = await geoAxisValue(
-        "/api/geotarget.png?code=" + geo.code + "&tok=GEOHOST01");
+        `/api/geotarget.png?code=${geo.code}&tok=GEOHOST01`);
     ok(revealedGeoTarget.x >= 0 && revealedGeoTarget.x < 512 &&
         revealedGeoTarget.y >= 0 && revealedGeoTarget.y < 256,
         "geo: revealed target decodes inside the 512x256 authoritative grid");
     const hostPick = await geoAxisValue(
-        "/api/geopick.png?code=" + geo.code + "&tok=GEOHOST01&seat=0");
+        `/api/geopick.png?code=${geo.code}&tok=GEOHOST01&seat=0`);
     ok(hostPick.x === 0 && hostPick.y === 0, "geo: host's revealed map pick round-trips");
     const joinerPick = await geoAxisValue(
-        "/api/geopick.png?code=" + geo.code + "&tok=GEOHOST01&seat=1");
+        `/api/geopick.png?code=${geo.code}&tok=GEOHOST01&seat=1`);
     ok(joinerPick.x === 511 && joinerPick.y === 255,
         "geo: joiner's revealed map pick round-trips at the far corner");
     // Place and credit are single-reply INDICES now (two base-63 levels, h=63 = error), so both
@@ -924,25 +924,25 @@ async function main() {
         firstGeoScores[1] >= 0 && firstGeoScores[1] <= 750,
         "geo: first-round authoritative scores stay in the 0..750 range");
 
-    await req(geo.hub, "/api/geonext.png?code=" + geo.code + "&tok=GEOHOST01");
-    d = await req(geo.hub, "/api/geostate.png?code=" + geo.code + "&tok=GEOHOST01");
+    await req(geo.hub, `/api/geonext.png?code=${geo.code}&tok=GEOHOST01`);
+    d = await req(geo.hub, `/api/geostate.png?code=${geo.code}&tok=GEOHOST01`);
     ok(d.w === 1 && d.h === 29, "geo: one ready seat cannot advance the round alone");
-    await req(geo.hub, "/api/geonext.png?code=" + geo.code + "&tok=GEOJOIN01");
-    d = await req(geo.hub, "/api/geostate.png?code=" + geo.code + "&tok=GEOJOIN01");
+    await req(geo.hub, `/api/geonext.png?code=${geo.code}&tok=GEOJOIN01`);
+    d = await req(geo.hub, `/api/geostate.png?code=${geo.code}&tok=GEOJOIN01`);
     ok(d.w === 2 && d.h === 1, "geo: both ready seats advance to round 2");
 
     // Round 2 is the pinned Panoramax row. Reveal it and read the credit: the same route must now
     // name Panoramax, proving the attribution follows the location's source rather than a constant.
-    await req(geo.hub, "/api/geoguess.png?code=" + geo.code + "&tok=GEOHOST01&cell=100");
-    await req(geo.hub, "/api/geoguess.png?code=" + geo.code + "&tok=GEOJOIN01&cell=200");
+    await req(geo.hub, `/api/geoguess.png?code=${geo.code}&tok=GEOHOST01&cell=100`);
+    await req(geo.hub, `/api/geoguess.png?code=${geo.code}&tok=GEOJOIN01&cell=200`);
     ok(await geoLevelValue("/api/geocredit.png", "GEOHOST01") ===
         GEO_CREDIT_KEYS.indexOf(geoPanoKey),
         "geo: a Panoramax round credits Panoramax, from the same reveal route");
     ok(await geoLevelValue("/api/geoinfo.png", "GEOHOST01") === geoPlaceFor("Australia", 5),
         "geo: the place hint follows the pooled row (Oceania · Australia)");
-    await req(geo.hub, "/api/geonext.png?code=" + geo.code + "&tok=GEOHOST01");
-    await req(geo.hub, "/api/geonext.png?code=" + geo.code + "&tok=GEOJOIN01");
-    d = await req(geo.hub, "/api/geostate.png?code=" + geo.code + "&tok=GEOHOST01");
+    await req(geo.hub, `/api/geonext.png?code=${geo.code}&tok=GEOHOST01`);
+    await req(geo.hub, `/api/geonext.png?code=${geo.code}&tok=GEOJOIN01`);
+    d = await req(geo.hub, `/api/geostate.png?code=${geo.code}&tok=GEOHOST01`);
     ok(d.w === 3 && d.h === 1, "geo: the match continues into round 3");
 
     let lastGeoScores = firstGeoScores;
@@ -951,9 +951,9 @@ async function main() {
             "&tok=GEOHOST01&cell=" + geoRound);
         await req(geo.hub, "/api/geoguess.png?code=" + geo.code +
             "&tok=GEOJOIN01&cell=" + (2047 - geoRound));
-        d = await req(geo.hub, "/api/geostate.png?code=" + geo.code + "&tok=GEOHOST01");
+        d = await req(geo.hub, `/api/geostate.png?code=${geo.code}&tok=GEOHOST01`);
         ok(d.w === geoRound + 1 && d.h === 28,
-            "geo: round " + (geoRound + 1) + " reveals only after both guesses");
+            `geo: round ${geoRound + 1} reveals only after both guesses`);
         const roundScores = [];
         for (geoSeat = 0; geoSeat < 2; geoSeat++) {
             d = await req(geo.hub, "/api/geoscore.png?code=" + geo.code +
@@ -961,12 +961,12 @@ async function main() {
             roundScores[geoSeat] = d.h * 63 + d.w;
         }
         ok(roundScores[0] >= lastGeoScores[0] && roundScores[1] >= lastGeoScores[1],
-            "geo: cumulative scores never decrease after round " + (geoRound + 1));
+            `geo: cumulative scores never decrease after round ${geoRound + 1}`);
         lastGeoScores = roundScores;
-        await req(geo.hub, "/api/geonext.png?code=" + geo.code + "&tok=GEOHOST01");
-        await req(geo.hub, "/api/geonext.png?code=" + geo.code + "&tok=GEOJOIN01");
+        await req(geo.hub, `/api/geonext.png?code=${geo.code}&tok=GEOHOST01`);
+        await req(geo.hub, `/api/geonext.png?code=${geo.code}&tok=GEOJOIN01`);
     }
-    d = await req(geo.hub, "/api/geostate.png?code=" + geo.code + "&tok=GEOHOST01");
+    d = await req(geo.hub, `/api/geostate.png?code=${geo.code}&tok=GEOHOST01`);
     ok(d.w === 6 && d.h === 40, "geo: five completed rounds end the match authoritatively");
     ok(lastGeoScores[0] <= 3750 && lastGeoScores[1] <= 3750,
         "geo: cumulative scores fit the collision-free 12-bit score codec");
@@ -976,23 +976,23 @@ async function main() {
     const geoSoloHub = new Hub({ storage: new FakeStorage() });
     d = await req(geoSoloHub, "/api/create.png?game=9&tok=GEOSOLO01&solo=1");
     const geoSoloCode = decCode(d);
-    d = await req(geoSoloHub, "/api/status.png?code=" + geoSoloCode);
+    d = await req(geoSoloHub, `/api/status.png?code=${geoSoloCode}`);
     ok(d.w === 2, "geo solo: create immediately forms a server-backed two-seat session");
-    d = await req(geoSoloHub, "/api/join.png?code=" + geoSoloCode + "&tok=GEOSNOOP1");
+    d = await req(geoSoloHub, `/api/join.png?code=${geoSoloCode}&tok=GEOSNOOP1`);
     ok(d.w === 21 && d.h === 1, "geo solo: a third party cannot occupy the synthetic seat");
-    d = await req(geoSoloHub, "/api/geotarget.png?code=" + geoSoloCode + "&tok=GEOSOLO01");
+    d = await req(geoSoloHub, `/api/geotarget.png?code=${geoSoloCode}&tok=GEOSOLO01`);
     ok(d.w === 1 && d.h === 63, "geo solo: target remains hidden before the player's guess");
     d = await req(geoSoloHub, "/api/geoguess.png?code=" + geoSoloCode +
         "&tok=GEOSOLO01&cell=17");
     ok(d.w === 1 && d.h === 1, "geo solo: player guess is accepted");
-    d = await req(geoSoloHub, "/api/geostate.png?code=" + geoSoloCode + "&tok=GEOSOLO01");
+    d = await req(geoSoloHub, `/api/geostate.png?code=${geoSoloCode}&tok=GEOSOLO01`);
     ok(d.w === 1 && d.h === 28, "geo solo: server opens the reveal without waiting for a client opponent");
     d = await req(geoSoloHub, "/api/geoscore.png?code=" + geoSoloCode +
         "&tok=GEOSOLO01&seat=0");
     ok(d.w < 63 && d.h < 63, "geo solo: authoritative player score is readable after reveal");
-    d = await req(geoSoloHub, "/api/geonext.png?code=" + geoSoloCode + "&tok=GEOSOLO01");
+    d = await req(geoSoloHub, `/api/geonext.png?code=${geoSoloCode}&tok=GEOSOLO01`);
     ok(d.w === 1 && d.h === 1, "geo solo: one ready action advances the server-filled round");
-    d = await req(geoSoloHub, "/api/geostate.png?code=" + geoSoloCode + "&tok=GEOSOLO01");
+    d = await req(geoSoloHub, `/api/geostate.png?code=${geoSoloCode}&tok=GEOSOLO01`);
     ok(d.w === 2 && d.h === 1, "geo solo: next round starts immediately");
     delete globalThis.MG_GEO_CATALOG_FETCH;
 
@@ -1005,52 +1005,52 @@ async function main() {
 
     d = await req(hub, "/api/create.png?game=1&tok=HOSTTOK01");
     const code = decCode(d);
-    ok(code >= 0 && code <= 1023, "create returns a 4-digit code (" + code + ")");
+    ok(code >= 0 && code <= 1023, `create returns a 4-digit code (${code})`);
 
-    d = await req(hub, "/api/status.png?code=" + code);
+    d = await req(hub, `/api/status.png?code=${code}`);
     ok(d.w === 1, "status players=1 after create");
 
     // Move before the opponent has joined is refused (players < 2).
-    d = await req(hub, "/api/move.png?code=" + code + "&from=" + sq(5, 0) + "&to=" + sq(4, 1) + "&end=1&tok=HOSTTOK01");
+    d = await req(hub, `/api/move.png?code=${code}&from=${sq(5, 0)}&to=${sq(4, 1)}&end=1&tok=HOSTTOK01`);
     ok(d.w === 9 && d.h === 1, "move before opponent joined → (9,1)");
 
-    d = await req(hub, "/api/join.png?code=" + code + "&tok=JOINTOK01");
+    d = await req(hub, `/api/join.png?code=${code}&tok=JOINTOK01`);
     ok(d.w === 1, "join ok returns game id 1");
 
-    d = await req(hub, "/api/status.png?code=" + code);
+    d = await req(hub, `/api/status.png?code=${code}`);
     ok(d.w === 2, "status players=2 after join");
 
     // ── seat token enforcement (T2/T3) ──
     // A move with a token belonging to NO seat is rejected (9,3).
-    d = await req(hub, "/api/move.png?code=" + code + "&from=" + sq(5, 0) + "&to=" + sq(4, 1) + "&end=1&tok=STRANGER0");
+    d = await req(hub, `/api/move.png?code=${code}&from=${sq(5, 0)}&to=${sq(4, 1)}&end=1&tok=STRANGER0`);
     ok(d.w === 9 && d.h === 3, "move with foreign token → (9,3) bad-token");
 
     // Joiner (black, seat 1) moving on white's opening turn is rejected (9,1).
-    d = await req(hub, "/api/move.png?code=" + code + "&from=" + sq(2, 1) + "&to=" + sq(3, 0) + "&end=1&tok=JOINTOK01");
+    d = await req(hub, `/api/move.png?code=${code}&from=${sq(2, 1)}&to=${sq(3, 0)}&end=1&tok=JOINTOK01`);
     ok(d.w === 9 && d.h === 1, "opponent moving out of turn → (9,1) not-your-turn");
 
     // Host (white) plays an ILLEGAL non-diagonal move → (9,2).
-    d = await req(hub, "/api/move.png?code=" + code + "&from=" + sq(5, 0) + "&to=" + sq(5, 1) + "&end=1&tok=HOSTTOK01");
+    d = await req(hub, `/api/move.png?code=${code}&from=${sq(5, 0)}&to=${sq(5, 1)}&end=1&tok=HOSTTOK01`);
     ok(d.w === 9 && d.h === 2, "illegal (non-diagonal) move → (9,2) illegal");
 
     // Host plays a LEGAL opening move (5,0)->(4,1). Accepted (1,1) and lands in the log.
-    d = await req(hub, "/api/move.png?code=" + code + "&from=" + sq(5, 0) + "&to=" + sq(4, 1) + "&end=1&tok=HOSTTOK01");
+    d = await req(hub, `/api/move.png?code=${code}&from=${sq(5, 0)}&to=${sq(4, 1)}&end=1&tok=HOSTTOK01`);
     ok(d.w === 1 && d.h === 1, "legal opening move accepted");
 
-    d = await req(hub, "/api/poll.png?code=" + code + "&since=0");
+    d = await req(hub, `/api/poll.png?code=${code}&since=0`);
     // Poll now returns RAW squares (from=w, to=h); the turn-hand-off `end` is derived
     // client-side from the shared rules, no longer sent down.
     ok(d.w === sq(5, 0) && d.h === sq(4, 1), "poll round-trips the accepted move (raw from/to squares)");
 
     // Now it's black's turn: host moving again is out of turn → (9,1).
-    d = await req(hub, "/api/move.png?code=" + code + "&from=" + sq(4, 1) + "&to=" + sq(3, 0) + "&end=1&tok=HOSTTOK01");
+    d = await req(hub, `/api/move.png?code=${code}&from=${sq(4, 1)}&to=${sq(3, 0)}&end=1&tok=HOSTTOK01`);
     ok(d.w === 9 && d.h === 1, "same player moving twice → (9,1) not-your-turn");
 
     // Black plays a legal reply (2,1)->(3,2). Accepted.
-    d = await req(hub, "/api/move.png?code=" + code + "&from=" + sq(2, 1) + "&to=" + sq(3, 2) + "&end=1&tok=JOINTOK01");
+    d = await req(hub, `/api/move.png?code=${code}&from=${sq(2, 1)}&to=${sq(3, 2)}&end=1&tok=JOINTOK01`);
     ok(d.w === 1 && d.h === 1, "black legal reply accepted (turn alternation works)");
 
-    d = await req(hub, "/api/join.png?code=" + code + "&tok=LATEJOIN0");
+    d = await req(hub, `/api/join.png?code=${code}&tok=LATEJOIN0`);
     ok(d.w === 21, "join a full lobby returns 21");
     d = await req(hub, "/api/join.png?code=1&tok=MISSING00"); // no such lobby
     ok(d.w === 20, "join a missing lobby returns 20");
@@ -1115,8 +1115,8 @@ async function main() {
         const h = new Hub({ storage: new FakeStorage() });
         const bad = ["1e3", "12345", "99", "abcd", "10 0", "١٢٣٤"];
         for (let i = 0; i < bad.length; i++) {
-            const r = await req(h, "/api/status.png?code=" + encodeURIComponent(bad[i]));
-            ok(r.w === 9 && r.h === 1, "L1: status(code='" + bad[i] + "') → (9,1) gone (rejected)");
+            const r = await req(h, `/api/status.png?code=${encodeURIComponent(bad[i])}`);
+            ok(r.w === 9 && r.h === 1, `L1: status(code='${bad[i]}') → (9,1) gone (rejected)`);
         }
 
         // H2: /api/join must refuse a multi-seat lobby (poker/durak-N have .cap and their own
@@ -1124,15 +1124,15 @@ async function main() {
         const ph = new Hub({ storage: new FakeStorage() });
         const pc = await req(ph, "/api/pcreate.png?n=3&tok=PKHOSTAA");
         const pcode = decCode(pc);
-        const jr = await req(ph, "/api/join.png?code=" + pcode + "&tok=INTRUDER1");
+        const jr = await req(ph, `/api/join.png?code=${pcode}&tok=INTRUDER1`);
         ok(jr.w === 20, "H2: generic join on a poker lobby → (20) missing (guarded)");
-        const pr = await req(ph, "/api/proom.png?code=" + pcode);
+        const pr = await req(ph, `/api/proom.png?code=${pcode}`);
         ok((pr.w >= 50 ? pr.w - 50 : pr.w) === 1, "H2: poker lobby still has 1 player after blocked join");
 
         // H3: >RL_MAX_HITS formation requests from ONE IP within the window get (9,4) throttled;
         // a null IP (as the rest of this suite uses) is exempt. Drive it with an explicit IP.
         const th = new Hub({ storage: new FakeStorage() });
-        function ipReq(pq) { return th.fetch(new Request("https://mg.test" + pq, { headers: { "CF-Connecting-IP": "203.0.113.9" } })).then(rawDims).then(delevel); }
+        function ipReq(pq) { return th.fetch(new Request(`https://mg.test${pq}`, { headers: { "CF-Connecting-IP": "203.0.113.9" } })).then(rawDims).then(delevel); }
         let throttled = false, lastH = 0;
         for (let k = 0; k < 120; k++) {
             const rr = await ipReq("/api/create.png?game=1&tok=FLOODER01");
@@ -1141,14 +1141,14 @@ async function main() {
         ok(throttled, "H3: single-IP create flood eventually returns (9,4) throttled");
         // A different IP is unaffected by the first IP's throttle.
         const other = await th.fetch(new Request("https://mg.test/api/create.png?game=1&tok=CLEANIP01", { headers: { "CF-Connecting-IP": "198.51.100.7" } })).then(rawDims).then(delevel);
-        ok(other.w !== 9, "H3: a different IP is not throttled (" + other.w + "," + other.h + ")");
+        ok(other.w !== 9, `H3: a different IP is not throttled (${other.w},${other.h})`);
 
         // H4: normal polling of one code is free, but distinct-code enumeration is capped.
         // The cap resets with time (not a ban), and every IP/NAT gets its own generous set.
         const scan = new Hub({ storage: new FakeStorage() });
         for (let sc = 0; sc < 16; sc++) {
-            const sr = await reqIp(scan, "/api/status.png?code=" + sc, "203.0.113.10");
-            ok(sr.w === 9 && sr.h === 1, "H4: distinct code probe " + (sc + 1) + " is allowed");
+            const sr = await reqIp(scan, `/api/status.png?code=${sc}`, "203.0.113.10");
+            ok(sr.w === 9 && sr.h === 1, `H4: distinct code probe ${sc + 1} is allowed`);
         }
         const scanBlocked = await reqIp(scan, "/api/status.png?code=16", "203.0.113.10");
         ok(scanBlocked.w === 9 && scanBlocked.h === 4,
@@ -1184,49 +1184,49 @@ async function main() {
         const ttl = new Hub({ storage: new FakeStorage() });
         const ttlCreate = await req(ttl, "/api/create.png?game=2&tok=TTLHOST1");
         const ttlCode = decCode(ttlCreate);
-        const ttlLobby = await ttl.storage.get("l:" + ttlCode);
+        const ttlLobby = await ttl.storage.get(`l:${ttlCode}`);
         ttlLobby.t = Date.now() - 31 * 60000;
-        await ttl.storage.put("l:" + ttlCode, ttlLobby);
-        await req(ttl, "/api/status.png?code=" + ttlCode + "&tok=TTLHOST1");
+        await ttl.storage.put(`l:${ttlCode}`, ttlLobby);
+        await req(ttl, `/api/status.png?code=${ttlCode}&tok=TTLHOST1`);
         await ttl.storage.put("lastSweep", 0);
         await ttl.maybeSweep();
-        ok(!!(await ttl.storage.get("l:" + ttlCode)),
+        ok(!!(await ttl.storage.get(`l:${ttlCode}`)),
             "H5: authenticated waiting-room polling keeps the lobby alive");
 
         const anonymousCreate = await req(ttl, "/api/create.png?game=2&tok=TTLANON1");
         const anonymousCode = decCode(anonymousCreate);
-        const anonymousLobby = await ttl.storage.get("l:" + anonymousCode);
+        const anonymousLobby = await ttl.storage.get(`l:${anonymousCode}`);
         anonymousLobby.t = Date.now() - 31 * 60000;
-        await ttl.storage.put("l:" + anonymousCode, anonymousLobby);
-        await req(ttl, "/api/status.png?code=" + anonymousCode);
+        await ttl.storage.put(`l:${anonymousCode}`, anonymousLobby);
+        await req(ttl, `/api/status.png?code=${anonymousCode}`);
         await ttl.storage.put("lastSweep", 0);
         await ttl.maybeSweep();
-        ok(!(await ttl.storage.get("l:" + anonymousCode)),
+        ok(!(await ttl.storage.get(`l:${anonymousCode}`)),
             "H5: anonymous status probes cannot keep guessed lobbies alive");
     })();
 
     // ── checkers: forced capture is enforced by the server ──
     await (async function () {
         let L = await seatedLobby(1, "HCHK1234", "JCHK1234");
-        await req(L.hub, "/api/move.png?code=" + L.code + "&from=" + sq(5, 2) + "&to=" + sq(4, 3) + "&end=1&tok=HCHK1234");
-        await req(L.hub, "/api/move.png?code=" + L.code + "&from=" + sq(2, 5) + "&to=" + sq(3, 4) + "&end=1&tok=JCHK1234");
+        await req(L.hub, `/api/move.png?code=${L.code}&from=${sq(5, 2)}&to=${sq(4, 3)}&end=1&tok=HCHK1234`);
+        await req(L.hub, `/api/move.png?code=${L.code}&from=${sq(2, 5)}&to=${sq(3, 4)}&end=1&tok=JCHK1234`);
         // A capture is now available for white at (4,3)->(2,5). A simple non-capture move must be refused.
-        const r1 = await req(L.hub, "/api/move.png?code=" + L.code + "&from=" + sq(5, 4) + "&to=" + sq(4, 5) + "&end=1&tok=HCHK1234");
+        const r1 = await req(L.hub, `/api/move.png?code=${L.code}&from=${sq(5, 4)}&to=${sq(4, 5)}&end=1&tok=HCHK1234`);
         ok(r1.w === 9 && r1.h === 2, "checkers: simple move refused while a capture is available (9,2)");
-        const r2 = await req(L.hub, "/api/move.png?code=" + L.code + "&from=" + sq(4, 3) + "&to=" + sq(2, 5) + "&end=1&tok=HCHK1234");
+        const r2 = await req(L.hub, `/api/move.png?code=${L.code}&from=${sq(4, 3)}&to=${sq(2, 5)}&end=1&tok=HCHK1234`);
         ok(r2.w === 1 && r2.h === 1, "checkers: the forced capture is accepted");
     })();
 
     // ── tic-tac-toe: marker + occupancy + turn + terminal guard ──
     await (async function () {
         let L = await seatedLobby(2, "HTTT1234", "JTTT1234");
-        const a = await req(L.hub, "/api/move.png?code=" + L.code + "&from=4&to=9&end=1&tok=HTTT1234");
+        const a = await req(L.hub, `/api/move.png?code=${L.code}&from=4&to=9&end=1&tok=HTTT1234`);
         ok(a.w === 1 && a.h === 1, "ttt: host places X in centre (accepted)");
-        const b2 = await req(L.hub, "/api/move.png?code=" + L.code + "&from=4&to=9&end=1&tok=JTTT1234");
+        const b2 = await req(L.hub, `/api/move.png?code=${L.code}&from=4&to=9&end=1&tok=JTTT1234`);
         ok(b2.w === 9 && b2.h === 2, "ttt: placing on an occupied cell → (9,2)");
-        const c2 = await req(L.hub, "/api/move.png?code=" + L.code + "&from=0&to=9&end=1&tok=HTTT1234");
+        const c2 = await req(L.hub, `/api/move.png?code=${L.code}&from=0&to=9&end=1&tok=HTTT1234`);
         ok(c2.w === 9 && c2.h === 1, "ttt: host playing twice → (9,1) not-your-turn");
-        const e2 = await req(L.hub, "/api/move.png?code=" + L.code + "&from=0&to=9&end=1&tok=JTTT1234");
+        const e2 = await req(L.hub, `/api/move.png?code=${L.code}&from=0&to=9&end=1&tok=JTTT1234`);
         ok(e2.w === 1 && e2.h === 1, "ttt: joiner places O (turn alternation)");
     })();
 
@@ -1234,13 +1234,13 @@ async function main() {
     await (async function () {
         let L = await seatedLobby(2, "HWIN1234", "JWIN1234");
         // X takes the top row 0,1,2; O answers on 3,4. X to move first (host seat 0).
-        await req(L.hub, "/api/move.png?code=" + L.code + "&from=0&to=9&end=1&tok=HWIN1234"); // X @0
-        await req(L.hub, "/api/move.png?code=" + L.code + "&from=3&to=9&end=1&tok=JWIN1234"); // O @3
-        await req(L.hub, "/api/move.png?code=" + L.code + "&from=1&to=9&end=1&tok=HWIN1234"); // X @1
-        await req(L.hub, "/api/move.png?code=" + L.code + "&from=4&to=9&end=1&tok=JWIN1234"); // O @4
-        const win = await req(L.hub, "/api/move.png?code=" + L.code + "&from=2&to=9&end=1&tok=HWIN1234"); // X @2 wins
+        await req(L.hub, `/api/move.png?code=${L.code}&from=0&to=9&end=1&tok=HWIN1234`); // X @0
+        await req(L.hub, `/api/move.png?code=${L.code}&from=3&to=9&end=1&tok=JWIN1234`); // O @3
+        await req(L.hub, `/api/move.png?code=${L.code}&from=1&to=9&end=1&tok=HWIN1234`); // X @1
+        await req(L.hub, `/api/move.png?code=${L.code}&from=4&to=9&end=1&tok=JWIN1234`); // O @4
+        const win = await req(L.hub, `/api/move.png?code=${L.code}&from=2&to=9&end=1&tok=HWIN1234`); // X @2 wins
         ok(win.w === 1 && win.h === 1, "ttt: winning move accepted");
-        const after = await req(L.hub, "/api/move.png?code=" + L.code + "&from=5&to=9&end=1&tok=JWIN1234");
+        const after = await req(L.hub, `/api/move.png?code=${L.code}&from=5&to=9&end=1&tok=JWIN1234`);
         ok(after.w === 9 && after.h === 2, "ttt: move after a win is refused → (9,2)");
     })();
 
@@ -1248,13 +1248,13 @@ async function main() {
     await (async function () {
         let L = await seatedLobby(4, "HCHS1234", "JCHS1234");
         // White e2-e4: e2 = row6 col4 (52) → e4 = row4 col4 (36).
-        const a = await req(L.hub, "/api/move.png?code=" + L.code + "&from=" + sq(6, 4) + "&to=" + sq(4, 4) + "&end=1&tok=HCHS1234");
+        const a = await req(L.hub, `/api/move.png?code=${L.code}&from=${sq(6, 4)}&to=${sq(4, 4)}&end=1&tok=HCHS1234`);
         ok(a.w === 1 && a.h === 1, "chess: white e2-e4 accepted");
         // Black tries to move a WHITE pawn → not their piece / wrong side → (9,2).
-        const b2 = await req(L.hub, "/api/move.png?code=" + L.code + "&from=" + sq(4, 4) + "&to=" + sq(3, 4) + "&end=1&tok=JCHS1234");
+        const b2 = await req(L.hub, `/api/move.png?code=${L.code}&from=${sq(4, 4)}&to=${sq(3, 4)}&end=1&tok=JCHS1234`);
         ok(b2.w === 9 && b2.h === 2, "chess: moving the opponent's piece → (9,2)");
         // Black e7-e5: e7 = row1 col4 (12) → e5 = row3 col4 (28).
-        const c2 = await req(L.hub, "/api/move.png?code=" + L.code + "&from=" + sq(1, 4) + "&to=" + sq(3, 4) + "&end=1&tok=JCHS1234");
+        const c2 = await req(L.hub, `/api/move.png?code=${L.code}&from=${sq(1, 4)}&to=${sq(3, 4)}&end=1&tok=JCHS1234`);
         ok(c2.w === 1 && c2.h === 1, "chess: black e7-e5 accepted");
     })();
 
@@ -1262,19 +1262,19 @@ async function main() {
     await (async function () {
         let L = await seatedLobby(5, "HCF11234", "JCF11234");
         // Host (red, seat 0) drops in column 3 - accepted (to=7 marker).
-        const a = await req(L.hub, "/api/move.png?code=" + L.code + "&from=3&to=7&end=1&tok=HCF11234");
+        const a = await req(L.hub, `/api/move.png?code=${L.code}&from=3&to=7&end=1&tok=HCF11234`);
         ok(a.w === 1 && a.h === 1, "c4: host drops in column 3 (accepted)");
         // A bad marker (to != 7) is illegal.
-        const b2 = await req(L.hub, "/api/move.png?code=" + L.code + "&from=2&to=5&end=1&tok=JCF11234");
+        const b2 = await req(L.hub, `/api/move.png?code=${L.code}&from=2&to=5&end=1&tok=JCF11234`);
         ok(b2.w === 9 && b2.h === 2, "c4: wrong destination marker → (9,2)");
         // Host playing twice in a row → not your turn.
-        const c2 = await req(L.hub, "/api/move.png?code=" + L.code + "&from=2&to=7&end=1&tok=HCF11234");
+        const c2 = await req(L.hub, `/api/move.png?code=${L.code}&from=2&to=7&end=1&tok=HCF11234`);
         ok(c2.w === 9 && c2.h === 1, "c4: host playing twice → (9,1) not-your-turn");
         // Joiner (yellow) drops in column 2 - accepted (turn alternation).
-        const e2 = await req(L.hub, "/api/move.png?code=" + L.code + "&from=2&to=7&end=1&tok=JCF11234");
+        const e2 = await req(L.hub, `/api/move.png?code=${L.code}&from=2&to=7&end=1&tok=JCF11234`);
         ok(e2.w === 1 && e2.h === 1, "c4: joiner drops (turn alternation)");
         // Poll round-trips the host's first drop (from=3, to marker=7, end=1).
-        const pd = await req(L.hub, "/api/poll.png?code=" + L.code + "&since=0");
+        const pd = await req(L.hub, `/api/poll.png?code=${L.code}&since=0`);
         const pfrom = pd.w, pto = pd.h;   // raw squares now; end is derived client-side
         ok(pfrom === 3 && pto === 7, "c4: poll round-trips the column drop (raw from/to)");
         // Fill column 0 (6 discs) then a 7th drop into it is rejected as illegal.
@@ -1282,14 +1282,14 @@ async function main() {
         const toks = ["HCF21234", "JCF21234"];
         for (let k = 0; k < 6; k++) {
             const who = toks[k % 2];
-            const rr = await req(L2.hub, "/api/move.png?code=" + L2.code + "&from=0&to=7&end=1&tok=" + who);
-            ok(rr.w === 1, "c4: fill column 0 drop " + (k + 1) + " accepted");
+            const rr = await req(L2.hub, `/api/move.png?code=${L2.code}&from=0&to=7&end=1&tok=${who}`);
+            ok(rr.w === 1, `c4: fill column 0 drop ${k + 1} accepted`);
         }
         // It's host's turn again (6 drops = even). Dropping into the FULL column 0 → (9,2).
-        const full = await req(L2.hub, "/api/move.png?code=" + L2.code + "&from=0&to=7&end=1&tok=HCF21234");
+        const full = await req(L2.hub, `/api/move.png?code=${L2.code}&from=0&to=7&end=1&tok=HCF21234`);
         ok(full.w === 9 && full.h === 2, "c4: dropping into a full column → (9,2) illegal");
         // Foreign token still rejected.
-        const ft = await req(L2.hub, "/api/move.png?code=" + L2.code + "&from=1&to=7&end=1&tok=NOPETOK0");
+        const ft = await req(L2.hub, `/api/move.png?code=${L2.code}&from=1&to=7&end=1&tok=NOPETOK0`);
         ok(ft.w === 9 && ft.h === 3, "c4: foreign token → (9,3) bad-token");
     })();
 
@@ -1297,49 +1297,49 @@ async function main() {
     await (async function () {
         let L = await seatedLobby(3, "DHOST123", "DJOIN123");   // create(game=3) + join → seats 0/1
         // The declared two-seat room starts atomically when the joiner fills it.
-        const rm = await req(L.hub, "/api/room.png?code=" + L.code);
+        const rm = await req(L.hub, `/api/room.png?code=${L.code}`);
         ok(rm.w === 2 && rm.h === 2, "durak: full 2-seat room auto-starts");
         // A repeated host start is harmless/idempotent.
-        const st = await req(L.hub, "/api/start.png?code=" + L.code + "&tok=DHOST123");
+        const st = await req(L.hub, `/api/start.png?code=${L.code}&tok=DHOST123`);
         ok(st.w === 1 && st.h === 1, "durak: host start after auto-start is idempotent");
-        const rm2 = await req(L.hub, "/api/room.png?code=" + L.code);
+        const rm2 = await req(L.hub, `/api/room.png?code=${L.code}`);
         ok(rm2.w === 2 && rm2.h === 2, "durak: room remains started");
         // Public log: TRUMP, OPEN, DRAW(0,6), DRAW(1,6).
-        const e0 = await req(L.hub, "/api/dlog.png?code=" + L.code + "&since=0");
+        const e0 = await req(L.hub, `/api/dlog.png?code=${L.code}&since=0`);
         ok(e0.w === 2 && e0.h >= 1 && e0.h <= 36, "durak: dlog[0] = TRUMP (2, trumpCard+1)");
-        const e1 = await req(L.hub, "/api/dlog.png?code=" + L.code + "&since=1");
+        const e1 = await req(L.hub, `/api/dlog.png?code=${L.code}&since=1`);
         ok(e1.w === 3 && (e1.h === 1 || e1.h === 2), "durak: dlog[1] = OPEN (3, attacker+1)");
         const attacker = e1.h - 1, defender = attacker === 0 ? 1 : 0;
-        const e2 = await req(L.hub, "/api/dlog.png?code=" + L.code + "&since=2");
+        const e2 = await req(L.hub, `/api/dlog.png?code=${L.code}&since=2`);
         ok(e2.w === 50 && e2.h === 7, "durak: dlog[2] = DRAW(seat0, 6)");
-        const e3 = await req(L.hub, "/api/dlog.png?code=" + L.code + "&since=3");
+        const e3 = await req(L.hub, `/api/dlog.png?code=${L.code}&since=3`);
         ok(e3.w === 51 && e3.h === 7, "durak: dlog[3] = DRAW(seat1, 6)");
-        const e4 = await req(L.hub, "/api/dlog.png?code=" + L.code + "&since=4");
+        const e4 = await req(L.hub, `/api/dlog.png?code=${L.code}&since=4`);
         ok(e4.w === 1 && e4.h === 1, "durak: dlog[4] = nothing new (1,1)");
         // Private deal: read my own 6 cards via ddraw.
         const atkTok = attacker === 0 ? "DHOST123" : "DJOIN123", defTok = defender === 0 ? "DHOST123" : "DJOIN123";
         const hand = [];
         for (let i = 0; i < 6; i++) {
-            let d = await req(L.hub, "/api/ddraw.png?code=" + L.code + "&tok=" + atkTok + "&i=" + i);
-            ok(d.w >= 2 && d.w <= 37 && d.h === 1, "durak: ddraw[" + i + "] returns a card (card+2, never (1,1))");
+            let d = await req(L.hub, `/api/ddraw.png?code=${L.code}&tok=${atkTok}&i=${i}`);
+            ok(d.w >= 2 && d.w <= 37 && d.h === 1, `durak: ddraw[${i}] returns a card (card+2, never (1,1))`);
             hand.push(d.w - 2);
         }
-        const d6 = await req(L.hub, "/api/ddraw.png?code=" + L.code + "&tok=" + atkTok + "&i=6");
+        const d6 = await req(L.hub, `/api/ddraw.png?code=${L.code}&tok=${atkTok}&i=6`);
         ok(d6.w === 1 && d6.h === 1, "durak: ddraw past the hand → (1,1)");
         // Privacy: a foreign token cannot read any seat's private cards.
-        const spy = await req(L.hub, "/api/ddraw.png?code=" + L.code + "&tok=STRANGER0&i=0");
+        const spy = await req(L.hub, `/api/ddraw.png?code=${L.code}&tok=STRANGER0&i=0`);
         ok(spy.w === 9 && spy.h === 3, "durak: ddraw with foreign token → (9,3)");
         // The defender may not attack.
-        const defHand0 = (await req(L.hub, "/api/ddraw.png?code=" + L.code + "&tok=" + defTok + "&i=0")).w - 2;
-        const defAtk = await req(L.hub, "/api/dact.png?code=" + L.code + "&tok=" + defTok + "&a=1&c=" + defHand0);
+        const defHand0 = (await req(L.hub, `/api/ddraw.png?code=${L.code}&tok=${defTok}&i=0`)).w - 2;
+        const defAtk = await req(L.hub, `/api/dact.png?code=${L.code}&tok=${defTok}&a=1&c=${defHand0}`);
         ok(defAtk.w === 9 && defAtk.h === 1, "durak: defender attacking → (9,1)");
         // The attacker opens with one of its cards → accepted, and a PLAY event appears.
-        const atkAct = await req(L.hub, "/api/dact.png?code=" + L.code + "&tok=" + atkTok + "&a=1&c=" + hand[0]);
+        const atkAct = await req(L.hub, `/api/dact.png?code=${L.code}&tok=${atkTok}&a=1&c=${hand[0]}`);
         ok(atkAct.w === 1 && atkAct.h === 1, "durak: attacker opens (accepted)");
-        const ev = await req(L.hub, "/api/dlog.png?code=" + L.code + "&since=4");
+        const ev = await req(L.hub, `/api/dlog.png?code=${L.code}&since=4`);
         ok(ev.w === (10 + attacker) && ev.h === (hand[0] + 1), "durak: dlog records PLAY(attacker, card)");
         // Covering pair 0 with a card the defender does NOT hold is illegal.
-        const badCover = await req(L.hub, "/api/dact.png?code=" + L.code + "&tok=" + defTok + "&a=2&p=0&c=" + hand[0]);
+        const badCover = await req(L.hub, `/api/dact.png?code=${L.code}&tok=${defTok}&a=2&p=0&c=${hand[0]}`);
         ok(badCover.w === 9 && badCover.h === 2, "durak: covering with a card you don't hold → (9,2)");
     })();
 
@@ -1351,42 +1351,42 @@ async function main() {
         const dc = await req(hub, "/api/dcreate.png?n=3&tok=DKHOST01");
         ok(codeHost(dc), "durak-N: dcreate → HOST (w>=100 role flag)");
         const code = decCode(dc);
-        ok(code >= 0 && code <= 1023, "durak-N: host code valid (" + code + ")");
+        ok(code >= 0 && code <= 1023, `durak-N: host code valid (${code})`);
         const badTok = await req(hub, "/api/dcreate.png?n=3&tok=x");
         ok(badTok.w === 9 && badTok.h === 3, "durak-N: dcreate short token → (9,3)");
         // Room shows 1 seated, cap 3, not started.
-        const dr = await req(hub, "/api/droom.png?code=" + code);
+        const dr = await req(hub, `/api/droom.png?code=${code}`);
         ok(dr.w === 1 && dr.h === 3, "durak-N: droom shows 1 player, cap 3, not started");
         // Two joiners fill seats 1 and 2; each learns its seat + the cap.
-        const j1 = await req(hub, "/api/djoin.png?code=" + code + "&tok=DKPLR201");
+        const j1 = await req(hub, `/api/djoin.png?code=${code}&tok=DKPLR201`);
         ok(j1.w === 3 && j1.h === 2, "durak-N: djoin → cap 3, seat index 1");
-        const j1b = await req(hub, "/api/djoin.png?code=" + code + "&tok=DKPLR201");
+        const j1b = await req(hub, `/api/djoin.png?code=${code}&tok=DKPLR201`);
         ok(j1b.w === 3 && j1b.h === 2, "durak-N: djoin re-join idempotent");
         // Before the table is full, only seat 0 may choose to start early.
-        const badStart = await req(hub, "/api/start.png?code=" + code + "&tok=DKPLR201");
+        const badStart = await req(hub, `/api/start.png?code=${code}&tok=DKPLR201`);
         ok(badStart.w === 9 && badStart.h === 1, "durak-N: non-host cannot start a partial table");
-        const j2 = await req(hub, "/api/djoin.png?code=" + code + "&tok=DKPLR301");
+        const j2 = await req(hub, `/api/djoin.png?code=${code}&tok=DKPLR301`);
         ok(j2.w === 3 && j2.h === 3, "durak-N: djoin → cap 3, seat index 2");
         // Simulate a lost response: seat 1 retries only after seat 2 has joined. The response
         // must still carry seat 1, not the table's current player count.
-        const j1c = await req(hub, "/api/djoin.png?code=" + code + "&tok=DKPLR201");
+        const j1c = await req(hub, `/api/djoin.png?code=${code}&tok=DKPLR201`);
         ok(j1c.w === 3 && j1c.h === 2, "durak-N: late re-join preserves the original seat index");
         // Table is already running: an existing seat may retry, but a new token is refused.
-        const j3 = await req(hub, "/api/djoin.png?code=" + code + "&tok=DKPLR401");
+        const j3 = await req(hub, `/api/djoin.png?code=${code}&tok=DKPLR401`);
         ok(j3.w === 22 && j3.h === 1, "durak-N: new join after automatic start → (22,1)");
         // Filling the declared cap deals immediately; an explicit host start remains idempotent.
-        const st = await req(hub, "/api/start.png?code=" + code + "&tok=DKHOST01");
+        const st = await req(hub, `/api/start.png?code=${code}&tok=DKHOST01`);
         ok(st.w === 1 && st.h === 1, "durak-N: host start after auto-start is idempotent");
-        const dr2 = await req(hub, "/api/droom.png?code=" + code);
+        const dr2 = await req(hub, `/api/droom.png?code=${code}`);
         ok(dr2.w === 53 && dr2.h === 3, "durak-N: full declared cap auto-starts (players 3, +50 band)");
         // Three DRAW events (one per seat) confirm a 3-hand deal, plus TRUMP + OPEN up front.
-        const e0 = await req(hub, "/api/dlog.png?code=" + code + "&since=0");
+        const e0 = await req(hub, `/api/dlog.png?code=${code}&since=0`);
         ok(e0.w === 2, "durak-N: dlog[0] = TRUMP");
-        const e1 = await req(hub, "/api/dlog.png?code=" + code + "&since=1");
+        const e1 = await req(hub, `/api/dlog.png?code=${code}&since=1`);
         ok(e1.w === 3 && e1.h >= 1 && e1.h <= 3, "durak-N: dlog[1] = OPEN(attacker 0..2)");
         for (let s = 0; s < 3; s++) {
-            const ds = await req(hub, "/api/dlog.png?code=" + code + "&since=" + (2 + s));
-            ok(ds.w === 50 + s && ds.h === 7, "durak-N: dlog[" + (2 + s) + "] = DRAW(seat " + s + ", 6)");
+            const ds = await req(hub, `/api/dlog.png?code=${code}&since=${2 + s}`);
+            ok(ds.w === 50 + s && ds.h === 7, `durak-N: dlog[${2 + s}] = DRAW(seat ${s}, 6)`);
         }
         // Drive a full bout to force a ROLES event. Read the opener's seat, walk its whole hand
         // (deterministic per-seed) attacking + taking so the defender picks up; the server then
@@ -1395,16 +1395,16 @@ async function main() {
         const toks = ["DKHOST01", "DKPLR201", "DKPLR301"];
         const defSeat = (openSeat + 1) % 3;
         // Attacker opens with its first card.
-        const aHand0 = (await req(hub, "/api/ddraw.png?code=" + code + "&tok=" + toks[openSeat] + "&i=0")).w - 2;
-        const open = await req(hub, "/api/dact.png?code=" + code + "&tok=" + toks[openSeat] + "&a=1&c=" + aHand0);
+        const aHand0 = (await req(hub, `/api/ddraw.png?code=${code}&tok=${toks[openSeat]}&i=0`)).w - 2;
+        const open = await req(hub, `/api/dact.png?code=${code}&tok=${toks[openSeat]}&a=1&c=${aHand0}`);
         ok(open.w === 1 && open.h === 1, "durak-N: opener attacks (accepted)");
         // Find where PLAY landed, then the defender takes the table → bout ends, ROLES emitted.
-        const take = await req(hub, "/api/dact.png?code=" + code + "&tok=" + toks[defSeat] + "&a=3");
+        const take = await req(hub, `/api/dact.png?code=${code}&tok=${toks[defSeat]}&a=3`);
         ok(take.w === 1 && take.h === 1, "durak-N: defender takes the table (accepted)");
         // Scan the log tail for a ROLES event (w===4). Its a/d must be legal seats and differ.
         let foundRoles = false;
         for (let idx = 5; idx < 40; idx++) {
-            const lg = await req(hub, "/api/dlog.png?code=" + code + "&since=" + idx);
+            const lg = await req(hub, `/api/dlog.png?code=${code}&since=${idx}`);
             if (lg.w === 1 && lg.h === 1) break;                   // drained
             if (lg.w === 4) {
                 const atk = ((lg.h - 1) / 4) | 0, def = (lg.h - 1) % 4;
@@ -1424,27 +1424,27 @@ async function main() {
         const hub = new Hub({ storage: new FakeStorage() });
         const dc = await req(hub, "/api/dcreate.png?n=3&tok=DKPASS01");
         const code = decCode(dc);
-        await req(hub, "/api/djoin.png?code=" + code + "&tok=DKPASS02");
-        await req(hub, "/api/djoin.png?code=" + code + "&tok=DKPASS03");
-        await req(hub, "/api/start.png?code=" + code + "&tok=DKPASS01");
+        await req(hub, `/api/djoin.png?code=${code}&tok=DKPASS02`);
+        await req(hub, `/api/djoin.png?code=${code}&tok=DKPASS03`);
+        await req(hub, `/api/start.png?code=${code}&tok=DKPASS01`);
         const toks = ["DKPASS01", "DKPASS02", "DKPASS03"];
-        const openEv = await req(hub, "/api/dlog.png?code=" + code + "&since=1");
+        const openEv = await req(hub, `/api/dlog.png?code=${code}&since=1`);
         const openSeat = openEv.h - 1, defSeat = (openSeat + 1) % 3;
         const coSeat = (openSeat + 2) % 3;                            // the OTHER non-defender
         // Opener attacks; defender covers so the table goes fully covered (attack phase reopens).
-        const aCard = (await req(hub, "/api/ddraw.png?code=" + code + "&tok=" + toks[openSeat] + "&i=0")).w - 2;
-        await req(hub, "/api/dact.png?code=" + code + "&tok=" + toks[openSeat] + "&a=1&c=" + aCard);
+        const aCard = (await req(hub, `/api/ddraw.png?code=${code}&tok=${toks[openSeat]}&i=0`)).w - 2;
+        await req(hub, `/api/dact.png?code=${code}&tok=${toks[openSeat]}&a=1&c=${aCard}`);
         // Defender tries each of its 6 cards to cover pair 0 (deterministic; at least one may work).
         let covered = false;
         for (let di = 0; di < 6 && !covered; di++) {
-            const dCard = (await req(hub, "/api/ddraw.png?code=" + code + "&tok=" + toks[defSeat] + "&i=" + di)).w - 2;
-            const cov = await req(hub, "/api/dact.png?code=" + code + "&tok=" + toks[defSeat] + "&a=2&p=0&c=" + dCard);
+            const dCard = (await req(hub, `/api/ddraw.png?code=${code}&tok=${toks[defSeat]}&i=${di}`)).w - 2;
+            const cov = await req(hub, `/api/dact.png?code=${code}&tok=${toks[defSeat]}&a=2&p=0&c=${dCard}`);
             if (cov.w === 1 && cov.h === 1) covered = true;
         }
         if (!covered) {
             // No legal cover in this deal - the consensus path needs a covered table, so just
             // assert the pass route rejects an uncovered table and move on (still a real check).
-            const earlyPass = await req(hub, "/api/dact.png?code=" + code + "&tok=" + toks[openSeat] + "&a=4");
+            const earlyPass = await req(hub, `/api/dact.png?code=${code}&tok=${toks[openSeat]}&a=4`);
             ok(earlyPass.w === 9 && earlyPass.h === 2, "durak-pass: pass on an uncovered table → (9,2)");
         } else {
             // The cover may have ALREADY beaten the table: if no attack seat held a legal throw-in,
@@ -1453,7 +1453,7 @@ async function main() {
             // we're in - both are correct, but they need different follow-up assertions.
             let seq = 5, coverBito = false;
             for (;;) {
-                const lg0 = await req(hub, "/api/dlog.png?code=" + code + "&since=" + seq);
+                const lg0 = await req(hub, `/api/dlog.png?code=${code}&since=${seq}`);
                 if (lg0.w === 1 && lg0.h === 1) break;               // drained
                 if (lg0.w === 40 && lg0.h === 1) coverBito = true;
                 seq++;
@@ -1466,19 +1466,19 @@ async function main() {
                 // Live covered table: at least one attack seat still holds a throw-in. Defender may
                 // not pass (only attack seats vote). Opener passes: unless it's the last unsettled
                 // attack seat, this echoes PASS(openSeat)=(41+seat,1) and the bout stays live.
-                const defPass = await req(hub, "/api/dact.png?code=" + code + "&tok=" + toks[defSeat] + "&a=4");
+                const defPass = await req(hub, `/api/dact.png?code=${code}&tok=${toks[defSeat]}&a=4`);
                 ok(defPass.w === 9 && defPass.h === 1, "durak-pass: defender cannot pass → (9,1)");
-                await req(hub, "/api/dact.png?code=" + code + "&tok=" + toks[openSeat] + "&a=4");
-                const after = await req(hub, "/api/dlog.png?code=" + code + "&since=" + seq);
+                await req(hub, `/api/dact.png?code=${code}&tok=${toks[openSeat]}&a=4`);
+                const after = await req(hub, `/api/dlog.png?code=${code}&since=${seq}`);
                 const isPass = (after.w === 41 + openSeat && after.h === 1);
                 const isBito = (after.w === 40 && after.h === 1);
                 ok(isPass || isBito, "durak-pass: opener pass → PASS echo (window open) or BITO (consensus)");
                 if (isPass) {
                     // Co-attacker passes too. With both non-defenders settled, consensus → BITO.
-                    await req(hub, "/api/dact.png?code=" + code + "&tok=" + toks[coSeat] + "&a=4");
+                    await req(hub, `/api/dact.png?code=${code}&tok=${toks[coSeat]}&a=4`);
                     let sawBito = false;
                     for (let q = seq + 1; q < seq + 30; q++) {
-                        const lg = await req(hub, "/api/dlog.png?code=" + code + "&since=" + q);
+                        const lg = await req(hub, `/api/dlog.png?code=${code}&since=${q}`);
                         if (lg.w === 1 && lg.h === 1) break;
                         if (lg.w === 40 && lg.h === 1) { sawBito = true; break; }
                     }
@@ -1498,52 +1498,52 @@ async function main() {
         const pc = await req(hub, "/api/pcreate.png?n=2&tok=PHOST123");
         ok(codeHost(pc), "poker: pcreate → HOST (w>=100 role flag)");
         const code = decCode(pc);
-        ok(code >= 0 && code <= 1023, "poker: host code valid (" + code + ")");
+        ok(code >= 0 && code <= 1023, `poker: host code valid (${code})`);
         // Bad token is refused up front.
         const badTok = await req(hub, "/api/pcreate.png?n=2&tok=x");
         ok(badTok.w === 9 && badTok.h === 3, "poker: pcreate with short token → (9,3)");
         // Room shows 1 seated, cap 2, not started.
-        const pr = await req(hub, "/api/proom.png?code=" + code);
+        const pr = await req(hub, `/api/proom.png?code=${code}`);
         ok(pr.w === 1 && pr.h === 2, "poker: proom shows 1 player, cap 2, not started");
         // A second player joins, learns its seat, and fills the declared cap.
-        const pj = await req(hub, "/api/pjoin.png?code=" + code + "&tok=PJOIN123");
+        const pj = await req(hub, `/api/pjoin.png?code=${code}&tok=PJOIN123`);
         ok(pj.w === 2 && pj.h === 2, "poker: pjoin → cap 2, seat index 1");
         // Re-join is idempotent (poll safety).
-        let pj2 = await req(hub, "/api/pjoin.png?code=" + code + "&tok=PJOIN123");
+        let pj2 = await req(hub, `/api/pjoin.png?code=${code}&tok=PJOIN123`);
         ok(pj2.w === 2 && pj2.h === 2, "poker: pjoin re-join idempotent");
-        const pr2 = await req(hub, "/api/proom.png?code=" + code);
+        const pr2 = await req(hub, `/api/proom.png?code=${code}`);
         ok(pr2.w === 52 && pr2.h === 2, "poker: full declared cap auto-deals (players 2, +50 band)");
         // A repeated host deal is harmless/idempotent.
-        const ps = await req(hub, "/api/pstart.png?code=" + code + "&tok=PHOST123");
+        const ps = await req(hub, `/api/pstart.png?code=${code}&tok=PHOST123`);
         ok(ps.w === 1 && ps.h === 1, "poker: host deal after auto-deal is idempotent");
         // Public log opens with a HAND event (2, button+1).
-        const h0 = await req(hub, "/api/plog.png?code=" + code + "&since=0");
+        const h0 = await req(hub, `/api/plog.png?code=${code}&since=0`);
         ok(h0.w === 2 && (h0.h === 1 || h0.h === 2), "poker: plog[0] = HAND (2, button+1)");
         // Private deal: each seat reads exactly its own 2 hole cards (card+2, never (1,1)).
         for (let seatTok = 0; seatTok < 2; seatTok++) {
             const tok = seatTok === 0 ? "PHOST123" : "PJOIN123";
             for (let i = 0; i < 2; i++) {
-                let d = await req(hub, "/api/pdraw.png?code=" + code + "&tok=" + tok + "&i=" + i);
-                ok(d.w >= 2 && d.w <= 53 && d.h === 1, "poker: pdraw seat" + seatTok + "[" + i + "] returns a card");
+                let d = await req(hub, `/api/pdraw.png?code=${code}&tok=${tok}&i=${i}`);
+                ok(d.w >= 2 && d.w <= 53 && d.h === 1, `poker: pdraw seat${seatTok}[${i}] returns a card`);
             }
         }
         // Privacy: a foreign token can't read any seat's hole cards.
-        const spy = await req(hub, "/api/pdraw.png?code=" + code + "&tok=STRANGER0&i=0");
+        const spy = await req(hub, `/api/pdraw.png?code=${code}&tok=STRANGER0&i=0`);
         ok(spy.w === 9 && spy.h === 3, "poker: pdraw with foreign token → (9,3)");
         // Heads-up preflop: the button/SB (seat = button) acts first. Whoever's turn it is folds;
         // the hand ends and the log carries a FOLD then a WIN.
         const button = h0.h - 1;                       // seat on the button = first to act heads-up
         const actTok = button === 0 ? "PHOST123" : "PJOIN123";
-        const fold = await req(hub, "/api/pact.png?code=" + code + "&tok=" + actTok + "&a=0&to=0");
+        const fold = await req(hub, `/api/pact.png?code=${code}&tok=${actTok}&a=0&to=0`);
         ok(fold.w === 1 && fold.h === 1, "poker: fold accepted");
-        const ev1 = await req(hub, "/api/plog.png?code=" + code + "&since=1");
+        const ev1 = await req(hub, `/api/plog.png?code=${code}&since=1`);
         ok(ev1.w === (10 + button) && ev1.h === 1, "poker: plog records FOLD(seat, 1)");
-        const ev2 = await req(hub, "/api/plog.png?code=" + code + "&since=2");
+        const ev2 = await req(hub, `/api/plog.png?code=${code}&since=2`);
         ok(ev2.w === 7 && ev2.h === 1, "poker: uncontested hand → WIN(7,1)");
         // A busted seat can't happen from one hand (stacks are 200/blinds tiny), so no OVER yet.
-        const pnext = await req(hub, "/api/pnext.png?code=" + code + "&tok=PJOIN123");
+        const pnext = await req(hub, `/api/pnext.png?code=${code}&tok=PJOIN123`);
         ok(pnext.w === 1 && pnext.h === 1, "poker: any seat may deal the next hand once over");
-        const h1 = await req(hub, "/api/plog.png?code=" + code + "&since=3");
+        const h1 = await req(hub, `/api/plog.png?code=${code}&since=3`);
         ok(h1.w === 2, "poker: next hand appends a fresh HAND event (continuous log)");
     })();
 
@@ -1556,17 +1556,17 @@ async function main() {
     await (async function () {
         const hub = new Hub({ storage: new FakeStorage() });
         const HOST = "FLOPHOSTAA", JOIN = "FLOPJOINBB";
-        let d = await req(hub, "/api/pcreate.png?n=2&tok=" + HOST);
+        let d = await req(hub, `/api/pcreate.png?n=2&tok=${HOST}`);
         const code = decCode(d);
-        await req(hub, "/api/pjoin.png?code=" + code + "&tok=" + JOIN);
-        await req(hub, "/api/pstart.png?code=" + code + "&tok=" + HOST);
+        await req(hub, `/api/pjoin.png?code=${code}&tok=${JOIN}`);
+        await req(hub, `/api/pstart.png?code=${code}&tok=${HOST}`);
         // Reach the flop: heads-up the button/SB acts first (CALL), then the BB CHECKS. We don't
         // track whose turn it is here - just try each token with CALL, then CHECK, until the flop
         // lands. The server rejects out-of-turn/illegal actions with (9,x), so wrong tries are safe.
         const toks = [HOST, JOIN];
         async function tryAct(a) {
             for (let i = 0; i < toks.length; i++) {
-                const r = await req(hub, "/api/pact.png?code=" + code + "&tok=" + toks[i] + "&a=" + a + "&to=0");
+                const r = await req(hub, `/api/pact.png?code=${code}&tok=${toks[i]}&a=${a}&to=0`);
                 if (r.w === 1 && r.h === 1) return true;
             }
             return false;
@@ -1575,13 +1575,13 @@ async function main() {
         // Drain the log; collect BOARD(5, card+1) events.
         let board = [], s = 0, blanks = 0;
         while (blanks < 2 && s < 40) {
-            let e = await req(hub, "/api/plog.png?code=" + code + "&since=" + s);
+            let e = await req(hub, `/api/plog.png?code=${code}&since=${s}`);
             if (e.w === 1 && e.h === 1) { blanks++; s++; continue; }
             blanks = 0;
             if (e.w === 5) board.push(e.h - 1);
             s++;
         }
-        ok(board.length >= 3, "poker: reached the flop - at least 3 BOARD cards emitted (" + board.length + ")");
+        ok(board.length >= 3, `poker: reached the flop - at least 3 BOARD cards emitted (${board.length})`);
         const inRange = board.every((c) => { return c >= 0 && c <= 51; });
         ok(inRange, "poker: every board card is a real id 0..51");
         ok(new Set(board).size === board.length, "poker: board cards are all DISTINCT (no duplicate 2♠ bug)");
@@ -1592,29 +1592,29 @@ async function main() {
     const q1 = await req(h2, "/api/quick.png?game=1&tok=QUICKQAA");
     ok(codeHost(q1), "quick #1 becomes HOST (w>=100 role flag)");
     const c1 = decCode(q1);
-    ok(c1 >= 0 && c1 <= 1023, "host code valid (" + c1 + ")");
+    ok(c1 >= 0 && c1 <= 1023, `host code valid (${c1})`);
 
     const q2 = await req(h2, "/api/quick.png?game=1&tok=QUICKQBB");
     ok(!codeHost(q2), "quick #2 becomes JOINER (w<100)");
     const c2 = decCode(q2);
     ok(c2 === c1, "joiner is paired into the host's lobby (same code)");
-    d = await req(h2, "/api/status.png?code=" + c1);
+    d = await req(h2, `/api/status.png?code=${c1}`);
     ok(d.w === 2, "paired lobby has 2 players");
 
     // ── concurrency: more players form a SECOND independent lobby ──
     const q3 = await req(h2, "/api/quick.png?game=1&tok=QUICKQCC");
     ok(codeHost(q3), "quick #3 hosts a new lobby (waiting slot was consumed)");
     const c3 = decCode(q3);
-    ok(c3 !== c1, "second lobby has a different code (" + c3 + ")");
+    ok(c3 !== c1, `second lobby has a different code (${c3})`);
     const q4 = await req(h2, "/api/quick.png?game=1&tok=QUICKQDD");
     const c4 = decCode(q4);
     ok(!codeHost(q4) && c4 === c3, "quick #4 joins the second lobby");
 
     // Host of lobby 1 (QUICKQAA = white seat 0) plays a legal move; lobby 3 stays independent.
-    await req(h2, "/api/move.png?code=" + c1 + "&from=" + sq(5, 0) + "&to=" + sq(4, 1) + "&end=1&tok=QUICKQAA");
-    d = await req(h2, "/api/poll.png?code=" + c3 + "&since=0");
+    await req(h2, `/api/move.png?code=${c1}&from=${sq(5, 0)}&to=${sq(4, 1)}&end=1&tok=QUICKQAA`);
+    d = await req(h2, `/api/poll.png?code=${c3}&since=0`);
     ok(d.w === 1 && d.h === 1, "second lobby has no moves (independent of first)");
-    d = await req(h2, "/api/poll.png?code=" + c1 + "&since=0");
+    d = await req(h2, `/api/poll.png?code=${c1}&since=0`);
     ok(!(d.w === 1 && d.h === 1), "first lobby carries its own move (two concurrent games)");
 
     // ── per-game queues don't cross-pair ──
@@ -1679,7 +1679,7 @@ async function main() {
         ok(english.host && english.code !== russian.code, "cv: English seeker does not join a Russian waiting lobby");
         const any = qdec(await req(hv, "/api/quick.png?game=1&tok=CVANY001&tc=any&cv=any"));
         ok(!any.host && any.code === russian.code, "cv/any: Any seeker joins the compatible Russian lobby");
-        const meta = await req(hv, "/api/match.png?code=" + russian.code);
+        const meta = await req(hv, `/api/match.png?code=${russian.code}`);
         ok(meta.w === 1 && meta.h === 5, "cv: match metadata reports Russian 3-minute checkers");
     })();
 
@@ -1690,9 +1690,9 @@ async function main() {
         const mh = await req(hm, "/api/mquick.png?games=1,2,4&tok=MQHOST01");
         ok(codeHost(mh), "mquick: first caller becomes HOST (role flag)");
         const mc = decCode(mh);
-        ok(mc >= 0 && mc <= 1023, "mquick: host code valid (" + mc + ")");
+        ok(mc >= 0 && mc <= 1023, `mquick: host code valid (${mc})`);
         // While undecided, status reports game+1 = 1 (game 0).
-        const msu = await req(hm, "/api/status.png?code=" + mc);
+        const msu = await req(hm, `/api/status.png?code=${mc}`);
         ok(msu.w === 1 && msu.h === 1, "mquick: undecided lobby reports players=1, game=0 (h=1)");
         // Joiner offers {4,5}. Intersection with host {1,2,4} = {4} → pairs, fixing game 4 (chess).
         const mj = await req(hm, "/api/mquick.png?games=5,4&tok=MQJOIN01");
@@ -1700,10 +1700,10 @@ async function main() {
         const mjc = decCode(mj);
         ok(mjc === mc, "mquick: joiner paired into the host's lobby (same code)");
         // Both sides now learn the fixed game from status: players=2, h = game+1 = 5.
-        const msd = await req(hm, "/api/status.png?code=" + mc);
+        const msd = await req(hm, `/api/status.png?code=${mc}`);
         ok(msd.w === 2 && msd.h === 5, "mquick: decided lobby reports players=2, game=4 (h=5)");
         // The fixed lobby is a real chess game: white e2-e4 is accepted.
-        const mv = await req(hm, "/api/move.png?code=" + mc + "&from=" + sq(6, 4) + "&to=" + sq(4, 4) + "&end=1&tok=MQHOST01");
+        const mv = await req(hm, `/api/move.png?code=${mc}&from=${sq(6, 4)}&to=${sq(4, 4)}&end=1&tok=MQHOST01`);
         ok(mv.w === 1 && mv.h === 1, "mquick: fixed game plays chess (e2-e4 accepted)");
     })();
 
@@ -1716,13 +1716,13 @@ async function main() {
         const mj = await req(hm, "/api/mquick.png?games=3&tok=MQDJOIN1");
         ok(!codeHost(mj) && decCode(mj) === mc,
             "mquick/durak: intersecting caller joins the same lobby");
-        const ms = await req(hm, "/api/status.png?code=" + mc);
+        const ms = await req(hm, `/api/status.png?code=${mc}`);
         ok(ms.w === 2 && ms.h === 4,
             "mquick/durak: match resolves to game 3 with exactly two players");
-        const room = await req(hm, "/api/room.png?code=" + mc);
+        const room = await req(hm, `/api/room.png?code=${mc}`);
         ok(room.w === 2 && room.h === 2,
             "mquick/durak: filled two-seat room starts automatically");
-        const first = await req(hm, "/api/dlog.png?code=" + mc + "&since=0");
+        const first = await req(hm, `/api/dlog.png?code=${mc}&since=0`);
         ok(first.w === 2 && first.h >= 1 && first.h <= 36,
             "mquick/durak: authoritative deal begins with TRUMP");
         const third = await req(hm, "/api/quick.png?game=3&tok=MQDTHIRD");
@@ -1750,7 +1750,7 @@ async function main() {
         const hm = new Hub({ storage: new FakeStorage() });
         const a = await req(hm, "/api/mquick.png?games=1,2,5&tok=MQCANAA1");
         const ac = decCode(a);
-        await req(hm, "/api/cancel.png?code=" + ac + "&tok=MQCANAA1");
+        await req(hm, `/api/cancel.png?code=${ac}&tok=MQCANAA1`);
         // Every queue is now free: a single-game quick on 1, 2 AND 5 each hosts fresh.
         const g1 = await req(hm, "/api/quick.png?game=1&tok=MQFRSH11");
         ok(codeHost(g1), "mquick cancel: queue 1 freed (quick hosts fresh)");
@@ -1768,7 +1768,7 @@ async function main() {
         // A plain single-game quick for game 5 should join the multi-host, fixing game 5.
         const j = await req(hm, "/api/quick.png?game=5&tok=MQMIXBB1");
         ok(!codeHost(j) && (decCode(j)) === ac, "mquick: single quick(5) joins a {2,5} multi-host");
-        const msd = await req(hm, "/api/status.png?code=" + ac);
+        const msd = await req(hm, `/api/status.png?code=${ac}`);
         ok(msd.w === 2 && msd.h === 6, "mquick: mixed match fixed game 5 (status h=6)");
     })();
 
@@ -1777,47 +1777,47 @@ async function main() {
     const qc = await req(h3, "/api/quick.png?game=1&tok=CANCELAA");
     const cc = decCode(qc);
     // A cancel WITHOUT a token must NOT destroy the lobby (blocks 4-digit-code griefers).
-    await req(h3, "/api/cancel.png?code=" + cc);
-    d = await req(h3, "/api/status.png?code=" + cc);
+    await req(h3, `/api/cancel.png?code=${cc}`);
+    d = await req(h3, `/api/status.png?code=${cc}`);
     ok(d.w === 1, "cancel without a token leaves the waiting lobby alive");
     // A cancel with a FOREIGN token also does nothing.
-    await req(h3, "/api/cancel.png?code=" + cc + "&tok=STRANGER0");
-    d = await req(h3, "/api/status.png?code=" + cc);
+    await req(h3, `/api/cancel.png?code=${cc}&tok=STRANGER0`);
+    d = await req(h3, `/api/status.png?code=${cc}`);
     ok(d.w === 1, "cancel with a foreign token leaves the lobby alive");
     // The seated host's token cancels it, freeing the waiting slot.
-    await req(h3, "/api/cancel.png?code=" + cc + "&tok=CANCELAA");
+    await req(h3, `/api/cancel.png?code=${cc}&tok=CANCELAA`);
     const qc2 = await req(h3, "/api/quick.png?game=1&tok=CANCELBB");
     ok(codeHost(qc2), "after a legitimate cancel, next quick hosts fresh (slot freed)");
-    d = await req(h3, "/api/status.png?code=" + cc);
+    d = await req(h3, `/api/status.png?code=${cc}`);
     ok(d.w === 9, "cancelled lobby is gone");
 
     // ── rematch handshake ──────────────────────────────────────────────────────
     await (async function () {
         let L = await seatedLobby(1, "RMHOST01", "RMJOIN01");
         // Play a couple of moves so the board is non-initial before the rematch resets it.
-        await req(L.hub, "/api/move.png?code=" + L.code + "&from=" + sq(5, 0) + "&to=" + sq(4, 1) + "&end=1&tok=RMHOST01");
-        await req(L.hub, "/api/move.png?code=" + L.code + "&from=" + sq(2, 1) + "&to=" + sq(3, 0) + "&end=1&tok=RMJOIN01");
+        await req(L.hub, `/api/move.png?code=${L.code}&from=${sq(5, 0)}&to=${sq(4, 1)}&end=1&tok=RMHOST01`);
+        await req(L.hub, `/api/move.png?code=${L.code}&from=${sq(2, 1)}&to=${sq(3, 0)}&end=1&tok=RMJOIN01`);
         // Foreign token can't rematch.
-        const bad = await req(L.hub, "/api/rematch.png?code=" + L.code + "&tok=STRANGER0&gen=0");
+        const bad = await req(L.hub, `/api/rematch.png?code=${L.code}&tok=STRANGER0&gen=0`);
         ok(bad.w === 9 && bad.h === 3, "rematch: foreign token → (9,3)");
         // Host asks first: armed, still gen 0 → (1, gen+1) = (1,1).
-        const r1 = await req(L.hub, "/api/rematch.png?code=" + L.code + "&tok=RMHOST01&gen=0");
+        const r1 = await req(L.hub, `/api/rematch.png?code=${L.code}&tok=RMHOST01&gen=0`);
         ok(r1.w === 1 && r1.h === 1, "rematch: host armed, waiting → (1, gen0+1)");
         // Host polling again is idempotent - still waiting, no double-arm side effect.
-        const r1b = await req(L.hub, "/api/rematch.png?code=" + L.code + "&tok=RMHOST01&gen=0");
+        const r1b = await req(L.hub, `/api/rematch.png?code=${L.code}&tok=RMHOST01&gen=0`);
         ok(r1b.w === 1 && r1b.h === 1, "rematch: host re-poll stays waiting (idempotent)");
         // Joiner asks: both armed → reset + gen++ → (2, gen1+1) = (2,2).
-        const r2 = await req(L.hub, "/api/rematch.png?code=" + L.code + "&tok=RMJOIN01&gen=0");
+        const r2 = await req(L.hub, `/api/rematch.png?code=${L.code}&tok=RMJOIN01&gen=0`);
         ok(r2.w === 2 && r2.h === 2, "rematch: both ready → (2, gen1+1)");
         // The board is fresh: poll from 0 sees nothing (moves cleared), status back to 2 players.
-        const pl = await req(L.hub, "/api/poll.png?code=" + L.code + "&since=0");
+        const pl = await req(L.hub, `/api/poll.png?code=${L.code}&since=0`);
         ok(pl.w === 1 && pl.h === 1, "rematch: state reset - poll(since=0) → (1,1) nothing new");
         // Host's stale gen-0 poll after the bump can't re-arm the next rematch; it just reads gen 1.
-        const stale = await req(L.hub, "/api/rematch.png?code=" + L.code + "&tok=RMHOST01&gen=0");
+        const stale = await req(L.hub, `/api/rematch.png?code=${L.code}&tok=RMHOST01&gen=0`);
         ok(stale.w === 1 && stale.h === 2, "rematch: stale gen-0 poll reads gen 1, does not arm");
         // A second full rematch at the live gen works and bumps to gen 2.
-        await req(L.hub, "/api/rematch.png?code=" + L.code + "&tok=RMHOST01&gen=1");
-        const r3 = await req(L.hub, "/api/rematch.png?code=" + L.code + "&tok=RMJOIN01&gen=1");
+        await req(L.hub, `/api/rematch.png?code=${L.code}&tok=RMHOST01&gen=1`);
+        const r3 = await req(L.hub, `/api/rematch.png?code=${L.code}&tok=RMJOIN01&gen=1`);
         ok(r3.w === 2 && r3.h === 3, "rematch: second rematch at live gen → (2, gen2+1)");
     })();
 
@@ -1828,7 +1828,7 @@ async function main() {
         const c = await req(hub, "/api/create.png?game=4&tok=CLKHOST01&tc=60");
         const code = decCode(c);
         // join learns the time control from the height as a tc-INDEX+1 (60s → index 1 → h=2).
-        const j = await req(hub, "/api/join.png?code=" + code + "&tok=CLKJOIN01");
+        const j = await req(hub, `/api/join.png?code=${code}&tok=CLKJOIN01`);
         ok(j.w === 4 && j.h === 2, "join reports the host's time control (tc=60 → index 1 → h=2)");
         // clocks are per-seat now: read each seat with &seat= and decode the banded value.
         const b0 = await clkSec(hub, code, 0), b1 = await clkSec(hub, code, 1);
@@ -1847,14 +1847,14 @@ async function main() {
         const hub2 = new Hub({ storage: new FakeStorage() });
         const c2 = await req(hub2, "/api/create.png?game=4&tok=BADTCHOST&tc=42");
         const code2 = decCode(c2);
-        const j2 = await req(hub2, "/api/join.png?code=" + code2 + "&tok=BADTCJOIN");
+        const j2 = await req(hub2, `/api/join.png?code=${code2}&tok=BADTCJOIN`);
         ok(j2.h === 1, "create: off-menu tc (42s) is rejected → untimed (join h=1)");
 
         // tc is ignored for a non-clock game (TTT) → untimed.
         const hub3 = new Hub({ storage: new FakeStorage() });
         const c3 = await req(hub3, "/api/create.png?game=2&tok=TTTTCHOST&tc=300");
         const code3 = decCode(c3);
-        const j3 = await req(hub3, "/api/join.png?code=" + code3 + "&tok=TTTTCJOIN");
+        const j3 = await req(hub3, `/api/join.png?code=${code3}&tok=TTTTCJOIN`);
         ok(j3.h === 1, "create: tc ignored for a non-clock game (TTT) → untimed");
 
         // ── time charging + flag-fall (deterministic: rewind clkStart in storage) ──
@@ -1863,24 +1863,24 @@ async function main() {
         const fhub = new Hub({ storage: new FakeStorage() });
         const fc = await req(fhub, "/api/create.png?game=4&tok=FLAGHOST1&tc=60");
         const fcode = decCode(fc);
-        await req(fhub, "/api/join.png?code=" + fcode + "&tok=FLAGJOIN1");
-        let L = await fhub.storage.get("l:" + fcode);
+        await req(fhub, `/api/join.png?code=${fcode}&tok=FLAGJOIN1`);
+        let L = await fhub.storage.get(`l:${fcode}`);
         // Seat 0 (host) is on the move. Pretend 25s elapsed since its turn began.
         L.clkStart = L.clkStart - 25000;
-        await fhub.storage.put("l:" + fcode, L);
+        await fhub.storage.put(`l:${fcode}`, L);
         // Per-seat now: seat 0 (running) has ~35s left, seat 1 (idle) still the full 60.
         const ck2a = await clkSec(fhub, fcode, 0);
         const ck2b = await clkSec(fhub, fcode, 1);
         ok(ck2a.sec === 35 && ck2b.sec === 60, "clocks: 25s charged to the running seat only (seat0=35, seat1=60)");
 
         // Now blow past the bank: rewind 70s > 60s → running seat flags and loses.
-        L = await fhub.storage.get("l:" + fcode);
+        L = await fhub.storage.get(`l:${fcode}`);
         L.clkStart = L.clkStart - 70000;
-        await fhub.storage.put("l:" + fcode, L);
+        await fhub.storage.put(`l:${fcode}`, L);
         const ck3 = await clkSec(fhub, fcode, 0);
         ok(ck3.sec === 0, "clocks: running seat's bank hits 0 → flag-fall (seat0=0)");
         // The flag is now persisted: a move by EITHER seat is refused (game over on time).
-        const mv = await req(fhub, "/api/move.png?code=" + fcode + "&from=" + sq(6, 4) + "&to=" + sq(4, 4) + "&end=1&tok=FLAGHOST1");
+        const mv = await req(fhub, `/api/move.png?code=${fcode}&from=${sq(6, 4)}&to=${sq(4, 4)}&end=1&tok=FLAGHOST1`);
         ok(mv.w === 9 && mv.h === 2, "move after flag-fall is refused → (9,2)");
         // A later /clocks re-read still shows the flagged seat at 0 (sticks, doesn't tick back up).
         const ck4 = await clkSec(fhub, fcode, 0);
@@ -1894,19 +1894,19 @@ async function main() {
         const hub = new Hub({ storage: new FakeStorage() });
         const c = await req(hub, "/api/create.png?game=1&tok=LVHOST001");
         const code = decCode(c);
-        await req(hub, "/api/join.png?code=" + code + "&tok=LVJOIN001");
+        await req(hub, `/api/join.png?code=${code}&tok=LVJOIN001`);
         // A stranger with no seat token can never nuke the match.
-        const lv0 = await req(hub, "/api/leave.png?code=" + code + "&tok=STRANGER9");
+        const lv0 = await req(hub, `/api/leave.png?code=${code}&tok=STRANGER9`);
         ok(lv0.w === 1 && lv0.h === 1, "leave: foreign token → (1,1) no-op");
-        const st0 = await req(hub, "/api/status.png?code=" + code);
+        const st0 = await req(hub, `/api/status.png?code=${code}`);
         ok(st0.w === 2, "leave: match still intact after a foreign-token leave");
         // The seated joiner leaves → lobby is deleted.
-        const lv1 = await req(hub, "/api/leave.png?code=" + code + "&tok=LVJOIN001");
+        const lv1 = await req(hub, `/api/leave.png?code=${code}&tok=LVJOIN001`);
         ok(lv1.w === 1 && lv1.h === 1, "leave: seated player leaving → (1,1)");
-        const pgone = await req(hub, "/api/poll.png?code=" + code + "&since=0");
+        const pgone = await req(hub, `/api/poll.png?code=${code}&since=0`);
         ok(pgone.w === 9 && pgone.h === 9, "leave: opponent's poll now returns (9,9) gone");
         // Leaving an already-gone lobby is a harmless no-op.
-        const lv2 = await req(hub, "/api/leave.png?code=" + code + "&tok=LVHOST001");
+        const lv2 = await req(hub, `/api/leave.png?code=${code}&tok=LVHOST001`);
         ok(lv2.w === 1 && lv2.h === 1, "leave: already-gone lobby → (1,1) no-op");
 
         // B) 3-seat durak: a live table. One seat leaves → the table PLAYS ON (still 2 present).
@@ -1914,24 +1914,24 @@ async function main() {
         const dhub = new Hub({ storage: new FakeStorage() });
         const dc = await req(dhub, "/api/dcreate.png?n=3&tok=DLHOST01");
         const dcode = decCode(dc);
-        await req(dhub, "/api/djoin.png?code=" + dcode + "&tok=DLPLR201");
-        await req(dhub, "/api/djoin.png?code=" + dcode + "&tok=DLPLR301");
-        await req(dhub, "/api/start.png?code=" + dcode + "&tok=DLHOST01");
+        await req(dhub, `/api/djoin.png?code=${dcode}&tok=DLPLR201`);
+        await req(dhub, `/api/djoin.png?code=${dcode}&tok=DLPLR301`);
+        await req(dhub, `/api/start.png?code=${dcode}&tok=DLHOST01`);
         // Drain the log to the current tail so we can spot the LEFT event that leave appends.
         let tail = 0;
         for (let di = 0; di < 60; di++) {
-            const lg = await req(dhub, "/api/dlog.png?code=" + dcode + "&since=" + di);
+            const lg = await req(dhub, `/api/dlog.png?code=${dcode}&since=${di}`);
             if (lg.w === 1 && lg.h === 1) { tail = di; break; }
         }
         // Seat 2 (DLPLR301) leaves. Table still has seats 0 & 1 → not torn down.
-        const dlv = await req(dhub, "/api/leave.png?code=" + dcode + "&tok=DLPLR301");
+        const dlv = await req(dhub, `/api/leave.png?code=${dcode}&tok=DLPLR301`);
         ok(dlv.w === 1 && dlv.h === 1, "leave(durak-3): seat 2 leaves → (1,1)");
-        const droom = await req(dhub, "/api/droom.png?code=" + dcode);
+        const droom = await req(dhub, `/api/droom.png?code=${dcode}`);
         ok(droom.w >= 50, "leave(durak-3): table still alive & started after a leave");
         // A LEFT(47) event (45 + seat 2) is present in the freshly-appended tail.
         let sawLeft = false, sawOver = false;
         for (let dj = tail; dj < tail + 30; dj++) {
-            let e = await req(dhub, "/api/dlog.png?code=" + dcode + "&since=" + dj);
+            let e = await req(dhub, `/api/dlog.png?code=${dcode}&since=${dj}`);
             if (e.w === 1 && e.h === 1) break;
             if (e.w === 47 && e.h === 1) sawLeft = true;
             if (e.w === 60) sawOver = true;
@@ -1939,38 +1939,38 @@ async function main() {
         ok(sawLeft, "leave(durak-3): LEFT(47) event logged for the departed seat");
         ok(!sawOver, "leave(durak-3): 2 players remain → game NOT over");
         // Now a SECOND seat leaves → only one player left → table torn down.
-        await req(dhub, "/api/leave.png?code=" + dcode + "&tok=DLPLR201");
-        const dgone = await req(dhub, "/api/dlog.png?code=" + dcode + "&since=0");
+        await req(dhub, `/api/leave.png?code=${dcode}&tok=DLPLR201`);
+        const dgone = await req(dhub, `/api/dlog.png?code=${dcode}&since=0`);
         ok(dgone.w === 9 && dgone.h === 9, "leave(durak-3): dropping to 1 player tears the table down");
 
         // C) 3-seat poker: a live table. One seat leaves → folds out, LEFT(50+seat) logged, plays on.
         const phub = new Hub({ storage: new FakeStorage() });
         const pc = await req(phub, "/api/pcreate.png?n=3&tok=PLHOST01");
         const pcode = decCode(pc);
-        await req(phub, "/api/pjoin.png?code=" + pcode + "&tok=PLPLR201");
-        await req(phub, "/api/pjoin.png?code=" + pcode + "&tok=PLPLR301");
-        await req(phub, "/api/pstart.png?code=" + pcode + "&tok=PLHOST01");
+        await req(phub, `/api/pjoin.png?code=${pcode}&tok=PLPLR201`);
+        await req(phub, `/api/pjoin.png?code=${pcode}&tok=PLPLR301`);
+        await req(phub, `/api/pstart.png?code=${pcode}&tok=PLHOST01`);
         let ptail = 0;
         for (let pi = 0; pi < 80; pi++) {
-            const pe = await req(phub, "/api/plog.png?code=" + pcode + "&since=" + pi);
+            const pe = await req(phub, `/api/plog.png?code=${pcode}&since=${pi}`);
             if (pe.w === 1 && pe.h === 1) { ptail = pi; break; }
         }
-        const plv = await req(phub, "/api/leave.png?code=" + pcode + "&tok=PLPLR301");
+        const plv = await req(phub, `/api/leave.png?code=${pcode}&tok=PLPLR301`);
         ok(plv.w === 1 && plv.h === 1, "leave(poker-3): seat 2 leaves → (1,1)");
-        const proom = await req(phub, "/api/proom.png?code=" + pcode);
+        const proom = await req(phub, `/api/proom.png?code=${pcode}`);
         ok(proom.w >= 50, "leave(poker-3): table still alive & started after a leave");
         let sawPLeft = false;
         for (let pj2 = ptail; pj2 < ptail + 30; pj2++) {
-            const pev = await req(phub, "/api/plog.png?code=" + pcode + "&since=" + pj2);
+            const pev = await req(phub, `/api/plog.png?code=${pcode}&since=${pj2}`);
             if (pev.w === 1 && pev.h === 1) break;
             if (pev.w === 52 && pev.h === 1) sawPLeft = true;
         }
         ok(sawPLeft, "leave(poker-3): LEFT(52) event logged for the departed seat");
-        const afterFirstPokerLeave = (await phub.storage.get("l:" + pcode)).state.log.length;
+        const afterFirstPokerLeave = (await phub.storage.get(`l:${pcode}`)).state.log.length;
         for (let repeatLeave = 0; repeatLeave < 20; repeatLeave++) {
-            await req(phub, "/api/leave.png?code=" + pcode + "&tok=PLPLR301");
+            await req(phub, `/api/leave.png?code=${pcode}&tok=PLPLR301`);
         }
-        const afterRepeatedPokerLeave = (await phub.storage.get("l:" + pcode)).state.log.length;
+        const afterRepeatedPokerLeave = (await phub.storage.get(`l:${pcode}`)).state.log.length;
         ok(afterRepeatedPokerLeave === afterFirstPokerLeave,
             "leave(poker-3): repeated leave is idempotent and appends no duplicate LEFT events");
 
@@ -1979,23 +1979,23 @@ async function main() {
         const capHub = new Hub({ storage: new FakeStorage() });
         const capCreate = await req(capHub, "/api/pcreate.png?n=4&tok=CAPLHOST");
         const capCode = decCode(capCreate);
-        await req(capHub, "/api/pjoin.png?code=" + capCode + "&tok=CAPLPLR1");
-        await req(capHub, "/api/pjoin.png?code=" + capCode + "&tok=CAPLPLR2");
-        await req(capHub, "/api/pjoin.png?code=" + capCode + "&tok=CAPLPLR3");
-        await req(capHub, "/api/pstart.png?code=" + capCode + "&tok=CAPLHOST");
-        const cappedLobby = await capHub.storage.get("l:" + capCode);
+        await req(capHub, `/api/pjoin.png?code=${capCode}&tok=CAPLPLR1`);
+        await req(capHub, `/api/pjoin.png?code=${capCode}&tok=CAPLPLR2`);
+        await req(capHub, `/api/pjoin.png?code=${capCode}&tok=CAPLPLR3`);
+        await req(capHub, `/api/pstart.png?code=${capCode}&tok=CAPLHOST`);
+        const cappedLobby = await capHub.storage.get(`l:${capCode}`);
         cappedLobby.state.log = new Array(1200).fill({ w: 2, h: 1 });
-        await capHub.storage.put("l:" + capCode, cappedLobby);
-        await req(capHub, "/api/leave.png?code=" + capCode + "&tok=CAPLPLR3");
-        ok((await req(capHub, "/api/plog.png?code=" + capCode + "&since=0")).w === 9,
+        await capHub.storage.put(`l:${capCode}`, cappedLobby);
+        await req(capHub, `/api/leave.png?code=${capCode}&tok=CAPLPLR3`);
+        ok((await req(capHub, `/api/plog.png?code=${capCode}&since=0`)).w === 9,
             "leave(poker-4): MOVE_CAP departure tears down instead of growing the log");
 
         // D) Pre-start lobby: leave behaves like cancel (tears down a waiting lobby).
         const whub = new Hub({ storage: new FakeStorage() });
         const wc = await req(whub, "/api/create.png?game=1&tok=WLHOST001");
         const wcode = decCode(wc);
-        await req(whub, "/api/leave.png?code=" + wcode + "&tok=WLHOST001");
-        const wstat = await req(whub, "/api/status.png?code=" + wcode);
+        await req(whub, `/api/leave.png?code=${wcode}&tok=WLHOST001`);
+        const wstat = await req(whub, `/api/status.png?code=${wcode}`);
         ok(wstat.w === 9, "leave: pre-start host leaving tears the waiting lobby down");
 
         // E) Pre-start MULTI-seat leave keeps the table. A joiner walking away (closing the Esc
@@ -2005,29 +2005,29 @@ async function main() {
         const hhub = new Hub({ storage: new FakeStorage() });
         const hc = await req(hhub, "/api/dcreate.png?n=4&tok=HOLEHOST");
         const hcode = decCode(hc);
-        const hj1 = await req(hhub, "/api/djoin.png?code=" + hcode + "&tok=HOLEJ001");
-        const hj2 = await req(hhub, "/api/djoin.png?code=" + hcode + "&tok=HOLEJ002");
+        const hj1 = await req(hhub, `/api/djoin.png?code=${hcode}&tok=HOLEJ001`);
+        const hj2 = await req(hhub, `/api/djoin.png?code=${hcode}&tok=HOLEJ002`);
         ok(hj1.h === 2 && hj2.h === 3, "hole: joiners took seats 1 and 2");
-        const hlv = await req(hhub, "/api/leave.png?code=" + hcode + "&tok=HOLEJ001");
+        const hlv = await req(hhub, `/api/leave.png?code=${hcode}&tok=HOLEJ001`);
         ok(hlv.w === 1 && hlv.h === 1, "hole: pre-start joiner leave → (1,1)");
-        const hroom = await req(hhub, "/api/droom.png?code=" + hcode);
+        const hroom = await req(hhub, `/api/droom.png?code=${hcode}`);
         ok(hroom.w !== 9, "hole: table SURVIVES a pre-start joiner leave");
         ok(hroom.w === 2, "hole: droom reports 2 present (not the 3 seats ever handed out)");
         // The seat-2 player must keep index 2 - compacting would have handed it index 1.
-        const hre = await req(hhub, "/api/djoin.png?code=" + hcode + "&tok=HOLEJ002");
+        const hre = await req(hhub, `/api/djoin.png?code=${hcode}&tok=HOLEJ002`);
         ok(hre.h === 3, "hole: the remaining joiner still holds seat 2 (no renumbering)");
         // A fresh joiner refills the hole rather than growing the table past cap.
-        const hj3 = await req(hhub, "/api/djoin.png?code=" + hcode + "&tok=HOLEJ003");
+        const hj3 = await req(hhub, `/api/djoin.png?code=${hcode}&tok=HOLEJ003`);
         ok(hj3.h === 2, "hole: a new joiner is seated INTO the vacated index 1");
-        ok((await req(hhub, "/api/droom.png?code=" + hcode)).w === 3, "hole: droom back to 3 present");
-        const refilledDurak = await hhub.storage.get("l:" + hcode);
+        ok((await req(hhub, `/api/droom.png?code=${hcode}`)).w === 3, "hole: droom back to 3 present");
+        const refilledDurak = await hhub.storage.get(`l:${hcode}`);
         ok(!refilledDurak.left || refilledDurak.left.indexOf(1) < 0,
             "hole: djoin clears the replacement seat's stale left marker");
         // Start, then let the other original joiner leave. Host + replacement are still live, so
         // stale departure bookkeeping must not tear their table down.
-        await req(hhub, "/api/start.png?code=" + hcode + "&tok=HOLEHOST");
-        await req(hhub, "/api/leave.png?code=" + hcode + "&tok=HOLEJ002");
-        const refilledDurakRoom = await req(hhub, "/api/droom.png?code=" + hcode);
+        await req(hhub, `/api/start.png?code=${hcode}&tok=HOLEHOST`);
+        await req(hhub, `/api/leave.png?code=${hcode}&tok=HOLEJ002`);
+        const refilledDurakRoom = await req(hhub, `/api/droom.png?code=${hcode}`);
         ok(refilledDurakRoom.w === 52,
             "hole: later leave keeps the started Durak table alive with host + replacement");
 
@@ -2035,9 +2035,9 @@ async function main() {
         const hostLeaveHub = new Hub({ storage: new FakeStorage() });
         const hostLeaveCreate = await req(hostLeaveHub, "/api/dcreate.png?n=3&tok=HLHOST01");
         const hostLeaveCode = decCode(hostLeaveCreate);
-        await req(hostLeaveHub, "/api/djoin.png?code=" + hostLeaveCode + "&tok=HLJOIN01");
-        await req(hostLeaveHub, "/api/leave.png?code=" + hostLeaveCode + "&tok=HLHOST01");
-        ok((await req(hostLeaveHub, "/api/droom.png?code=" + hostLeaveCode)).w === 9,
+        await req(hostLeaveHub, `/api/djoin.png?code=${hostLeaveCode}&tok=HLJOIN01`);
+        await req(hostLeaveHub, `/api/leave.png?code=${hostLeaveCode}&tok=HLHOST01`);
+        ok((await req(hostLeaveHub, `/api/droom.png?code=${hostLeaveCode}`)).w === 9,
             "hole: pre-start HOST leave still tears the table down");
 
         // F) Start with an unfilled hole: the deal must run and fold the empty seat out, so the
@@ -2045,14 +2045,14 @@ async function main() {
         const ghub = new Hub({ storage: new FakeStorage() });
         const gc = await req(ghub, "/api/dcreate.png?n=4&tok=GAPHOST1");
         const gcode = decCode(gc);
-        await req(ghub, "/api/djoin.png?code=" + gcode + "&tok=GAPJ0001");
-        await req(ghub, "/api/djoin.png?code=" + gcode + "&tok=GAPJ0002");
-        await req(ghub, "/api/leave.png?code=" + gcode + "&tok=GAPJ0001");   // hole at seat 1
-        const gst = await req(ghub, "/api/start.png?code=" + gcode + "&tok=GAPHOST1");
+        await req(ghub, `/api/djoin.png?code=${gcode}&tok=GAPJ0001`);
+        await req(ghub, `/api/djoin.png?code=${gcode}&tok=GAPJ0002`);
+        await req(ghub, `/api/leave.png?code=${gcode}&tok=GAPJ0001`);   // hole at seat 1
+        const gst = await req(ghub, `/api/start.png?code=${gcode}&tok=GAPHOST1`);
         ok(gst.w === 1 && gst.h === 1, "gap: host can start a durak table with a hole in it");
         let sawGapLeft = false, gapEvents = 0;
         for (let gi = 0; gi < 60; gi++) {
-            const gev = await req(ghub, "/api/dlog.png?code=" + gcode + "&since=" + gi);
+            const gev = await req(ghub, `/api/dlog.png?code=${gcode}&since=${gi}`);
             if (gev.w === 1 && gev.h === 1) break;
             gapEvents++;
             if (gev.w === 46) sawGapLeft = true;                 // LEFT(seat 1) = 45 + 1
@@ -2063,17 +2063,17 @@ async function main() {
         const qhub = new Hub({ storage: new FakeStorage() });
         const qc = await req(qhub, "/api/pcreate.png?n=4&tok=GAPPHST1");
         const qcode = decCode(qc);
-        await req(qhub, "/api/pjoin.png?code=" + qcode + "&tok=GAPPJ001");
-        await req(qhub, "/api/pjoin.png?code=" + qcode + "&tok=GAPPJ002");
-        await req(qhub, "/api/leave.png?code=" + qcode + "&tok=GAPPJ001");
-        const qbad = await req(qhub, "/api/pstart.png?code=" + qcode + "&tok=GAPPJ002");
+        await req(qhub, `/api/pjoin.png?code=${qcode}&tok=GAPPJ001`);
+        await req(qhub, `/api/pjoin.png?code=${qcode}&tok=GAPPJ002`);
+        await req(qhub, `/api/leave.png?code=${qcode}&tok=GAPPJ001`);
+        const qbad = await req(qhub, `/api/pstart.png?code=${qcode}&tok=GAPPJ002`);
         ok(qbad.w === 9 && qbad.h === 1, "gap: non-host cannot deal a partial poker table");
-        const qst = await req(qhub, "/api/pstart.png?code=" + qcode + "&tok=GAPPHST1");
+        const qst = await req(qhub, `/api/pstart.png?code=${qcode}&tok=GAPPHST1`);
         ok(qst.w === 1 && qst.h === 1, "gap: host can deal a poker table with a hole in it");
-        ok((await req(qhub, "/api/proom.png?code=" + qcode)).w >= 50, "gap: poker table reports started");
+        ok((await req(qhub, `/api/proom.png?code=${qcode}`)).w >= 50, "gap: poker table reports started");
         let sawPokerGapLeft = false;
         for (let qgi = 0; qgi < 20; qgi++) {
-            const qgev = await req(qhub, "/api/plog.png?code=" + qcode + "&since=" + qgi);
+            const qgev = await req(qhub, `/api/plog.png?code=${qcode}&since=${qgi}`);
             if (qgev.w === 1 && qgev.h === 1) break;
             if (qgev.w === 51) sawPokerGapLeft = true;              // LEFT(seat 1) = 50 + 1
         }
@@ -2084,17 +2084,17 @@ async function main() {
         const pHoleHub = new Hub({ storage: new FakeStorage() });
         const pHoleCreate = await req(pHoleHub, "/api/pcreate.png?n=4&tok=PHOLHOST");
         const pHoleCode = decCode(pHoleCreate);
-        await req(pHoleHub, "/api/pjoin.png?code=" + pHoleCode + "&tok=PHOLPLR1");
-        await req(pHoleHub, "/api/pjoin.png?code=" + pHoleCode + "&tok=PHOLPLR2");
-        await req(pHoleHub, "/api/leave.png?code=" + pHoleCode + "&tok=PHOLPLR1");
-        const pHoleJoin = await req(pHoleHub, "/api/pjoin.png?code=" + pHoleCode + "&tok=PHOLREPL");
+        await req(pHoleHub, `/api/pjoin.png?code=${pHoleCode}&tok=PHOLPLR1`);
+        await req(pHoleHub, `/api/pjoin.png?code=${pHoleCode}&tok=PHOLPLR2`);
+        await req(pHoleHub, `/api/leave.png?code=${pHoleCode}&tok=PHOLPLR1`);
+        const pHoleJoin = await req(pHoleHub, `/api/pjoin.png?code=${pHoleCode}&tok=PHOLREPL`);
         ok(pHoleJoin.h === 2, "hole: pjoin reuses the vacated seat index");
-        const refilledPoker = await pHoleHub.storage.get("l:" + pHoleCode);
+        const refilledPoker = await pHoleHub.storage.get(`l:${pHoleCode}`);
         ok(!refilledPoker.left || refilledPoker.left.indexOf(1) < 0,
             "hole: pjoin clears the replacement seat's stale left marker");
-        await req(pHoleHub, "/api/pstart.png?code=" + pHoleCode + "&tok=PHOLHOST");
-        await req(pHoleHub, "/api/leave.png?code=" + pHoleCode + "&tok=PHOLPLR2");
-        ok((await req(pHoleHub, "/api/proom.png?code=" + pHoleCode)).w === 52,
+        await req(pHoleHub, `/api/pstart.png?code=${pHoleCode}&tok=PHOLHOST`);
+        await req(pHoleHub, `/api/leave.png?code=${pHoleCode}&tok=PHOLPLR2`);
+        ok((await req(pHoleHub, `/api/proom.png?code=${pHoleCode}`)).w === 52,
             "hole: later leave keeps the started Poker table alive with host + replacement");
 
         // G) /api/join must REFUSE an mquick lobby. It sits at game 0 until a seeker resolves it
@@ -2104,9 +2104,9 @@ async function main() {
         const mhub = new Hub({ storage: new FakeStorage() });
         const mc = await req(mhub, "/api/mquick.png?games=1,2&tok=MQHOST001");
         const mcode = decCode(mc);
-        const mj = await req(mhub, "/api/join.png?code=" + mcode + "&tok=MQJOIN001");
+        const mj = await req(mhub, `/api/join.png?code=${mcode}&tok=MQJOIN001`);
         ok(mj.w === 20 && mj.h === 1, "mquick: generic /api/join is refused with (20,1) missing");
-        const mstat = await req(mhub, "/api/status.png?code=" + mcode);
+        const mstat = await req(mhub, `/api/status.png?code=${mcode}`);
         ok(mstat.w === 1, "mquick: the lobby is untouched - still waiting with 1 player");
         // …and the intended path still works: a seeker matches through mquick itself.
         const ms = await req(mhub, "/api/mquick.png?games=2,4&tok=MQSEEK001");
@@ -2120,19 +2120,19 @@ async function main() {
         const q1 = await req(xhub, "/api/quick.png?game=2&tok=SELFMTCH");
         const q2 = await req(xhub, "/api/quick.png?game=2&tok=SELFMTCH");
         ok(decCode(q1) !== decCode(q2), "self-match: a second quick with the same token does NOT join its own lobby");
-        ok((await req(xhub, "/api/status.png?code=" + decCode(q1))).w === 1, "self-match: the first lobby is still waiting for a real opponent");
+        ok((await req(xhub, `/api/status.png?code=${decCode(q1)}`)).w === 1, "self-match: the first lobby is still waiting for a real opponent");
         // A different token matches into whichever lobby currently owns the queue slot (the second
         // host overwrote it), but it must be a REAL match: two players in one lobby.
         const q3 = await req(xhub, "/api/quick.png?game=2&tok=OTHERPLR");
-        ok((await req(xhub, "/api/status.png?code=" + decCode(q3))).w === 2, "self-match: a DIFFERENT token still matches into a waiting lobby");
+        ok((await req(xhub, `/api/status.png?code=${decCode(q3)}`)).w === 2, "self-match: a DIFFERENT token still matches into a waiting lobby");
         // Typing your own private code is idempotent, not a second seat.
         const chub = new Hub({ storage: new FakeStorage() });
         const cc = await req(chub, "/api/create.png?game=2&tok=SELFJOIN");
         const ccode = decCode(cc);
-        const selfJoin = await req(chub, "/api/join.png?code=" + ccode + "&tok=SELFJOIN");
+        const selfJoin = await req(chub, `/api/join.png?code=${ccode}&tok=SELFJOIN`);
         ok(selfJoin.w === 2, "self-join: the host typing its own code gets an idempotent reply");
-        ok((await req(chub, "/api/status.png?code=" + ccode)).w === 1, "self-join: the lobby still has ONE player");
-        ok((await req(chub, "/api/join.png?code=" + ccode + "&tok=REALJOIN")).w === 2, "self-join: a real joiner can still take seat 1");
+        ok((await req(chub, `/api/status.png?code=${ccode}`)).w === 1, "self-join: the lobby still has ONE player");
+        ok((await req(chub, `/api/join.png?code=${ccode}&tok=REALJOIN`)).w === 2, "self-join: a real joiner can still take seat 1");
 
         // H) Rematch on a 3-seat table needs EVERY seat, not just seats 0 and 1. Two players used
         // to be able to reset the game from under the third: state was re-initialised and the
@@ -2141,40 +2141,40 @@ async function main() {
         const rhub = new Hub({ storage: new FakeStorage() });
         const rc = await req(rhub, "/api/dcreate.png?n=3&tok=RMHOST01");
         const rcode = decCode(rc);
-        await req(rhub, "/api/djoin.png?code=" + rcode + "&tok=RMPLR001");
-        await req(rhub, "/api/djoin.png?code=" + rcode + "&tok=RMPLR002");
-        await req(rhub, "/api/start.png?code=" + rcode + "&tok=RMHOST01");
+        await req(rhub, `/api/djoin.png?code=${rcode}&tok=RMPLR001`);
+        await req(rhub, `/api/djoin.png?code=${rcode}&tok=RMPLR002`);
+        await req(rhub, `/api/start.png?code=${rcode}&tok=RMHOST01`);
         let rlogLen = 0;
         for (let ri = 0; ri < 80; ri++) {
-            const rev = await req(rhub, "/api/dlog.png?code=" + rcode + "&since=" + ri);
+            const rev = await req(rhub, `/api/dlog.png?code=${rcode}&since=${ri}`);
             if (rev.w === 1 && rev.h === 1) { rlogLen = ri; break; }
         }
         ok(rlogLen > 0, "rematch: the started table has a public log");
-        const rm0 = await req(rhub, "/api/rematch.png?code=" + rcode + "&tok=RMHOST01&gen=0");
-        const rm1 = await req(rhub, "/api/rematch.png?code=" + rcode + "&tok=RMPLR001&gen=0");
+        const rm0 = await req(rhub, `/api/rematch.png?code=${rcode}&tok=RMHOST01&gen=0`);
+        const rm1 = await req(rhub, `/api/rematch.png?code=${rcode}&tok=RMPLR001&gen=0`);
         ok(rm0.w === 1 && rm1.w === 1, "rematch: seats 0 and 1 agreeing is NOT enough on a 3-seat table");
-        const stillThere = await req(rhub, "/api/dlog.png?code=" + rcode + "&since=" + (rlogLen - 1));
+        const stillThere = await req(rhub, `/api/dlog.png?code=${rcode}&since=${rlogLen - 1}`);
         ok(!(stillThere.w === 1 && stillThere.h === 1), "rematch: seat 2's log cursor is still valid");
-        const rm2 = await req(rhub, "/api/rematch.png?code=" + rcode + "&tok=RMPLR002&gen=0");
+        const rm2 = await req(rhub, `/api/rematch.png?code=${rcode}&tok=RMPLR002&gen=0`);
         ok(rm2.w === 2, "rematch: the LAST seat agreeing performs the reset");
-        ok((await req(rhub, "/api/droom.png?code=" + rcode)).w === 53,
+        ok((await req(rhub, `/api/droom.png?code=${rcode}`)).w === 53,
             "rematch: all 3 seats are automatically dealt a fresh Durak game");
-        const freshDurakLog = await req(rhub, "/api/dlog.png?code=" + rcode + "&since=0");
+        const freshDurakLog = await req(rhub, `/api/dlog.png?code=${rcode}&since=0`);
         ok(freshDurakLog.w === 2, "rematch: fresh Durak log begins with TRUMP, not an empty poll");
         // An empty seat can never answer, so it must not hold the rematch hostage.
         const ehub = new Hub({ storage: new FakeStorage() });
         const ec = await req(ehub, "/api/dcreate.png?n=3&tok=RMEHOST1");
         const ecode = decCode(ec);
-        await req(ehub, "/api/djoin.png?code=" + ecode + "&tok=RMEPLR01");
-        await req(ehub, "/api/djoin.png?code=" + ecode + "&tok=RMEPLR02");
-        await req(ehub, "/api/start.png?code=" + ecode + "&tok=RMEHOST1");
-        await req(ehub, "/api/leave.png?code=" + ecode + "&tok=RMEPLR02");   // seat 2 walks out mid-game
-        await req(ehub, "/api/rematch.png?code=" + ecode + "&tok=RMEHOST1&gen=0");
-        const erm = await req(ehub, "/api/rematch.png?code=" + ecode + "&tok=RMEPLR01&gen=0");
+        await req(ehub, `/api/djoin.png?code=${ecode}&tok=RMEPLR01`);
+        await req(ehub, `/api/djoin.png?code=${ecode}&tok=RMEPLR02`);
+        await req(ehub, `/api/start.png?code=${ecode}&tok=RMEHOST1`);
+        await req(ehub, `/api/leave.png?code=${ecode}&tok=RMEPLR02`);   // seat 2 walks out mid-game
+        await req(ehub, `/api/rematch.png?code=${ecode}&tok=RMEHOST1&gen=0`);
+        const erm = await req(ehub, `/api/rematch.png?code=${ecode}&tok=RMEPLR01&gen=0`);
         ok(erm.w === 2, "rematch: a departed seat does not block the remaining players");
-        ok((await req(ehub, "/api/droom.png?code=" + ecode)).w === 52,
+        ok((await req(ehub, `/api/droom.png?code=${ecode}`)).w === 52,
             "rematch: remaining Durak seats are automatically redealt");
-        const departedFreshLog = await req(ehub, "/api/dlog.png?code=" + ecode + "&since=0");
+        const departedFreshLog = await req(ehub, `/api/dlog.png?code=${ecode}&since=0`);
         ok(departedFreshLog.w === 2,
             "rematch: Durak redeal with a departed seat still begins with TRUMP");
 
@@ -2183,16 +2183,16 @@ async function main() {
         const pokerRematchHub = new Hub({ storage: new FakeStorage() });
         const pokerRematchCreate = await req(pokerRematchHub, "/api/pcreate.png?n=2&tok=PRMHOST1");
         const pokerRematchCode = decCode(pokerRematchCreate);
-        await req(pokerRematchHub, "/api/pjoin.png?code=" + pokerRematchCode + "&tok=PRMJOIN1");
-        await req(pokerRematchHub, "/api/pstart.png?code=" + pokerRematchCode + "&tok=PRMHOST1");
-        await req(pokerRematchHub, "/api/rematch.png?code=" + pokerRematchCode + "&tok=PRMHOST1&gen=0");
+        await req(pokerRematchHub, `/api/pjoin.png?code=${pokerRematchCode}&tok=PRMJOIN1`);
+        await req(pokerRematchHub, `/api/pstart.png?code=${pokerRematchCode}&tok=PRMHOST1`);
+        await req(pokerRematchHub, `/api/rematch.png?code=${pokerRematchCode}&tok=PRMHOST1&gen=0`);
         const pokerRematchDone = await req(pokerRematchHub,
-            "/api/rematch.png?code=" + pokerRematchCode + "&tok=PRMJOIN1&gen=0");
+            `/api/rematch.png?code=${pokerRematchCode}&tok=PRMJOIN1&gen=0`);
         ok(pokerRematchDone.w === 2, "rematch: both Poker seats complete the handshake");
-        ok((await req(pokerRematchHub, "/api/proom.png?code=" + pokerRematchCode)).w === 52,
+        ok((await req(pokerRematchHub, `/api/proom.png?code=${pokerRematchCode}`)).w === 52,
             "rematch: Poker table is automatically dealt again");
         const freshPokerLog = await req(pokerRematchHub,
-            "/api/plog.png?code=" + pokerRematchCode + "&since=0");
+            `/api/plog.png?code=${pokerRematchCode}&since=0`);
         ok(freshPokerLog.w === 2, "rematch: fresh Poker log begins with HAND, not an empty poll");
 
         // I) Durak PASS is idempotent. applyPass always was, but the event push was not, so a seat
@@ -2205,22 +2205,22 @@ async function main() {
         let sc = await req(shub, "/api/dcreate.png?n=3&tok=SPHOST01");
         const scode = decCode(sc);
         const stoks = ["SPHOST01", "SPPLR001", "SPPLR002"];
-        await req(shub, "/api/djoin.png?code=" + scode + "&tok=SPPLR001");
-        await req(shub, "/api/djoin.png?code=" + scode + "&tok=SPPLR002");
-        await req(shub, "/api/start.png?code=" + scode + "&tok=SPHOST01");
-        const sOpenEv = await req(shub, "/api/dlog.png?code=" + scode + "&since=1");
+        await req(shub, `/api/djoin.png?code=${scode}&tok=SPPLR001`);
+        await req(shub, `/api/djoin.png?code=${scode}&tok=SPPLR002`);
+        await req(shub, `/api/start.png?code=${scode}&tok=SPHOST01`);
+        const sOpenEv = await req(shub, `/api/dlog.png?code=${scode}&since=1`);
         const sOpen = sOpenEv.h - 1, sDef = (sOpen + 1) % 3;
-        const sAtk = (await req(shub, "/api/ddraw.png?code=" + scode + "&tok=" + stoks[sOpen] + "&i=0")).w - 2;
-        await req(shub, "/api/dact.png?code=" + scode + "&tok=" + stoks[sOpen] + "&a=1&c=" + sAtk);
+        const sAtk = (await req(shub, `/api/ddraw.png?code=${scode}&tok=${stoks[sOpen]}&i=0`)).w - 2;
+        await req(shub, `/api/dact.png?code=${scode}&tok=${stoks[sOpen]}&a=1&c=${sAtk}`);
         let sCovered = false;
         for (let sdi = 0; sdi < 6 && !sCovered; sdi++) {
-            const sdc = (await req(shub, "/api/ddraw.png?code=" + scode + "&tok=" + stoks[sDef] + "&i=" + sdi)).w - 2;
-            const scov = await req(shub, "/api/dact.png?code=" + scode + "&tok=" + stoks[sDef] + "&a=2&p=0&c=" + sdc);
+            const sdc = (await req(shub, `/api/ddraw.png?code=${scode}&tok=${stoks[sDef]}&i=${sdi}`)).w - 2;
+            const scov = await req(shub, `/api/dact.png?code=${scode}&tok=${stoks[sDef]}&a=2&p=0&c=${sdc}`);
             if (scov.w === 1 && scov.h === 1) sCovered = true;
         }
         async function logLen(hub, c) {
             for (let i = 0; i < 400; i++) {
-                let e = await req(hub, "/api/dlog.png?code=" + c + "&since=" + i);
+                let e = await req(hub, `/api/dlog.png?code=${c}&since=${i}`);
                 if (e.w === 1 && e.h === 1) return i;
             }
             return -1;
@@ -2230,22 +2230,22 @@ async function main() {
             // for the co-attacker - so the pass window stays open, which is the state the unbounded
             // push exploited. (If the co-attacker held no legal throw-in the cover already beat the
             // table; then there is nothing to spam and we skip, same as the durak-pass test does.)
-            const firstPass = await req(shub, "/api/dact.png?code=" + scode + "&tok=" + stoks[sOpen] + "&a=4");
+            const firstPass = await req(shub, `/api/dact.png?code=${scode}&tok=${stoks[sOpen]}&a=4`);
             const afterFirst = await logLen(shub, scode);
-            const stillOpen = (await req(shub, "/api/dact.png?code=" + scode + "&tok=" + stoks[sOpen] + "&a=4")).w === 1;
+            const stillOpen = (await req(shub, `/api/dact.png?code=${scode}&tok=${stoks[sOpen]}&a=4`)).w === 1;
             if (firstPass.w === 1 && stillOpen) {
                 // Re-passing the SAME already-settled seat must be a no-op. Without the guard each
                 // call pushed another PASS event, and st.pub had no MOVE_CAP ceiling.
                 for (let sp = 0; sp < 40; sp++)
-                    await req(shub, "/api/dact.png?code=" + scode + "&tok=" + stoks[sOpen] + "&a=4");
+                    await req(shub, `/api/dact.png?code=${scode}&tok=${stoks[sOpen]}&a=4`);
                 const afterSpam = await logLen(shub, scode);
                 ok(afterSpam === afterFirst,
-                    "pass-spam: 41 re-passes from a settled seat add 0 events (added " + (afterSpam - afterFirst) + ")");
+                    `pass-spam: 41 re-passes from a settled seat add 0 events (added ${afterSpam - afterFirst})`);
             }
         }
     })();
 
-    console.log("\nALL SERVER TESTS PASSED (" + passed + " checks)");
+    console.log(`\nALL SERVER TESTS PASSED (${passed} checks)`);
 }
 
 main().catch((e) => { console.error(e); process.exitCode = 1; });

@@ -11,12 +11,12 @@ new Function(fs.readFileSync(path.join(rulesDir, "poker.js"), "utf8"))();
 const M = globalThis.MGRules.poker;
 
 let failures = 0;
-function ok(cond, msg) { if (!cond) { failures++; console.log("  ✗ " + msg); } else { console.log("  ✓ " + msg); } }
+function ok(cond, msg) { if (!cond) { failures++; console.log(`  ✗ ${msg}`); } else { console.log(`  ✓ ${msg}`); } }
 
 // Build a card id from suit char + rank char, using the engine's own tables.
 function card(s, r) {
     const suit = M.SUIT_CHARS.indexOf(s), rank = M.RANK_CHARS.indexOf(r);
-    if (suit < 0 || rank < 0) throw new Error("bad card " + s + r);
+    if (suit < 0 || rank < 0) throw new Error(`bad card ${s}${r}`);
     return suit * 13 + rank;
 }
 function hand() { const a = []; for (let i = 0; i < arguments.length; i++) a.push(card(arguments[i][0], arguments[i][1])); return a; }
@@ -175,8 +175,8 @@ console.log("full bot games (chip conservation + termination)");
             played++;
         }
     }
-    ok(played > 0, "bot games ran (" + played + " hands)");
-    ok(allConserved, "chips conserved across every hand (=" + (NUM * START) + ")");
+    ok(played > 0, `bot games ran (${played} hands)`);
+    ok(allConserved, `chips conserved across every hand (=${NUM * START})`);
     ok(allTerminated, "every hand terminated with only legal bot actions");
 })();
 

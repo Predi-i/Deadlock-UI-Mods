@@ -47,7 +47,7 @@ const banner =
 let out = banner;
 out += "/* ── shared rules (from panorama/scripts/rules/*.js; attach to globalThis.MGRules) ── */\n";
 for (const name of RULES) {
-    out += "// ---- rules/" + name + " ----\n";
+    out += `// ---- rules/${name} ----\n`;
     out += read(path.join(rulesDir, name)).replace(/\s*$/, "") + "\n\n";
 }
 out += "/* ── generated Pixel Battle land mask ── */\n";
@@ -68,7 +68,7 @@ if (process.argv.indexOf("--check") !== -1) {
         process.exit(0);
     }
     console.log("STALE worker.js - it does not match its sources. Run: node tools/build_worker.js");
-    if (current !== null) console.log("  (committed " + current.length + " bytes, sources produce " + out.length + ")");
+    if (current !== null) console.log(`  (committed ${current.length} bytes, sources produce ${out.length})`);
     process.exit(1);
 }
 

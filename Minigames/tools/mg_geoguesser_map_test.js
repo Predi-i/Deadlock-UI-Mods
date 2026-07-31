@@ -24,7 +24,7 @@ assert(png.length > 24 && png[0] === 137 && png[1] === 80, "GeoGuesser map must 
 // so any other aspect silently skews every guess. 2048x1024 keeps the 8x zoom readable.
 const mapW = png.readUInt32BE(16), mapH = png.readUInt32BE(20);
 assert(mapW === 2048 && mapH === 1024,
-    "GeoGuesser map must be 2048x1024 (2:1 equirectangular), got " + mapW + "x" + mapH);
+    `GeoGuesser map must be 2048x1024 (2:1 equirectangular), got ${mapW}x${mapH}`);
 
 // Every layer the builder draws must be committed, or a rebuild silently loses detail.
 // ne_50m_urban_areas is deliberately NOT here any more: the natural-colour raster already carries
@@ -33,7 +33,7 @@ assert(mapW === 2048 && mapH === 1024,
     "ne_110m_admin_1_states_provinces_lines",
     "ne_110m_populated_places"].forEach((layer) => {
     const file = path.join(assetDir, layer + ".geojson");
-    assert(fs.existsSync(file), "missing Natural Earth layer: " + layer);
+    assert(fs.existsSync(file), `missing Natural Earth layer: ${layer}`);
 });
 const countries = JSON.parse(
     fs.readFileSync(path.join(assetDir, "ne_50m_admin_0_countries.geojson"), "utf8"));
@@ -57,7 +57,9 @@ assert(/images\/geoguesser\/world_map\.vtex/.test(controller),
     "the game board must use the dedicated GeoGuesser map");
 // The picker card takes the SAME cards/<key>.vtex path as every other game. It used to
 // special-case id 9 onto world_map.vtex because no card art existed; a map is not card art.
-assert(/"s2r:\/\/panorama\/images\/cards\/" \+ g\.key \+ "\.vtex"/.test(ui) &&
+// Accept either the concatenated or the template-literal spelling; the PATH is the invariant.
+assert((/"s2r:\/\/panorama\/images\/cards\/" \+ g\.key \+ "\.vtex"/.test(ui) ||
+    /`s2r:\/\/panorama\/images\/cards\/\$\{g\.key\}\.vtex`/.test(ui)) &&
     !/g\.id === 9/.test(ui),
     "the picker card must use cards/<key>.vtex, with no GeoGuesser special case");
 
@@ -65,7 +67,7 @@ assert(/"s2r:\/\/panorama\/images\/cards\/" \+ g\.key \+ "\.vtex"/.test(ui) &&
 // the generated manifest must exist, be loaded BEFORE the controller, and carry usable records.
 assert(/MG\.GeoCities = \[/.test(citiesSrc), "city manifest must publish MG.GeoCities");
 const cityCount = (citiesSrc.match(/"n":/g) || []).length;
-assert(cityCount >= 200, "expected the full populated-places set, got " + cityCount);
+assert(cityCount >= 200, `expected the full populated-places set, got ${cityCount}`);
 assert(/"x":[\d.]+,"y":[\d.]+,"r":\d/.test(citiesSrc),
     "city records must carry map fractions plus a SCALERANK for the zoom threshold");
 const citiesInclude = baseHud.indexOf("mg_geoguesser_cities.generated");

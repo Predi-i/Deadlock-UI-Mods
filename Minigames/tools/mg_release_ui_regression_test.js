@@ -208,7 +208,7 @@ assert(/MG\.Net\.isLevelEncodedSize\(loadedW, loadedH\)/.test(geo) &&
         }
     });
     assert(bad.length === 0,
-        "unknown <Image> scaling token (silently falls back to native size):\n  " + bad.join("\n  "));
+        `unknown <Image> scaling token (silently falls back to native size):\n  ${bad.join("\n  ")}`);
 })();
 assert(/\b(?:var|let|const) PANO_SCALING = "cover"/.test(geo) &&
     !/scaling: *"stretch-to-fit"/.test(geo),
@@ -244,7 +244,7 @@ assert(/\.mg-geo-stage\s*\{[^}]*\}/.test(css) &&
         "\\.mg-geo-camera-controls\\s*\\{", "\\.mg-geo-lower\\s*\\{"];
     want.forEach((sel) => {
         const block = new RegExp(sel + "[^}]*width:\\s*860px;").test(css);
-        assert(block, "GeoGuesser row " + sel.replace(/\\\\|\\s\*\\\{/g, "") + " must be 860px wide");
+        assert(block, `GeoGuesser row ${sel.replace(/\\\\|\\s\*\\\{/g, "")} must be 860px wide`);
     });
     assert(/\b(?:var|let|const) VIEW_W = 860, VIEW_H = 360;/.test(geo) &&
         /\.mg-geo-viewport\s*\{[^}]*height:\s*360px;/.test(css),
@@ -322,7 +322,7 @@ assert(/\.mg-geo-camera-controls Slider\.HorizontalSlider #SliderThumb\s*\{[\s\S
             glow.push((i + 1) + ": " + line.trim());
         }
     });
-    assert(glow.length === 0, "no outer glow allowed in mg.css, found:\n  " + glow.join("\n  "));
+    assert(glow.length === 0, `no outer glow allowed in mg.css, found:\n  ${glow.join("\n  ")}`);
 })();
 assert(/\.mg-geo-cell\s*\{[\s\S]{0,250}width:\s*fill-parent-flow\(1\);[\s\S]{0,250}border-radius:\s*50%;/.test(css),
     "GeoGuesser map selection must render as fine circular markers, not coarse squares");
@@ -379,17 +379,17 @@ assert(!/geocredit"[^)]*i:/.test(net) && !/GEO_CREDIT_ALPHABET/.test(worker) &&
         const country = parts[6] || "";
         const continent = Number(parts[7]);
         assert(creditKeys.indexOf(parts[0] + "|" + parts[5]) >= 0,
-            "pooled provider missing from the credit table: " + parts[5]);
+            `pooled provider missing from the credit table: ${parts[5]}`);
         if (!country) { assert(continent === -1, "an unplaced row must carry continent -1"); continue; }
         assert(countries.indexOf(country) >= 0,
-            "pooled country missing from the country table: " + country);
-        assert(continent >= 0 && continent < 6, "bad continent for " + country);
+            `pooled country missing from the country table: ${country}`);
+        assert(continent >= 0 && continent < 6, `bad continent for ${country}`);
         placed++;
     }
     // Almost every row should be placed; a build that suddenly cannot name most of the pool means
     // the country resolver broke, not that the world changed.
     assert(placed >= rows.length * 0.95,
-        "most pooled rows must resolve to a country (" + placed + "/" + rows.length + ")");
+        `most pooled rows must resolve to a country (${placed}/${rows.length})`);
     // The place code packs country and continent into one reply: 6 + idx*6 + continent must stay
     // inside the two-base-63-level range, with h=63 reserved for errors.
     assert(6 + countries.length * 6 <= 63 * 63,
@@ -403,7 +403,7 @@ assert(!/geocredit"[^)]*i:/.test(net) && !/GEO_CREDIT_ALPHABET/.test(worker) &&
     assert(packed, "the generated worker must carry the prebuilt GeoGuesser pool");
     const rows = packed[1].split("\\n").filter(Boolean);
     assert(rows.length >= 1000,
-        "the GeoGuesser pool must stay large (found " + rows.length + " locations, want 1000+)");
+        `the GeoGuesser pool must stay large (found ${rows.length} locations, want 1000+)`);
     // Even coverage is the whole point of the offline build: a pool that is 90% Europe makes five
     // rounds feel like one country. Every labelled region must be represented.
     const perRegion = [0, 0, 0, 0, 0, 0];
@@ -412,7 +412,7 @@ assert(!/geocredit"[^)]*i:/.test(net) && !/GEO_CREDIT_ALPHABET/.test(worker) &&
         if (region >= 0 && region < 6) perRegion[region]++;
     }
     assert(perRegion.every((count) => { return count >= 50; }),
-        "every GeoGuesser region needs 50+ pooled locations, got " + perRegion.join("/"));
+        `every GeoGuesser region needs 50+ pooled locations, got ${perRegion.join("/")}`);
 })();
 assert(/bl\.text = selectedGameId === 9 \? "PLAY SOLO" : "PLAY VS BOT"/.test(ui) &&
     /function startGeoSolo\(\)[\s\S]*?MG\.Api\.create\(9,[\s\S]*?\{ solo: true \}/.test(ui) &&

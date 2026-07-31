@@ -206,7 +206,7 @@
         function transformFor(realIdx) {
             let d = toDisplay(realIdx);
             let dr = (d / 8) | 0, dc = d % 8;
-            return "translate3d(" + (dc * SQ + INSET) + "px, " + (dr * SQ + INSET) + "px, 0px)";
+            return `translate3d(${dc * SQ + INSET}px, ${dr * SQ + INSET}px, 0px)`;
         }
 
         let cells = [];
@@ -220,13 +220,13 @@
             // Build 8 explicit rows of 8 cells. Row layout can't mis-wrap the grid the
             // way flow:right-wrap does when a border shaves a pixel off the width.
             for (let dr = 0; dr < 8; dr++) {
-                const rowPanel = $.CreatePanel("Panel", boardPanel, "row_" + dr);
+                const rowPanel = $.CreatePanel("Panel", boardPanel, `row_${dr}`);
                 rowPanel.AddClass("mg-board-row");
                 for (let dc = 0; dc < 8; dc++) {
                     let d = dr * 8 + dc;
                     let i = fromDisplay(d);
                     const r = rowOf(i), c = colOf(i);
-                    var cell = $.CreatePanel("Panel", rowPanel, "cell_" + i);
+                    var cell = $.CreatePanel("Panel", rowPanel, `cell_${i}`);
                     cell.AddClass("mg-cell");
                     cell.AddClass(isDark(r, c) ? "mg-cell-dark" : "mg-cell-light");
                     ((square) => {
@@ -307,7 +307,7 @@
             // (51,46) lands the glyph ~32px out, clear of the circle, and still inside the 60px cell.
             const ox = kind === "file" ? (SQ - 9) : 3;
             const oy = kind === "file" ? (SQ - 14) : 2;
-            lbl.style.transform = "translate3d(" + (x + ox) + "px, " + (y + oy) + "px, 0px)";
+            lbl.style.transform = `translate3d(${x + ox}px, ${y + oy}px, 0px)`;
         }
 
         // interactive defaults to true (live board). Review renders pass false so the snapshot
@@ -539,7 +539,7 @@
         // `droppedPanel` is DragEnd's authoritative 2nd arg (the panel released onto).
         function commitDropMultimethod(droppedPanel) {
             if (destroyed || !myTurn() || selected < 0) {
-                if (DRAG_DEBUG) status("drop ignored: myTurn=" + myTurn() + " selected=" + selected);
+                if (DRAG_DEBUG) status(`drop ignored: myTurn=${myTurn()} selected=${selected}`);
                 return;
             }
             // Capture window positions FIRST, before squareFromGhost() reparents the ghost
@@ -565,7 +565,7 @@
                 const lwS = lw ? (Math.round(lw.x) + "," + Math.round(lw.y)) : "null";
                 const gwS = gw ? (Math.round(gw.x) + "," + Math.round(gw.y)) : "null";
                 const lwd = (piecesLayer && piecesLayer.actuallayoutwidth) || "?";
-                status("DROP " + (matched >= 0 ? ("OK via " + via + "->" + matched) : "MISS") +
+                status("DROP " + (matched >= 0 ? (`OK via ${via}->${matched}`) : "MISS") +
                     " | win=" + wSq + " g(" + gwS + ") L(" + lwS + ") lw=" + lwd +
                     " | panel=" + dpid + "->" + aPanel + " over=" + bOver + "(" + dragEnterCount + "e) ghost=" + cGhost +
                     " | targets=[" + tg.join(",") + "]");
@@ -1151,7 +1151,7 @@
             refreshHighlights();
             if (clock) clock.stop();
             const lost = reason === "time" ? " (on time)" : "";
-            status(winner === myColor ? ("🏆 You win!" + lost) : ("You lose." + lost));
+            status(winner === myColor ? (`🏆 You win!${lost}`) : (`You lose.${lost}`));
             sfx("GameEnd");
             if (session.onGameOver) session.onGameOver(winner === myColor ? "win" : "lose");
         }
@@ -1174,7 +1174,7 @@
         syncClockTurn();          // white (seat 0) is on the move at the start
         sfx("GameStart");
         if (myTurn()) {
-            status("Your turn. You play " + (myColor === WHITE ? "white (bottom)." : "black (bottom)."));
+            status(`Your turn. You play ${myColor === WHITE ? "white (bottom)." : "black (bottom)."}`);
         } else if (session.bot) {
             // Offline and it's white's turn but I'm black → the bot (white) opens.
             status("Bot is thinking…");

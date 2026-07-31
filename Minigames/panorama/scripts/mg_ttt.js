@@ -94,11 +94,11 @@
         const cells = [];
         (function buildCells() {
             for (let r = 0; r < 3; r++) {
-                const rowPanel = $.CreatePanel("Panel", boardPanel, "ttt_row_" + r);
+                const rowPanel = $.CreatePanel("Panel", boardPanel, `ttt_row_${r}`);
                 rowPanel.AddClass("mg-ttt-row");
                 for (let c = 0; c < 3; c++) {
                     let i = r * 3 + c;
-                    var cell = $.CreatePanel("Panel", rowPanel, "ttt_cell_" + i);
+                    var cell = $.CreatePanel("Panel", rowPanel, `ttt_cell_${i}`);
                     cell.AddClass("mg-ttt-cell");
                     ((square) => {
                         cell.SetPanelEvent("onactivate", () => { onCellClick(square); });
@@ -250,7 +250,7 @@
         // ── boot ─────────────────────────────────────────────────────────────
         render(null);
         if (myTurn()) {
-            status("Your turn. You play " + (myMark === X ? "✕ (X)." : "◯ (O)."));
+            status(`Your turn. You play ${myMark === X ? "✕ (X)." : "◯ (O)."}`);
         } else if (session.bot) {
             // Offline and it's X's turn but I'm O → the bot (X) opens.
             status("Bot is thinking…");

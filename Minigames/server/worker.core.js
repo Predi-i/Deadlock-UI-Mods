@@ -327,7 +327,7 @@ async function finishGitHubLogin(request, url, env) {
     const userResponse = await fetch("https://api.github.com/user", {
       headers: {
         "Accept": "application/vnd.github+json",
-        "Authorization": "Bearer " + tokenBody.access_token,
+        "Authorization": `Bearer ${tokenBody.access_token}`,
         "User-Agent": "Deadlock-Minigames-Admin",
         "X-GitHub-Api-Version": "2022-11-28"
       }
@@ -499,7 +499,7 @@ export class Hub {
     const now = Date.now();
     if (!lobby.t || now - lobby.t >= LOBBY_TOUCH_MS) {
       lobby.t = now;
-      await this.storage.put("l:" + code, lobby);
+      await this.storage.put(`l:${code}`, lobby);
     }
   }
 
@@ -602,7 +602,7 @@ export class Hub {
         }
         if (st.guesses[0] != null && st.guesses[1] != null) geoRevealRound(st);
         access.lobby.t = nowSeq();
-        await this.storage.put("l:" + code, access.lobby);
+        await this.storage.put(`l:${code}`, access.lobby);
         return d(1, 1);
       }
       if (p === "/api/geonext") {
@@ -615,7 +615,7 @@ export class Hub {
         if (access.lobby.solo) st.ready[1] = 1;
         if (st.ready[0] && st.ready[1]) geoAdvanceRound(st);
         access.lobby.t = nowSeq();
-        await this.storage.put("l:" + code, access.lobby);
+        await this.storage.put(`l:${code}`, access.lobby);
         return d(1, 1);
       }
       if (p === "/api/geotarget" || p === "/api/geopick" ||
@@ -686,7 +686,7 @@ export class Hub {
           state: geoState || initState(game, cv)       // authoritative board/state
         };
         initClock(lobby);
-        await this.storage.put("l:" + newCode, lobby);
+        await this.storage.put(`l:${newCode}`, lobby);
         // Code rides the level-quantised downlink in the joiner/create band (see dCode).
         return dCode(newCode, false);
       }
@@ -715,7 +715,7 @@ export class Hub {
           // Code 0 is a real lobby code. Durable Object storage returns undefined for a
           // missing queue key, so use a nullish check rather than treating numeric 0 as empty.
           if (waitCode == null) continue;
-          const w = await this.storage.get("l:" + waitCode);
+          const w = await this.storage.get(`l:${waitCode}`);
           // Never seat a token into a lobby it already holds a seat in. Two /api/quick calls with
           // the same token used to seat the caller as its own opponent: seatOf returns the FIRST
           // match, so seat 1 became unreachable, every move was attributed to seat 0, and the game
@@ -748,7 +748,7 @@ export class Hub {
           state: geoState || initState(game, cv)
         };
         initClock(lobby);
-        await this.storage.put("l:" + newCode, lobby);
+        await this.storage.put(`l:${newCode}`, lobby);
         await this.storage.put(lobby.qk, newCode);
         return dCode(newCode, true);
       }
@@ -777,7 +777,7 @@ export class Hub {
                 seenQueues[key] = 1;
                 const waitCode = await this.storage.get(key);
                 if (waitCode == null) continue;             // code 0 is valid (see /api/quick)
-                const w = await this.storage.get("l:" + waitCode);
+                const w = await this.storage.get(`l:${waitCode}`);
                 if (w && seatOf(w, q.get("tok")) >= 0) continue;   // never match a token to itself (see /api/quick)
                 const isMulti = w && w.game === 0 && w.games && w.games.indexOf(g) >= 0;
                 if (w && w.pub && w.players < 2 && (w.game === g || isMulti) && preferencesMatch(w, g, rawTc, rawCv)) {
@@ -805,17 +805,17 @@ export class Hub {
           lobby.mqs.push(key);
           await this.storage.put(key, newCode);
         }
-        await this.storage.put("l:" + newCode, lobby);
+        await this.storage.put(`l:${newCode}`, lobby);
         // HOST: +100 on the width flags the role, exactly like /api/quick.
         return dCode(newCode, true);
       }
 
       if (p === "/api/cancel") {
-        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get(`l:${code}`) : null;
         // Only a SEATED player (valid token) may cancel, and only while the lobby is still
         // waiting for the second player. Never let a 4-digit code-guesser nuke an active match.
         if (lobby && seatOf(lobby, q.get("tok")) >= 0 && lobby.players < 2) {
-          await this.storage.delete("l:" + code);
+          await this.storage.delete(`l:${code}`);
           await this.clearQueuesFor(lobby, code); // clear every per-game queue this lobby holds
         }
         return d(1, 1);
@@ -833,7 +833,7 @@ export class Hub {
       //     which appends a LEFT event (+ DRAW/ROLES or board/WIN) to the public log so the table
       //     plays on without the leaver. The game only ends here if it drops to one player.
       if (p === "/api/leave") {
-        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get(`l:${code}`) : null;
         if (!lobby) return d(1, 1);                       // already gone - nothing to do
         const seat = seatOf(lobby, q.get("tok"));
         if (seat < 0) return d(1, 1);                     // not a seated player: ignore, don't leak
@@ -852,7 +852,7 @@ export class Hub {
           // Durable Object value past MOVE_CAP or persisting an invisible state transition.
           if (lobby.game === 6 && lobby.state && lobby.state.log &&
               lobby.state.log.length >= MOVE_CAP) {
-            await this.storage.delete("l:" + code);
+            await this.storage.delete(`l:${code}`);
             await this.clearQueuesFor(lobby, code);
             return d(1, 1);
           }
@@ -860,7 +860,7 @@ export class Hub {
           if (lobby.game === 3) durakLeave(lobby, seat);
           else pokerLeave(lobby, seat);
           lobby.t = nowSeq();
-          await this.storage.put("l:" + code, lobby);
+          await this.storage.put(`l:${code}`, lobby);
           return d(1, 1);
         }
         // PRE-START multi-seat table: the leaver is not in a hand yet, so there is nothing to fold
@@ -876,11 +876,11 @@ export class Hub {
         if (!started && isMultiSeat && present >= 2 && seat !== 0) {
           lobby.seats[seat] = null;
           lobby.t = nowSeq();
-          await this.storage.put("l:" + code, lobby);
+          await this.storage.put(`l:${code}`, lobby);
           return d(1, 1);
         }
         // Pair game, pre-start pair/host lobby, or the table just dropped to one player → tear it down.
-        await this.storage.delete("l:" + code);
+        await this.storage.delete(`l:${code}`);
         await this.clearQueuesFor(lobby, code);
         return d(1, 1);
       }
@@ -888,7 +888,7 @@ export class Hub {
 
       if (p === "/api/join") {
         if (!validTok(q.get("tok"))) return d(9, 3); // reject empty/garbage seat token
-        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get(`l:${code}`) : null;
         if (!lobby) return d(20, 1);             // missing
         // Game-type guard (H2): the generic 2-seat join hard-sets players=2/seats[1], which would
         // CORRUPT an N-seat poker/durak lobby (those carry `cap` and grow via seats.push through
@@ -912,7 +912,7 @@ export class Hub {
         lobby.seats[1] = { tok: q.get("tok") || "" }; // joiner takes seat 1
         initClock(lobby);                          // arm the bank now that both seats are present
         autoStartDealerIfFull(lobby);              // a private heads-up Durak room is now full
-        await this.storage.put("l:" + code, lobby);
+        await this.storage.put(`l:${code}`, lobby);
         // height carries the time-control INDEX+1 (0..4 → 1..5) so the joiner learns the host's
         // chosen bank without picking it. Index (not raw seconds) keeps it inside one level dim.
         // tc=0 → index 0 → height 1 (no clock), a plain "which game" reply.
@@ -920,7 +920,7 @@ export class Hub {
       }
 
       if (p === "/api/status") {
-        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get(`l:${code}`) : null;
         if (!lobby) return d(9, 1);              // gone
         await this.touchWaitingLobby(code, lobby, q.get("tok"));
         // height carries the chosen game + 1 (1 while an mquick lobby is still undecided,
@@ -937,7 +937,7 @@ export class Hub {
       //   height = tcIndex*2 + variantBit + 1   (variantBit: english=1, else 0; +1 keeps it ≥1)
       // e.g. Russian 3-min checkers = (1, 2*2+0+1) = (1,5). An undecided mquick lobby → (9,1).
       if (p === "/api/match") {
-        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get(`l:${code}`) : null;
         if (!lobby) return d(9, 1);              // gone
         if (!lobby.game) return d(9, 1);         // still-undecided mquick lobby: no game fixed yet
         const g = lobby.game;
@@ -947,7 +947,7 @@ export class Hub {
       }
 
       if (p === "/api/move") {
-        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get(`l:${code}`) : null;
         if (!lobby) return d(9, 9);              // no lobby
         if (lobby.players < 2) return d(9, 1);   // can't move before the opponent has joined
         const seat = seatOf(lobby, q.get("tok"));
@@ -960,7 +960,7 @@ export class Hub {
         // SERVER computes (never the client's), so a cheat can't forge the turn hand-off.
         // A seat that has already flagged (bank ran out) is out of moves - the game is over on
         // time and the server refuses further play from either side.
-        if (clockCheckFlag(lobby) >= 0) { await this.storage.put("l:" + code, lobby); return d(9, 2); }
+        if (clockCheckFlag(lobby) >= 0) { await this.storage.put(`l:${code}`, lobby); return d(9, 2); }
         const v = validateMove(lobby, seat, from, to, end);
         if (!v.ok) return d(9, v.code);          // (9,1) not your turn · (9,2) illegal
         // Hard ceiling on the move log (poll?since indexes it directly, so it can't be
@@ -975,13 +975,13 @@ export class Hub {
         // jump, v.move.e === 0) keep the SAME clock running - the turn hasn't handed off yet.
         // validateMove already advanced lobby.turn on a hand-off, so it names the next seat.
         clockCharge(lobby, v.move.e === 1, lobby.turn);
-        await this.storage.put("l:" + code, lobby);
+        await this.storage.put(`l:${code}`, lobby);
         return d(1, 1);                          // accepted
       }
 
 
       if (p === "/api/poll") {
-        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get(`l:${code}`) : null;
         if (!lobby) return d(9, 9);              // 9x9 signals lobby destroyed / opponent left
         const since = clampInt(q.get("since"), 0, 0, 100000);
         const mv = lobby.moves[since]; // 0-based; this move is seq = since+1
@@ -1008,11 +1008,11 @@ export class Hub {
       // Both clients read the SAME server clock, so they can't disagree on the time or on who
       // flagged: a seat's bank reaching 0 IS the flag-fall signal (that seat loses).
       if (p === "/api/clocks") {
-        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get(`l:${code}`) : null;
         if (!lobby) return d(9, 9);              // gone
         if (!lobby.clkMs) return d(9, 8);        // untimed game → no clocks
         // Persist a freshly-detected flag so the outcome sticks for later polls / moves.
-        if (clockCheckFlag(lobby) >= 0) await this.storage.put("l:" + code, lobby);
+        if (clockCheckFlag(lobby) >= 0) await this.storage.put(`l:${code}`, lobby);
         const seat = clampInt(q.get("seat"), 0, 0, 1);
         const s = Math.min(600, Math.max(0, clockSec(lobby, seat)));
         return d(CLK_BASE + ((s >> 6) & 15), s & 63);   // width band 30..39, height 0..63
@@ -1035,7 +1035,7 @@ export class Hub {
       // re-arm the next rematch, it just reads the bumped gen and the client restarts. This is
       // what stops the flag "sticking" across consecutive rematches (no extra clear round-trip).
       if (p === "/api/rematch") {
-        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get(`l:${code}`) : null;
         if (!lobby) return d(9, 9);
         const seat = seatOf(lobby, q.get("tok"));
         if (seat < 0) return d(9, 3);
@@ -1098,10 +1098,10 @@ export class Hub {
           const cleared = [];
           for (let i = 0; i < rmSeats; i++) cleared.push(false);
           lobby.rm = cleared;
-          await this.storage.put("l:" + code, lobby);
+          await this.storage.put(`l:${code}`, lobby);
           return d(2, lobby.gen + 1);                     // everyone ready: reset done, gen bumped
         }
-        await this.storage.put("l:" + code, lobby);
+        await this.storage.put(`l:${code}`, lobby);
         return d(1, lobby.gen + 1);                       // waiting for the opponent
       }
 
@@ -1114,25 +1114,25 @@ export class Hub {
       // a seat token (tok → seat), which also gates ddraw so a cheat can't read a foreign
       // seat's private cards. Public Quick is heads-up; private tables use 2–4 seats.
       if (p === "/api/room") {
-        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get(`l:${code}`) : null;
         if (!lobby) return d(9, 1);                        // gone
         await this.touchWaitingLobby(code, lobby, q.get("tok"));
         const started = lobby.state && lobby.state.started ? 2 : 1; // h: 2 started, 1 waiting
         return d(lobby.players, started);
       }
       if (p === "/api/start") {
-        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get(`l:${code}`) : null;
         if (!lobby) return d(9, 9);
         const seat = seatOf(lobby, q.get("tok"));
         if (seat < 0) return d(9, 3);
         const r = durakStart(lobby, seat);
         if (!r.ok) return d(9, r.code);
         lobby.t = nowSeq();                                  // keep-alive: TTL from last activity
-        await this.storage.put("l:" + code, lobby);
+        await this.storage.put(`l:${code}`, lobby);
         return d(1, 1);
       }
       if (p === "/api/dact") {
-        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get(`l:${code}`) : null;
         if (!lobby) return d(9, 9);
         const seat = seatOf(lobby, q.get("tok"));
         if (seat < 0) return d(9, 3);
@@ -1147,11 +1147,11 @@ export class Hub {
         const r = durakAct(lobby, seat, a, pr, c);
         if (!r.ok) return d(9, r.code);
         lobby.t = nowSeq();                                  // keep-alive: TTL from last activity
-        await this.storage.put("l:" + code, lobby);
+        await this.storage.put(`l:${code}`, lobby);
         return d(1, 1);
       }
       if (p === "/api/dlog") {
-        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get(`l:${code}`) : null;
         if (!lobby) return d(9, 9);
         const since = clampInt(q.get("since"), 0, 0, 100000);
         const ev = lobby.state && lobby.state.pub ? lobby.state.pub[since] : null;
@@ -1159,7 +1159,7 @@ export class Hub {
         return d(ev.w, ev.h);
       }
       if (p === "/api/ddraw") {
-        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get(`l:${code}`) : null;
         if (!lobby) return d(9, 9);
         const seat = seatOf(lobby, q.get("tok"));
         if (seat < 0) return d(9, 3);                      // only your own seat's private cards
@@ -1188,14 +1188,14 @@ export class Hub {
           turn: 0,
           state: initState(3, null, cap)
         };
-        await this.storage.put("l:" + newCode, lobby);
+        await this.storage.put(`l:${newCode}`, lobby);
         // HOST (+100 on width, like create) · height carries the seat cap so the joiner UI
         // can show "waiting 1/N" without another round-trip.
         return dCode(newCode, true);
       }
       if (p === "/api/djoin") {
         if (!validTok(q.get("tok"))) return d(9, 3);
-        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get(`l:${code}`) : null;
         if (!lobby || lobby.game !== 3 || !lobby.cap) return d(20, 1); // missing / not an N-seat durak lobby
         const existingSeat = seatOf(lobby, q.get("tok"));
         if (existingSeat >= 0)                                           // idempotent re-join (poll safety)
@@ -1212,12 +1212,12 @@ export class Hub {
         else { lobby.seats.push({ tok: q.get("tok") || "" }); lobby.players++; }
         lobby.t = nowSeq();
         autoStartDealerIfFull(lobby);
-        await this.storage.put("l:" + code, lobby);
+        await this.storage.put(`l:${code}`, lobby);
         // width = cap, height = the seat index this joiner took +1 (so it learns its seat)
         return d(lobby.cap, (holeD >= 0 ? holeD : lobby.seats.length - 1) + 1);
       }
       if (p === "/api/droom") {
-        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get(`l:${code}`) : null;
         if (!lobby || lobby.game !== 3 || !lobby.cap) return d(9, 1); // gone / not an N-seat durak lobby
         await this.touchWaitingLobby(code, lobby, q.get("tok"));
         const started = lobby.state && lobby.state.started ? ROOM_STARTED : 0;
@@ -1241,14 +1241,14 @@ export class Hub {
           seats: [{ tok: q.get("tok") || "" }],              // host = seat 0
           state: initState(6)
         };
-        await this.storage.put("l:" + newCode, lobby);
+        await this.storage.put(`l:${newCode}`, lobby);
         // HOST (+100 on width, like create) · height carries the seat cap so the joiner UI
         // can show "waiting 1/N" without another round-trip.
         return dCode(newCode, true);
       }
       if (p === "/api/pjoin") {
         if (!validTok(q.get("tok"))) return d(9, 3);
-        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get(`l:${code}`) : null;
         if (!lobby || lobby.game !== 6) return d(20, 1);   // missing / not a poker lobby
         const existingSeat = seatOf(lobby, q.get("tok"));
         if (existingSeat >= 0)                                // idempotent re-join (poll safety)
@@ -1264,12 +1264,12 @@ export class Hub {
         else { lobby.seats.push({ tok: q.get("tok") || "" }); lobby.players++; }
         lobby.t = nowSeq();
         autoStartDealerIfFull(lobby);
-        await this.storage.put("l:" + code, lobby);
+        await this.storage.put(`l:${code}`, lobby);
         // width = cap, height = the seat index this joiner took +1 (so it learns its seat)
         return d(lobby.cap || 4, (holeP >= 0 ? holeP : lobby.seats.length - 1) + 1);
       }
       if (p === "/api/proom") {
-        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get(`l:${code}`) : null;
         if (!lobby || lobby.game !== 6) return d(9, 1);    // gone
         await this.touchWaitingLobby(code, lobby, q.get("tok"));
         const started = lobby.state && lobby.state.started ? ROOM_STARTED : 0;
@@ -1278,18 +1278,18 @@ export class Hub {
         return d(liveSeatCount(lobby) + started, lobby.cap || 4);
       }
       if (p === "/api/pstart") {
-        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get(`l:${code}`) : null;
         if (!lobby || lobby.game !== 6) return d(9, 9);
         const seat = seatOf(lobby, q.get("tok"));
         if (seat < 0) return d(9, 3);
         const r = pokerStart(lobby, seat);
         if (!r.ok) return d(9, r.code);
         lobby.t = nowSeq();
-        await this.storage.put("l:" + code, lobby);
+        await this.storage.put(`l:${code}`, lobby);
         return d(1, 1);
       }
       if (p === "/api/pact") {
-        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get(`l:${code}`) : null;
         if (!lobby || lobby.game !== 6) return d(9, 9);
         const seat = seatOf(lobby, q.get("tok"));
         if (seat < 0) return d(9, 3);
@@ -1298,22 +1298,22 @@ export class Hub {
         const r = pokerAct(lobby, seat, a, to);
         if (!r.ok) return d(9, r.code);
         lobby.t = nowSeq();
-        await this.storage.put("l:" + code, lobby);
+        await this.storage.put(`l:${code}`, lobby);
         return d(1, 1);
       }
       if (p === "/api/pnext") {
-        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get(`l:${code}`) : null;
         if (!lobby || lobby.game !== 6) return d(9, 9);
         const seat = seatOf(lobby, q.get("tok"));
         if (seat < 0) return d(9, 3);
         const r = pokerNext(lobby, seat);
         if (!r.ok) return d(9, r.code);
         lobby.t = nowSeq();
-        await this.storage.put("l:" + code, lobby);
+        await this.storage.put(`l:${code}`, lobby);
         return d(1, 1);
       }
       if (p === "/api/plog") {
-        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get(`l:${code}`) : null;
         if (!lobby || lobby.game !== 6) return d(9, 9);
         const since = clampInt(q.get("since"), 0, 0, 100000);
         const ev = lobby.state && lobby.state.log ? lobby.state.log[since] : null;
@@ -1321,7 +1321,7 @@ export class Hub {
         return d(ev.w, ev.h);
       }
       if (p === "/api/pdraw") {
-        const lobby = code !== "" ? await this.storage.get("l:" + code) : null;
+        const lobby = code !== "" ? await this.storage.get(`l:${code}`) : null;
         if (!lobby || lobby.game !== 6) return d(9, 9);
         const seat = seatOf(lobby, q.get("tok"));
         if (seat < 0) return d(9, 3);
@@ -1347,11 +1347,11 @@ export class Hub {
     // validCode canonicalised to the same int-string land on the same key.
     for (let i = 0; i < 200; i++) {
       const c = Math.floor(Math.random() * (CODE_MAX + 1));
-      const existing = await this.storage.get("l:" + c);
+      const existing = await this.storage.get(`l:${c}`);
       if (!existing) return c;
     }
     for (let c = 0; c <= CODE_MAX; c++) {
-      const existing = await this.storage.get("l:" + c);
+      const existing = await this.storage.get(`l:${c}`);
       if (!existing) return c;
     }
     return -1; // server full (extremely unlikely); create surfaces it as a broken mint
@@ -1383,7 +1383,7 @@ export class Hub {
     initClock(w);                              // (re)anchor the bank to the JOIN moment, so a host that
                                                // waited in the public queue isn't billed for idle matchmaking
     autoStartDealerIfFull(w);                  // heads-up Durak starts as soon as matchmaking fills it
-    await this.storage.put("l:" + waitCode, w);
+    await this.storage.put(`l:${waitCode}`, w);
     await this.clearQueuesFor(w, waitCode);
   }
 
@@ -1589,8 +1589,8 @@ function variantBucketsFor(game, raw) {
   if (wantsAnyCheckersVariant(game, raw)) return ["russian", "english", "any"];
   return [checkersVariantFor(game, raw), "any"];
 }
-function quickQueueKey(game, tc, cv) { return "pubq:q:" + game + ":" + tc + ":" + cv; }
-function multiQueueKey(game, tc, cv) { return "pubq:m:" + game + ":" + tc + ":" + cv; }
+function quickQueueKey(game, tc, cv) { return `pubq:q:${game}:${tc}:${cv}`; }
+function multiQueueKey(game, tc, cv) { return `pubq:m:${game}:${tc}:${cv}`; }
 function lobbyTimeChoice(lobby, game) {
   if (!CLOCK_GAMES[game]) return "0";
   if (lobby.game === 0 && lobby.mtc != null) return lobby.mtc === "any" ? "any" : String(clockSecFor(game, lobby.mtc));
@@ -1900,7 +1900,7 @@ function geoCreditCode(location) {
 async function geoResolveImageUrl(location, token) {
   if (!location) return "";
   if (location.source !== GEO_SRC_MAPILLARY) {
-    return "https://api.panoramax.xyz/api/pictures/" + location.id + "/sd.jpg";
+    return `https://api.panoramax.xyz/api/pictures/${location.id}/sd.jpg`;
   }
   if (!token) return "";
   const fetcher = typeof globalThis.MG_GEO_CATALOG_FETCH === "function"
@@ -1983,7 +1983,7 @@ function geoCreateState() {
 }
 
 async function geoLobbyAccess(hub, code, tok) {
-  const lobby = code !== "" ? await hub.storage.get("l:" + code) : null;
+  const lobby = code !== "" ? await hub.storage.get(`l:${code}`) : null;
   if (!lobby || lobby.game !== 9 || !lobby.state) return { ok: false, code: 9 };
   const seat = seatOf(lobby, tok);
   if (seat < 0) return { ok: false, code: 3 };
@@ -2680,7 +2680,7 @@ function validPixelAccount(raw) {
 }
 
 async function pixelBan(hub, account) {
-  return await hub.storage.get("px:b:" + account) || null;
+  return await hub.storage.get(`px:b:${account}`) || null;
 }
 
 function pixelBankPng(balance) {
@@ -2705,7 +2705,7 @@ async function pixelVersion(hub) {
 }
 
 async function pixelBank(hub, account, spend) {
-  const key = "px:u:" + account;
+  const key = `px:u:${account}`;
   const now = Date.now();
   let record = await hub.storage.get(key);
   if (!record || !Number.isFinite(record.balance) || !Number.isFinite(record.at)) {
@@ -2871,9 +2871,9 @@ async function persistPixelDeltas(hub, changed) {
       if (tile[i] !== 0) { hasPaint = true; break; }
     }
     if (hasPaint) {
-      await hub.storage.put("px:t:" + index, tile);
+      await hub.storage.put(`px:t:${index}`, tile);
     } else {
-      await hub.storage.delete("px:t:" + index);
+      await hub.storage.delete(`px:t:${index}`);
       tiles.delete(index);
     }
   }
@@ -2924,8 +2924,8 @@ async function logPixelAction(hub, input) {
     })
   };
   action.bounds = pixelDeltaBounds(action.deltas);
-  await hub.storage.put("px:a:" + id, action);
-  if (action.steamid) await hub.storage.put("px:ua:" + action.steamid + ":" + id, true);
+  await hub.storage.put(`px:a:${id}`, action);
+  if (action.steamid) await hub.storage.put(`px:ua:${action.steamid}:${id}`, true);
   return action;
 }
 
@@ -2963,7 +2963,7 @@ async function maybePrunePixelAudit(hub, now) {
         break;
       }
       await hub.storage.delete(key);
-      if (action.steamid) await hub.storage.delete("px:ua:" + action.steamid + ":" + action.id);
+      if (action.steamid) await hub.storage.delete(`px:ua:${action.steamid}:${action.id}`);
       removed++;
       pageRemoved++;
     }
@@ -3020,7 +3020,7 @@ function pixelOwnerFromRecord(record, offset) {
 
 async function pixelOwnerActionId(hub, x, y) {
   const location = pixelOwnershipLocation(x, y);
-  const record = pixelOwnershipRecord(await hub.storage.get("px:o:" + location.tile));
+  const record = pixelOwnershipRecord(await hub.storage.get(`px:o:${location.tile}`));
   return pixelOwnerFromRecord(record, location.offset);
 }
 
@@ -3030,7 +3030,7 @@ async function attachPixelOwners(hub, changed) {
     const p = changed[i], location = pixelOwnershipLocation(p.x, p.y);
     let record = records.get(location.tile);
     if (!record) {
-      record = pixelOwnershipRecord(await hub.storage.get("px:o:" + location.tile));
+      record = pixelOwnershipRecord(await hub.storage.get(`px:o:${location.tile}`));
       records.set(location.tile, record);
     }
     p.beforeOwnerActionId = pixelOwnerFromRecord(record, location.offset);
@@ -3050,7 +3050,7 @@ async function persistPixelOwnership(hub, changed, defaultActionId, loadedRecord
   }
 
   for (const [tile, updates] of grouped) {
-    const key = "px:o:" + tile;
+    const key = `px:o:${tile}`;
     const old = loadedRecords && loadedRecords.has(tile)
       ? loadedRecords.get(tile) : pixelOwnershipRecord(await hub.storage.get(key));
     const values = new Array(PX_TILE * PX_TILE);
@@ -3144,7 +3144,7 @@ async function adminPixelActions(hub, url) {
   const before = beforeRaw ? validPixelActionId(beforeRaw) : "";
   if (beforeRaw && !before) return adminError("Invalid action cursor.", 400);
   const limit = clampInt(url.searchParams.get("limit"), 50, 1, 100);
-  const prefix = steamid ? "px:ua:" + steamid + ":" : "px:a:";
+  const prefix = steamid ? `px:ua:${steamid}:` : "px:a:";
   const options = { prefix: prefix, reverse: true, limit: limit + 1 };
   if (before) options.end = prefix + before;
   const listed = await hub.storage.list(options);
@@ -3155,7 +3155,7 @@ async function adminPixelActions(hub, url) {
 
   const actions = [];
   for (let i = 0; i < ids.length; i++) {
-    const action = await hub.storage.get("px:a:" + ids[i]);
+    const action = await hub.storage.get(`px:a:${ids[i]}`);
     if (action) actions.push(pixelActionSummary(action));
   }
   return adminJson({
@@ -3194,7 +3194,7 @@ async function adminPixelUndo(hub, request, login) {
   const force = !!(body && body.force);
   if (!actionId) return adminError("Invalid action ID.", 400);
   return pixelStorageTransaction(hub, async function (txHub) {
-    const actionKey = "px:a:" + actionId;
+    const actionKey = `px:a:${actionId}`;
     const action = await txHub.storage.get(actionKey);
     if (!action || action.kind !== "paint" || !Array.isArray(action.deltas)) {
       return adminError("Action not found or cannot be undone.", 404);
@@ -3247,7 +3247,7 @@ async function adminPixelUndo(hub, request, login) {
 async function adminPixelAction(hub, url) {
   const actionId = validPixelActionId(url.searchParams.get("id") || "");
   if (!actionId) return adminError("Invalid action ID.", 400);
-  const action = await hub.storage.get("px:a:" + actionId);
+  const action = await hub.storage.get(`px:a:${actionId}`);
   if (!action) return adminError("Action not found.", 404);
   const detail = pixelActionSummary(action);
   const tiles = await pixelTiles(hub);
@@ -3308,7 +3308,7 @@ async function adminPixelInspect(hub, url) {
   const tiles = await pixelTiles(hub);
   const color = pixelAt(tiles, x, y);
   let actionId = await pixelOwnerActionId(hub, x, y);
-  let action = actionId ? await hub.storage.get("px:a:" + actionId) : null;
+  let action = actionId ? await hub.storage.get(`px:a:${actionId}`) : null;
   if (!action) {
     action = await legacyPixelOwnerAction(hub, x, y);
     actionId = action ? action.id : "";
@@ -3317,7 +3317,7 @@ async function adminPixelInspect(hub, url) {
     x: x,
     y: y,
     color: color,
-    colorName: PX_ADMIN_COLOR_NAMES[color] || ("color " + color),
+    colorName: PX_ADMIN_COLOR_NAMES[color] || (`color ${color}`),
     action: action ? pixelActionSummary(action) : null
   });
 }
@@ -3345,7 +3345,7 @@ async function adminPixelBanStatus(hub, url) {
 async function adminPixelBan(hub, request, login, banned) {
   const target = await readAdminBanTarget(request);
   if (!target) return adminError("Invalid Steam32 ID or JSON body.", 400);
-  const key = "px:b:" + target.steamid;
+  const key = `px:b:${target.steamid}`;
   if (banned) {
     const record = {
       steamid: target.steamid,

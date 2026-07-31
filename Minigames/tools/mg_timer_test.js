@@ -17,9 +17,9 @@ let log=[], recording=false;
 function panel(type,parent,id){
   const st={};
   const p={type,id,_text:"",classes:[],children:[],
-    style:new Proxy(st,{set(t,k,v){t[k]=v; if(recording)log.push("style."+String(k)+" = "+v); return true;},get(t,k){return t[k];}}),
-    AddClass(c){if(!this.classes.includes(c))this.classes.push(c); if(recording)log.push("AddClass "+c);},
-    RemoveClass(c){this.classes=this.classes.filter(x=>x!==c); if(recording)log.push("RemoveClass "+c);},
+    style:new Proxy(st,{set(t,k,v){t[k]=v; if(recording)log.push(`style.${String(k)} = ${v}`); return true;},get(t,k){return t[k];}}),
+    AddClass(c){if(!this.classes.includes(c))this.classes.push(c); if(recording)log.push(`AddClass ${c}`);},
+    RemoveClass(c){this.classes=this.classes.filter(x=>x!==c); if(recording)log.push(`RemoveClass ${c}`);},
     SetHasClass(c,on){this.classes=this.classes.filter(x=>x!==c); if(on)this.classes.push(c);},
     IsValid:()=>true,SetPanelEvent(){},DeleteAsync(){},RemoveAndDeleteChildren(){},
     FindChildTraverse:()=>null,GetParent:()=>null,SetImage(){},SetAttributeString(){}};
@@ -46,7 +46,7 @@ const lastRed=log.map((l,i)=>l==="RemoveClass mg-tt-crit"?i:-1).filter(i=>i>=0);
 const zeroed=log.filter(l=>l==="style.transitionDuration = 0s").length;
 console.log("scenario A: red -> new turn");
 check(firstDur===0,"the very first write of the new turn is the duration");
-check(zeroed===2,"both stop() and snapFull() zero it (got "+zeroed+")");
+check(zeroed===2,`both stop() and snapFull() zero it (got ${zeroed})`);
 check(lastRed.every(i=>{ // every red-removal must be preceded by a 0s that is not yet overwritten
         const prior=log.slice(0,i).filter(l=>l.startsWith("style.transitionDuration")).pop();
         return prior==="style.transitionDuration = 0s"; }),
@@ -59,5 +59,5 @@ check(fill.classes.includes("mg-tt-anim"),"arm() re-adds mg-tt-anim");
 // scenario C: durak's short Bito window
 t.stop(); t.start(()=>{},10); armOnly();
 check(fill.style.transitionDuration==="10s, 0.3s","a 10s budget arms as 10s, not the CSS 25s");
-console.log(fails?("\n"+fails+" FAILURES"):"\nALL TIMER-BAR CHECKS PASSED");
+console.log(fails?(`\n${fails} FAILURES`):"\nALL TIMER-BAR CHECKS PASSED");
 process.exitCode=fails?1:0;

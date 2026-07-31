@@ -91,11 +91,11 @@
         let discEls = {};     // cell index -> disc panel (persistent so we don't rebuild every render)
         (function buildCells() {
             for (let r = 0; r < ROWS; r++) {
-                const rowPanel = $.CreatePanel("Panel", boardPanel, "c4_row_" + r);
+                const rowPanel = $.CreatePanel("Panel", boardPanel, `c4_row_${r}`);
                 rowPanel.AddClass("mg-cf-row");
                 for (let c = 0; c < COLS; c++) {
                     let i = r * COLS + c;
-                    var cell = $.CreatePanel("Panel", rowPanel, "c4_cell_" + i);
+                    var cell = $.CreatePanel("Panel", rowPanel, `c4_cell_${i}`);
                     cell.AddClass("mg-cf-cell");
                     const hole = $.CreatePanel("Panel", cell, "");   // the round "hole" the disc shows through
                     hole.AddClass("mg-cf-hole");
@@ -144,14 +144,14 @@
             const p = discXY(i);
             if (animate) {
                 const startY = -CELL + INSET;   // one cell above the plate's top edge (above the clip box)
-                disc.style.transform = "translate3d(" + p.x + "px, " + startY + "px, 0px)";
+                disc.style.transform = `translate3d(${p.x}px, ${startY}px, 0px)`;
                 $.Schedule(0.0, () => {
                     if (destroyed || !disc.IsValid()) return;
                     disc.AddClass("mg-cf-anim");
-                    disc.style.transform = "translate3d(" + p.x + "px, " + p.y + "px, 0px)";
+                    disc.style.transform = `translate3d(${p.x}px, ${p.y}px, 0px)`;
                 });
             } else {
-                disc.style.transform = "translate3d(" + p.x + "px, " + p.y + "px, 0px)";
+                disc.style.transform = `translate3d(${p.x}px, ${p.y}px, 0px)`;
             }
             return disc;
         }
@@ -308,7 +308,7 @@
 
         // ── boot ─────────────────────────────────────────────────────────────
         if (myTurn()) {
-            status("Your turn. You are " + (myMark === RED ? "RED." : "YELLOW."));
+            status(`Your turn. You are ${myMark === RED ? "RED." : "YELLOW."}`);
         } else if (session.bot) {
             status("Bot is thinking…");
             $.Schedule(0.35, botTurn);

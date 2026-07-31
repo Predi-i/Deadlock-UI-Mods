@@ -26,14 +26,14 @@ const scoreGuess = new Function(body + "\nreturn scoreGuess;")();
 
 let failed = 0;
 function check(condition, label) {
-    console.log("  " + (condition ? "PASS " : "FAIL ") + label);
+    console.log(`  ${condition ? "PASS " : "FAIL "}${label}`);
     if (!condition) failed++;
 }
 function same(actual, expected, label) {
     const ok = JSON.stringify(actual) === JSON.stringify(expected);
-    console.log("  " + (ok ? "✓ " : "✗ ") + label);
+    console.log(`  ${ok ? "✓ " : "✗ "}${label}`);
     if (!ok) {
-        console.log("    expected " + JSON.stringify(expected) + ", got " + JSON.stringify(actual));
+        console.log(`    expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
         failed++;
     }
 }
@@ -60,7 +60,7 @@ same(scoreGuess("BANAL", "ALARM"), [1, 1, 1, 0, 0],
     "present-letter counts are consumed independently");
 
 if (failed) {
-    console.error("\n" + failed + " WORDLE FAILURE(S)");
+    console.error(`\n${failed} WORDLE FAILURE(S)`);
     process.exitCode = 1;
 } else {
     console.log("\nAll Wordle scoring tests passed.");

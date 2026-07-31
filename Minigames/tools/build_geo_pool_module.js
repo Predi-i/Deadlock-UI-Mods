@@ -48,7 +48,7 @@ for (const row of pool) {
     if (!idOk || !Number.isFinite(lat) || !Number.isFinite(lon) ||
         lat < -90 || lat > 90 || lon < -180 || lon > 180 ||
         !Number.isInteger(region) || region < 0 || region >= REGION_COUNT) {
-        console.error("bad pool row: " + JSON.stringify(row));
+        console.error(`bad pool row: ${JSON.stringify(row)}`);
         process.exit(1);
     }
     const provider = String(row.provider || "").replace(/[^ A-Za-z0-9.]/g, "").trim();
@@ -57,7 +57,7 @@ for (const row of pool) {
     const country = String(row.country || "").replace(/[|\n\r]/g, " ").trim();
     const continent = country ? Number(row.continent) : -1;
     if (country && (!Number.isInteger(continent) || continent < 0 || continent >= REGION_COUNT)) {
-        console.error("bad country/continent pair: " + JSON.stringify(row));
+        console.error(`bad country/continent pair: ${JSON.stringify(row)}`);
         process.exit(1);
     }
     lines.push(source + "|" + id + "|" + lat.toFixed(6) + "|" + lon.toFixed(6) +

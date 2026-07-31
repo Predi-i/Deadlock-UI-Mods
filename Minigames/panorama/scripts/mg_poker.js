@@ -90,7 +90,7 @@
         function status(t) { if (session.onStatus) session.onStatus(t); }
         function nameOf(seat) {
             if (seat === mySeat) return "You";
-            const base = online ? ("Player " + (seat + 1)) : ("Bot " + (seat + 1));
+            const base = online ? (`Player ${seat + 1}`) : (`Bot ${seat + 1}`);
             return (leftSeats.indexOf(seat) >= 0) ? (base + " (left)") : base;
         }
         function myTurn() { return !destroyed && st && st.toAct === mySeat && st.street !== "over" && st.street !== "showdown"; }
@@ -111,7 +111,7 @@
         const turnTimer = (MG.Widgets && MG.Widgets.createTurnTimer) ? MG.Widgets.createTurnTimer(container, { boardW: 760 }) : null;
 
         function xform(x, y, rot) {
-            const t = "translate3d(" + Math.round(x) + "px, " + Math.round(y) + "px, 0px)";
+            const t = `translate3d(${Math.round(x)}px, ${Math.round(y)}px, 0px)`;
             return rot ? (t + " rotateZ(" + rot + "deg)") : t;
         }
 
@@ -197,7 +197,7 @@
             // right-hand seat's bet chip readout ("texts overlap", maintainer 2026-07-18). translateY
             // only for the vertical drop below the board; align keeps it horizontally centred.
             lbl.style.transform = xform(0, STAGE_H / 2 + CARD_H / 2 - 6, 0);
-            lbl.text = "Pot: " + pot;
+            lbl.text = `Pot: ${pot}`;
         }
 
         function buildBoard() {
@@ -319,7 +319,7 @@
             const row = $.CreatePanel("Panel", controlsZone, ""); row.AddClass("mg-pk-actionrow");
             if (la.canFold) mkButton(row, "Fold", "mg-btn", () => { doAction({ type: "fold" }); });
             if (la.canCheck) mkButton(row, "Check", "mg-btn-primary", () => { doAction({ type: "check" }); });
-            if (la.canCall) mkButton(row, "Call " + la.callAmount, "mg-btn-primary", () => { doAction({ type: "call" }); });
+            if (la.canCall) mkButton(row, `Call ${la.callAmount}`, "mg-btn-primary", () => { doAction({ type: "call" }); });
             if (la.canRaise) {
                 const raiseLabel = (st.currentBet === 0) ? "Bet " : "Raise to ";
                 mkButton(row, raiseLabel + pendingBet, "mg-btn-primary", () => {

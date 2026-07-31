@@ -19,7 +19,7 @@ const E = R.checkersEnglish;
 
 
 let failures = 0;
-function ok(cond, msg) { if (!cond) { failures++; console.log("  ✗ " + msg); } else { console.log("  ✓ " + msg); } }
+function ok(cond, msg) { if (!cond) { failures++; console.log(`  ✗ ${msg}`); } else { console.log(`  ✓ ${msg}`); } }
 function empty() { return new Array(64).fill(0); }
 
 // English draughts differ from Russian draughts in the two rule branches that
@@ -76,7 +76,7 @@ function empty() { return new Array(64).fill(0); }
     const caps = M.captureMoves(b, M.idx(3, 3));
     const land = M.idx(5, 5);
     const found = caps.some(c => c.to === land && c.cap === M.idx(4, 4));
-    ok(found, "white man captures backward (to " + land + ")");
+    ok(found, `white man captures backward (to ${land})`);
 })();
 
 // 2) Flying king slides multiple squares on an empty diagonal.
@@ -85,7 +85,7 @@ function empty() { return new Array(64).fill(0); }
     b[M.idx(7, 0)] = 2; // white king, bottom-left corner
     const moves = M.simpleMoves(b, M.idx(7, 0)).map(m => m.to);
     ok(moves.includes(M.idx(0, 7)), "flying king reaches far corner (0,7)");
-    ok(moves.length === 7, "flying king has 7 slide targets, got " + moves.length);
+    ok(moves.length === 7, `flying king has 7 slide targets, got ${moves.length}`);
 })();
 
 // 3) Flying king captures at range and may land beyond the taken piece.
@@ -131,7 +131,7 @@ function empty() { return new Array(64).fill(0); }
     const t0 = Date.now();
     while (moves < 300) {
         const dr = M.drawReason(b, idleTurns);
-        if (dr) { ended = "draw:" + dr; break; }
+        if (dr) { ended = `draw:${dr}`; break; }
         const seqs = M.legalSequences(b, color);
         if (seqs.length === 0) { ended = "no-move"; break; }
         const seq = M.chooseBotMove(b, color);
@@ -150,8 +150,8 @@ function empty() { return new Array(64).fill(0); }
     let wc = 0, bc = 0;
     for (let i = 0; i < 64; i++) { if (M.colorOf(b[i]) === M.WHITE) wc++; else if (M.colorOf(b[i]) === M.BLACK) bc++; }
     ok(allLegal, "bot only played legal moves");
-    ok(moves < 300, "game terminated in " + moves + " moves via " + (ended || "cap") + " (not the safety cap)");
-    console.log("    (white=" + wc + " black=" + bc + " moves=" + moves + " end=" + ended + " time=" + ms + "ms)");
+    ok(moves < 300, `game terminated in ${moves} moves via ${ended || "cap"} (not the safety cap)`);
+    console.log(`    (white=${wc} black=${bc} moves=${moves} end=${ended} time=${ms}ms)`);
 })();
 
 // ── tic-tac-toe ──────────────────────────────────────────────────────────────
@@ -195,5 +195,5 @@ function empty() { return new Array(64).fill(0); }
     })();
 })();
 
-console.log(failures === 0 ? "\nALL RULES TESTS PASSED" : "\n" + failures + " FAILURE(S)");
+console.log(failures === 0 ? "\nALL RULES TESTS PASSED" : `\n${failures} FAILURE(S)`);
 process.exit(failures === 0 ? 0 : 1);

@@ -63,7 +63,7 @@
             const row = $.CreatePanel("Panel", wrap, "");
             row.AddClass("mg-clock-row");
             const name = $.CreatePanel("Label", row, ""); name.AddClass("mg-clock-name");
-            name.text = (seatNames && seatNames[s]) || ("Seat " + (s + 1));
+            name.text = (seatNames && seatNames[s]) || (`Seat ${s + 1}`);
             const time = $.CreatePanel("Label", row, ""); time.AddClass("mg-clock-time");
             rows[s] = { row: row, time: time };
         }
@@ -71,7 +71,7 @@
         function fmt(sec) {
             sec = Math.max(0, Math.ceil(sec));
             let m = Math.floor(sec / 60), s = sec % 60;
-            return m + ":" + (s < 10 ? "0" + s : s);
+            return m + ":" + (s < 10 ? `0${s}` : s);
         }
         function paint(secArr) {
             for (let s = 0; s < 2; s++) {
@@ -218,7 +218,7 @@
             const minVx = EDGE + TIMER_W / 2 - INNER_W / 2;   // keeps wrapLeft >= EDGE
             if (vx < minVx) vx = minVx;
         }
-        wrap.style.transform = "translate3d(" + vx + "px, " + VNUDGE + "px, 0px)";
+        wrap.style.transform = `translate3d(${vx}px, ${VNUDGE}px, 0px)`;
         const track = $.CreatePanel("Panel", wrap, "");
         track.AddClass("mg-tt-track");
         const fill = $.CreatePanel("Panel", track, "");
@@ -259,7 +259,7 @@
             // transition-property list (transform, background-color). This also restores a real
             // duration after snapFull zeroed it, so the low/crit recolours during the turn still fade.
             fill.style.transitionDuration = curSecs + "s, 0.3s";
-            fill.style.transform = "translate3d(0px, " + TRACK_H + "px, 0px)";   // drain top→bottom over curSecs
+            fill.style.transform = `translate3d(0px, ${TRACK_H}px, 0px)`;   // drain top→bottom over curSecs
         }
 
         function tick(myGen) {

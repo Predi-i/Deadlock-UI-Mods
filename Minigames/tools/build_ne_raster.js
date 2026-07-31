@@ -91,7 +91,7 @@ if (compression !== 1 || samples !== 3) {
     process.exit(1);
 }
 if (stripCount !== height) {
-    console.error("expected one strip per row, got " + stripCount + " for " + height + " rows");
+    console.error(`expected one strip per row, got ${stripCount} for ${height} rows`);
     process.exit(1);
 }
 
@@ -101,7 +101,7 @@ const rowOffset = (row) => stripType === 3
     ? stripTable.readUInt16LE(row * 2)
     : (little ? stripTable.readUInt32LE(row * 4) : stripTable.readUInt32BE(row * 4));
 
-console.log("source " + width + "x" + height + " -> " + OUT_W + "x" + OUT_H);
+console.log(`source ${width}x${height} -> ${OUT_W}x${OUT_H}`);
 
 // Box average. Accumulate one source row at a time so the 167 MiB image never sits in memory.
 const sums = new Float64Array(OUT_W * OUT_H * 3);
@@ -120,9 +120,9 @@ for (let y = 0; y < height; y++) {
         sums[target + 2] += row[source + 2];
         hits[targetY * OUT_W + columnBucket[x]]++;
     }
-    if (y % 500 === 0) process.stdout.write("\r  row " + y + "/" + height + "   ");
+    if (y % 500 === 0) process.stdout.write(`\r  row ${y}/${height}   `);
 }
-process.stdout.write("\r  row " + height + "/" + height + "   \n");
+process.stdout.write(`\r  row ${height}/${height}   \n`);
 fs.closeSync(fd);
 
 const raw = Buffer.alloc((OUT_W * 3 + 1) * OUT_H);
@@ -150,4 +150,4 @@ const png = Buffer.concat([
     chunk("IEND", Buffer.alloc(0))
 ]);
 fs.writeFileSync(OUT, png);
-console.log("wrote " + path.relative(ROOT, OUT) + " (" + (png.length / 1024).toFixed(0) + " KiB)");
+console.log(`wrote ${path.relative(ROOT, OUT)} (${(png.length / 1024).toFixed(0)} KiB)`);

@@ -13,7 +13,7 @@ const M = globalThis.MGRules.chess;
 
 
 let failures = 0;
-function ok(cond, msg) { if (!cond) { failures++; console.log("  ✗ " + msg); } else { console.log("  ✓ " + msg); } }
+function ok(cond, msg) { if (!cond) { failures++; console.log(`  ✗ ${msg}`); } else { console.log(`  ✓ ${msg}`); } }
 const WHITE = 1, BLACK = -1;
 function empty() { const b = new Array(64); for (let i = 0; i < 64; i++) b[i] = 0; return b; }
 function hasMove(list, from, to) { return list.some(m => m.from === from && m.to === to); }
@@ -116,5 +116,5 @@ function perft(b, st, color, depth) {
     ok(pick && hasMove(legal, pick.from, pick.to), "chessBotMove returns a legal move");
 })();
 
-console.log(failures === 0 ? "\nAll chess tests passed." : "\n" + failures + " chess test(s) FAILED.");
+console.log(failures === 0 ? "\nAll chess tests passed." : `\n${failures} chess test(s) FAILED.`);
 process.exitCode = failures === 0 ? 0 : 1;

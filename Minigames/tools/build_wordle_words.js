@@ -26,7 +26,7 @@ async function readSource(name, directory) {
         return fs.readFileSync(path.join(directory, "weldor", "wordbase", name), "utf8");
     }
     const response = await fetch(SOURCE_BASE + name);
-    if (!response.ok) throw new Error("Unable to download " + name + ": HTTP " + response.status);
+    if (!response.ok) throw new Error(`Unable to download ${name}: HTTP ${response.status}`);
     return response.text();
 }
 
@@ -48,9 +48,9 @@ function wordExpression(words) {
     const lines = [];
     for (let i = 0; i < words.length; i += 14) {
         const chunk = words.slice(i, i + 14).join(" ");
-        lines.push("        \"" + chunk + (i + 14 < words.length ? " \" +" : "\""));
+        lines.push(`        \"${chunk}${i + 14 < words.length ? " \" +" : "\""}`);
     }
-    return "(\n" + lines.join("\n") + "\n    ).split(\" \")";
+    return `(\n${lines.join("\n")}\n    ).split(\" \")`;
 }
 
 function render(answers, guesses) {
@@ -102,7 +102,7 @@ async function main() {
     for (let i = 0; i < answers.length; i++) answerSet[answers[i]] = true;
     for (let i = 0; i < guesses.length; i++) {
         if (answerSet[guesses[i]]) {
-            throw new Error("answer/guess lists overlap at " + guesses[i]);
+            throw new Error(`answer/guess lists overlap at ${guesses[i]}`);
         }
     }
     fs.writeFileSync(OUTPUT, render(answers, guesses), "utf8");

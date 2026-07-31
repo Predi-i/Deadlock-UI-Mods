@@ -62,7 +62,7 @@ function extractQollockBody(src) {
     const open = afterHeader.indexOf("{");
     const close = afterHeader.lastIndexOf("}");
     if (open < 0 || close < 0 || close <= open) {
-        throw new Error("Could not find root braces in QOLLOCK soundevents: " + src);
+        throw new Error(`Could not find root braces in QOLLOCK soundevents: ${src}`);
     }
     // body is the inner content (without the outer braces), trimmed of surrounding blank lines.
     let body = afterHeader.slice(open + 1, close);
@@ -74,13 +74,13 @@ function extractQollockBody(src) {
 function eventBlock(eventName, volume, wavFile) {
     const vsnd = VSND_DIR + wavFile + ".vsnd";
     return [
-        "\t" + eventName + " = ",
+        `\t${eventName} = `,
         "\t{",
         "\t\tbase = \"MG.SoundBase\"",
-        "\t\tvolume = " + f6(volume),
+        `\t\tvolume = ${f6(volume)}`,
         "\t\tvsnd_files = ",
         "\t\t[",
-        "\t\t\t\"" + vsnd + "\",",
+        `\t\t\t\"${vsnd}\",`,
         "\t\t]",
         "\t}"
     ].join("\n");
@@ -109,7 +109,7 @@ function buildMgEvents() {
         const snd = SOUNDS[s];
         for (let step = 0; step <= STEPS; step++) {
             const vol = VOL_MAX * (step / STEPS);
-            out.push(eventBlock("MG." + snd.name + "_V" + step, vol, snd.file));
+            out.push(eventBlock(`MG.${snd.name}_V${step}`, vol, snd.file));
         }
     }
     return out.join("\n");
@@ -138,8 +138,8 @@ function main() {
     fs.writeFileSync(OUT, text, "utf8");
 
     const mgCount = SOUNDS.length * (STEPS + 1) + 1; // +1 for MG.SoundBase
-    console.log("[gen_soundevents] wrote " + OUT);
-    console.log("  QOLLOCK events copied: " + (haveQollock ? "yes" : "NO (file missing)"));
+    console.log(`[gen_soundevents] wrote ${OUT}`);
+    console.log(`  QOLLOCK events copied: ${haveQollock ? "yes" : "NO (file missing)"}`);
     console.log("  MG events appended:    " + mgCount + " (" + SOUNDS.length +
         " sounds × " + (STEPS + 1) + " volume steps + base)");
 }

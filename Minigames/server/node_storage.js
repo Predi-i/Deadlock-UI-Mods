@@ -79,7 +79,7 @@ export class SqliteStorage {
     }
 
     let sql = "SELECT key, value FROM kv";
-    if (where.length) sql += " WHERE " + where.join(" AND ");
+    if (where.length) sql += ` WHERE ${where.join(" AND ")}`;
     sql += opts.reverse ? " ORDER BY key DESC" : " ORDER BY key ASC";
     const limit = positiveLimit(opts.limit);
     if (limit) {

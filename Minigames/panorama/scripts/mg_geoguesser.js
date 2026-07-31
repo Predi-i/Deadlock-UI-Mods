@@ -119,7 +119,7 @@
 
         const stats = $.CreatePanel("Panel", root, "");
         stats.AddClass("mg-geo-stats");
-        const roundLabel = addLabel(stats, "mg-geo-stat", "Round 1 / " + ROUNDS);
+        const roundLabel = addLabel(stats, "mg-geo-stat", `Round 1 / ${ROUNDS}`);
         const viewLabel = addLabel(stats, "mg-geo-view-label", "Drag to look around");
         const scoreLabel = addLabel(stats, "mg-geo-stat mg-geo-score",
             solo ? "Score 0" : "You 0 · Opponent 0");
@@ -286,14 +286,14 @@
             // with the transition class removed.
             const wrapped = lastStageX !== null && Math.abs(x - lastStageX) > PANO_STEP / 2;
             if (wrapped) stage.RemoveClass("mg-geo-anim");
-            stage.style.transform = "translate3d(" + Math.round(x) + "px, " + Math.round(y) + "px, 0px)";
+            stage.style.transform = `translate3d(${Math.round(x)}px, ${Math.round(y)}px, 0px)`;
             lastStageX = x;
             if (wrapped) {
                 $.Schedule(0.0, () => {
                     if (!destroyed && stage && stage.IsValid && stage.IsValid()) stage.AddClass("mg-geo-anim");
                 });
             }
-            viewLabel.text = "Heading " + Math.round(yaw) + "° · pitch " + Math.round(pitch) + "°";
+            viewLabel.text = `Heading ${Math.round(yaw)}° · pitch ${Math.round(pitch)}°`;
         }
 
         // ── map zoom + coordinate mapping ─────────────────────────────────────────────────
@@ -499,7 +499,7 @@
             image.AddClass("mg-geo-pano-image");
             image.style.width = PANO_W + "px";
             image.style.height = PANO_H + "px";
-            image.style.transform = "translate3d(" + offset + "px, 0px, 0px)";
+            image.style.transform = `translate3d(${offset}px, 0px, 0px)`;
             try { image.SetAttributeString("hittest", "false"); } catch (e) {}
             panoImages.push(image);
         }
@@ -646,7 +646,7 @@
             // the wrap reference so the first applyCamera of the round can't be mistaken for a
             // seam crossing (and suppress its own transition for nothing).
             lastStageX = null;
-            roundLabel.text = "Round " + (round + 1) + " / " + ROUNDS;
+            roundLabel.text = `Round ${round + 1} / ${ROUNDS}`;
             revealPlace.text = "";
             revealCredit.text = "";
             prompt.text = "Explore the panorama, then choose a point on the map.";
@@ -661,12 +661,12 @@
             // take a second, and a timer that only began on load would hand a slow connection
             // extra thinking time.
             refreshTimer();
-            outerStatus("GeoGuesser round " + (round + 1) + " of " + ROUNDS + ".");
+            outerStatus(`GeoGuesser round ${round + 1} of ${ROUNDS}.`);
         }
 
         function updateScoreText() {
-            scoreLabel.text = solo ? "Score " + scores[mySeat]
-                : "You " + scores[mySeat] + " · Opponent " + scores[1 - mySeat];
+            scoreLabel.text = solo ? `Score ${scores[mySeat]}`
+                : `You ${scores[mySeat]} · Opponent ${scores[1 - mySeat]}`;
         }
 
         function revealReadDone(round) {
@@ -776,16 +776,16 @@
             const mine = scores[mySeat], theirs = scores[1 - mySeat];
             if (solo) {
                 roundLabel.text = "Solo complete";
-                prompt.text = "Final score: " + mine + " / " + (ROUNDS * 750) + ".";
+                prompt.text = `Final score: ${mine} / ${ROUNDS * 750}.`;
                 setAction("SOLO COMPLETE", false, readyNext);
-                outerStatus("GeoGuesser solo finished: " + mine + " / " + (ROUNDS * 750) + ".");
+                outerStatus(`GeoGuesser solo finished: ${mine} / ${ROUNDS * 750}.`);
                 if (session.onGameOver) session.onGameOver("win");
                 return;
             }
             roundLabel.text = "Match complete";
             prompt.text = mine > theirs ? "You win!" : mine < theirs ? "Opponent wins." : "Draw.";
             setAction("MATCH COMPLETE", false, readyNext);
-            outerStatus("GeoGuesser finished: " + mine + "–" + theirs + ".");
+            outerStatus(`GeoGuesser finished: ${mine}–${theirs}.`);
             if (session.onGameOver) session.onGameOver(mine > theirs ? "win" : mine < theirs ? "lose" : "draw");
         }
 

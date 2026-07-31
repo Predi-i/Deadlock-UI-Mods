@@ -28,7 +28,7 @@
         toggleMute: function () { muted = !muted; return muted; },
         play: function (name) {
             if (muted || vol <= 0) return;
-            const ev = "MG." + name + "_V" + stepFor(vol);
+            const ev = `MG.${name}_V${stepFor(vol)}`;
             try { $.DispatchEvent("PlaySoundEffect", ev); } catch (e) {}
         }
     };

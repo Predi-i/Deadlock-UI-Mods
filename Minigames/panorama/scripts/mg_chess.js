@@ -124,7 +124,7 @@
 
         function pieceUrl(v) {
             const name = (v > 0 ? "White" : "Black") + ["", "Pawn", "Knight", "Bishop", "Rook", "Queen", "King"][cType(v)];
-            return "s2r://panorama/images/" + name + ".vtex";
+            return `s2r://panorama/images/${name}.vtex`;
         }
         // Piece sprites are drawn by a CHILD <Image>, not the container's background: a Panel
         // background paints the .vtex at its NATIVE size (250²) until the panel is re-laid-out.
@@ -183,7 +183,7 @@
         function transformFor(realIdx) {
             let d = toDisplay(realIdx);
             let dr = (d / 8) | 0, dc = d % 8;
-            return "translate3d(" + (dc * SQ + INSET) + "px, " + (dr * SQ + INSET) + "px, 0px)";
+            return `translate3d(${dc * SQ + INSET}px, ${dr * SQ + INSET}px, 0px)`;
         }
 
         let cells = [];
@@ -195,12 +195,12 @@
             cells = [];
             pieceEls = {};
             for (let dr = 0; dr < 8; dr++) {
-                const rowPanel = $.CreatePanel("Panel", boardPanel, "row_" + dr);
+                const rowPanel = $.CreatePanel("Panel", boardPanel, `row_${dr}`);
                 rowPanel.AddClass("mg-board-row");
                 for (let dc = 0; dc < 8; dc++) {
                     let d = dr * 8 + dc;
                     let i = fromDisplay(d);
-                    var cell = $.CreatePanel("Panel", rowPanel, "cell_" + i);
+                    var cell = $.CreatePanel("Panel", rowPanel, `cell_${i}`);
                     cell.AddClass("mg-cell");
                     cell.AddClass(((cRow(i) + cCol(i)) & 1) === 1 ? "mg-cell-dark" : "mg-cell-light");
                     ((square) => {
@@ -251,7 +251,7 @@
             // 2026-07-16). Matches createCheckers.addCoord.
             const ox = kind === "file" ? (SQ - 9) : 3;       // rank → top-left; file → bottom-right
             const oy = kind === "file" ? (SQ - 14) : 2;
-            lbl.style.transform = "translate3d(" + (x + ox) + "px, " + (y + oy) + "px, 0px)";
+            lbl.style.transform = `translate3d(${x + ox}px, ${y + oy}px, 0px)`;
         }
 
         function makePiece(realIdx, v, interactive) {
@@ -406,7 +406,7 @@
             for (let k = 0; k < candidates.length; k++) {
                 if (candidates[k] >= 0 && isLegalTarget(candidates[k])) { onCellDrop(candidates[k]); return; }
             }
-            if (DRAG_DEBUG) status("DROP MISS win=" + wSq + " panel=" + aPanel + " over=" + bOver + " ghost=" + cGhost);
+            if (DRAG_DEBUG) status(`DROP MISS win=${wSq} panel=${aPanel} over=${bOver} ghost=${cGhost}`);
         }
 
         // Raw dropped square (any of 0..63) with NO legal-target filter - used to queue a premove
@@ -894,7 +894,7 @@
         syncClockTurn();          // white (seat 0) is on the move at the start
         sfx("GameStart");
         if (myTurn()) {
-            status("Your turn. You play " + (myColor === 1 ? "white (bottom)." : "black (bottom)."));
+            status(`Your turn. You play ${myColor === 1 ? "white (bottom)." : "black (bottom)."}`);
         } else if (session.bot) {
             status("Bot is thinking…");
             scheduleBotTurn();

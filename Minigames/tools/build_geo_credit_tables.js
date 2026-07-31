@@ -58,7 +58,7 @@ pairs.sort();
 // literal they are emitted into.
 function checkText(value, what) {
     if (/[|\n"\\]/.test(value)) {
-        console.error("bad " + what + " (contains a separator or quote): " + JSON.stringify(value));
+        console.error(`bad ${what} (contains a separator or quote): ${JSON.stringify(value)}`);
         process.exit(1);
     }
 }
@@ -67,7 +67,7 @@ for (const name of countries) checkText(name, "country");
 // provider half has to be free of them.
 for (const key of pairs) {
     if (!/^[01]\|/.test(key)) {
-        console.error("bad provider pair (no source prefix): " + JSON.stringify(key));
+        console.error(`bad provider pair (no source prefix): ${JSON.stringify(key)}`);
         process.exit(1);
     }
     checkText(key.slice(2), "provider");
@@ -78,11 +78,11 @@ for (const key of pairs) {
 // resolves them per point. Layout: 0..5 = region only, 6 + countryIndex*6 + continent.
 const topPlace = REGION_COUNT + countries.length * REGION_COUNT - 1;
 if (topPlace >= CODE_CAP) {
-    console.error("place codes exceed one reply: top code " + topPlace);
+    console.error(`place codes exceed one reply: top code ${topPlace}`);
     process.exit(1);
 }
 if (pairs.length >= CODE_CAP) {
-    console.error("credit codes exceed one reply: " + pairs.length);
+    console.error(`credit codes exceed one reply: ${pairs.length}`);
     process.exit(1);
 }
 

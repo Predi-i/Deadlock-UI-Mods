@@ -61,14 +61,14 @@ function imageSize(bytes) {
     const rows = sample(pool.filter((r) => { return r.source === 1; }), SAMPLE_PER_SOURCE)
         .concat(sample(pool.filter((r) => { return r.source === 0; }), SAMPLE_PER_SOURCE));
 
-    console.log("checking " + rows.length + " panoramas from a pool of " + pool.length);
+    console.log(`checking ${rows.length} panoramas from a pool of ${pool.length}`);
     if (!TOKEN) console.log("! MLY_TOKEN not set - Mapillary rows will be reported as unreachable");
 
     let failed = 0;
     for (const row of rows) {
         const name = (row.source === 1 ? "mapillary" : "panoramax") + " " + row.id;
         try {
-            let url = "https://api.panoramax.xyz/api/pictures/" + row.id + "/sd.jpg";
+            let url = `https://api.panoramax.xyz/api/pictures/${row.id}/sd.jpg`;
             let camera = "";
             if (row.source === 1) {
                 if (!TOKEN) throw new Error("no token");
@@ -79,7 +79,7 @@ function imageSize(bytes) {
             }
             const started = Date.now();
             const response = await fetch(url, { signal: AbortSignal.timeout(20000) });
-            if (!response.ok) throw new Error("http " + response.status);
+            if (!response.ok) throw new Error(`http ${response.status}`);
             const bytes = new Uint8Array(await response.arrayBuffer());
             const size = imageSize(bytes);
             const ratio = size.h ? size.w / size.h : 0;
@@ -88,11 +88,11 @@ function imageSize(bytes) {
             console.log("  " + (ok ? "ok  " : "BAD ") + name.padEnd(28) +
                 String(size.w) + "x" + size.h + " ratio=" + ratio.toFixed(3) +
                 " " + (bytes.length / 1024).toFixed(0) + "KiB " + (Date.now() - started) + "ms" +
-                (camera ? " " + camera : "") +
+                (camera ? ` ${camera}` : "") +
                 " host=" + new URL(url).hostname);
         } catch (error) {
             failed++;
-            console.log("  FAIL " + name.padEnd(28) + error.message);
+            console.log(`  FAIL ${name.padEnd(28)}${error.message}`);
         }
     }
 

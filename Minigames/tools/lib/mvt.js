@@ -79,7 +79,7 @@ class Reader {
         if (wire === 1) { this.pos += 8; return; }
         if (wire === 2) { this.bytes(); return; }
         if (wire === 5) { this.pos += 4; return; }
-        throw new Error("unsupported wire type " + wire);
+        throw new Error(`unsupported wire type ${wire}`);
     }
 }
 

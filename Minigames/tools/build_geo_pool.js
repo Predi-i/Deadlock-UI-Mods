@@ -386,7 +386,7 @@ function imageSize(bytes) {
 }
 
 async function imageIsEquirect(row) {
-    let url = "https://api.panoramax.xyz/api/pictures/" + row.id + "/sd.jpg";
+    let url = `https://api.panoramax.xyz/api/pictures/${row.id}/sd.jpg`;
     try {
         if (row.source === 1) {
             const meta = await fetch(MLY_GRAPH + "/" + row.id + "?fields=thumb_2048_url" +
@@ -408,7 +408,7 @@ async function imageIsEquirect(row) {
 }
 
 async function verifyImages(pool) {
-    console.log("verifying the delivered image for " + pool.length + " rows is a 2:1 strip");
+    console.log(`verifying the delivered image for ${pool.length} rows is a 2:1 strip`);
     const kept = [];
     let dropped = 0;
     for (let i = 0; i < pool.length; i += CONCURRENCY) {
@@ -421,7 +421,7 @@ async function verifyImages(pool) {
             pool.length + " · kept " + kept.length + " · dropped " + dropped + "   ");
     }
     process.stdout.write("\n");
-    console.log("  dropped " + dropped + " rows whose image is not equirectangular");
+    console.log(`  dropped ${dropped} rows whose image is not equirectangular`);
     return kept;
 }
 
@@ -432,14 +432,14 @@ async function resolveExisting() {
     try {
         existing = JSON.parse(fs.readFileSync(OUT, "utf8"));
     } catch (error) {
-        console.error("--resolve-only needs an existing " + path.basename(OUT) + ": " + error.message);
+        console.error(`--resolve-only needs an existing ${path.basename(OUT)}: ${error.message}`);
         process.exit(1);
     }
     if (!Array.isArray(existing) || !existing.length) {
         console.error("--resolve-only: pool file is empty");
         process.exit(1);
     }
-    console.log("re-resolving " + existing.length + " pooled ids against graph.mapillary.com");
+    console.log(`re-resolving ${existing.length} pooled ids against graph.mapillary.com`);
 
     const out = [];
     let dropped = 0, moved = 0, shifts = [];
@@ -485,7 +485,7 @@ async function resolveExisting() {
         pool = await verifyImages(JSON.parse(fs.readFileSync(OUT, "utf8")));
     } else if (countryOnly) {
         pool = JSON.parse(fs.readFileSync(OUT, "utf8"));
-        console.log("re-stamping country on " + pool.length + " existing rows (no catalog calls)");
+        console.log(`re-stamping country on ${pool.length} existing rows (no catalog calls)`);
     } else if (resolveOnly) {
         pool = await resolveExisting();
     } else {
@@ -552,7 +552,7 @@ async function resolveExisting() {
         byRegion[row.region].total++;
         if (row.source === 1) byRegion[row.region].mly++; else byRegion[row.region].pano++;
     }
-    console.log("\nfinal pool: " + pool.length + " locations");
+    console.log(`\nfinal pool: ${pool.length} locations`);
     console.log("region            total   mapillary  panoramax");
     REGIONS.forEach((region, i) => {
         console.log("  " + region.name.padEnd(16) + String(byRegion[i].total).padStart(5) +

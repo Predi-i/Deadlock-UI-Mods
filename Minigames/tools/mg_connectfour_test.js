@@ -11,12 +11,12 @@ new Function(fs.readFileSync(path.join(rulesDir, "connectfour.js"), "utf8"))();
 const C = globalThis.MGRules.connectfour;
 
 let failures = 0;
-function ok(cond, msg) { if (!cond) { failures++; console.log("  ✗ " + msg); } else { console.log("  ✓ " + msg); } }
+function ok(cond, msg) { if (!cond) { failures++; console.log(`  ✗ ${msg}`); } else { console.log(`  ✓ ${msg}`); } }
 
 // helper: play a list of columns alternating players starting with `first`
 function playCols(cols, first) {
     let b = C.initialBoard(), p = first || 1;
-    for (const col of cols) { const res = C.drop(b, col, p); if (!res) throw new Error("illegal drop col " + col); b = res.board; p = p === 1 ? 2 : 1; }
+    for (const col of cols) { const res = C.drop(b, col, p); if (!res) throw new Error(`illegal drop col ${col}`); b = res.board; p = p === 1 ? 2 : 1; }
     return b;
 }
 
@@ -118,5 +118,5 @@ function playCols(cols, first) {
     ok(mv === 3, "bot blocks the opponent's four (col 3)");
 })();
 
-if (failures) { console.log("\n" + failures + " connect-four check(s) FAILED"); process.exit(1); }
+if (failures) { console.log(`\n${failures} connect-four check(s) FAILED`); process.exit(1); }
 console.log("\nall connect four checks passed");

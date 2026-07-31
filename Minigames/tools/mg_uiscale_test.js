@@ -45,9 +45,9 @@ measure(MENU, 125);
 ok(fitted(125) === 125, "menu at 125% is not clamped (it fits)");
 measure(POKER, 125);                                  // switching into poker re-measures
 const p = fitted(125);
-ok(naturalModalH >= POKER - 1, "poker's taller height was picked up (got "+Math.round(naturalModalH)+")");
-ok(p * POKER / 100 <= VP * FIT_MARGIN, "clamped scale "+p+"% keeps poker inside the JS ceiling -> LEAVE visible");
-ok(p <= 125, "clamp only ever reduces (got "+p+"%)");
+ok(naturalModalH >= POKER - 1, `poker's taller height was picked up (got ${Math.round(naturalModalH)})`);
+ok(p * POKER / 100 <= VP * FIT_MARGIN, `clamped scale ${p}% keeps poker inside the JS ceiling -> LEAVE visible`);
+ok(p <= 125, `clamp only ever reduces (got ${p}%)`);
 console.log("\nfirst menu -> poker switch at every higher step:");
 for (const want of [150,175,200]) {
   naturalModalH = 0;
@@ -61,10 +61,10 @@ for (const want of [150,175,200]) {
 }
 console.log("\ngoing back to the menu must NOT loosen the clamp below what poker needs:");
 measure(MENU, 125);
-ok(naturalModalH >= POKER - 1, "tallest-seen is retained (got "+Math.round(naturalModalH)+")");
+ok(naturalModalH >= POKER - 1, `tallest-seen is retained (got ${Math.round(naturalModalH)})`);
 console.log("\n100% is never touched:");
 naturalModalH = 0; measure(POKER, 100);
 ok(fitted(100) === 100, "100% passes through unclamped");
 ok(POKER <= VP*FIT_MARGIN, "and poker at 100% genuinely fits the JS ceiling");
-console.log(fails ? "\n"+fails+" FAILURES" : "\nALL CLAMP CHECKS PASSED");
+console.log(fails ? `\n${fails} FAILURES` : "\nALL CLAMP CHECKS PASSED");
 process.exitCode = fails ? 1 : 0;

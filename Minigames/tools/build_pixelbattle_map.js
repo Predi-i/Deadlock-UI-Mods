@@ -22,7 +22,7 @@ const palette = JSON.parse(fs.readFileSync(palettePath, "utf8"));
 const pixels = new Uint8Array(W * H);
 
 function rgb(hex) {
-    if (!/^#[0-9a-f]{6}$/i.test(hex)) throw new Error("Invalid palette colour: " + hex);
+    if (!/^#[0-9a-f]{6}$/i.test(hex)) throw new Error(`Invalid palette colour: ${hex}`);
     return [
         parseInt(hex.slice(1, 3), 16),
         parseInt(hex.slice(3, 5), 16),

@@ -41,7 +41,7 @@ const CL = loadClientRules();
 const SV = loadServerRules();
 
 let failures = 0, checks = 0;
-function ok(cond, msg) { checks++; if (!cond) { failures++; console.log("  ✗ " + msg); } }
+function ok(cond, msg) { checks++; if (!cond) { failures++; console.log(`  ✗ ${msg}`); } }
 
 // A tiny deterministic RNG so a failure is reproducible.
 function makeRng(seed) { let s = seed >>> 0; return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; }; }
@@ -70,7 +70,7 @@ function makeRng(seed) { let s = seed >>> 0; return () => { s = (s * 1664525 + 1
             steps++;
         }
     }
-    ok(mismatches === 0, "checkers: client & server legal moves identical over " + positions + " positions");
+    ok(mismatches === 0, `checkers: client & server legal moves identical over ${positions} positions`);
 })();
 
 // ── tic-tac-toe: every reachable board (exhaustive) must give the same bot pick + winner ──
@@ -86,7 +86,7 @@ function makeRng(seed) { let s = seed >>> 0; return () => { s = (s * 1664525 + 1
         for (let i = 0; i < 9; i++) if (!b[i]) { const nb = b.slice(); nb[i] = mark; walk(nb, mark === 1 ? 2 : 1); }
     }
     walk([0, 0, 0, 0, 0, 0, 0, 0, 0], 1);
-    ok(mism === 0, "ttt: client & server winner/full/bot identical over " + seen + " reachable states");
+    ok(mism === 0, `ttt: client & server winner/full/bot identical over ${seen} reachable states`);
 })();
 
 // ── chess: random self-play; at each ply assert identical legalMoves sets ──
@@ -111,7 +111,7 @@ function makeRng(seed) { let s = seed >>> 0; return () => { s = (s * 1664525 + 1
             b = r[0]; st = r[1]; color = -color; steps++;
         }
     }
-    ok(mismatches === 0, "chess: client & server legalMoves identical over " + plies + " plies");
+    ok(mismatches === 0, `chess: client & server legalMoves identical over ${plies} plies`);
 })();
 
 // ── connect four: random self-play; at each ply assert identical legalCols + winner + bot ──
@@ -132,7 +132,7 @@ function makeRng(seed) { let s = seed >>> 0; return () => { s = (s * 1664525 + 1
             p = p === 1 ? 2 : 1; steps++;
         }
     }
-    ok(mismatches === 0, "connect four: client & server legalCols/winner/bot identical over " + plies + " plies");
+    ok(mismatches === 0, `connect four: client & server legalCols/winner/bot identical over ${plies} plies`);
 })();
 
 // ── durak: server owns the deck/seed, so drive one deterministic self-play per seed with
@@ -168,7 +168,7 @@ function makeRng(seed) { let s = seed >>> 0; return () => { s = (s * 1664525 + 1
             steps++;
         }
     }
-    ok(mismatches === 0, "durak: client & server legalAttacks/legalDefends identical over " + plies + " plies");
+    ok(mismatches === 0, `durak: client & server legalAttacks/legalDefends identical over ${plies} plies`);
 })();
 
 // ── poker: the ONLY game with a server-side dealer and a pot, so a client/server rules drift
@@ -213,11 +213,11 @@ function makeRng(seed) { let s = seed >>> 0; return () => { s = (s * 1664525 + 1
             button = (button + 1) % n;
         }
     }
-    ok(mismatches === 0, "poker: client & server legalActions/score identical over " + plies + " actions in " + hands + " hands (" + evals + " showdown evals)");
+    ok(mismatches === 0, `poker: client & server legalActions/score identical over ${plies} actions in ${hands} hands (${evals} showdown evals)`);
 })();
 
 console.log((failures === 0 ? "  ✓ " : "") + "");
 console.log(failures === 0
-    ? "ALL PARITY CHECKS PASSED (" + checks + " checks) - client predictor == server authority"
-    : "\n" + failures + " PARITY FAILURE(S) - client and server rules have DRIFTED (rebuild worker.js?)");
+    ? `ALL PARITY CHECKS PASSED (${checks} checks) - client predictor == server authority`
+    : `\n${failures} PARITY FAILURE(S) - client and server rules have DRIFTED (rebuild worker.js?)`);
 process.exit(failures === 0 ? 0 : 1);

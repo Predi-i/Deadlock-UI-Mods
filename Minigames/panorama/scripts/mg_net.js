@@ -118,7 +118,7 @@
     function debug(msg) {
         dbgLines.push(msg);
         if (dbgLines.length > 40) dbgLines.shift();
-        if (DEBUG) { try { $.Msg("[MG] " + msg); } catch (e) {} }
+        if (DEBUG) { try { $.Msg(`[MG] ${msg}`); } catch (e) {} }
     }
 
     function setDebug(on) {
@@ -127,7 +127,7 @@
             // Dump buffered history so turning it on shows what already happened.
             try {
                 $.Msg("[MG] debug ON - recent history:");
-                for (let i = 0; i < dbgLines.length; i++) $.Msg("[MG] " + dbgLines[i]);
+                for (let i = 0; i < dbgLines.length; i++) $.Msg(`[MG] ${dbgLines[i]}`);
             } catch (e) {}
         }
     }
@@ -155,7 +155,7 @@
             host.style.height = HOST_H + "px";
             host.style.opacity = "0.02";
             host.style.zIndex = "99999";
-        } catch (e) { log("✗ host style exc: " + (e && e.message ? e.message : e)); }
+        } catch (e) { log(`✗ host style exc: ${e && e.message ? e.message : e}`); }
         // hittest=false alone still lets the child <Image> panels intercept hover,
         // which broke every escape-menu setting's hover once the host grew to
         // 640x1020 and sat over the menu. hittestchildren=false makes the whole
@@ -228,7 +228,7 @@
             // mitigation, not a proven fix - it can't be verified without in-game runs.
             job.tries = (job.tries || 0) + 1;
             if (job.tries < 2) {
-                log("↻ retry " + (job.path || job.url) + " (attempt " + (job.tries + 1) + ")");
+                log(`↻ retry ${job.path || job.url} (attempt ${job.tries + 1})`);
                 reqQueue.unshift(job);
                 $.Schedule(0.05, () => { reqActive = false; drainQueue(); });
                 return;
@@ -250,12 +250,12 @@
         let img;
         try {
             const h = ensureHost();
-            img = $.CreatePanel("Image", h, "mgimg_" + (reqCounter++), attributes || {});
+            img = $.CreatePanel("Image", h, `mgimg_${reqCounter++}`, attributes || {});
             img.style.position = "0px 0px 0px";
-            log("→ IMG " + url);
+            log(`→ IMG ${url}`);
             img.SetImage(url);
         } catch (e) {
-            log("✗ EXC loading image: " + (e && e.message ? e.message : e));
+            log(`✗ EXC loading image: ${e && e.message ? e.message : e}`);
             if (img) {
                 try { img.SetImage(""); } catch (e2) {}
                 try { img.DeleteAsync(0); } catch (e3) {}
@@ -276,7 +276,7 @@
             let hh = Number(img.actuallayoutheight);
             if (w > 0 && hh > 0) {
                 finished = true;
-                log("← IMG = " + w + "x" + hh + " (" + Math.round(elapsed) + "ms)");
+                log(`← IMG = ${w}x${hh} (${Math.round(elapsed)}ms)`);
                 onDone(img, w, hh);
                 return;
             }
@@ -284,7 +284,7 @@
             if (elapsed >= REQ_TIMEOUT_MS) {
                 finished = true;
                 discard();
-                log("✗ IMAGE TIMEOUT (dims stayed 0 for " + REQ_TIMEOUT_MS + "ms)");
+                log(`✗ IMAGE TIMEOUT (dims stayed 0 for ${REQ_TIMEOUT_MS}ms)`);
                 if (onError) onError("timeout");
                 return;
             }
@@ -303,28 +303,28 @@
         let img;
         try {
             const h = ensureHost();
-            img = $.CreatePanel("Image", h, "mgreq_" + (reqCounter++));
+            img = $.CreatePanel("Image", h, `mgreq_${reqCounter++}`);
             // Do NOT set width/height/scaling: Panorama rejects width:auto and any
             // explicit size would override the intrinsic pixel size we need to read.
             // Left unset, the Image lays out at the PNG's real dimensions (proven by
             // the dummyimage test that reported 123x456 correctly).
             img.style.position = "0px 0px 0px";
 
-            let qs = "rnd=" + Math.random() + "x" + reqCounter;
+            let qs = `rnd=${Math.random()}x${reqCounter}`;
             if (params) {
                 for (const k in params) {
                     if (params.hasOwnProperty(k)) {
-                        qs += "&" + k + "=" + encodeURIComponent(params[k]);
+                        qs += `&${k}=${encodeURIComponent(params[k])}`;
                     }
                 }
             }
             // NOTE: Panorama's image loader keys off the URL extension - it will
             // silently refuse a URL that doesn't look like an image, so paths end ".png".
             const fullUrl = BASE_URL + path + ".png?" + qs;
-            log("→ GET " + path + ".png");
+            log(`→ GET ${path}.png`);
             img.SetImage(fullUrl);
         } catch (e) {
-            log("✗ EXC sending " + path + ": " + (e && e.message ? e.message : e));
+            log(`✗ EXC sending ${path}: ${e && e.message ? e.message : e}`);
             if (onError) onError("exception");
             return;
         }
@@ -344,7 +344,7 @@
             if (w > 0 && hh > 0) {
                 finished = true;
                 cleanup();
-                log("← " + path + " = " + w + "x" + hh + " (" + Math.round(elapsed) + "ms)");
+                log(`← ${path} = ${w}x${hh} (${Math.round(elapsed)}ms)`);
                 onDone(w, hh);
                 return;
             }
@@ -352,7 +352,7 @@
             if (elapsed >= REQ_TIMEOUT_MS) {
                 finished = true;
                 cleanup();
-                log("✗ TIMEOUT " + path + " (dims stayed 0 for " + REQ_TIMEOUT_MS + "ms)");
+                log(`✗ TIMEOUT ${path} (dims stayed 0 for ${REQ_TIMEOUT_MS}ms)`);
                 if (onError) onError("timeout");
                 return;
             }
@@ -402,11 +402,11 @@
     function probeOnce(attempt) {
         function retryOrFail(why) {
             if (attempt < PROBE_ATTEMPTS) {
-                log("probe attempt " + attempt + " " + why + "; retrying");
+                log(`probe attempt ${attempt} ${why}; retrying`);
                 probeOnce(attempt + 1);
                 return;
             }
-            log("✗ probe " + why + " " + PROBE_ATTEMPTS + " times; giving up");
+            log(`✗ probe ${why} ${PROBE_ATTEMPTS} times; giving up`);
             failCalib();
         }
         rawRequest("/api/probe", null, (w, hh) => {
@@ -424,12 +424,12 @@
             // usual cause; the host is sized > probe precisely to prevent this.)
             const lo = Math.min(sx, sy), hi = Math.max(sx, sy);
             if (!(lo > 0.05) || (hi - lo) / hi > 0.15) {
-                log("⚠ probe distorted: raw " + w + "x" + hh + " => sx=" + sx.toFixed(3) + " sy=" + sy.toFixed(3));
+                log(`⚠ probe distorted: raw ${w}x${hh} => sx=${sx.toFixed(3)} sy=${sy.toFixed(3)}`);
                 retryOrFail("distorted");
                 return;
             }
             swap = sw; scaleX = sx; scaleY = sy;
-            log("calibrated swap=" + swap + " scaleX=" + scaleX.toFixed(3) + " scaleY=" + scaleY.toFixed(3));
+            log(`calibrated swap=${swap} scaleX=${scaleX.toFixed(3)} scaleY=${scaleY.toFixed(3)}`);
             finishCalib();
         }, () => {
             retryOrFail("failed");
@@ -442,7 +442,7 @@
     // burst of bad reads doesn't stack recalibrations.
     let lastSuspect = 0;
     function suspectDecode(why) {
-        log("⚠ suspicious decode: " + why);
+        log(`⚠ suspicious decode: ${why}`);
         const now = Date.now();
         if (now - lastSuspect < 5000) return;
         lastSuspect = now;
@@ -563,7 +563,7 @@
     }
     // Client displays / re-sends a code as a plain decimal string. The server canonicalises
     // (validCode) so zero-padding is irrelevant, but we pad to 4 for a stable on-screen code.
-    function codeStr(code) { let s = "" + code; while (s.length < 4) s = "0" + s; return s; }
+    function codeStr(code) { let s = `${code}`; while (s.length < 4) s = `0${s}`; return s; }
     // tc index (join height) -> seconds. Mirrors worker tcFromIndex: 0 none · 1..4 = the menu.
     const TC_SECONDS = [0, 60, 180, 300, 600];
     function tcFromIndex(i) { return (i >= 0 && i < TC_SECONDS.length) ? TC_SECONDS[i] : 0; }
@@ -599,9 +599,9 @@
             request("/api/create", params, (w, h) => {
                 if (w === 9 && h === 4) { if (err) err("busy"); return; } // rate-limited, don't recalibrate
                 const dc = decodeCode(w, h);
-                log("create decoded w=" + w + " h=" + h + " => code=" + (dc ? dc.code : "?"));
+                log(`create decoded w=${w} h=${h} => code=${dc ? dc.code : "?"}`);
                 if (!dc) {
-                    suspectDecode("create w=" + w + " h=" + h);
+                    suspectDecode(`create w=${w} h=${h}`);
                     if (err) err("decode");
                     return;
                 }
@@ -623,7 +623,7 @@
                 if (w === 9 && h === 4) { if (err) err("busy"); return; } // rate-limited
                 const dc = decodeCode(w, h);
                 if (!dc) {
-                    suspectDecode("quick w=" + w + " h=" + h);
+                    suspectDecode(`quick w=${w} h=${h}`);
                     if (err) err("decode");
                     return;
                 }
@@ -645,13 +645,13 @@
             request("/api/mquick", params, (w, h) => {
                 if (w === 9 && h === 4) { if (err) err("busy"); return; } // rate-limited
                 if (w === 9) {                                   // (9,6) no valid ids · (9,3) bad token
-                    suspectDecode("mquick w=" + w + " h=" + h);
+                    suspectDecode(`mquick w=${w} h=${h}`);
                     if (err) err(h === 6 ? "games" : h === 3 ? "token" : "error");
                     return;
                 }
                 const dc = decodeCode(w, h);
                 if (!dc) {
-                    suspectDecode("mquick w=" + w + " h=" + h);
+                    suspectDecode(`mquick w=${w} h=${h}`);
                     if (err) err("decode");
                     return;
                 }
@@ -677,7 +677,7 @@
 
         join: function (code, tok, cb, err) {
             request("/api/join", { code: code, tok: tok }, (w, h) => {
-                log("join decoded w=" + w + " h=" + h);
+                log(`join decoded w=${w} h=${h}`);
                 // h carries the host's time control as a small INDEX (0=untimed,1=60,2=180,
                 // 3=300,4=600), not raw seconds - 600 would overflow a level. tcFromIndex maps
                 // it back. join's width is the game id (1..9); tc rides the height.
@@ -686,7 +686,7 @@
                 else if (w === 20) cb({ ok: false, reason: "missing" });
                 else if (w === 21) cb({ ok: false, reason: "full" });
                 else {
-                    suspectDecode("join w=" + w + " h=" + h);
+                    suspectDecode(`join w=${w} h=${h}`);
                     cb({ ok: false, reason: "error" });
                 }
             }, err);
@@ -694,7 +694,7 @@
 
         status: function (code, tok, cb, err) {
             request("/api/status", { code: code, tok: tok || "" }, (w, h) => {
-                log("status(" + code + ") decoded w=" + w + " h=" + h);
+                log(`status(${code}) decoded w=${w} h=${h}`);
                 if (w === 9 && h === 4) { if (err) err("busy"); return; } // rate-limited: caller retries
                 if (w === 9 && h === 1) {
                     // status is only polled while a host waits for a joiner, so a
@@ -705,7 +705,7 @@
                 }
                 if (w === 9) { if (err) err("transient"); return; }
                 if (w !== 1 && w !== 2) {
-                    suspectDecode("status w=" + w + " h=" + h);
+                    suspectDecode(`status w=${w} h=${h}`);
                     if (err) err("decode");
                     return;
                 }
@@ -726,7 +726,7 @@
                 if (w === 9 && h === 1) { cb({ gone: true }); return; }    // gone/undecided
                 if (w === 9) { if (err) err("transient"); return; }
                 if (w < 1 || w > 9) {
-                    suspectDecode("match w=" + w + " h=" + h);
+                    suspectDecode(`match w=${w} h=${h}`);
                     if (err) err("decode");
                     return;
                 }
@@ -772,7 +772,7 @@
                 if (from === to) { cb(null); return; }   // (1,1)/(0,0) => nothing new
                 const inRange = from >= 0 && from <= 63 && to >= 0 && to <= 63;
                 if (!inRange || (validate && !validate(from, to))) {
-                    suspectDecode("poll w=" + w + " h=" + h);
+                    suspectDecode(`poll w=${w} h=${h}`);
                     if (err) err("decode");
                     return;
                 }
@@ -794,7 +794,7 @@
                     return;
                 }
                 if (w < 1 || w > 5) {
-                    suspectDecode("geostate w=" + w + " h=" + h);
+                    suspectDecode(`geostate w=${w} h=${h}`);
                     if (err) err("decode");
                     return;
                 }
@@ -813,7 +813,7 @@
                     cb({ done: false, round: w - 1, reveal: false, guessMask: h - 1, readyMask: 0 });
                     return;
                 }
-                suspectDecode("geostate w=" + w + " h=" + h);
+                suspectDecode(`geostate w=${w} h=${h}`);
                 if (err) err("decode");
             }, err);
         },
@@ -864,7 +864,7 @@
                 if (h === 63) { if (err) err(w); return; }
                 const score = h * 63 + w;
                 if (w < 0 || w >= 63 || score < 0 || score > 4095) {
-                    suspectDecode("geoscore w=" + w + " h=" + h);
+                    suspectDecode(`geoscore w=${w} h=${h}`);
                     if (err) err("decode");
                     return;
                 }
@@ -885,7 +885,7 @@
                 const place = h * 63 + w;
                 const limit = 6 + (MG.GeoCountries ? MG.GeoCountries.length : 0) * 6;
                 if (w < 0 || w >= 63 || place < 0 || place >= limit) {
-                    suspectDecode("geoinfo w=" + w + " h=" + h);
+                    suspectDecode(`geoinfo w=${w} h=${h}`);
                     if (err) err("decode");
                     return;
                 }
@@ -902,7 +902,7 @@
                 const index = h * 63 + w;
                 const list = MG.GeoCredits || [];
                 if (w < 0 || w >= 63 || index < 0 || index >= list.length) {
-                    suspectDecode("geocredit w=" + w + " h=" + h);
+                    suspectDecode(`geocredit w=${w} h=${h}`);
                     if (err) err("decode");
                     return;
                 }
@@ -935,7 +935,7 @@
                     // Real reading: width is the CLK band (30..39 = 30+hi), height is lo (0..63).
                     const sec = (w - 30) * 64 + h;
                     if (w < 30 || w > 39 || sec < 0 || sec > 600) {
-                        suspectDecode("clocks seat=" + seat + " w=" + w + " h=" + h);
+                        suspectDecode(`clocks seat=${seat} w=${w} h=${h}`);
                         fail("decode");
                         return;
                     }
@@ -980,7 +980,7 @@
                 if (w === 9 && h === 1) { cb({ gone: true, players: 0, started: false }); return; }
                 if (w === 9) { if (err) err("transient"); return; }
                 if (w < 1 || w > 2 || (h !== 1 && h !== 2)) {
-                    suspectDecode("room w=" + w + " h=" + h);
+                    suspectDecode(`room w=${w} h=${h}`);
                     if (err) err("decode");
                     return;
                 }
@@ -998,7 +998,7 @@
                     cb({ ok: false, reason: reason });
                     return;
                 }
-                suspectDecode("start w=" + w + " h=" + h);
+                suspectDecode(`start w=${w} h=${h}`);
                 cb({ ok: false, reason: "decode" });
             }, err);
         },
@@ -1012,7 +1012,7 @@
                     cb({ ok: false, reason: reason });
                     return;
                 }
-                suspectDecode("dact w=" + w + " h=" + h);
+                suspectDecode(`dact w=${w} h=${h}`);
                 cb({ ok: false, reason: "decode" });
             }, err);
         },
@@ -1039,7 +1039,7 @@
                 else if (w >= 50 && w <= 53 && h >= 1 && h <= 7) ev = { type: "draw", seat: w - 50, count: h - 1 };
                 else if (w === 60 && h >= 1 && h <= 5) ev = { type: "over", loser: h - 2 };
                 if (!ev) {
-                    suspectDecode("dlog w=" + w + " h=" + h);
+                    suspectDecode(`dlog w=${w} h=${h}`);
                     if (err) err("decode");
                     return;
                 }
@@ -1056,7 +1056,7 @@
                 // Private card ids use card+2 (2..37), not card+1, so card 0 never
                 // collides with the universal (1,1) "nothing new" marker.
                 if (w >= 2 && w <= 37 && h === 1) { cb(w - 2); return; }
-                suspectDecode("ddraw w=" + w + " h=" + h);
+                suspectDecode(`ddraw w=${w} h=${h}`);
                 if (err) err("decode");
             }, err);
         },
@@ -1071,7 +1071,7 @@
                 if (w === 9 && h === 3) { if (err) err("token"); return; }
                 const dc = decodeCode(w, h);   // host/joiner flag folded into the width band
                 if (!dc) {
-                    suspectDecode("dcreate w=" + w + " h=" + h);
+                    suspectDecode(`dcreate w=${w} h=${h}`);
                     if (err) err("decode");
                     return;
                 }
@@ -1088,7 +1088,7 @@
                 if (w === 22) { cb({ ok: false, reason: "started" }); return; }
                 // width = seat cap (2..4), height = the joiner's seat index +1 (players count).
                 if (w >= 2 && w <= 4 && h >= 1 && h <= 4) { cb({ ok: true, cap: w, seat: h - 1 }); return; }
-                suspectDecode("djoin w=" + w + " h=" + h);
+                suspectDecode(`djoin w=${w} h=${h}`);
                 cb({ ok: false, reason: "decode" });
             }, err);
         },
@@ -1103,7 +1103,7 @@
                 const started = w >= 50;
                 const players = started ? w - 50 : w;
                 if (players < 1 || players > 4 || h < 2 || h > 4) {
-                    suspectDecode("droom w=" + w + " h=" + h);
+                    suspectDecode(`droom w=${w} h=${h}`);
                     if (err) err("decode");
                     return;
                 }
@@ -1122,7 +1122,7 @@
                 if (w === 9 && h === 3) { if (err) err("token"); return; }
                 const dc = decodeCode(w, h);   // host/joiner flag folded into the width band
                 if (!dc) {
-                    suspectDecode("pcreate w=" + w + " h=" + h);
+                    suspectDecode(`pcreate w=${w} h=${h}`);
                     if (err) err("decode");
                     return;
                 }
@@ -1139,7 +1139,7 @@
                 if (w === 22) { cb({ ok: false, reason: "started" }); return; }
                 // width = seat cap (2..4), height = the joiner's seat index +1 (players count).
                 if (w >= 2 && w <= 4 && h >= 1 && h <= 4) { cb({ ok: true, cap: w, seat: h - 1 }); return; }
-                suspectDecode("pjoin w=" + w + " h=" + h);
+                suspectDecode(`pjoin w=${w} h=${h}`);
                 cb({ ok: false, reason: "decode" });
             }, err);
         },
@@ -1154,7 +1154,7 @@
                 const started = w >= 50;
                 const players = started ? w - 50 : w;
                 if (players < 1 || players > 4 || h < 2 || h > 4) {
-                    suspectDecode("proom w=" + w + " h=" + h);
+                    suspectDecode(`proom w=${w} h=${h}`);
                     if (err) err("decode");
                     return;
                 }
@@ -1171,7 +1171,7 @@
                     cb({ ok: false, reason: reason });
                     return;
                 }
-                suspectDecode("pstart w=" + w + " h=" + h);
+                suspectDecode(`pstart w=${w} h=${h}`);
                 cb({ ok: false, reason: "decode" });
             }, err);
         },
@@ -1186,7 +1186,7 @@
                     cb({ ok: false, reason: reason });
                     return;
                 }
-                suspectDecode("pact w=" + w + " h=" + h);
+                suspectDecode(`pact w=${w} h=${h}`);
                 cb({ ok: false, reason: "decode" });
             }, err);
         },
@@ -1196,7 +1196,7 @@
                 if (!cb) return;
                 if (w === 1 && h === 1) { cb({ ok: true }); return; }
                 if (w === 9) { cb({ ok: false, reason: h === 3 ? "token" : "wait" }); return; }
-                suspectDecode("pnext w=" + w + " h=" + h);
+                suspectDecode(`pnext w=${w} h=${h}`);
                 cb({ ok: false, reason: "decode" });
             }, err);
         },
@@ -1229,7 +1229,7 @@
                 // SHOW(60+seat, card+1)
                 else if (w >= 60 && w <= 63 && h >= 1 && h <= 52) ev = { type: "show", seat: w - 60, card: h - 1 };
                 if (!ev) {
-                    suspectDecode("plog w=" + w + " h=" + h);
+                    suspectDecode(`plog w=${w} h=${h}`);
                     if (err) err("decode");
                     return;
                 }
@@ -1245,7 +1245,7 @@
                 if (w === 9 && h === 9) { if (err) err("gone"); return; }
                 // Private card ids use card+2 (2..53) so card 0 never collides with (1,1).
                 if (w >= 2 && w <= 53 && h === 1) { cb(w - 2); return; }
-                suspectDecode("pdraw w=" + w + " h=" + h);
+                suspectDecode(`pdraw w=${w} h=${h}`);
                 if (err) err("decode");
             }, err);
         }
@@ -1261,5 +1261,5 @@
     // Cost: the first online action pays the engine's cold image-load once, spent under
     // the "waiting for opponent" view - a fair trade for never breaking menu hover.
 
-    log("loaded (configured=" + MG.Net.isConfigured() + ")");
+    log(`loaded (configured=${MG.Net.isConfigured()})`);
 })();

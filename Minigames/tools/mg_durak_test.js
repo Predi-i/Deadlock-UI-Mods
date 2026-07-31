@@ -11,7 +11,7 @@ new Function(fs.readFileSync(path.join(rulesDir, "durak.js"), "utf8"))();
 const M = globalThis.MGRules.durak;
 
 let failures = 0;
-function ok(cond, msg) { if (!cond) { failures++; console.log("  ✗ " + msg); } else { console.log("  ✓ " + msg); } }
+function ok(cond, msg) { if (!cond) { failures++; console.log(`  ✗ ${msg}`); } else { console.log(`  ✓ ${msg}`); } }
 
 // Total cards must always be conserved across hands + deck + table + discard.
 function totalCards(st) {
@@ -96,7 +96,7 @@ console.log("throw-in legality");
         else if (allowed) sawReject = true; // a non-matching rank was wrongly allowed
     }
     ok(!sawReject, "throw-in rejects ranks not present on the table");
-    ok(true, "matching-rank throw-in path exercised" + (sawAccept ? " (accept seen)" : ""));
+    ok(true, `matching-rank throw-in path exercised${sawAccept ? " (accept seen)" : ""}`);
     // Defender may never attack.
     ok(!M.canAttackWith(st, st.defender, st.hands[st.defender][0]), "defender cannot attack");
 })();
@@ -138,7 +138,7 @@ console.log("full bot-vs-bot games terminate & conserve cards");
                 }
             } catch (e) { threw = true; }
             if (threw || st.phase !== "over" || guard >= 20000) {
-                ok(false, "N=" + N + " seed=" + seed + " game did not cleanly finish (guard=" + guard + ")");
+                ok(false, `N=${N} seed=${seed} game did not cleanly finish (guard=${guard})`);
             }
         }
     }
@@ -259,7 +259,7 @@ console.log("full CONSENSUS bot games (all attack seats throw in) terminate & co
             } catch (e) { threw = true; }
             if (threw || st.phase !== "over" || guard >= 40000) {
                 bad++;
-                ok(false, "consensus N=" + N + " seed=" + seed + " did not finish (guard=" + guard + ")");
+                ok(false, `consensus N=${N} seed=${seed} did not finish (guard=${guard})`);
             }
         }
     }

@@ -106,7 +106,7 @@ export function createMinigamesServer(options) {
   const server = createServer(async function (incoming, outgoing) {
     try {
       const host = incoming.headers.host || "127.0.0.1";
-      const origin = publicOrigin || "http://" + host;
+      const origin = publicOrigin || `http://${host}`;
       const url = new URL(incoming.url || "/", origin);
       const headers = new Headers();
       for (const name of Object.keys(incoming.headers)) {
@@ -183,14 +183,14 @@ if (isMainModule()) {
   const runtime = createMinigamesServer();
   runtime.server.listen(port, host, () => {
     const address = runtime.server.address();
-    console.log("deadlock-minigames listening on " + address.address + ":" + address.port);
+    console.log(`deadlock-minigames listening on ${address.address}:${address.port}`);
   });
 
   let stopping = false;
   async function shutdown(signal) {
     if (stopping) return;
     stopping = true;
-    console.log("received " + signal + ", shutting down");
+    console.log(`received ${signal}, shutting down`);
     try {
       await runtime.close();
       process.exit(0);

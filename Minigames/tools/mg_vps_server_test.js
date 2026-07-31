@@ -41,7 +41,7 @@ async function openRuntime(createMinigamesServer, databasePath) {
     const address = runtime.server.address();
     return {
         runtime: runtime,
-        origin: "http://127.0.0.1:" + address.port,
+        origin: `http://127.0.0.1:${address.port}`,
     };
 }
 

@@ -3,9 +3,9 @@
 
 const origin = String(process.argv[2] || "https://178.236.246.13").replace(/\/+$/, "");
 let nonce = Date.now();
-const hostToken = "liveGeoHost" + nonce;
-const joinToken = "liveGeoJoin" + nonce;
-const soloToken = "liveGeoSolo" + nonce;
+const hostToken = `liveGeoHost${nonce}`;
+const joinToken = `liveGeoJoin${nonce}`;
+const soloToken = `liveGeoSolo${nonce}`;
 let lobbyCode = "";
 let soloCode = "";
 
@@ -42,7 +42,7 @@ try {
   lobbyCode = String((created.w - 24) * 64 + created.h).padStart(4, "0");
 
   const joined = levels(await get("/api/join", { code: lobbyCode, tok: joinToken }), "join");
-  if (joined.w !== 9) throw new Error("join resolved game " + joined.w + ", expected 9");
+  if (joined.w !== 9) throw new Error(`join resolved game ${joined.w}, expected 9`);
 
   const initial = levels(await get("/api/geostate", {
     code: lobbyCode, tok: hostToken
@@ -136,7 +136,7 @@ try {
   if (soloNext.w !== 1 || soloRoundTwo.w !== 2 || soloRoundTwo.h !== 1) {
     throw new Error("solo round did not advance automatically");
   }
-  console.log("LIVE GEO SOLO OK code=" + soloCode);
+  console.log(`LIVE GEO SOLO OK code=${soloCode}`);
 } finally {
   if (lobbyCode) {
     try {

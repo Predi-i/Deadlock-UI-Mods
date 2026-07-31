@@ -141,7 +141,7 @@
         function status(t) { if (session.onStatus) session.onStatus(t); }
         function nameOf(seat) {
             if (seat === mySeat) return "You";
-            const base = isBot ? ("Bot " + seat) : ("Player " + (seat + 1));
+            const base = isBot ? (`Bot ${seat}`) : (`Player ${seat + 1}`);
             return (leftSeats.indexOf(seat) >= 0) ? (base + " (left)") : base;
         }
 
@@ -299,7 +299,7 @@
 
         // slot geometry (stage coords)
         function xform(x, y, rot) {
-            let t = "translate3d(" + Math.round(x) + "px, " + Math.round(y) + "px, 0px)";
+            let t = `translate3d(${Math.round(x)}px, ${Math.round(y)}px, 0px)`;
             return rot ? (t + " rotateZ(" + rot + "deg)") : t;
         }
         // Deck stack on the LEFT, at the table row's height. The trump card lies UNDER the deck,
@@ -491,7 +491,7 @@
             av.AddClass("mg-opp-avatar");
             const ini = $.CreatePanel("Label", av, "");
             ini.AddClass("mg-opp-initial");
-            ini.text = isMe ? "You" : (isBot ? "B" + seat : "P" + (seat + 1));
+            ini.text = isMe ? "You" : (isBot ? `B${seat}` : `P${seat + 1}`);
             const name = $.CreatePanel("Label", tile, "");
             name.AddClass("mg-opp-name");
             name.text = nameOf(seat);

@@ -163,8 +163,8 @@
         function finish(won) {
             over = true;
             sfx("GameEnd");
-            status(won ? "Solved in " + row + (row === 1 ? " guess!" : " guesses!") :
-                "The word was " + answer + ".");
+            status(won ? `Solved in ${row}${row === 1 ? " guess!" : " guesses!"}` :
+                `The word was ${answer}.`);
             if (session.onGameOver) session.onGameOver(won ? "win" : "lose");
         }
 
@@ -192,7 +192,7 @@
             sfx("MoveSelf");
             if (guess === answer) { finish(true); return; }
             if (row >= 6) { finish(false); return; }
-            status("Guess " + (row + 1) + " of 6.");
+            status(`Guess ${row + 1} of 6.`);
             paintCurrent();
         }
 
@@ -228,7 +228,7 @@
         for (let kr = 0; kr < KBD_ROWS.length; kr++) {
             var krow = $.CreatePanel("Panel", kbd, "");
             krow.AddClass("mg-wordle-kbd-row");
-            krow.AddClass("mg-wordle-kbd-row" + (kr + 1));
+            krow.AddClass(`mg-wordle-kbd-row${kr + 1}`);
             for (let kc = 0; kc < KBD_ROWS[kr].length; kc++) {
                 ((letter) => {
                     var btn = $.CreatePanel("Button", krow, "");

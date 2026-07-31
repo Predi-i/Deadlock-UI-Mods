@@ -307,9 +307,9 @@
             const available = availableBalance();
             const elapsed = Math.max(0, Date.now() - balanceAt);
             const until = current >= BANK_CAP ? 0 : Math.max(1, Math.ceil((REGEN_MS - (elapsed % REGEN_MS)) / 1000));
-            bankLabel.text = "PIXELS  " + available + " / " + BANK_CAP;
-            regenLabel.text = until ? ("NEXT +1  " + until + "s") : "PIXELS FULL";
-            queueLabel.text = "QUEUE  " + pendingOrder.length + " / " + MIN_BATCH;
+            bankLabel.text = `PIXELS  ${available} / ${BANK_CAP}`;
+            regenLabel.text = until ? (`NEXT +1  ${until}s`) : "PIXELS FULL";
+            queueLabel.text = `QUEUE  ${pendingOrder.length} / ${MIN_BATCH}`;
             queueLabel.SetHasClass("mg-px-stat-ready", pendingOrder.length >= MIN_BATCH);
             sendButton.SetHasClass("mg-px-action-disabled",
                 pendingOrder.length < MIN_BATCH || !accountId || sending);
@@ -442,7 +442,7 @@
                 panel.style.visibility = "visible";
                 panel.style.width = Math.max(1, right - left) + "px";
                 panel.style.height = Math.max(1, bottom - top) + "px";
-                panel.style.transform = "translate3d(" + left + "px, " + top + "px, 0px)";
+                panel.style.transform = `translate3d(${left}px, ${top}px, 0px)`;
                 return;
             }
             let col = pixel.x - viewX;
@@ -530,7 +530,7 @@
             if (remaining < MIN_BATCH) {
                 sending = false;
                 updateStats();
-                outerStatus("Uploaded full batches; " + remaining + " pixels remain queued.");
+                outerStatus(`Uploaded full batches; ${remaining} pixels remain queued.`);
                 return;
             }
 
@@ -724,8 +724,8 @@
                     cell.SetPanelEvent("onmouseover", () => {
                         var point = mapPoint(cellCol, cellRow);
                         coordLabel.text = zoom === MAX_ZOOM
-                            ? ("PIXEL  " + point.x + ", " + point.y)
-                            : ("REGION  " + point.x + ", " + point.y + "   ·   CLICK TO ZOOM");
+                            ? (`PIXEL  ${point.x}, ${point.y}`)
+                            : (`REGION  ${point.x}, ${point.y}   ·   CLICK TO ZOOM`);
                     });
                     cell.SetPanelEvent("onactivate", () => {
                         // Grid geometry changes immediately on pan/zoom, while its matching

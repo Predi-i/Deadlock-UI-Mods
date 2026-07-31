@@ -80,7 +80,7 @@ async function placeName(code, tok) {
     let slowestCreate = 0, failed = 0;
 
     for (let i = 0; i < rounds; i++) {
-        const tok = "srcLive" + i + "x" + Date.now().toString(36).slice(-4);
+        const tok = `srcLive${i}x${Date.now().toString(36).slice(-4)}`;
         const started = Date.now();
         const created = await get("/api/create", { game: 9, tok: tok, solo: 1 }, "create");
         const createMs = Date.now() - started;
@@ -116,10 +116,10 @@ async function placeName(code, tok) {
     console.log("places: " + Object.keys(regionsSeen).map((name) => {
         return name + "x" + regionsSeen[name];
     }).join(", "));
-    console.log("slowest lobby create: " + slowestCreate + "ms (prebuilt pool means no catalog call)");
+    console.log(`slowest lobby create: ${slowestCreate}ms (prebuilt pool means no catalog call)`);
 
     if (failed) {
-        console.log("\n" + failed + "/" + rounds + " rounds served no panorama");
+        console.log(`\n${failed}/${rounds} rounds served no panorama`);
         process.exit(1);
     }
     if (!sources.Mapillary) {

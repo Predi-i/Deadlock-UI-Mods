@@ -44,7 +44,7 @@ function verify(name, expected) {
             }
         }
     }
-    console.log("  \u2713 " + name + " " + raw.w + "x" + raw.h + ": " + cases + " simulated reads");
+    console.log(`  \u2713 ${name} ${raw.w}x${raw.h}: ${cases} simulated reads`);
 }
 
 verify("relevant-template.png", "current");
