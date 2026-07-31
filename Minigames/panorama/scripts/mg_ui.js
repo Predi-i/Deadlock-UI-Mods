@@ -650,12 +650,7 @@
                 art.AddClass("mg-card-art");
                 // Custom card image (compiled .vtex). soon1-4 have no art → plain bg.
                 if (g.key.indexOf("soon") !== 0) {
-                    // GeoGuesser has no dedicated compiled card yet; reuse its shipped map
-                    // instead of requesting a missing cards/geoguesser.vtex_c every menu open.
-                    var artUrl = g.id === 9
-                        ? "s2r://panorama/images/geoguesser/world_map.vtex"
-                        : "s2r://panorama/images/cards/" + g.key + ".vtex";
-                    setFace(art, artUrl);
+                    setFace(art, "s2r://panorama/images/cards/" + g.key + ".vtex");
                 }
 
                 var bar = $.CreatePanel("Panel", card, "");

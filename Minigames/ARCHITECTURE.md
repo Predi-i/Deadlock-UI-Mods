@@ -133,6 +133,8 @@ tools/                     dev-only Node test harnesses + build helpers (NOT pac
                            (`--check` verifies the committed worker.js is in sync; first step of `npm test`)
   mg_geo_live_smoke.js     disposable two-seat production GeoGuesser smoke over HTTPS
   build_geoguesser_map.js  rasterize the dedicated Natural Earth country map
+  build_ne_raster.js       one-off: downsample Natural Earth II's natural-colour GeoTIFF into
+                           the committed assets/ne2_natural_2048.png the map builder samples
   build_pixelbattle_map.js generate the Pixel Battle land mask from the source map image
   build_wordle_words.js    generate the Wordle answer + guess word lists
   gen_soundevents.js       generate the soundevents manifest consumed by mg_sound.js
@@ -1240,14 +1242,37 @@ is built but **not yet in-game verified**.
   button points at a different place the moment the window pans. The label and marker layers are
   `hittest: false` so the grid above still receives every click.
 - The map is a 2048×1024 Natural Earth composite (`tools/build_geoguesser_map.js`, pure Node +
-  zlib — no `sharp`/`canvas` in this repo): 1:50m countries/land/lakes/rivers/urban areas, 1:110m
-  state lines, and 243 populated places as dots. All public domain, no attribution required.
+  zlib — no `sharp`/`canvas` in this repo): 1:50m countries/land/lakes/rivers, 1:110m state lines,
+  and 243 populated places as dots. All public domain, no attribution required.
   **OSM was rejected deliberately**: tiles are ODbL and the tile usage policy forbids proxying or
-  embedding them in an application. City *names* are Panorama `Label`s fed by the generated
-  `mg_geoguesser_cities.generated.js` rather than baked pixels, because that PNG encoder has no
-  font renderer; labels appear by `SCALERANK` as zoom deepens so the world view stays uncluttered.
-  Antarctica correctly fills the bottom band — its polygon reaches −89.999° and equirectangular
-  stretches the pole across the full width.
+  embedding them in an application. Antarctica correctly fills the bottom band — its polygon
+  reaches −89.999° and equirectangular stretches the pole across the full width.
+- **Land colour is sampled from Natural Earth II's natural-colour raster**
+  (`tools/assets/ne2_natural_2048.png`, produced by `build_ne_raster.js` from a 40 MiB public-domain
+  GeoTIFF; only the downsample is committed, so a clone needs neither the source nor a network).
+  The country polygons act purely as a mask, and water is painted separately because that raster
+  renders the ocean flat white. Two FLAT palettes were shipped and rejected — grey, then dark brown
+  — before the real cause was accepted: the problem was never the hue, it is that a single fill
+  cannot show a continent's variety. Amazon green, Sahara sand and Greenland ice now read as
+  themselves.
+- City *names* are Panorama `Label`s fed by the generated `mg_geoguesser_cities.generated.js`
+  rather than baked pixels, because that PNG encoder has no font renderer. Two gates keep them
+  readable and **both are load-bearing**: a `SCALERANK` limit per zoom (1x shows only the 27 rank-0
+  capitals — `rank<=1` put 68 names on a 500px map) and a greedy overlap rejection that drops any
+  label whose box touches one already placed. Rank alone can never separate Ljubljana from Zagreb
+  at 30px apart, which is what made the Balkans an unreadable pile. Off-window labels are culled
+  *before* the overlap test, or at zoom an invisible name steals a slot from a visible one.
+- Because the map is light, the label ink is dark on a white halo and the markers are saturated
+  fills with a white ring. The previous muted set (`#7199ba` blue, `#a9b88a` olive) was tuned
+  against a dark grey map and vanished on cyan sea and green land; the reveal pin is violet
+  precisely because nothing on a natural-colour map is purple.
+- A round is on a **60 s** timer (`MG.Widgets.createTurnTimer` with a per-call override; the shared
+  default is 25 s, which is barely enough to spin the panorama once). It attaches to `container`
+  (`.mg-game-host`, `flow-children: none`) rather than the `.mg-geo` column, because the widget
+  positions itself with `vertical-align` and inside a `flow-children: down` parent it would push the
+  panorama down instead. Expiry submits the selected cell, or cell 0 when nothing is selected: the
+  server reveals only once **both** seats have guessed, so a silent timeout would strand the
+  opponent.
 - Direct image drag reuses the chess/checkers `DragStart`/`DragEnd` + `MG.Widgets.winPos` pattern.
   Some Panorama builds expose the drag ghost position only at release, so two native `Slider`
   controls are the continuous path: `onvaluechanged` updates heading and pitch while the thumb moves.

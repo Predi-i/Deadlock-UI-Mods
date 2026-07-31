@@ -86,6 +86,10 @@
         var panoramaReady = false;
         var pollMisses = 0;
         var sendingGuess = false;
+        // Set once this seat's guess is accepted by the server. Distinct from sendingGuess (in
+        // flight) and from the reveal: between locking in and the opponent answering, the round is
+        // still open but this player is done, so the clock must be off.
+        var guessLocked = false;
         var sendingNext = false;
         var finished = false;
         var revealReadsPending = 0;
@@ -143,6 +147,43 @@
         addButton(cameraControls, "mg-geo-camera-button mg-geo-reset-button", "RESET", function () {
             yaw = 0; pitch = 0; applyCamera();
         });
+
+        // ── round timer ───────────────────────────────────────────────────────────────────
+        // 60s per location, not the shared 25s default: a GeoGuesser round is explore-then-place,
+        // and 25s is barely enough to spin the panorama once. The widget takes a per-call override.
+        //
+        // Attached to `container` (.mg-game-host, flow-children:none), NOT to the .mg-geo column:
+        // the bar positions itself with vertical-align, which a flow-children:down parent ignores,
+        // and inside the column it would push the panorama down instead of floating beside it.
+        // No boardW either - GeoGuesser is 860 wide against an 844 inner zone, so the board-edge
+        // shove clamps back to the gutter anyway (poker/durak omit it for the same reason).
+        var ROUND_SECS = 60;
+        var roundTimer = (MG.Widgets && MG.Widgets.createTurnTimer)
+            ? MG.Widgets.createTurnTimer(container, {}) : null;
+        var timerOn = false;
+
+        // On the clock only while this seat can still act: a round is live once the panorama is up
+        // and stays live until the guess is in or the reveal lands.
+        function refreshTimer() {
+            if (!roundTimer) return;
+            var live = !destroyed && !finished && currentRound >= 0 &&
+                revealRound !== currentRound && !sendingGuess && !guessLocked;
+            if (live === timerOn) return;
+            timerOn = live;
+            if (!live) { roundTimer.stop(); return; }
+            roundTimer.start(onRoundTimeout, ROUND_SECS);
+        }
+
+        // Timeout must not stall the other seat: the server reveals only once BOTH have guessed, so
+        // running out submits whatever is selected, or cell 0 when nothing is - a deliberate
+        // maximum-distance answer rather than a dead lobby.
+        function onRoundTimeout() {
+            timerOn = false;
+            if (destroyed || finished || revealRound === currentRound || sendingGuess) return;
+            if (selectedCell < 0) selectedCell = 0;
+            prompt.text = "Time expired. Your guess was submitted.";
+            submitGuess();
+        }
 
         var lower = $.CreatePanel("Panel", root, "");
         lower.AddClass("mg-geo-lower");
@@ -306,22 +347,61 @@
 
         // ── city labels ───────────────────────────────────────────────────────────────────
         // Drawn as Panorama Labels rather than baked into the PNG (the build's encoder has no
-        // font renderer), so the text stays crisp at every zoom. Only the most prominent places
-        // show at 1x; deeper zoom reveals the rest, which keeps the world view uncluttered.
+        // font renderer), so the text stays crisp at every zoom.
+        //
+        // Two gates decide what shows. The RANK gate keeps the world view sparse: at 1x only the
+        // 27 rank-0 capitals are candidates (rank<=1 put 68 names on a 500px map and the Balkans
+        // became an unreadable pile). The OVERLAP gate then drops any label whose box would touch
+        // one already placed - which is what a real atlas does, and the only thing that actually
+        // fixes clusters, since no rank threshold can separate Ljubljana from Zagreb.
         function cityRankLimit() {
             if (mapZoomLevel >= 8) return 9;
             if (mapZoomLevel >= 4) return 4;
             if (mapZoomLevel >= 2) return 3;
-            return 1;
+            return 0;
         }
+
+        // Panorama cannot measure a Label before it lays out, so estimate: radiance at 11px runs
+        // about 5.6px per character. Only relative sizes matter here - the estimate decides
+        // spacing, not painting.
+        var CITY_CHAR_W = 5.6, CITY_LABEL_H = 13, CITY_PAD_X = 3, CITY_PAD_Y = 2;
 
         function refreshCityLabels() {
             var list = MG.GeoCities || [];
             var limit = cityRankLimit();
+            var placed = [];
+            // The window's own rectangle in the zoom layer's px space. Labels outside it are
+            // culled BEFORE the overlap test: the layer is far wider than the 500px window once
+            // zoomed, and an off-screen name must not win a slot from a visible one.
+            var viewLeft = panX * MAP_W * mapZoomLevel;
+            var viewTop = panY * MAP_H * mapZoomLevel;
+            var viewRight = viewLeft + MAP_W;
+            var viewBottom = viewTop + MAP_H;
             for (var i = 0; i < list.length; i++) {
                 var city = list[i];
                 var label = cityLabels[i];
                 var show = city.r <= limit;
+                var left = 0, top = 0;
+                if (show) {
+                    // The manifest is sorted by rank, so the first fit wins and a more prominent
+                    // city always beats a lesser one for the same patch of map.
+                    left = city.x * MAP_W * mapZoomLevel + 4;
+                    top = city.y * MAP_H * mapZoomLevel - 7;
+                    var right = left + city.n.length * CITY_CHAR_W;
+                    var bottom = top + CITY_LABEL_H;
+                    if (right < viewLeft || left > viewRight ||
+                        bottom < viewTop || top > viewBottom) {
+                        show = false;
+                    }
+                    for (var p = 0; show && p < placed.length; p++) {
+                        var other = placed[p];
+                        if (left - CITY_PAD_X < other[2] && right + CITY_PAD_X > other[0] &&
+                            top - CITY_PAD_Y < other[3] && bottom + CITY_PAD_Y > other[1]) {
+                            show = false;
+                        }
+                    }
+                    if (show) placed.push([left, top, right, bottom]);
+                }
                 if (show && !label) {
                     label = $.CreatePanel("Label", labelLayer, "");
                     label.AddClass("mg-geo-city");
@@ -334,8 +414,7 @@
                 if (!show) continue;
                 // Positioned in the zoom layer's own space, so it pans and scales with the map.
                 label.style.transform = "translate3d(" +
-                    Math.round(city.x * MAP_W * mapZoomLevel + 4) + "px, " +
-                    Math.round(city.y * MAP_H * mapZoomLevel - 7) + "px, 0px)";
+                    Math.round(left) + "px, " + Math.round(top) + "px, 0px)";
             }
         }
 
@@ -510,6 +589,7 @@
         function submitGuess() {
             if (selectedCell < 0 || sendingGuess || finished || revealRound === currentRound) return;
             sendingGuess = true;
+            refreshTimer();
             setAction("SUBMITTING…", false, submitGuess);
             MG.Api.geoGuess(code, tok, selectedCell, function (result) {
                 if (destroyed) return;
@@ -517,8 +597,11 @@
                 if (!result.ok) {
                     prompt.text = "The server rejected that guess. Pick again.";
                     setAction("SUBMIT GUESS", true, submitGuess);
+                    refreshTimer();
                     return;
                 }
+                guessLocked = true;
+                refreshTimer();
                 prompt.text = solo ? "Calculating result…" : "Guess locked. Waiting for the opponent…";
                 setAction(solo ? "CALCULATING…" : "WAITING FOR OPPONENT", false, submitGuess);
                 pollMisses = 0;
@@ -527,6 +610,9 @@
                 sendingGuess = false;
                 prompt.text = "Couldn't submit. Try again.";
                 setAction("SUBMIT GUESS", true, submitGuess);
+                // The guess never landed, so the round is still this player's to answer: put them
+                // back on the clock rather than leaving a stalled seat with no deadline.
+                refreshTimer();
             });
         }
 
@@ -536,6 +622,7 @@
             selectedCell = -1;
             sendingGuess = false;
             sendingNext = false;
+            guessLocked = false;
             yaw = Math.floor(Math.random() * 24) * 15;
             pitch = 0;
             clearMapMarkers();
@@ -552,6 +639,15 @@
             prompt.text = "Explore the panorama, then choose a point on the map.";
             setAction("SELECT A MAP POINT", false, submitGuess);
             loadPanorama(round);
+            // Force a restart rather than calling refreshTimer alone: the previous round may still
+            // read as "live", and refreshTimer is edge-triggered, so it would see no change and
+            // leave the old countdown running into the new round.
+            timerOn = false;
+            if (roundTimer) roundTimer.stop();
+            // Start the clock with the round, not with the image: the panorama is proxied and can
+            // take a second, and a timer that only began on load would hand a slow connection
+            // extra thinking time.
+            refreshTimer();
             outerStatus("GeoGuesser round " + (round + 1) + " of " + ROUNDS + ".");
         }
 
@@ -600,6 +696,9 @@
         function showReveal() {
             if (revealRound === currentRound) return;
             revealRound = currentRound;
+            // The round is decided; nothing this seat does can change it, so take them off the
+            // clock before the reveal reads start.
+            refreshTimer();
             // Two reads per point now: target (2) + my pick (2) [+ opponent pick (2)] + score
             // + info + credit.
             revealReadsPending = solo ? 7 : 10;
@@ -658,6 +757,7 @@
         function finishGame() {
             if (finished) return;
             finished = true;
+            refreshTimer();
             var mine = scores[mySeat], theirs = scores[1 - mySeat];
             if (solo) {
                 roundLabel.text = "Solo complete";
@@ -762,6 +862,9 @@
             destroy: function () {
                 destroyed = true;
                 panoramaGen++;
+                // Before the panel goes: the timer owns $.Schedule callbacks that would otherwise
+                // keep firing against a deleted panel after the player leaves.
+                if (roundTimer) roundTimer.destroy();
                 cleanupDrag();
                 clearPanorama();
                 try { root.DeleteAsync(0); } catch (e) {}

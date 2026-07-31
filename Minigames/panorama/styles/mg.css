@@ -2439,8 +2439,10 @@
     height: 250px;
     flow-children: none;
     overflow: clip;
-    background-color: #0c151f;
-    border: 1px solid #354453;
+    /* Matches the map's own sea colour, so the frame reads as part of the water rather than as a
+       dark gutter while the .vtex is still decoding. */
+    background-color: #8acae2;
+    border: 1px solid #4d7688;
 }
 /* Zoom layer. ⚠ The map window (.mg-geo-map) stays 500x250 and clips; only this wrapper grows, so
    the image AND the 64x32 hit grid scale together and a cell keeps covering the same piece of
@@ -2467,19 +2469,28 @@
     height: 100%;
     flow-children: none;
 }
+/* Dark ink on a WHITE halo: the map is now a light natural-colour raster, so the old pale text
+   with a black shadow was invisible over Sahara sand and Greenland ice. This is the same trick a
+   real atlas uses - the halo keeps a name readable whether it lands on desert, forest or sea. */
 .mg-geo-city {
     font-family: radiance;
     font-size: 11px;
-    color: #e2e9f1;
-    text-shadow: 0px 1px 3px 2 #000000;
+    color: #26282b;
+    text-shadow: 0px 0px 3px 3 #ffffffdd;
 }
 /* Markers are world-anchored panels in the zoom layer, NOT tinted grid buttons: a grid button
    points at a different place as soon as the window pans, which would drift the reveal dots. */
+/* Markers are world-anchored panels in the zoom layer, NOT tinted grid buttons: a grid button
+   points at a different place as soon as the window pans, which would drift the reveal dots.
+   ⚠ Colours are tuned for the LIGHT natural-colour map. The previous muted set (#7199ba blue,
+   #a9b88a olive) was picked against a dark grey map and disappeared once the map became cyan sea
+   and green land - a muted blue dot on cyan water is invisible. Saturated fill + white ring is
+   the atlas/Google answer: the fill separates from mid-tone terrain, the ring from dark terrain. */
 .mg-geo-marker {
     width: 9px;
     height: 9px;
     border-radius: 50%;
-    border: 1px solid #0b1117;
+    border: 1px solid #ffffffee;
 }
 .mg-geo-grid {
     width: 100%;
@@ -2499,24 +2510,26 @@
     border-radius: 50%;
 }
 .mg-geo-cell:hover {
-    background-color: #d3c39032;
-    border-color: #d8cda777;
+    background-color: #1c1c1c22;
+    border-color: #ffffffbb;
 }
 .mg-geo-selected {
-    background-color: #d7b95ddd;
-    border-color: #fff0b2;
+    background-color: #e8a41ef2;
+    border-color: #ffffff;
 }
 .mg-geo-me {
-    background-color: #7199badd;
-    border-color: #c6d8e6;
+    background-color: #1f6fd0f2;
+    border-color: #ffffff;
 }
 .mg-geo-them {
-    background-color: #a96c70dd;
-    border-color: #e7bdc0;
+    background-color: #cf2f43f2;
+    border-color: #ffffff;
 }
+/* The answer. Green would fight the vegetation, so the reveal pin is violet: nothing on a
+   natural-colour map is purple, which makes it unmistakable at a glance. */
 .mg-geo-target {
-    background-color: #a9b88acc;
-    border-color: #e2e9cf;
+    background-color: #7b3fc4f2;
+    border-color: #ffffff;
 }
 .mg-geo-side {
     width: 342px;

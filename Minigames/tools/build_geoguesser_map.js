@@ -5,10 +5,16 @@
 // Node's built-in zlib. (sharp/canvas/resvg are all absent, and adding a native dep for a
 // once-per-asset build is not worth it.)
 //
-// Layer order is bottom -> top and deliberate: ocean, graticule, land, urban blush, lakes,
-// rivers, state lines, country borders, coastline, city dots. The palette stays dark and
-// low-contrast on purpose - the guess markers and reveal dots are drawn ON TOP of this in
-// Panorama, so a bright or busy map would swallow them.
+// Layer order is bottom -> top and deliberate: water, graticule, land, lakes, rivers, state
+// lines, country borders, coastline, city dots.
+//
+// Land colour comes from Natural Earth II's natural-colour raster (assets/ne2_natural_2048.png,
+// public domain, produced by tools/build_ne_raster.js) rather than a flat fill, so vegetation,
+// desert and ice read as themselves: Amazon green, Sahara sand, Greenland white. A flat palette
+// was tried twice and rejected both times - grey and dark brown are equally monotone, because the
+// problem was never the hue, it was that one fill cannot show a continent's variety.
+// The raster renders the ocean flat white, so water is painted here and the raster is MASKED to
+// the land polygons.
 //
 // City NAMES are not rasterised here (this encoder has no font renderer). The builder instead
 // emits a manifest that mg_geoguesser.js turns into real Panorama Labels, which stay crisp at
@@ -29,30 +35,93 @@ const W = 2048;
 const H = 1024;
 const pixels = Buffer.alloc(W * H * 4);
 
-const OCEAN_TOP = [17, 28, 39];
-const OCEAN_BOTTOM = [12, 22, 31];
-const GRID = [67, 83, 96, 46];
-const BORDERS = [114, 125, 132, 210];
-const STATE_LINES = [104, 114, 120, 105];
-const COAST = [159, 166, 163, 235];
-const LAKE = [38, 58, 76, 255];
-const RIVER = [70, 96, 116, 150];
-const URBAN = [122, 126, 116, 130];
-const CITY_CORE = [226, 232, 226, 255];
-const CITY_RING = [40, 48, 52, 220];
-const FRAME = [79, 96, 112, 255];
-const LAND = [
-    [79, 91, 91, 255],
-    [84, 96, 92, 255],
-    [75, 89, 91, 255],
-    [89, 99, 91, 255],
-    [78, 92, 96, 255],
-    [91, 100, 95, 255],
-    [82, 94, 88, 255]
-];
+// Water is the one big flat colour left, so it carries the map's tone: Google's cyan, slightly
+// deeper at the poles to keep the two hemispheres from reading as one slab.
+const OCEAN_TOP = [138, 202, 226];
+const OCEAN_BOTTOM = [122, 190, 218];
+const GRID = [255, 255, 255, 38];
+const BORDERS = [118, 116, 110, 190];
+const STATE_LINES = [140, 138, 132, 90];
+const COAST = [96, 118, 128, 205];
+const LAKE = [150, 208, 230, 255];
+const RIVER = [130, 190, 215, 165];
+const CITY_CORE = [58, 54, 50, 255];
+const CITY_RING = [255, 255, 255, 210];
+const FRAME = [92, 112, 124, 255];
+// Land tint: the raster is a touch dull and dark on a bright map, so each sampled pixel is nudged
+// toward Google's paler, more saturated look. Applied per pixel in landColor().
+const LAND_GAIN = 1.06;
+const LAND_LIFT = 12;
 
 function readLayer(name) {
     return JSON.parse(fs.readFileSync(path.join(ASSETS, name + ".geojson"), "utf8"));
+}
+
+// ── natural-colour land raster ────────────────────────────────────────────────────────
+// Minimal PNG reader for the one asset this builder consumes. Node ships the inflate; all that
+// is left is undoing the per-row filters. Only the 8-bit RGB/RGBA, non-interlaced case is
+// supported, which is what build_ne_raster.js writes.
+function readPng(file) {
+    const png = fs.readFileSync(file);
+    const width = png.readUInt32BE(16), height = png.readUInt32BE(20);
+    const depth = png[24], colorType = png[25], interlace = png[28];
+    if (depth !== 8 || (colorType !== 2 && colorType !== 6) || interlace !== 0) {
+        throw new Error(file + ": need a non-interlaced 8-bit RGB(A) PNG");
+    }
+    const channels = colorType === 6 ? 4 : 3;
+    const parts = [];
+    for (let at = 8; at + 8 <= png.length;) {
+        const length = png.readUInt32BE(at);
+        const type = png.toString("ascii", at + 4, at + 8);
+        if (type === "IDAT") parts.push(png.subarray(at + 8, at + 8 + length));
+        else if (type === "IEND") break;
+        at += length + 12;
+    }
+    const raw = zlib.inflateSync(Buffer.concat(parts));
+    const stride = width * channels;
+    const out = Buffer.alloc(stride * height);
+    for (let y = 0; y < height; y++) {
+        const filter = raw[y * (stride + 1)];
+        const from = y * (stride + 1) + 1;
+        const to = y * stride;
+        const prior = to - stride;
+        for (let i = 0; i < stride; i++) {
+            const x = raw[from + i];
+            const a = i >= channels ? out[to + i - channels] : 0;
+            const b = y > 0 ? out[prior + i] : 0;
+            const c = (i >= channels && y > 0) ? out[prior + i - channels] : 0;
+            let value;
+            if (filter === 0) value = x;
+            else if (filter === 1) value = x + a;
+            else if (filter === 2) value = x + b;
+            else if (filter === 3) value = x + ((a + b) >> 1);
+            else if (filter === 4) {
+                const p = a + b - c;
+                const pa = Math.abs(p - a), pb = Math.abs(p - b), pc = Math.abs(p - c);
+                value = x + (pa <= pb && pa <= pc ? a : (pb <= pc ? b : c));
+            } else throw new Error(file + ": bad row filter " + filter);
+            out[to + i] = value & 0xff;
+        }
+    }
+    return { width, height, channels, data: out };
+}
+
+const raster = readPng(path.join(ASSETS, "ne2_natural_2048.png"));
+
+// Land colour for a map pixel, tinted toward the brighter Google look. Nearest-neighbour is
+// exact while the raster matches W x H; the scale factors keep it correct if either side changes.
+const rasterScaleX = raster.width / W;
+const rasterScaleY = raster.height / H;
+function landColor(x, y) {
+    const sx = Math.min(raster.width - 1, Math.floor(x * rasterScaleX));
+    const sy = Math.min(raster.height - 1, Math.floor(y * rasterScaleY));
+    const i = (sy * raster.width + sx) * raster.channels;
+    return [
+        Math.min(255, Math.round(raster.data[i] * LAND_GAIN + LAND_LIFT)),
+        Math.min(255, Math.round(raster.data[i + 1] * LAND_GAIN + LAND_LIFT)),
+        Math.min(255, Math.round(raster.data[i + 2] * LAND_GAIN + LAND_LIFT)),
+        255
+    ];
 }
 
 function setPixel(x, y, color) {
@@ -92,7 +161,10 @@ function polygonRings(rawRings) {
     return rawRings.map(ring => ring.map(project));
 }
 
+// `color` may be an [r,g,b,a] array or a (x, y) => colour function - the latter is how the
+// natural-colour raster gets masked to the land polygons instead of bleeding into the sea.
 function fillPolygon(rings, color) {
+    const sampler = typeof color === "function" ? color : null;
     let minY = H - 1, maxY = 0;
     for (const ring of rings) {
         for (const point of ring) {
@@ -116,7 +188,7 @@ function fillPolygon(rings, color) {
         for (let i = 0; i + 1 < hits.length; i += 2) {
             const from = Math.max(0, Math.ceil(hits[i]));
             const to = Math.min(W - 1, Math.floor(hits[i + 1]));
-            for (let x = from; x <= to; x++) setPixel(x, y, color);
+            for (let x = from; x <= to; x++) setPixel(x, y, sampler ? sampler(x, y) : color);
         }
     }
 }
@@ -208,7 +280,7 @@ function writePng() {
     return png.length;
 }
 
-// ── ocean + graticule ─────────────────────────────────────────────────────────────────
+// ── water + graticule ─────────────────────────────────────────────────────────────────
 for (let y = 0; y < H; y++) {
     const t = y / (H - 1);
     const shade = OCEAN_TOP.map((value, i) => Math.round(value * (1 - t) + OCEAN_BOTTOM[i] * t));
@@ -224,13 +296,16 @@ for (let lat = -60; lat <= 60; lat += 30) {
 }
 
 // ── land, then the detail layers on top of it ─────────────────────────────────────────
+// The country polygons act purely as a MASK here: each land pixel takes its colour from the
+// natural-colour raster, so a country reads as its terrain rather than as a flat political fill.
+// Antarctica is in this layer too, so the ice sheet comes along for free.
 const countries = readLayer("ne_50m_admin_0_countries");
 for (const feature of countries.features) {
-    const mapColor = Math.max(1, Math.min(7, Number(feature.properties.MAPCOLOR7) || 1));
-    for (const polygon of geometries(feature)) fillPolygon(polygonRings(polygon), LAND[mapColor - 1]);
+    for (const polygon of geometries(feature)) fillPolygon(polygonRings(polygon), landColor);
 }
 
-fillLayer(readLayer("ne_50m_urban_areas"), URBAN);
+// No urban blush: the raster already carries settlement tone, and a grey wash over it just
+// muddied the land colour it exists to show.
 fillLayer(readLayer("ne_50m_lakes"), LAKE);
 drawLines(readLayer("ne_50m_rivers_lake_centerlines"), RIVER);
 drawLines(readLayer("ne_110m_admin_1_states_provinces_lines"), STATE_LINES);
