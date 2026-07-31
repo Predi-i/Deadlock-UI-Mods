@@ -2232,15 +2232,18 @@
     width: 860px;
     flow-children: down;
 }
+/* ⚠ Every GeoGuesser row is 860 wide, matching .mg-geo. They used to be 720 (centred) above the
+   860 map row, so the panorama sat inset 70px on each side while the map ran to the full width —
+   the "странно оборвано" ragged edge the maintainer reported. Keep these four widths equal. */
 .mg-geo-stats {
-    width: 720px;
+    width: 860px;
     height: 29px;
     horizontal-align: center;
     flow-children: right;
     margin-bottom: 5px;
 }
 .mg-geo-stat {
-    width: 190px;
+    width: 240px;
     vertical-align: center;
     font-family: radiance;
     font-size: 15px;
@@ -2248,7 +2251,7 @@
     color: #cbd5df;
 }
 .mg-geo-view-label {
-    width: 340px;
+    width: 380px;
     vertical-align: center;
     text-align: center;
     font-family: radiance;
@@ -2259,18 +2262,29 @@
     text-align: right;
 }
 .mg-geo-viewport {
-    width: 720px;
-    height: 324px;
+    width: 860px;
+    height: 360px;
     horizontal-align: center;
     flow-children: none;
     overflow: clip;
     background-color: #080d14;
     border: 1px solid #354453;
 }
+/* ⚠ The transition lives on a SEPARATE class, not on .mg-geo-stage itself. When yaw normalises
+   across the 359°→0° seam, `point` jumps by a whole PANO_STEP (2878px) — and with a transition
+   active the engine ANIMATES that jump, which reads in-game as a super-fast full spin (maintainer
+   2026-07-31: "делается полный поворот супер быстрый/дёрганно"). applyCamera removes this class,
+   writes the wrapped transform, and re-arms the class a frame LATER (`$.Schedule(0.0)`) so the
+   re-centre lands instantly and invisibly. Note the ordering matters for the opposite reason to
+   trap 3: there, a transition armed in the same frame as the value may be SKIPPED — which is
+   exactly the behaviour wanted here, but relying on "may" is not a contract, so the class is
+   genuinely absent for the frame that carries the jump. */
 .mg-geo-stage {
     width: 8640px;
     height: 1440px;
     flow-children: none;
+}
+.mg-geo-stage.mg-geo-anim {
     transition-property: transform;
     transition-duration: 0.04s;
     transition-timing-function: ease-out;
@@ -2290,8 +2304,8 @@
     z-index: 3;
 }
 .mg-geo-drag-handle {
-    width: 720px;
-    height: 324px;
+    width: 860px;
+    height: 360px;
     z-index: 4;
 }
 .mg-geo-drag-ghost {
@@ -2300,7 +2314,7 @@
     opacity: 0.01;
 }
 .mg-geo-camera-controls {
-    width: 720px;
+    width: 860px;
     height: 38px;
     horizontal-align: center;
     flow-children: right;
@@ -2324,11 +2338,11 @@
     margin-left: 10px;
 }
 .mg-geo-yaw-slider {
-    width: 228px;
+    width: 300px;
     height: 30px;
 }
 .mg-geo-pitch-slider {
-    width: 112px;
+    width: 150px;
     height: 30px;
 }
 /* Native Slider de-glow. ⚠ SPECIFICITY: the game's own rules are
@@ -2412,8 +2426,13 @@
 }
 .mg-geo-lower {
     width: 860px;
-    height: 250px;
+    height: 272px;
     flow-children: right;
+}
+.mg-geo-map-col {
+    width: 500px;
+    height: 272px;
+    flow-children: down;
 }
 .mg-geo-map {
     width: 500px;
@@ -2423,18 +2442,28 @@
     background-color: #0c151f;
     border: 1px solid #354453;
 }
-.mg-geo-map-image {
+/* Zoom layer. ⚠ The map window (.mg-geo-map) stays 500x250 and clips; only this wrapper grows, so
+   the image AND the 64x32 hit grid scale together and a cell keeps covering the same piece of
+   world. The controller sets width/height/transform in px — real layout sizing, not a
+   pre-transform-scale2d, so the .vtex re-rasterises crisply at 2x/4x instead of turning into a
+   blurry upscale, and MG.Widgets.winPos hit maths keeps working. */
+.mg-geo-map-zoom {
     width: 500px;
     height: 250px;
+    flow-children: none;
+}
+.mg-geo-map-image {
+    width: 100%;
+    height: 100%;
     opacity: 1;
 }
 .mg-geo-grid {
-    width: 500px;
-    height: 250px;
+    width: 100%;
+    height: 100%;
     flow-children: down;
 }
 .mg-geo-grid-row {
-    width: 500px;
+    width: 100%;
     height: fill-parent-flow(1);
     flow-children: right;
 }
@@ -2471,9 +2500,14 @@
     margin-left: 18px;
     flow-children: down;
 }
+/* ⚠ These four used to carry FIXED heights (66 + 34 + 54 + 46). Before the reveal, place and
+   credit are empty strings, so 88px of blank column was reserved between the prompt and the
+   button and the text appeared to stop mid-panel — the second half of the maintainer's
+   "выглядит странно оборвано". `height: fit-children` collapses an empty Label to 0, and the
+   spacer below eats whatever is left so the button still pins to the bottom edge. */
 .mg-geo-prompt {
     width: 342px;
-    height: 66px;
+    height: fit-children;
     font-family: radiance;
     font-size: 16px;
     color: #bdc8d3;
@@ -2481,24 +2515,39 @@
 }
 .mg-geo-place {
     width: 342px;
-    height: 34px;
+    height: fit-children;
+    margin-top: 8px;
     font-family: radiance;
     font-size: 21px;
     font-weight: bold;
     color: #c9d5b6;
+    white-space: normal;
 }
 .mg-geo-credit {
     width: 342px;
-    height: 54px;
+    height: fit-children;
+    margin-top: 4px;
     font-family: radiance;
     font-size: 13px;
     color: #7f91a7;
     white-space: normal;
 }
+.mg-geo-side-spacer {
+    width: 342px;
+    height: fill-parent-flow(1);
+}
 .mg-geo-action {
     width: 342px;
     height: 46px;
-    vertical-align: bottom;
+}
+/* Zoom hint / level readout under the map. Sits in the map row, not the side column. */
+.mg-geo-map-hint {
+    width: 500px;
+    height: 18px;
+    margin-top: 4px;
+    font-family: radiance;
+    font-size: 12px;
+    color: #6d7f93;
 }
 
 

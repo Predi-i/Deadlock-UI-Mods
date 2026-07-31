@@ -220,6 +220,42 @@ assert(/function addCachedCopy\(url, offset, myGen, done\)[\s\S]{0,600}MG\.Net\.
     !/\$\.CreatePanel\("Image", stage[\s\S]{0,200}SetImage\(url\)/.test(geo) &&
     /addCachedCopy\(url, 0, myGen, function \(\)[\s\S]{0,400}addCachedCopy\(url, PANO_STEP \* 2, myGen, function \(\)[\s\S]{0,300}panoramaReady = true/.test(geo),
     "GeoGuesser's side panorama copies must load through the shared FIFO and gate panoramaReady");
+// The 359°→0° wrap re-centres the strip by a whole PANO_STEP. With the transition on the BASE
+// class the engine animates that 2878px jump and it reads as a super-fast full spin, so the
+// transition must live on a toggled class that applyCamera drops for the wrap frame.
+assert(/\.mg-geo-stage\s*\{[^}]*\}/.test(css) &&
+    !/\.mg-geo-stage\s*\{[^}]*transition-property/.test(css) &&
+    /\.mg-geo-stage\.mg-geo-anim\s*\{[^}]*transition-property:\s*transform;/.test(css) &&
+    /Math\.abs\(x - lastStageX\) > PANO_STEP \/ 2/.test(geo) &&
+    /if \(wrapped\) stage\.RemoveClass\("mg-geo-anim"\)/.test(geo),
+    "GeoGuesser must not animate the yaw-wrap re-centre (fast-spin artifact at the 359/0 seam)");
+// All four stacked rows share one width, or the panorama sits inset above a wider map row and the
+// panel reads as ragged/cut off. VIEW_W/VIEW_H in the controller must match the CSS viewport.
+(function () {
+    var want = ["\\.mg-geo\\s*\\{", "\\.mg-geo-stats\\s*\\{", "\\.mg-geo-viewport\\s*\\{",
+        "\\.mg-geo-camera-controls\\s*\\{", "\\.mg-geo-lower\\s*\\{"];
+    want.forEach(function (sel) {
+        var block = new RegExp(sel + "[^}]*width:\\s*860px;").test(css);
+        assert(block, "GeoGuesser row " + sel.replace(/\\\\|\\s\*\\\{/g, "") + " must be 860px wide");
+    });
+    assert(/var VIEW_W = 860, VIEW_H = 360;/.test(geo) &&
+        /\.mg-geo-viewport\s*\{[^}]*height:\s*360px;/.test(css),
+        "GeoGuesser VIEW_W/VIEW_H must match the CSS viewport box");
+})();
+// Pitch is 8px per degree (1440px strip / 180°). The old hard-coded 4 moved at half rate. And the
+// constant must be declared AFTER PANO_H — `var` hoists the name, not the value, so reading it a
+// line early silently yields NaN and breaks tilt while every syntax check still passes.
+assert(/var PANO_W = 2880, PANO_H = 1440[\s\S]{0,600}var PITCH_PX_PER_DEG = PANO_H \/ 180;/.test(geo) &&
+    /pitch \* PITCH_PX_PER_DEG/.test(geo),
+    "GeoGuesser pitch must use PITCH_PX_PER_DEG, declared after PANO_H");
+// Map zoom: engine has no ondblclick, so the run is timestamp-keyed, and a new round must reset to
+// the whole world (a leftover 8x zoom would strand the player in an unrelated region).
+assert(/var MULTI_CLICK_MS = 400;/.test(geo) &&
+    /clickRun = \(now - lastClickAt < MULTI_CLICK_MS\) \? clickRun \+ 1 : 1;/.test(geo) &&
+    /if \(clickRun === 2\) setMapZoom\(mapZoomLevel \* 2, cell\);/.test(geo) &&
+    /else if \(clickRun >= 3\) setMapZoom\(1, -1\);/.test(geo) &&
+    /clearMapMarkers\(\);[\s\S]{0,400}setMapZoom\(1, -1\);/.test(geo),
+    "GeoGuesser map must zoom on double-click, reset on triple-click, and reset each round");
 assert(/images\/geoguesser\/world_map\.vtex/.test(geo) &&
     /var GRID_W = 64, GRID_H = 32/.test(geo),
     "GeoGuesser must use its dedicated map and fine 64x32 authoritative guess grid");
