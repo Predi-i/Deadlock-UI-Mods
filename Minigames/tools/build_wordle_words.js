@@ -31,7 +31,7 @@ async function readSource(name, directory) {
 }
 
 function parseWords(text, label) {
-    const words = text.trim().split(/\s+/).map(function (word) {
+    const words = text.trim().split(/\s+/).map((word) => {
         return word.toUpperCase();
     });
     const seen = {};
@@ -110,7 +110,7 @@ async function main() {
         answers.length + " answers and " + guesses.length + " additional guesses.");
 }
 
-main().catch(function (error) {
+main().catch((error) => {
     console.error(error.stack || error);
     process.exitCode = 1;
 });

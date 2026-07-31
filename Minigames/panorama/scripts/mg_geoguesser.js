@@ -8,7 +8,7 @@
  * a global pointer-move callback, so native Sliders provide continuous heading
  * and pitch updates while their thumbs are being dragged.
  */
-(function () {
+(() => {
     "use strict";
 
     const MG = $.MG = $.MG || {};
@@ -130,7 +130,7 @@
         stage.AddClass("mg-geo-stage");
         // Arm the transition a frame after creation, the .mg-piece/.mg-dk-anim idiom: the stage's
         // first committed transform is its baseline and must not slide in from the corner.
-        $.Schedule(0.0, function () {
+        $.Schedule(0.0, () => {
             if (!destroyed && stage && stage.IsValid && stage.IsValid()) stage.AddClass("mg-geo-anim");
         });
         const loading = addLabel(viewport, "mg-geo-loading", "Loading panorama…");
@@ -140,24 +140,24 @@
         const cameraControls = $.CreatePanel("Panel", root, "");
         cameraControls.AddClass("mg-geo-camera-controls");
         addLabel(cameraControls, "mg-geo-slider-label", "LOOK");
-        addButton(cameraControls, "mg-geo-camera-button", "◀", function () { turn(-20, 0); });
+        addButton(cameraControls, "mg-geo-camera-button", "◀", () => { turn(-20, 0); });
         const yawSlider = $.CreatePanel("Slider", cameraControls, "", { direction: "horizontal" });
         yawSlider.AddClass("HorizontalSlider");
         yawSlider.AddClass("mg-geo-yaw-slider");
         yawSlider.min = 0;
         yawSlider.max = 359;
         yawSlider.value = 0;
-        addButton(cameraControls, "mg-geo-camera-button", "▶", function () { turn(20, 0); });
+        addButton(cameraControls, "mg-geo-camera-button", "▶", () => { turn(20, 0); });
         addLabel(cameraControls, "mg-geo-slider-label mg-geo-pitch-label", "TILT");
-        addButton(cameraControls, "mg-geo-camera-button", "▼", function () { turn(0, -10); });
+        addButton(cameraControls, "mg-geo-camera-button", "▼", () => { turn(0, -10); });
         const pitchSlider = $.CreatePanel("Slider", cameraControls, "", { direction: "horizontal" });
         pitchSlider.AddClass("HorizontalSlider");
         pitchSlider.AddClass("mg-geo-pitch-slider");
         pitchSlider.min = -30;
         pitchSlider.max = 30;
         pitchSlider.value = 0;
-        addButton(cameraControls, "mg-geo-camera-button", "▲", function () { turn(0, 10); });
-        addButton(cameraControls, "mg-geo-camera-button mg-geo-reset-button", "RESET", function () {
+        addButton(cameraControls, "mg-geo-camera-button", "▲", () => { turn(0, 10); });
+        addButton(cameraControls, "mg-geo-camera-button mg-geo-reset-button", "RESET", () => {
             yaw = 0; pitch = 0; applyCamera();
         });
 
@@ -229,10 +229,10 @@
             var rowPanel = $.CreatePanel("Panel", grid, "");
             rowPanel.AddClass("mg-geo-grid-row");
             for (let col = 0; col < GRID_W; col++) {
-                (function (r, c) {
+                ((r, c) => {
                     var hit = $.CreatePanel("Button", rowPanel, "");
                     hit.AddClass("mg-geo-cell");
-                    hit.SetPanelEvent("onactivate", function () { clickCell(r, c); });
+                    hit.SetPanelEvent("onactivate", () => { clickCell(r, c); });
                     cells.push(hit);
                 })(row, col);
             }
@@ -259,7 +259,7 @@
             if (label) label.text = text;
             actionButton.SetHasClass("mg-btn-inert", !enabled);
             try { actionButton.enabled = !!enabled; } catch (e) {}
-            actionButton.SetPanelEvent("onactivate", enabled ? callback : function () {});
+            actionButton.SetPanelEvent("onactivate", enabled ? callback : () => {});
         }
 
         function turn(dx, dy) {
@@ -289,7 +289,7 @@
             stage.style.transform = "translate3d(" + Math.round(x) + "px, " + Math.round(y) + "px, 0px)";
             lastStageX = x;
             if (wrapped) {
-                $.Schedule(0.0, function () {
+                $.Schedule(0.0, () => {
                     if (!destroyed && stage && stage.IsValid && stage.IsValid()) stage.AddClass("mg-geo-anim");
                 });
             }
@@ -471,14 +471,14 @@
             markers = [];
         }
 
-        yawSlider.SetPanelEvent("onvaluechanged", function () {
+        yawSlider.SetPanelEvent("onvaluechanged", () => {
             if (syncingCameraSliders || !panoramaReady) return;
             const nextYaw = Number(yawSlider.value);
             if (!isFinite(nextYaw)) return;
             yaw = nextYaw;
             applyCamera();
         });
-        pitchSlider.SetPanelEvent("onvaluechanged", function () {
+        pitchSlider.SetPanelEvent("onvaluechanged", () => {
             if (syncingCameraSliders || !panoramaReady) return;
             const nextPitch = Number(pitchSlider.value);
             if (!isFinite(nextPitch)) return;
@@ -515,14 +515,14 @@
         // The URL is identical for all three, so the engine serves the neighbours from cache.
         function addCachedCopy(url, offset, myGen, done) {
             if (destroyed || myGen !== panoramaGen) return;
-            MG.Net.loadImage(url, function (copy) {
+            MG.Net.loadImage(url, (copy) => {
                 if (destroyed || myGen !== panoramaGen) {
                     try { copy.SetImage(""); copy.DeleteAsync(0); } catch (e) {}
                     return;
                 }
                 configurePanoImage(copy, offset);
                 if (done) done();
-            }, function () {
+            }, () => {
                 // A missing neighbour only costs the wrap at that edge; the round stays playable,
                 // so surface nothing and let the centre copy carry the view.
                 if (!destroyed && myGen === panoramaGen && done) done();
@@ -537,7 +537,7 @@
             const myGen = ++panoramaGen;
             const url = MG.Net.getBaseUrl() + "/api/geoview.png?code=" + code +
                 "&tok=" + encodeURIComponent(tok) + "&round=" + round + "&rnd=" + Math.random();
-            MG.Net.loadImage(url, function (image, loadedW, loadedH) {
+            MG.Net.loadImage(url, (image, loadedW, loadedH) => {
                 if (destroyed || myGen !== panoramaGen) {
                     try { image.SetImage(""); image.DeleteAsync(0); } catch (e) {}
                     return;
@@ -549,7 +549,7 @@
                 if (MG.Net.isLevelEncodedSize(loadedW, loadedH)) {
                     try { image.SetImage(""); image.DeleteAsync(0); } catch (e2) {}
                     loading.text = "Panorama unavailable. Retrying…";
-                    $.Schedule(1.5, function () {
+                    $.Schedule(1.5, () => {
                         if (!destroyed && myGen === panoramaGen) loadPanorama(round);
                     });
                     return;
@@ -564,18 +564,18 @@
                 // slot, so `panoramaReady` (and the first applyCamera) fired while the side copies
                 // were still loading - or never loaded at all. Now the left copy is requested,
                 // then the right one, and only then is the viewport revealed.
-                addCachedCopy(url, 0, myGen, function () {
-                    addCachedCopy(url, PANO_STEP * 2, myGen, function () {
+                addCachedCopy(url, 0, myGen, () => {
+                    addCachedCopy(url, PANO_STEP * 2, myGen, () => {
                         if (destroyed || myGen !== panoramaGen) return;
                         panoramaReady = true;
                         loading.style.visibility = "collapse";
                         applyCamera();
                     });
                 });
-            }, function () {
+            }, () => {
                 if (destroyed || myGen !== panoramaGen) return;
                 loading.text = "Couldn't load panorama. Retrying…";
-                $.Schedule(1.5, function () {
+                $.Schedule(1.5, () => {
                     if (!destroyed && myGen === panoramaGen) loadPanorama(round);
                 });
             }, { scaling: PANO_SCALING });
@@ -604,7 +604,7 @@
             sendingGuess = true;
             refreshTimer();
             setAction("SUBMITTING…", false, submitGuess);
-            MG.Api.geoGuess(code, tok, selectedCell, function (result) {
+            MG.Api.geoGuess(code, tok, selectedCell, (result) => {
                 if (destroyed) return;
                 sendingGuess = false;
                 if (!result.ok) {
@@ -618,7 +618,7 @@
                 prompt.text = solo ? "Calculating result…" : "Guess locked. Waiting for the opponent…";
                 setAction(solo ? "CALCULATING…" : "WAITING FOR OPPONENT", false, submitGuess);
                 pollMisses = 0;
-            }, function () {
+            }, () => {
                 if (destroyed) return;
                 sendingGuess = false;
                 prompt.text = "Couldn't submit. Try again.";
@@ -682,11 +682,11 @@
             const round = currentRound;
             function attempt() {
                 if (destroyed || revealRound !== round || currentRound !== round) return;
-                fetcher(function (value) {
+                fetcher((value) => {
                     if (destroyed || revealRound !== round || currentRound !== round) return;
                     apply(value);
                     revealReadDone(round);
-                }, function () {
+                }, () => {
                     if (!destroyed && revealRound === round && currentRound === round) {
                         $.Schedule(0.8, attempt);
                     }
@@ -699,8 +699,8 @@
         // base-63 reply, so each axis comes back on its own request. Chain them so the marker is
         // only placed once both halves are in — a half-decoded point would land at the equator.
         function readPoint(fetch, cls) {
-            readReveal(function (ok, fail) { fetch(0, ok, fail); }, function (x) {
-                readReveal(function (ok2, fail2) { fetch(1, ok2, fail2); }, function (y) {
+            readReveal((ok, fail) => { fetch(0, ok, fail); }, (x) => {
+                readReveal((ok2, fail2) => { fetch(1, ok2, fail2); }, (y) => {
                     addMarker(y * FULL_W + x, cls);
                 });
             });
@@ -720,31 +720,31 @@
             sendingGuess = false;
             prompt.text = "Round complete. Loading the authoritative reveal…";
             setAction("LOADING RESULT…", false, readyNext);
-            readPoint(function (axis, ok, fail) {
+            readPoint((axis, ok, fail) => {
                 MG.Api.geoTarget(code, tok, axis, ok, fail);
             }, "mg-geo-target");
-            readPoint(function (axis, ok, fail) {
+            readPoint((axis, ok, fail) => {
                 MG.Api.geoPick(code, tok, mySeat, axis, ok, fail);
             }, "mg-geo-me");
             if (!solo) {
-                readPoint(function (axis, ok, fail) {
+                readPoint((axis, ok, fail) => {
                     MG.Api.geoPick(code, tok, 1 - mySeat, axis, ok, fail);
                 }, "mg-geo-them");
             }
-            readReveal(function (ok, fail) { MG.Api.geoScore(code, tok, mySeat, ok, fail); }, function (score) {
+            readReveal((ok, fail) => { MG.Api.geoScore(code, tok, mySeat, ok, fail); }, (score) => {
                 scores[mySeat] = score;
             });
             if (!solo) {
-                readReveal(function (ok, fail) { MG.Api.geoScore(code, tok, 1 - mySeat, ok, fail); }, function (score) {
+                readReveal((ok, fail) => { MG.Api.geoScore(code, tok, 1 - mySeat, ok, fail); }, (score) => {
                     scores[1 - mySeat] = score;
                 });
             }
-            readReveal(function (ok, fail) { MG.Api.geoPlace(code, tok, ok, fail); }, function (place) {
+            readReveal((ok, fail) => { MG.Api.geoPlace(code, tok, ok, fail); }, (place) => {
                 revealPlace.text = placeLabel(place);
                 prompt.text = solo ? "Round complete. The exact cell and your guess are shown."
                     : "Round complete. The exact cell and both guesses are shown.";
             });
-            readReveal(function (ok, fail) { MG.Api.geoCredit(code, tok, ok, fail); }, function (text) {
+            readReveal((ok, fail) => { MG.Api.geoCredit(code, tok, ok, fail); }, (text) => {
                 revealCredit.text = text;
             });
         }
@@ -753,7 +753,7 @@
             if (sendingNext || finished || revealRound !== currentRound) return;
             sendingNext = true;
             setAction(solo ? "LOADING NEXT ROUND…" : "WAITING FOR OPPONENT", false, readyNext);
-            MG.Api.geoNext(code, tok, function (result) {
+            MG.Api.geoNext(code, tok, (result) => {
                 if (destroyed) return;
                 if (!result.ok) {
                     sendingNext = false;
@@ -762,7 +762,7 @@
                 }
                 prompt.text = solo ? "Loading next round…" : "Ready. Waiting for the opponent…";
                 pollMisses = 0;
-            }, function () {
+            }, () => {
                 if (destroyed) return;
                 sendingNext = false;
                 setAction(currentRound + 1 >= ROUNDS ? "FINISH" : "NEXT ROUND", true, readyNext);
@@ -803,12 +803,12 @@
 
         function pollState() {
             if (destroyed || finished) return;
-            MG.Api.geoState(code, tok, function (state) {
+            MG.Api.geoState(code, tok, (state) => {
                 if (destroyed) return;
                 handleState(state);
                 pollMisses = state.reveal ? Math.min(pollMisses + 1, 20) : pollMisses + 1;
                 $.Schedule(MG.Net.pollDelay(pollMisses), pollState);
-            }, function () {
+            }, () => {
                 if (destroyed) return;
                 pollMisses++;
                 $.Schedule(MG.Net.pollDelay(pollMisses), pollState);
@@ -825,7 +825,7 @@
 
         try {
             dragHandle.SetDraggable(true);
-            $.RegisterEventHandler("DragStart", dragHandle, function (_panel, dragEvent) {
+            $.RegisterEventHandler("DragStart", dragHandle, (_panel, dragEvent) => {
                 if (destroyed) return;
                 cleanupDrag();
                 dragGhost = $.CreatePanel("Panel", root, "");
@@ -834,11 +834,11 @@
                 dragEvent.displayPanel = dragGhost;
                 dragEvent.removePositionBeforeDrop = false;
                 dragGhost.style.align = "left top";
-                $.Schedule(0.0, function () {
+                $.Schedule(0.0, () => {
                     if (!destroyed && dragGhost) dragStartPos = MG.Widgets.winPos(dragGhost);
                 });
             });
-            $.RegisterEventHandler("DragEnd", dragHandle, function () {
+            $.RegisterEventHandler("DragEnd", dragHandle, () => {
                 if (destroyed || !dragGhost) { cleanupDrag(); return; }
                 const end = MG.Widgets.winPos(dragGhost);
                 let start = dragStartPos;

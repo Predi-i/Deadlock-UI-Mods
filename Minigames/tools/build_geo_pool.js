@@ -308,7 +308,7 @@ async function runPool(tasks, worker, label) {
 // more candidates than the quota needs, and resolving all of them would cost one request each for
 // rows that get thrown away anyway.
 async function assemble(harvest) {
-    const byRegion = REGIONS.map(function () { return []; });
+    const byRegion = REGIONS.map(() => { return []; });
     for (const row of harvest) byRegion[row.region].push(row);
 
     const pool = [];
@@ -332,7 +332,7 @@ async function assemble(harvest) {
             }
             if (!batch.length) break;
             const resolved = await Promise.all(batch.map(resolveRow));
-            resolveCalls += batch.filter(function (row) { return row.source === 1; }).length;
+            resolveCalls += batch.filter((row) => { return row.source === 1; }).length;
         for (const candidate of resolved) {
             if (accepted.length >= PER_REGION_QUOTA) break;
             if (!candidate) { resolveDropped++; continue; }
@@ -459,7 +459,7 @@ async function resolveExisting() {
             existing.length + " · kept " + out.length + " · dropped " + dropped + "   ");
     }
     process.stdout.write("\n");
-    shifts.sort(function (a, b) { return a - b; });
+    shifts.sort((a, b) => { return a - b; });
     if (shifts.length) {
         console.log("  coordinate correction: median " +
             Math.round(shifts[Math.floor(shifts.length / 2)]) + "m, max " +
@@ -502,7 +502,7 @@ async function resolveExisting() {
         }
         shuffle(tiles);   // spread load over the CDN instead of hammering one row
 
-        const mapillary = await runPool(tiles, function (t) { return harvestTile(t[0], t[1], t[2]); },
+        const mapillary = await runPool(tiles, (t) => { return harvestTile(t[0], t[1], t[2]); },
             "mapillary tiles");
         if (tileIntercepted) {
             console.error("\n" + tileIntercepted + " tile requests were answered with HTML/JSON " +
@@ -547,14 +547,14 @@ async function resolveExisting() {
     console.log("\ncountry: " + located + "/" + pool.length + " located (" +
         (pool.length - located) + " at sea or outside the six continents)");
 
-    const byRegion = REGIONS.map(function () { return { total: 0, mly: 0, pano: 0 }; });
+    const byRegion = REGIONS.map(() => { return { total: 0, mly: 0, pano: 0 }; });
     for (const row of pool) {
         byRegion[row.region].total++;
         if (row.source === 1) byRegion[row.region].mly++; else byRegion[row.region].pano++;
     }
     console.log("\nfinal pool: " + pool.length + " locations");
     console.log("region            total   mapillary  panoramax");
-    REGIONS.forEach(function (region, i) {
+    REGIONS.forEach((region, i) => {
         console.log("  " + region.name.padEnd(16) + String(byRegion[i].total).padStart(5) +
             String(byRegion[i].mly).padStart(11) + String(byRegion[i].pano).padStart(11));
     });

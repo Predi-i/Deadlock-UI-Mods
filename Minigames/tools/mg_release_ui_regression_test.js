@@ -67,16 +67,16 @@ assert($.MG.Net.waitDelay(0) === 1.5 && $.MG.Net.waitDelay(99) === 5,
 let firstLoaded = null;
 let secondLoaded = null;
 const display = makePanel("Panel", context, "display");
-$.MG.Net.loadImage("https://example.test/marker.png", function (image) {
+$.MG.Net.loadImage("https://example.test/marker.png", (image) => {
     firstLoaded = image;
     image.SetParent(display);
     // Real callbacks frequently enqueue protocol traffic synchronously. It must
     // still wait for the release frame and the older pxview job. An uncalibrated
     // request first queues /api/probe, which is enough to prove both job kinds
     // really share this lane.
-    $.MG.Net.request("/api/status", { code: 1 }, function () {});
+    $.MG.Net.request("/api/status", { code: 1 }, () => {});
 });
-$.MG.Net.loadImage("https://example.test/pxview.png", function (image) {
+$.MG.Net.loadImage("https://example.test/pxview.png", (image) => {
     secondLoaded = image;
     image.SetParent(display);
 });
@@ -158,7 +158,9 @@ assert(/clocks:\s*function[\s\S]*?w === 9 && h === 8/.test(net) &&
     /if \(w === 9\) \{ fail\(/.test(net) &&
     /request\("\/api\/clocks"[\s\S]{0,1000}\}, fail\);/.test(net),
     "clock transport/server failures must reach createClock's retry callback");
-assert(/function resyncTick[\s\S]*?function \(\) \{ if \(!stopped\) \$\.Schedule/.test(games),
+// The failure callback may be spelled `function ()` or as an arrow `()`; what this guards is
+// that the error path still checks `!stopped` and reschedules, so accept either form.
+assert(/function resyncTick[\s\S]*?(?:function )?\(\)(?: =>)? \{ if \(!stopped\) \$\.Schedule/.test(games),
     "createClock must retain a retry path for transient authoritative-clock failures");
 assert(/\b(?:var|let|const) RESYNC_S = 8;/.test(games),
     "authoritative clock resync must stay infrequent so it cannot crowd out move traffic");
@@ -193,13 +195,13 @@ assert(/MG\.Net\.isLevelEncodedSize\(loadedW, loadedH\)/.test(geo) &&
 // GeoGuesser panorama paint 2048x1024 centred in its 2880x1440 strip (416px of black each side,
 // 208px top/bottom) and limited the usable heading to roughly 95°..270° in-game. Whitelist taken
 // from every scaling= token that appears on an <Image> in G:\GameTracking-Deadlock.
-(function () {
+(() => {
     const VALID = ["stretch-to-fit-preserve-aspect", "stretch-to-fit-y-preserve-aspect",
         "stretch-to-fit-x-preserve-aspect", "stretch-to-cover-preserve-aspect",
         "cover", "contain", "none"];
     const files = { "mg_geoguesser.js": geo, "mg_ui.js": ui, "mg_pixelbattle.js": pixel, "mg_net.js": net };
     const bad = [];
-    Object.keys(files).forEach(function (name) {
+    Object.keys(files).forEach((name) => {
         let re = /scaling:\s*"([a-z-]+)"/g, m;
         while ((m = re.exec(files[name]))) {
             if (VALID.indexOf(m[1]) === -1) bad.push(name + ': "' + m[1] + '"');
@@ -220,9 +222,11 @@ assert(/PANO_W = 2880, PANO_H = 1440, PANO_STEP = PANO_W - 2/.test(geo) &&
 // dims 0 and never paint, leaving a mostly BLACK viewport (and an empty frame once heading walks
 // onto the missing copy). Also assert the reveal is CHAINED off the second copy rather than
 // fired by a fixed timer that can't know whether the loads finished.
+// (`CB` below = either `function ()` or an arrow `()`; the callback SPELLING is irrelevant,
+// the nesting order and the final panoramaReady assignment are what matter.)
 assert(/function addCachedCopy\(url, offset, myGen, done\)[\s\S]{0,600}MG\.Net\.loadImage\(url,/.test(geo) &&
     !/\$\.CreatePanel\("Image", stage[\s\S]{0,200}SetImage\(url\)/.test(geo) &&
-    /addCachedCopy\(url, 0, myGen, function \(\)[\s\S]{0,400}addCachedCopy\(url, PANO_STEP \* 2, myGen, function \(\)[\s\S]{0,300}panoramaReady = true/.test(geo),
+    /addCachedCopy\(url, 0, myGen, (?:function )?\(\)(?: =>)?[\s\S]{0,400}addCachedCopy\(url, PANO_STEP \* 2, myGen, (?:function )?\(\)(?: =>)?[\s\S]{0,300}panoramaReady = true/.test(geo),
     "GeoGuesser's side panorama copies must load through the shared FIFO and gate panoramaReady");
 // The 359°→0° wrap re-centres the strip by a whole PANO_STEP. With the transition on the BASE
 // class the engine animates that 2878px jump and it reads as a super-fast full spin, so the
@@ -235,10 +239,10 @@ assert(/\.mg-geo-stage\s*\{[^}]*\}/.test(css) &&
     "GeoGuesser must not animate the yaw-wrap re-centre (fast-spin artifact at the 359/0 seam)");
 // All four stacked rows share one width, or the panorama sits inset above a wider map row and the
 // panel reads as ragged/cut off. VIEW_W/VIEW_H in the controller must match the CSS viewport.
-(function () {
+(() => {
     const want = ["\\.mg-geo\\s*\\{", "\\.mg-geo-stats\\s*\\{", "\\.mg-geo-viewport\\s*\\{",
         "\\.mg-geo-camera-controls\\s*\\{", "\\.mg-geo-lower\\s*\\{"];
-    want.forEach(function (sel) {
+    want.forEach((sel) => {
         const block = new RegExp(sel + "[^}]*width:\\s*860px;").test(css);
         assert(block, "GeoGuesser row " + sel.replace(/\\\\|\\s\*\\\{/g, "") + " must be 860px wide");
     });
@@ -296,13 +300,13 @@ assert(/\.mg-geo-camera-controls Slider\.HorizontalSlider #SliderThumb\s*\{[\s\S
     "GeoGuesser camera controls must out-specify and suppress the native slider glow (trap 22)");
 // House style has no outer glow anywhere: no rule may carry a zero-offset blurred box-shadow.
 // A hard ring (`0px 0px 0px 3px`, zero blur) and offset drop shadows are both still fine.
-(function () {
+(() => {
     // Blank out /* … */ comments, PRESERVING newlines so reported line numbers stay accurate.
     // Needed because the trap-22 note and the .mg-pk-active note both QUOTE the removed glow
     // declarations verbatim, and a naive scan flags its own documentation.
-    const live = css.replace(/\/\*[\s\S]*?\*\//g, function (m) { return m.replace(/[^\n]/g, " "); });
+    const live = css.replace(/\/\*[\s\S]*?\*\//g, (m) => { return m.replace(/[^\n]/g, " "); });
     const glow = [];
-    live.split(/\r?\n/).forEach(function (line, i) {
+    live.split(/\r?\n/).forEach((line, i) => {
         const decl = /box-shadow:\s*([^;}]+)/.exec(line);
         if (!decl) return;
         // Tokenise instead of pattern-matching the whole value: `fill`/`inset` keywords and colours
@@ -310,7 +314,7 @@ assert(/\.mg-geo-camera-controls Slider\.HorizontalSlider #SliderThumb\s*\{[\s\S
         // regex with an optional prefix can silently absorb the first 0px and mistake the SPREAD
         // for the blur — which is what made `0px 0px 0px 3px` (a hard ring) read as a glow.
         const lengths = decl[1].split(/\s+/)
-            .filter(function (t) { return /^-?[\d.]+px$/.test(t); })
+            .filter((t) => { return /^-?[\d.]+px$/.test(t); })
             .map(parseFloat);
         // Glow = no offset in either axis AND a non-zero blur radius. Offset drop shadows and
         // zero-blur spread rings are both legitimate house style.
@@ -350,7 +354,7 @@ assert(!/geocredit"[^)]*i:/.test(net) && !/GEO_CREDIT_ALPHABET/.test(worker) &&
     /MG\.GeoCredits/.test(net) && /MG\.GeoCountries/.test(net),
     "GeoGuesser reveal labels must be single-request indices, not text walked over the side channel");
 // The two generated artifacts are indexed by position, so a reveal is only correct while they agree.
-(function () {
+(() => {
     const packed = /const GEO_POOL_PACKED = "([^"]*)"/.exec(workerBuilt);
     const names = /const GEO_COUNTRY_NAMES = (\[[\s\S]*?\]);/.exec(workerBuilt);
     const keys = /const GEO_CREDIT_KEYS = (\[[\s\S]*?\]);/.exec(workerBuilt);
@@ -392,7 +396,7 @@ assert(!/geocredit"[^)]*i:/.test(net) && !/GEO_CREDIT_ALPHABET/.test(worker) &&
         "place codes must fit one downlink reply");
     assert(creditKeys.length <= 63 * 63, "credit codes must fit one downlink reply");
 })();
-(function () {
+(() => {
     // The pool lives in the GENERATED artifact, not the authored core, so read that one here.
     const built = fs.readFileSync(path.join(ROOT, "server", "worker.js"), "utf8");
     const packed = /const GEO_POOL_PACKED = "([^"]*)"/.exec(built);
@@ -407,7 +411,7 @@ assert(!/geocredit"[^)]*i:/.test(net) && !/GEO_CREDIT_ALPHABET/.test(worker) &&
         const region = Number(row.split("|")[4]);
         if (region >= 0 && region < 6) perRegion[region]++;
     }
-    assert(perRegion.every(function (count) { return count >= 50; }),
+    assert(perRegion.every((count) => { return count >= 50; }),
         "every GeoGuesser region needs 50+ pooled locations, got " + perRegion.join("/"));
 })();
 assert(/bl\.text = selectedGameId === 9 \? "PLAY SOLO" : "PLAY VS BOT"/.test(ui) &&
@@ -431,7 +435,10 @@ for (const entry of [{ name: "Durak", text: durak }, { name: "Poker", text: poke
         entry.name + " must park its timer before starting the action request");
     assert(/function onTimerExpire[\s\S]{0,500}pendingAct/.test(entry.text),
         entry.name + " expiry must ignore a pending authoritative action");
-    const send = entry.text.match(/function sendAct[\s\S]*?\n        }\n/);
+    // `\r?\n` because these sources are CRLF: a bare `\n        }\n` never matches, the slice
+    // comes back null, and the assertion below then fails for the wrong reason.
+    const send = entry.text.match(/function sendAct[\s\S]*?\r?\n        }\r?\n/);
+    assert(send, entry.name + " sendAct body could not be sliced (check the indentation anchor)");
     assert(send && (send[0].match(/refreshTimer\(\)/g) || []).length >= 3,
         entry.name + " must re-arm after both rejection and transport failure");
 }

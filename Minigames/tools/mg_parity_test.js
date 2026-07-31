@@ -19,7 +19,7 @@ const root = path.join(__dirname, "..");
 function loadClientRules() {
     const sandbox = {};                 // isolated MGRules so it can't collide with the server copy
     const g = { globalThis: sandbox };
-    ["checkers.js", "ttt.js", "chess.js", "connectfour.js", "durak.js", "poker.js"].forEach(function (name) {
+    ["checkers.js", "ttt.js", "chess.js", "connectfour.js", "durak.js", "poker.js"].forEach((name) => {
         let src = fs.readFileSync(path.join(root, "panorama", "scripts", "rules", name), "utf8");
         // The IIFE resolves its namespace off `globalThis`; give it our sandbox as that.
         new Function("globalThis", src)(sandbox);
@@ -44,11 +44,11 @@ let failures = 0, checks = 0;
 function ok(cond, msg) { checks++; if (!cond) { failures++; console.log("  ✗ " + msg); } }
 
 // A tiny deterministic RNG so a failure is reproducible.
-function makeRng(seed) { let s = seed >>> 0; return function () { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; }; }
+function makeRng(seed) { let s = seed >>> 0; return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; }; }
 
 // ── checkers: play random legal turns from both engines' shared move generator, and at
 // each step assert the two engines enumerate the SAME legal first-hops for the mover. ──
-(function () {
+(() => {
     const C = CL.checkers, S = SV.checkers;
     function firstHopsKey(R, b, color) {
         const seqs = R.legalSequences(b, color), set = {};
@@ -74,7 +74,7 @@ function makeRng(seed) { let s = seed >>> 0; return function () { s = (s * 16645
 })();
 
 // ── tic-tac-toe: every reachable board (exhaustive) must give the same bot pick + winner ──
-(function () {
+(() => {
     let C = CL.ttt, S = SV.ttt, mism = 0, seen = 0;
     function walk(b, mark) {
         seen++;
@@ -90,7 +90,7 @@ function makeRng(seed) { let s = seed >>> 0; return function () { s = (s * 16645
 })();
 
 // ── chess: random self-play; at each ply assert identical legalMoves sets ──
-(function () {
+(() => {
     const C = CL.chess, S = SV.chess;
     function movesKey(R, b, st, color) {
         const ms = R.legalMoves(b, st, color), a = [];
@@ -115,7 +115,7 @@ function makeRng(seed) { let s = seed >>> 0; return function () { s = (s * 16645
 })();
 
 // ── connect four: random self-play; at each ply assert identical legalCols + winner + bot ──
-(function () {
+(() => {
     const C = CL.connectfour, S = SV.connectfour;
     function key(R, b) { return R.legalCols(b).join(",") + "|" + R.winner(b) + "|" + R.cfBotMove(b.slice(), 1) + "/" + R.cfBotMove(b.slice(), 2); }
     let rng = makeRng(424242), mismatches = 0, plies = 0;
@@ -139,10 +139,10 @@ function makeRng(seed) { let s = seed >>> 0; return function () { s = (s * 16645
 // the CLIENT engine, and at every ply assert the SERVER engine enumerates the identical
 // legalAttacks (for the attacker) and legalDefends (for each uncovered pair). Both sides
 // share newGame(seed), so a mismatch means the bundled durak rules drifted from source. ──
-(function () {
+(() => {
     const C = CL.durak, S = SV.durak;
-    function attKey(R, st, seat) { return R.legalAttacks(st, seat).slice().sort(function (a, b) { return a - b; }).join(","); }
-    function defKey(R, st, pair) { return R.legalDefends(st, pair).slice().sort(function (a, b) { return a - b; }).join(","); }
+    function attKey(R, st, seat) { return R.legalAttacks(st, seat).slice().sort((a, b) => { return a - b; }).join(","); }
+    function defKey(R, st, pair) { return R.legalDefends(st, pair).slice().sort((a, b) => { return a - b; }).join(","); }
     let rng = makeRng(31415926), mismatches = 0, plies = 0;
     for (let game = 0; game < 40; game++) {
         const seed = (rng() * 0x7fffffff) | 0;
@@ -175,7 +175,7 @@ function makeRng(seed) { let s = seed >>> 0; return function () { s = (s * 16645
 // here misawards chips. Both sides share newHand(seed), so drive one deterministic self-play per
 // seed with the CLIENT engine and at every action assert the SERVER engine reports the identical
 // legalActions for the seat on the clock, plus the identical showdown scores/pots at the end. ──
-(function () {
+(() => {
     const C = CL.poker, S = SV.poker;
     function laKey(R, st, seat) {
         const la = R.legalActions(st, seat);

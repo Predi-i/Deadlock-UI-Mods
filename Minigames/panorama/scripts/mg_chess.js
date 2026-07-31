@@ -12,7 +12,7 @@
  * MG.Games registry exist.
  */
 
-(function () {
+(() => {
     const MG = ($.MG = $.MG || {});
     if (MG._chessLoaded) return;
     MG._chessLoaded = true;
@@ -156,9 +156,9 @@
             moveListRows.AddClass("mg-movelist-rows");
             const nav = $.CreatePanel("Panel", panel, "");
             nav.AddClass("mg-movelist-nav");
-            navPrevBtn = makeNavBtn(nav, "< Prev", function () { navPrev(); });
-            navLiveBtn = makeNavBtn(nav, "Live", function () { navLive(); });
-            navNextBtn = makeNavBtn(nav, "Next >", function () { navNext(); });
+            navPrevBtn = makeNavBtn(nav, "< Prev", () => { navPrev(); });
+            navLiveBtn = makeNavBtn(nav, "Live", () => { navLive(); });
+            navNextBtn = makeNavBtn(nav, "Next >", () => { navNext(); });
             renderMoveList();
         })();
                 // makeNavBtn: shared, see MG.Widgets in mg_games.js
@@ -203,17 +203,17 @@
                     var cell = $.CreatePanel("Panel", rowPanel, "cell_" + i);
                     cell.AddClass("mg-cell");
                     cell.AddClass(((cRow(i) + cCol(i)) & 1) === 1 ? "mg-cell-dark" : "mg-cell-light");
-                    (function (square) {
-                        cell.SetPanelEvent("onactivate", function () { onCellClick(square); });
-                        $.RegisterEventHandler("DragEnter", cell, function () {
+                    ((square) => {
+                        cell.SetPanelEvent("onactivate", () => { onCellClick(square); });
+                        $.RegisterEventHandler("DragEnter", cell, () => {
                             if (dragActive) { dragOverSq = square; dragEnterCount++; }
                             return true;
                         });
-                        $.RegisterEventHandler("DragLeave", cell, function () {
+                        $.RegisterEventHandler("DragLeave", cell, () => {
                             if (dragActive && dragOverSq === square) dragOverSq = -1;
                         });
-                        $.RegisterEventHandler("DragDrop", cell, function () { onCellDrop(square); });
-                        cell.SetPanelEvent("onmouseover", function () { if (dragActive) dragOverSq = square; });
+                        $.RegisterEventHandler("DragDrop", cell, () => { onCellDrop(square); });
+                        cell.SetPanelEvent("onmouseover", () => { if (dragActive) dragOverSq = square; });
                     })(i);
                     cells[i] = cell;
                 }
@@ -260,7 +260,7 @@
             piece.AddClass("mg-chess-piece");
             setFace(piece, pieceUrl(v));
             piece.style.transform = transformFor(realIdx);
-            $.Schedule(0.0, function () {
+            $.Schedule(0.0, () => {
                 if (piece && piece.IsValid && piece.IsValid()) piece.AddClass("mg-anim");
             });
             piece._sq = realIdx;
@@ -270,14 +270,14 @@
         }
 
         function setupPieceInput(piece) {
-            piece.SetPanelEvent("onactivate", function () {
+            piece.SetPanelEvent("onactivate", () => {
                 if (piece._sq === undefined) return;
                 onCellClick(piece._sq);
             });
             if (cSign(board[piece._sq]) !== myColor) return;   // only my pieces are grabbable
             piece.SetDraggable(true);
 
-            $.RegisterEventHandler("DragStart", piece, function (_p, dragEvent) {
+            $.RegisterEventHandler("DragStart", piece, (_p, dragEvent) => {
                 if (destroyed || reviewIndex !== null) return; // no dragging while reviewing history
                 const sq = piece._sq;
                 // Only start a drag on a square that STILL holds one of my pieces. A piece the
@@ -309,7 +309,7 @@
                 if (!destroyed && myTurn() && selected !== sq) onCellClick(sq);
             });
 
-            $.RegisterEventHandler("DragEnd", piece, function (_p, droppedPanel) {
+            $.RegisterEventHandler("DragEnd", piece, (_p, droppedPanel) => {
                 if (!myTurn() && canPremove()) {
                     // Dragged during the opponent's turn → queue a PREMOVE to the dropped square.
                     const pmTo = dropSquare(droppedPanel);
@@ -495,12 +495,12 @@
             } else {
                 const cur = (reviewIndex === null) ? history.length - 1 : reviewIndex;
                 for (let i = 0; i < history.length; i++) {
-                    (function (idx) {
+                    ((idx) => {
                         var row = $.CreatePanel("Label", moveListRows, "");
                         row.AddClass("mg-move-row");
                         if (idx === cur) row.AddClass("mg-move-current");
                         row.text = (idx + 1) + ". " + history[idx].label;
-                        row.SetPanelEvent("onactivate", function () { gotoReview(idx); });
+                        row.SetPanelEvent("onactivate", () => { gotoReview(idx); });
                     })(i);
                 }
             }
@@ -599,7 +599,7 @@
                 delete pieceEls[capSq];
                 dead.AddClass("mg-captured");
                 dead.style.preTransformScale2d = "0.2";
-                (function (d) { $.Schedule(0.22, function () { try { d.DeleteAsync(0); } catch (e) {} }); })(dead);
+                ((d) => { $.Schedule(0.22, () => { try { d.DeleteAsync(0); } catch (e) {} }); })(dead);
             }
             slidePiece(from, to);
             let promoted = false;
@@ -762,15 +762,15 @@
         // ── networking ─────────────────────────────────────────────────────────────────
         function sendChessMove(from, to) {
             if (destroyed) return;
-            Api.move(code, from, to, 1, session.tok, function (r) {
+            Api.move(code, from, to, 1, session.tok, (r) => {
                 if (r.ok) {
                     appliedSeq++;
                     afterTurnSwitch();
                     return;
                 }
                 rejectAndResync(r.reason); // authoritative server refused this move
-            }, function () {
-                $.Schedule(0.6, function () { sendChessMove(from, to); });
+            }, () => {
+                $.Schedule(0.6, () => { sendChessMove(from, to); });
             });
         }
 
@@ -802,7 +802,7 @@
                 else { status("Move rejected. Resyncing…"); startPolling(); }
                 return;
             }
-            Api.poll(code, seq, function (mv) {
+            Api.poll(code, seq, (mv) => {
                 if (destroyed) return;
                 if (mv) {
                     const r = makeMove(board, cst, mv.from, mv.to);
@@ -811,7 +811,7 @@
                     notePosition();          // resync path bypasses pushHistory; keep the repeat count honest
                     replayAccepted(seq + 1);
                 } else { appliedSeq = seq; replayAccepted(seq); }
-            }, function () { $.Schedule(0.4, function () { replayAccepted(seq); }); },
+            }, () => { $.Schedule(0.4, () => { replayAccepted(seq); }); },
             function (from, to) { return from >= 0 && from < 64 && to >= 0 && to < 64 && from !== to; });
         }
         function afterTurnSwitch() {
@@ -826,7 +826,7 @@
         function pollOnce(myToken) {
             if (destroyed || myToken !== pollToken) return;
             if (turn === myColor) return;
-            Api.poll(code, appliedSeq, function (mv) {
+            Api.poll(code, appliedSeq, (mv) => {
                 if (destroyed || myToken !== pollToken) return;
                 if (mv) {
                     pollMisses = 0;
@@ -841,11 +841,11 @@
                     sfx(moveSound(fx, inCheck(board, myColor), false));
                     if (!checkEnd()) { status(inCheck(board, myColor) ? "Check! Your turn." : "Your turn."); tryPremove(); }
                 } else {
-                    $.Schedule(MG.Net.pollDelay(pollMisses++), function () { pollOnce(myToken); });
+                    $.Schedule(MG.Net.pollDelay(pollMisses++), () => { pollOnce(myToken); });
                 }
-            }, function () {
-                $.Schedule(MG.Net.pollDelay(pollMisses++), function () { pollOnce(myToken); });
-            }, function (from, to) {
+            }, () => {
+                $.Schedule(MG.Net.pollDelay(pollMisses++), () => { pollOnce(myToken); });
+            }, (from, to) => {
                 return from >= 0 && from < 64 && to >= 0 && to < 64 && from !== to;
             });
         }

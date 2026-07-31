@@ -20,7 +20,7 @@
  * Registers itself into the shared registry: MG.Games.register({ id:3, enabled:true, create }).
  */
 
-(function () {
+(() => {
     const MG = ($.MG = $.MG || {});
     if (MG._durakLoaded) return;
     MG._durakLoaded = true;
@@ -258,7 +258,7 @@
             // asked to confirm or pile on, not to make a full defensive decision. Mandatory actions
             // keep the default budget.
             const secs = (mode === "optional") ? 10 : 0;   // 0 → widget's default (TURN_SECS)
-            turnTimer.start(function () { onTimerExpire(mode); }, secs);
+            turnTimer.start(() => { onTimerExpire(mode); }, secs);
         }
         // The bar emptied. Mandatory → forfeit (2p: I lose; online 3–4: I leave the table, which
         // the server turns into a fold-out). Optional → I simply pass (auto-Bito for my seat).
@@ -574,8 +574,8 @@
                 el.style.transform = xform(start.x, start.y, 0);
                 cardEls[w.id] = el;
                 bindCardDrag(el, w.id);
-                (function (elem, tgt) {
-                    $.Schedule(0.0, function () {
+                ((elem, tgt) => {
+                    $.Schedule(0.0, () => {
                         if (elem && elem.IsValid && elem.IsValid()) { elem.AddClass("mg-dk-anim"); elem.style.transform = tgt; }
                     });
                 })(el, target);
@@ -589,9 +589,9 @@
             el.RemoveClass("mg-dk-playable");
             if (w.playable) {
                 el.AddClass("mg-dk-playable");
-                (function (cid) { el.SetPanelEvent("onactivate", function () { onHandCardClick(cid); }); })(w.id);
+                ((cid) => { el.SetPanelEvent("onactivate", () => { onHandCardClick(cid); }); })(w.id);
             } else {
-                el.SetPanelEvent("onactivate", function () { });
+                el.SetPanelEvent("onactivate", () => { });
             }
         }
 
@@ -683,7 +683,7 @@
         }
 
         function bindCardDrag(el, cid) {
-            $.RegisterEventHandler("DragStart", el, function (_p, dragEvent) {
+            $.RegisterEventHandler("DragStart", el, (_p, dragEvent) => {
                 // _dkPlayable already reflects throw-in eligibility (computeWanted marks any legal
                 // non-defender attack card playable, not just the primary attacker's), so we no
                 // longer gate the drag on myTurn(); commitDrop re-checks via can*Input().
@@ -699,7 +699,7 @@
                 el._dkGhost = ghost;
                 el.AddClass("mg-dk-drag-source");
             });
-            $.RegisterEventHandler("DragEnd", el, function () {
+            $.RegisterEventHandler("DragEnd", el, () => {
                 const ghost = el._dkGhost;
                 try { commitDrop(el._dkCard, ghost); } catch (e) {}
                 if (ghost) { try { ghost.DeleteAsync(0); } catch (e2) {} }
@@ -729,8 +729,8 @@
                     if (os === mySeat) continue;
                     if (!D.attackSeatSettled(st, os)) { othersPending = true; break; }
                 }
-                const lastToSettle = !othersPending && pendingThrowers(st).filter(function (s) { return s !== mySeat; }).length === 0;
-                mkButton(controlsZone, lastToSettle ? "Beaten" : "Pass", function () {
+                const lastToSettle = !othersPending && pendingThrowers(st).filter((s) => { return s !== mySeat; }).length === 0;
+                mkButton(controlsZone, lastToSettle ? "Beaten" : "Pass", () => {
                     if (pendingAct || st.passed[mySeat]) return;
                     if (online) { sendAct(4, 0, 0); return; }         // 4 = pass/knock (server tallies)
                     myPass();
@@ -738,7 +738,7 @@
             }
             const canAct = myTurn() && !pendingAct;
             if (canAct && st.phase === "defend" && st.defender === mySeat && st.table.length > 0) {
-                mkButton(controlsZone, "Take", function () {
+                mkButton(controlsZone, "Take", () => {
                     if (!myTurn() || pendingAct) return;
                     if (online) { sendAct(3, 0, 0); return; }         // 3 = take
                     boutTakeSeat = st.defender; endBout(st, true); afterAction();
@@ -928,13 +928,13 @@
         function pullDraws(done) {
             if (destroyed) return;
             if (drawCursor[mySeat] >= myDrawExpected) { done(); return; }
-            MG.Api.ddraw(session.code, session.tok, drawCursor[mySeat], function (card) {
+            MG.Api.ddraw(session.code, session.tok, drawCursor[mySeat], (card) => {
                 if (destroyed) return;
                 if (card == null) { done(); return; }       // nothing at that index yet - try later
                 st.hands[mySeat].push(card);
                 drawCursor[mySeat]++;
                 pullDraws(done);
-            }, function () { if (!destroyed) $.Schedule(0.5, function () { pullDraws(done); }); });
+            }, () => { if (!destroyed) $.Schedule(0.5, () => { pullDraws(done); }); });
         }
         function onlineStatus() {
             if (gameOver) return;
@@ -950,16 +950,16 @@
         function startPolling() { pollGen++; pollMisses = 0; pollLoop(pollGen); }
         function pollLoop(gen) {
             if (destroyed || gameOver || gen !== pollGen) return;
-            MG.Api.dlog(session.code, logSeq, function (ev) {
+            MG.Api.dlog(session.code, logSeq, (ev) => {
                 if (destroyed || gen !== pollGen) return;
                 // Nothing new: back off on a slow adaptive cadence (see MG.Net.pollDelay) so a
                 // long think doesn't burn ~2 req/s. A real event resets the miss counter below.
-                if (!ev) { $.Schedule(MG.Net.pollDelay(pollMisses++), function () { pollLoop(gen); }); return; }
+                if (!ev) { $.Schedule(MG.Net.pollDelay(pollMisses++), () => { pollLoop(gen); }); return; }
                 pollMisses = 0;
                 logSeq++;
                 applyEvent(ev);
                 if (ev.type === "draw" && ev.seat === mySeat) {
-                    pullDraws(function () {
+                    pullDraws(() => {
                         if (gen !== pollGen) return;
                         render(); onlineStatus();
                         if (gameOver) finishGame(); else pollLoop(gen);
@@ -970,9 +970,9 @@
                 onlineStatus();
                 if (gameOver) { finishGame(); return; }
                 pollLoop(gen);                                       // drain any burst immediately
-            }, function () {
+            }, () => {
                 if (!destroyed && gen === pollGen) {
-                    $.Schedule(MG.Net.pollDelay(pollMisses++), function () { pollLoop(gen); });
+                    $.Schedule(MG.Net.pollDelay(pollMisses++), () => { pollLoop(gen); });
                 }
             });
         }
@@ -982,7 +982,7 @@
             if (destroyed || pendingAct) return;
             pendingAct = true;
             refreshTimer();                                             // park immediately, before the request starts
-            MG.Api.dact(session.code, session.tok, a, pair || 0, card || 0, function (r) {
+            MG.Api.dact(session.code, session.tok, a, pair || 0, card || 0, (r) => {
                 pendingAct = false;
                 if (r && r.ok) { startPolling(); return; }           // pull the echo promptly (single chain)
                 const why = r && r.reason;
@@ -991,7 +991,7 @@
                 else if (why === "gone") { if (MG.UI && MG.UI.kickToMenu) MG.UI.kickToMenu("Lobby closed."); }
                 else status("Move rejected.");
                 refreshTimer();                                      // rejected: the same obligation still needs a clock
-            }, function () {
+            }, () => {
                 pendingAct = false;
                 status("Server unavailable.");
                 refreshTimer();                                      // transport failed: let the player retry on a fresh clock
@@ -1011,7 +1011,7 @@
             if (destroyed || gameOver || !online) return;
             if (logSeq > 0) return;                     // deal (or any event) arrived - nothing to heal
             if (tries >= 6) { status("Still dealing… check your connection or try again."); return; }
-            $.Schedule(3.0, function () {
+            $.Schedule(3.0, () => {
                 if (destroyed || gameOver || logSeq > 0) return;
                 startPolling();                         // abandon any wedged chain, retry from logSeq
                 dealWatchdog(tries + 1);

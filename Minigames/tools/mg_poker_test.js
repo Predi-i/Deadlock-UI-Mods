@@ -22,7 +22,7 @@ function card(s, r) {
 function hand() { const a = []; for (let i = 0; i < arguments.length; i++) a.push(card(arguments[i][0], arguments[i][1])); return a; }
 
 console.log("card ids & encoding");
-(function () {
+(() => {
     ok(M.DECK_SIZE === 52, "deck size is 52");
     ok(M.suitOf(0) === 0 && M.rankOf(0) === 0, "id 0 = S2");
     ok(M.suitOf(51) === 3 && M.rankOf(51) === 12, "id 51 = CA");
@@ -35,7 +35,7 @@ console.log("card ids & encoding");
 })();
 
 console.log("hand categories (7-card best-5)");
-(function () {
+(() => {
     // [category] indices: 8 SF, 7 quads, 6 full, 5 flush, 4 straight, 3 trips, 2 two-pair, 1 pair, 0 high
     function cat(cards) { return M.score(cards)[0]; }
     ok(cat(hand(["S","A"],["S","K"],["S","Q"],["S","J"],["S","T"],["H","2"],["D","3"])) === 8, "royal/straight flush");
@@ -51,7 +51,7 @@ console.log("hand categories (7-card best-5)");
 })();
 
 console.log("hand comparisons");
-(function () {
+(() => {
     const c = M.compareScores;
     // higher full house beats lower full house
     const fhA = M.score(hand(["S","A"],["H","A"],["D","A"],["C","K"],["S","K"],["H","2"],["D","3"]));
@@ -72,7 +72,7 @@ console.log("hand comparisons");
 })();
 
 console.log("blinds & opener");
-(function () {
+(() => {
     // 4 players, button=0, equal stacks. sb=1 (seat1), bb=2 (seat2), UTG opener = seat3.
     const st = M.newHand(4, 0, [100, 100, 100, 100], 5, 10, 42);
     ok(st.bet[1] === 5 && st.bet[2] === 10, "small blind seat1=5, big blind seat2=10");
@@ -87,7 +87,7 @@ console.log("blinds & opener");
 })();
 
 console.log("legal actions");
-(function () {
+(() => {
     const st = M.newHand(4, 0, [100, 100, 100, 100], 5, 10, 42);
     const la = M.legalActions(st, 3);   // UTG facing the big blind
     ok(la.canFold && la.canCall && !la.canCheck, "UTG can fold/call, cannot check facing a bet");
@@ -98,7 +98,7 @@ console.log("legal actions");
 })();
 
 console.log("betting round → streets");
-(function () {
+(() => {
     // Everyone calls/checks preflop → flop is dealt.
     const st = M.newHand(3, 0, [100, 100, 100], 5, 10, 7);
     // seats: button=0, sb=1, bb=2, opener=0 (UTG in 3-handed = button)
@@ -112,7 +112,7 @@ console.log("betting round → streets");
 })();
 
 console.log("fold-to-one ends hand immediately");
-(function () {
+(() => {
     const st = M.newHand(3, 0, [100, 100, 100], 5, 10, 7);
     M.applyAction(st, 0, { type: "raise", to: 30 });
     M.applyAction(st, 1, { type: "fold" });
@@ -124,7 +124,7 @@ console.log("fold-to-one ends hand immediately");
 })();
 
 console.log("side pots (all-in short stack)");
-(function () {
+(() => {
     // seat0 has 20, seats1&2 have 200. Everyone all-in preflop. Short stack can only win the
     // main pot (60), the rest is a side pot between the two big stacks.
     const st = M.newHand(3, 0, [20, 200, 200], 5, 10, 3);
@@ -143,7 +143,7 @@ console.log("side pots (all-in short stack)");
 })();
 
 console.log("full bot games (chip conservation + termination)");
-(function () {
+(() => {
     const NUM = 4, START = 200, SB = 5, BB = 10;
     let played = 0, allConserved = true, allTerminated = true;
     for (let g = 0; g < 200; g++) {

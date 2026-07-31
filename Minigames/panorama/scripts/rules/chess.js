@@ -282,7 +282,7 @@
 
     // Captures first → better alpha-beta pruning.
     function orderChessMoves(b, moves) {
-        moves.sort(function (a, z) {
+        moves.sort((a, z) => {
             return (b[z.to] !== 0 ? pieceValue(cType(b[z.to])) : 0) - (b[a.to] !== 0 ? pieceValue(cType(b[a.to])) : 0);
         });
     }

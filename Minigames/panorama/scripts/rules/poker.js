@@ -43,7 +43,7 @@
     // Deterministic PRNG (mulberry32) - identical to the other engines so seeds line up.
     function makeRng(seed) {
         let s = seed | 0;
-        return function () {
+        return () => {
             s = (s + 0x6D2B79F5) | 0;
             let t = Math.imul(s ^ (s >>> 15), 1 | s);
             t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
@@ -93,7 +93,7 @@
         // grouped by count then value, high to low
         const groups = [];
         for (const key in byVal) if (byVal.hasOwnProperty(key)) groups.push([byVal[key], parseInt(key, 10)]);
-        groups.sort(function (a, b) { return b[0] - a[0] || b[1] - a[1]; });
+        groups.sort((a, b) => { return b[0] - a[0] || b[1] - a[1]; });
         // ordered distinct values high→low (kickers)
         const vals = [];
         for (i = 0; i < groups.length; i++) vals.push(groups[i][1]);
@@ -459,7 +459,7 @@
         if (winners.length === 0) return;
         const each = Math.floor(amount / winners.length);
         const rem = amount - each * winners.length;
-        const ordered = winners.slice().sort(function (a, b) {
+        const ordered = winners.slice().sort((a, b) => {
             return seatOrderFromButton(st, a) - seatOrderFromButton(st, b);
         });
         for (var i = 0; i < ordered.length; i++) st.stacks[ordered[i]] += each;

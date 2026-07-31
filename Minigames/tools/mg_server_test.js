@@ -46,7 +46,7 @@ class FakeStorage {
             if (opts && opts.end && key >= opts.end) continue;
             entries.push(e);
         }
-        entries.sort(function (a, b) { return String(a[0]).localeCompare(String(b[0])); });
+        entries.sort((a, b) => { return String(a[0]).localeCompare(String(b[0])); });
         if (opts && opts.reverse) entries.reverse();
         if (opts && opts.limit) entries.length = Math.min(entries.length, opts.limit);
         const out = new Map();
@@ -217,7 +217,7 @@ async function main() {
     // (5,63) specifically as "you are banned". A 12-bit version put 4032..4095 into that band, so a
     // canvas painted 4037 times encoded bit-for-bit like the ban sentinel and showed EVERY client a
     // false ban. Walk the wrap point and assert no version can ever land in the reserved band.
-    (function () {
+    (() => {
         let collide = 0, banLike = 0;
         for (let v = 0; v < 4032; v++) {
             const w = v & 63, h = (v >> 6) & 63;
@@ -666,7 +666,7 @@ async function main() {
     ok(adminState.body.painted === 150 && adminState.body.palette.length === 19,
         "admin state reports the live painted count and shared palette");
     actionList = await adminReq(adminHub, "/admin/api/actions?limit=50", "GET");
-    const loggedPlayerAction = actionList.body.actions.find(function (a) { return a.actor === "player"; });
+    const loggedPlayerAction = actionList.body.actions.find((a) => { return a.actor === "player"; });
     ok(actionList.body.actions.length === 3 && loggedPlayerAction && loggedPlayerAction.undoneAt > 0,
         "audit log records player paint, admin paint, and the undo action");
 
@@ -740,10 +740,10 @@ async function main() {
     // Five rounds drawn from a 2380-row pool must be five DIFFERENT places, and each must carry a
     // source tag so the reveal can credit the right provider.
     const geoLobby = await geo.hub.storage.get("l:" + geo.code);
-    const geoIds = geoLobby.state.locations.map(function (loc) { return loc.source + ":" + loc.id; });
+    const geoIds = geoLobby.state.locations.map((loc) => { return loc.source + ":" + loc.id; });
     ok(geoIds.length === 5 && new Set(geoIds).size === 5,
         "geo: a match draws five distinct pooled locations");
-    ok(geoLobby.state.locations.every(function (loc) {
+    ok(geoLobby.state.locations.every((loc) => {
         return (loc.source === 0 || loc.source === 1) &&
             Number.isFinite(loc.lat) && Number.isFinite(loc.lon) &&
             loc.lat >= -90 && loc.lat <= 90 && loc.lon >= -180 && loc.lon <= 180 &&
@@ -753,12 +753,12 @@ async function main() {
     // panoramas sit at sea and reveal as a region), but a country the table does not list means
     // geo_pool.generated.js and geo_credit_tables.generated.js were built from different pools -
     // the reveal would then name the wrong place.
-    ok(geoLobby.state.locations.every(function (loc) {
+    ok(geoLobby.state.locations.every((loc) => {
         if (!loc.country) return loc.continent === -1;
         return GEO_COUNTRY_NAMES.indexOf(loc.country) >= 0 &&
             Number.isInteger(loc.continent) && loc.continent >= 0 && loc.continent < 6;
     }), "geo: every drawn location's country is present in the shipped country table");
-    ok(geoLobby.state.locations.every(function (loc) {
+    ok(geoLobby.state.locations.every((loc) => {
         return GEO_CREDIT_KEYS.indexOf((loc.source === 1 ? 1 : 0) + "|" + loc.provider) >= 0;
     }), "geo: every drawn location's provider is present in the shipped credit table");
 
@@ -766,8 +766,8 @@ async function main() {
     // paths then get asserted deterministically: the URL resolve, the host allowlist and the two
     // different credit codes. The providers must be REAL entries from the generated credit table -
     // the reveal now sends an index into it, so an invented name has no code to send.
-    const geoMlyKey = GEO_CREDIT_KEYS.find(function (key) { return key.charAt(0) === "1"; });
-    const geoPanoKey = GEO_CREDIT_KEYS.find(function (key) { return key.charAt(0) === "0"; });
+    const geoMlyKey = GEO_CREDIT_KEYS.find((key) => { return key.charAt(0) === "1"; });
+    const geoPanoKey = GEO_CREDIT_KEYS.find((key) => { return key.charAt(0) === "0"; });
     geoLobby.state.locations[0] = {
         source: 1, id: "1234567890123456", lat: 48.858, lon: 2.294, region: 0,
         provider: geoMlyKey.slice(2), country: "France", continent: 0
@@ -1582,7 +1582,7 @@ async function main() {
             s++;
         }
         ok(board.length >= 3, "poker: reached the flop - at least 3 BOARD cards emitted (" + board.length + ")");
-        const inRange = board.every(function (c) { return c >= 0 && c <= 51; });
+        const inRange = board.every((c) => { return c >= 0 && c <= 51; });
         ok(inRange, "poker: every board card is a real id 0..51");
         ok(new Set(board).size === board.length, "poker: board cards are all DISTINCT (no duplicate 2♠ bug)");
     })();
@@ -2248,4 +2248,4 @@ async function main() {
     console.log("\nALL SERVER TESTS PASSED (" + passed + " checks)");
 }
 
-main().catch(function (e) { console.error(e); process.exitCode = 1; });
+main().catch((e) => { console.error(e); process.exitCode = 1; });

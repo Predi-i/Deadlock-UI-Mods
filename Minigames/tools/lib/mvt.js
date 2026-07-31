@@ -202,8 +202,8 @@ function parse(buffer, z, tileX, tileY) {
                 const key = layer.keys[feature.tags[i]];
                 if (key !== undefined) properties[key] = layer.values[feature.tags[i + 1]];
             }
-            const rings = decodeGeometry(feature.geometry).map(function (ring) {
-                return ring.map(function (point) {
+            const rings = decodeGeometry(feature.geometry).map((ring) => {
+                return ring.map((point) => {
                     return tileToLonLat(z, tileX, tileY, point[0], point[1], layer.extent);
                 });
             });

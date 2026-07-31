@@ -150,7 +150,7 @@ async function main() {
     }
 }
 
-main().catch(function (error) {
+main().catch((error) => {
     console.error(error);
     process.exitCode = 1;
 });

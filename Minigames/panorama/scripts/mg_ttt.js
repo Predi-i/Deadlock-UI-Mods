@@ -14,7 +14,7 @@
  * mg_games.js so MG.Rules.ttt, MG.Widgets.createTurnTimer and the MG.Games registry exist.
  */
 
-(function () {
+(() => {
     const MG = ($.MG = $.MG || {});
     if (MG._tttLoaded) return;
     MG._tttLoaded = true;
@@ -100,8 +100,8 @@
                     let i = r * 3 + c;
                     var cell = $.CreatePanel("Panel", rowPanel, "ttt_cell_" + i);
                     cell.AddClass("mg-ttt-cell");
-                    (function (square) {
-                        cell.SetPanelEvent("onactivate", function () { onCellClick(square); });
+                    ((square) => {
+                        cell.SetPanelEvent("onactivate", () => { onCellClick(square); });
                     })(i);
                     cells[i] = cell;
                 }
@@ -176,15 +176,15 @@
         // ── relay + polling ──────────────────────────────────────────────────
         function sendMove(cell, attempt) {
             if (destroyed) return;
-            Api.move(code, cell, 9, 1, session.tok, function (r) {
+            Api.move(code, cell, 9, 1, session.tok, (r) => {
                 if (r.ok) {
                     appliedSeq++;          // our own placement is now in the shared server list
                     if (!gameOver) startPolling();
                     return;
                 }
                 rejectAndResync(r.reason); // server refused (occupied / not our turn / bad token)
-            }, function () {
-                $.Schedule(0.6, function () { sendMove(cell, (attempt || 0) + 1); }); // transport retry
+            }, () => {
+                $.Schedule(0.6, () => { sendMove(cell, (attempt || 0) + 1); }); // transport retry
             });
         }
 
@@ -204,7 +204,7 @@
                 else { status("Move rejected. Resyncing…"); startPolling(); }
                 return;
             }
-            Api.poll(code, seq, function (mv) {
+            Api.poll(code, seq, (mv) => {
                 if (destroyed) return;
                 if (mv) {
                     const mk = (seq % 2 === 0) ? X : O; // X placed the even-indexed moves
@@ -212,7 +212,7 @@
                     turn = (mk === X ? O : X);
                     replayAccepted(seq + 1);
                 } else { appliedSeq = seq; replayAccepted(seq); }
-            }, function () { $.Schedule(0.4, function () { replayAccepted(seq); }); },
+            }, () => { $.Schedule(0.4, () => { replayAccepted(seq); }); },
             function (from, to) { return from >= 0 && from <= 8 && to === 9; });
         }
 
@@ -225,7 +225,7 @@
         function pollOnce(myToken) {
             if (destroyed || myToken !== pollToken || gameOver) return;
             if (turn === myMark) return; // our move; nothing to poll
-            Api.poll(code, appliedSeq, function (mv) {
+            Api.poll(code, appliedSeq, (mv) => {
                 if (destroyed || myToken !== pollToken) return;
                 if (mv) {
                     pollMisses = 0;
@@ -237,11 +237,11 @@
                     if (checkEnd()) return;
                     status("Your turn.");
                 } else {
-                    $.Schedule(MG.Net.pollDelay(pollMisses++), function () { pollOnce(myToken); });
+                    $.Schedule(MG.Net.pollDelay(pollMisses++), () => { pollOnce(myToken); });
                 }
-            }, function () {
-                $.Schedule(MG.Net.pollDelay(pollMisses++), function () { pollOnce(myToken); });
-            }, function (from, to) {
+            }, () => {
+                $.Schedule(MG.Net.pollDelay(pollMisses++), () => { pollOnce(myToken); });
+            }, (from, to) => {
                 // A placement is a single cell 0..8 with the fixed marker to=9.
                 return from >= 0 && from <= 8 && to === 9;
             });

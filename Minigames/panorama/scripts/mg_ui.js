@@ -11,7 +11,7 @@
  * Depends on mg_net.js ($.MG.Net / $.MG.Api) and mg_games.js ($.MG.Games).
  */
 
-(function () {
+(() => {
     const MG = ($.MG = $.MG || {});
     if (MG.UI) return;
 
@@ -214,7 +214,7 @@
         const lbl = $.CreatePanel("Label", btn, "");
         lbl.AddClass("menuButtonLabel");
         lbl.text = "DL Arcade";
-        btn.SetPanelEvent("onactivate", function () { showOverlay(); });
+        btn.SetPanelEvent("onactivate", () => { showOverlay(); });
         escBtn = btn;
         // Leave it appended (bottom of the list); CSS lifts it up and out of the way of
         // the native items - forcing it to the top made it overlap "Swap Hero".
@@ -248,7 +248,7 @@
         // fall through to the menu's EscapeBackground (which would resume/close).
         const dim = $.CreatePanel("Panel", overlay, "MG_Dim");
         dim.AddClass("mg-dim");
-        dim.SetPanelEvent("onactivate", function () { });
+        dim.SetPanelEvent("onactivate", () => { });
 
         const modal = $.CreatePanel("Panel", overlay, "MG_Modal");
         modal.AddClass("mg-modal");
@@ -266,14 +266,14 @@
         headerCredit = $.CreatePanel("Button", headerLeft, "");
         headerCredit.AddClass("mg-header-credit");
         const creditLbl = $.CreatePanel("Label", headerCredit, ""); creditLbl.text = "by Predi_i";
-        headerCredit.SetPanelEvent("onactivate", function () { openSupport(); });
+        headerCredit.SetPanelEvent("onactivate", () => { openSupport(); });
         // Support pill sits just right of the credit (thumbsup icon + label) → Boosty.
         const supportBtn = $.CreatePanel("Button", headerLeft, "");
         supportBtn.AddClass("mg-support-btn");
         const sIcon = $.CreatePanel("Panel", supportBtn, "");
         sIcon.AddClass("mg-support-icon");   // background-image = icon_thumbsup.vsvg (CSS)
         const sLbl = $.CreatePanel("Label", supportBtn, ""); sLbl.AddClass("mg-support-label"); sLbl.text = "Support";
-        supportBtn.SetPanelEvent("onactivate", function () { openSupport(); });
+        supportBtn.SetPanelEvent("onactivate", () => { openSupport(); });
         // Discord pill sits just right of Support - same shape, Discord blurple palette. The
         // logo is a .vtex (raster), so it MUST be drawn by a child <Image> (setFace), NOT a
         // Panel background-image: a raster background paints at native px until relayout (the
@@ -285,7 +285,7 @@
         dIcon.AddClass("mg-discord-icon");
         setFace(dIcon, "s2r://panorama/images/discord_logo.vtex");
         const dLbl = $.CreatePanel("Label", discordBtn, ""); dLbl.AddClass("mg-discord-label"); dLbl.text = "Discord";
-        discordBtn.SetPanelEvent("onactivate", function () { openDiscord(); });
+        discordBtn.SetPanelEvent("onactivate", () => { openDiscord(); });
         // Flexible spacer: eats the row's slack so the two right controls flow to the far right edge.
         // (horizontal-align:right is IGNORED on a child of a flow-children:right parent - the controls
         // just flow in a row and stay stuck next to the left cluster. A fill-parent-flow spacer is the
@@ -314,7 +314,7 @@
         close.AddClass("mg-close");
         const closeLbl = $.CreatePanel("Label", close, "");
         closeLbl.text = "X"; // plain ASCII: the ✕ glyph isn't in the game font
-        close.SetPanelEvent("onactivate", function () { hideOverlay(); });
+        close.SetPanelEvent("onactivate", () => { hideOverlay(); });
 
 
         modalBody = $.CreatePanel("Panel", modal, "MG_Body");
@@ -341,7 +341,7 @@
         updatePopupClose.AddClass("mg-update-popup-close");
         const updatePopupCloseLbl = $.CreatePanel("Label", updatePopupClose, "");
         updatePopupCloseLbl.text = "X";
-        updatePopupClose.SetPanelEvent("onactivate", function () {
+        updatePopupClose.SetPanelEvent("onactivate", () => {
             if (updatePopup) updatePopup.RemoveClass("mg-open");
         });
         updatePopupBody = $.CreatePanel("Label", updatePopup, "");
@@ -409,7 +409,7 @@
         try { dd.SetSelected(selectedId || ("MG_Scale_" + SCALE_STEPS[0])); } catch (e) {}
         // The engine fires oninputsubmit when the user picks an option. Read the % from the
         // selected option's id (the numeric suffix), apply it.
-        dd.SetPanelEvent("oninputsubmit", function () {
+        dd.SetPanelEvent("oninputsubmit", () => {
             let sel = null;
             try { sel = dd.GetSelected ? dd.GetSelected() : null; } catch (e) {}
             if (!sel) return;
@@ -449,7 +449,7 @@
         }
         try { dd.SetSelected(selectedId || ("MG_Vol_" + VOL_STEPS[0])); } catch (e) {}
         wrap.SetHasClass("mg-vol-muted", curVol === 0);   // match the state we opened with
-        dd.SetPanelEvent("oninputsubmit", function () {
+        dd.SetPanelEvent("oninputsubmit", () => {
             let sel = null;
             try { sel = dd.GetSelected ? dd.GetSelected() : null; } catch (e) {}
             if (!sel) return;
@@ -638,7 +638,7 @@
         cardEls = [];
         const games = MG.Games.list;
         for (let i = 0; i < games.length; i++) {
-            (function (g) {
+            ((g) => {
                 var card = $.CreatePanel("Button", picker, "");
                 card.AddClass("mg-game-card");
                 if (!g.enabled) card.AddClass("mg-disabled");
@@ -669,7 +669,7 @@
                 // Click: in multi-select mode a multi-capable, enabled card TOGGLES its ticked
                 // state (shown by the card's own accent highlight - no corner badge, per the
                 // maintainer); otherwise it just selects the card.
-                card.SetPanelEvent("onactivate", function () {
+                card.SetPanelEvent("onactivate", () => {
                     if (multiSelect && isMultiGame(g.id) && g.enabled) {
                         multiChecked[g.id] = !multiChecked[g.id];
                         if (g.id !== selectedGameId) selectGame(g.id); else renderDetail();
@@ -740,7 +740,7 @@
             const reqLbl = $.CreatePanel("Label", reqBtn, "");
             reqLbl.AddClass("mg-request-label");
             reqLbl.text = "Request a game in my Discord";
-            reqBtn.SetPanelEvent("onactivate", function () { openDiscord(); });
+            reqBtn.SetPanelEvent("onactivate", () => { openDiscord(); });
 
             const locked = $.CreatePanel("Label", detailPanel, "");
             locked.AddClass("mg-detail-locked");
@@ -772,7 +772,7 @@
             pixelCap.AddClass("mg-caption");
             pixelCap.text = "Checking this Steam account before loading the shared canvas.";
             if ($.MG.PixelBattle && $.MG.PixelBattle.checkAccess) {
-                $.MG.PixelBattle.checkAccess(function (result) {
+                $.MG.PixelBattle.checkAccess((result) => {
                     if (!pixelBtn || !pixelBtn.IsValid || !pixelBtn.IsValid()) return;
                     if (result.status === "banned") {
                         pixelBtn.RemoveClass("mg-btn-inert");
@@ -790,7 +790,7 @@
                     pixelBtn.AddClass("mg-btn-primary");
                     pixelLbl.text = "OPEN WORLD MAP";
                     pixelCap.text = "100 stored pixels · +1 every 30 seconds · minimum upload: 10";
-                    pixelBtn.SetPanelEvent("onactivate", function () {
+                    pixelBtn.SetPanelEvent("onactivate", () => {
                         renderGame(7, 0, true, false, {});
                     });
                 });
@@ -817,7 +817,7 @@
             const wordleBtn = $.CreatePanel("Button", wordleRow, "");
             wordleBtn.AddClass("mg-btn"); wordleBtn.AddClass("mg-btn-primary"); wordleBtn.AddClass("mg-btn-solo");
             const wordleLbl = $.CreatePanel("Label", wordleBtn, ""); wordleLbl.text = "PLAY WORDLE";
-            wordleBtn.SetPanelEvent("onactivate", function () {
+            wordleBtn.SetPanelEvent("onactivate", () => {
                 // `bot=true` selects the existing local Play Again flow; Wordle has no bot.
                 renderGame(8, 0, true, true, {});
             });
@@ -844,7 +844,7 @@
         if (multiSelect) { const tMark = $.CreatePanel("Label", tBox, ""); tMark.AddClass("mg-check-mark"); tMark.text = "x"; }
         const tLbl = $.CreatePanel("Label", toggle, ""); tLbl.AddClass("mg-multi-toggle-label");
         tLbl.text = "Select multiple games";
-        toggle.SetPanelEvent("onactivate", function () {
+        toggle.SetPanelEvent("onactivate", () => {
             multiSelect = !multiSelect;
             if (multiSelect) {
                 // Seed the ticked set with the current game if it's multi-capable and nothing
@@ -901,7 +901,7 @@
                 quickBtn.AddClass("mg-btn-inert");
                 try { quickBtn.enabled = false; } catch (e) {}
             } else {
-                quickBtn.SetPanelEvent("onactivate", function () { startQuickMatch(); });
+                quickBtn.SetPanelEvent("onactivate", () => { startQuickMatch(); });
             }
             const quickCap = $.CreatePanel("Label", detailPanel, "");
             quickCap.AddClass("mg-caption");
@@ -918,11 +918,11 @@
             const createBtn = $.CreatePanel("Button", friendRow, "");
             createBtn.AddClass("mg-btn");
             const cl = $.CreatePanel("Label", createBtn, ""); cl.text = "CREATE";
-            createBtn.SetPanelEvent("onactivate", function () { startCreate(); });
+            createBtn.SetPanelEvent("onactivate", () => { startCreate(); });
             const joinBtn = $.CreatePanel("Button", friendRow, "");
             joinBtn.AddClass("mg-btn"); joinBtn.AddClass("mg-btn-2nd");
             const jl = $.CreatePanel("Label", joinBtn, ""); jl.text = "JOIN";
-            joinBtn.SetPanelEvent("onactivate", function () { renderJoin(); });
+            joinBtn.SetPanelEvent("onactivate", () => { renderJoin(); });
         }
 
         if (!multiSelect) {
@@ -937,7 +937,7 @@
             botBtn.AddClass("mg-btn"); botBtn.AddClass("mg-btn-solo");
             const bl = $.CreatePanel("Label", botBtn, "");
             bl.text = selectedGameId === 9 ? "PLAY SOLO" : "PLAY VS BOT";
-            botBtn.SetPanelEvent("onactivate", function () { startBotGame(); });
+            botBtn.SetPanelEvent("onactivate", () => { startBotGame(); });
         }
 
         fadeInDetail();
@@ -959,12 +959,12 @@
         label.text = "Table size";
         const seg = $.CreatePanel("Panel", detailPanel, "");
         seg.AddClass("mg-tc-seg");
-        [2, 3, 4].forEach(function (n) {
+        [2, 3, 4].forEach((n) => {
             const b = $.CreatePanel("Button", seg, "");
             b.AddClass("mg-tc-opt");
             if (pokerSeatCap === n) b.AddClass("mg-on");
             const l = $.CreatePanel("Label", b, ""); l.text = n + " seats";
-            b.SetPanelEvent("onactivate", function () {
+            b.SetPanelEvent("onactivate", () => {
                 if (pokerSeatCap === n) return;
                 pokerSeatCap = n;
                 renderDetail();     // re-skin the segments (cheap; whole column rebuilds)
@@ -984,12 +984,12 @@
         label.text = "Private table size";
         const seg = $.CreatePanel("Panel", detailPanel, "");
         seg.AddClass("mg-tc-seg");
-        [2, 3, 4].forEach(function (n) {
+        [2, 3, 4].forEach((n) => {
             const b = $.CreatePanel("Button", seg, "");
             b.AddClass("mg-tc-opt");
             if (durakSeatCap === n) b.AddClass("mg-on");
             const l = $.CreatePanel("Label", b, ""); l.text = n + " players";
-            b.SetPanelEvent("onactivate", function () {
+            b.SetPanelEvent("onactivate", () => {
                 if (durakSeatCap === n) return;
                 durakSeatCap = n;
                 renderDetail();     // re-skin the segments (cheap; whole column rebuilds)
@@ -1013,12 +1013,12 @@
             { sec: 600, text: "10 min" },
             { sec: -1, text: "Any" }
         ];
-        opts.forEach(function (o) {
+        opts.forEach((o) => {
             const b = $.CreatePanel("Button", seg, "");
             b.AddClass("mg-tc-opt");
             if (selectedTimeControl === o.sec) b.AddClass("mg-on");
             const l = $.CreatePanel("Label", b, ""); l.text = o.text;
-            b.SetPanelEvent("onactivate", function () {
+            b.SetPanelEvent("onactivate", () => {
                 if (selectedTimeControl === o.sec) return;
                 selectedTimeControl = o.sec;
                 renderDetail();     // re-skin the segments (cheap; whole column rebuilds)
@@ -1043,12 +1043,12 @@
             { cv: "english", text: "English" },
             { cv: "any", text: "Any" }
         ];
-        opts.forEach(function (o) {
+        opts.forEach((o) => {
             const b = $.CreatePanel("Button", seg, "");
             b.AddClass("mg-tc-opt");
             if (selectedVariant === o.cv) b.AddClass("mg-on");
             const l = $.CreatePanel("Label", b, ""); l.text = o.text;
-            b.SetPanelEvent("onactivate", function () {
+            b.SetPanelEvent("onactivate", () => {
                 if (selectedVariant === o.cv) return;
                 selectedVariant = o.cv;
                 renderDetail();     // re-skin the segments (cheap; whole column rebuilds)
@@ -1061,7 +1061,7 @@
     function fadeInDetail() {
         if (!detailPanel) return;
         detailPanel.style.opacity = "0.0";
-        $.Schedule(0.0, function () {
+        $.Schedule(0.0, () => {
             if (detailPanel && detailPanel.IsValid && detailPanel.IsValid()) detailPanel.style.opacity = "1.0";
         });
     }
@@ -1103,19 +1103,19 @@
             return l;
         }
 
-        mkTool("Test Connection", function () {
+        mkTool("Test Connection", () => {
             if (!MG.Net.isConfigured()) { setStatus("⚠ Configure the server first."); return; }
             setStatus("Pinging server…");
-            MG.Api.ping(function (ms) {
+            MG.Api.ping((ms) => {
                 setStatus("✅ Ping: " + ms + "ms. Connection is working!");
-            }, function () {
+            }, () => {
                 setStatus("❌ Ping failed. Server unreachable.");
             });
         });
-        mkTool("Check Updates", function () { checkUpdates(false); });
+        mkTool("Check Updates", () => { checkUpdates(false); });
         // Debug toggle: flips console logging on/off (no on-screen panel anymore).
         function dbgText() { return MG.Net.isDebug && MG.Net.isDebug() ? "Debug: ON" : "Debug: OFF"; }
-        const dbgLbl = mkTool(dbgText(), function () {
+        const dbgLbl = mkTool(dbgText(), () => {
             if (!MG.Net.setDebug) return;
             MG.Net.setDebug(!MG.Net.isDebug());
             dbgLbl.text = dbgText();
@@ -1173,7 +1173,7 @@
         }
 
         if (!automatic) setStatus("Checking for updates...");
-        MG.Net.loadImage(url, function (img, w, h) {
+        MG.Net.loadImage(url, (img, w, h) => {
             cleanup(img);
             if (!alive()) return;
             const marker = classifyUpdateMarker(w, h);
@@ -1206,59 +1206,59 @@
 
         function cleanup() { if (code) { try { MG.Api.cancel(code, hostTok); } catch (e) {} } }
         function fail(what) { if (alive()) { cleanup(); setStatus("❌ Self-test failed at: " + what); } }
-        function netFail(label) { return function () { fail(label + " (no response)"); }; }
+        function netFail(label) { return () => { fail(label + " (no response)"); }; }
 
         // Each step calls next() on success or fail(...) on a bad result; the runner advances
         // through them one at a time and reports "N/total" progress as it goes.
         const steps = [
-            ["pinging the server", function () {
-                MG.Api.ping(function (ms) { pingMs = ms; next(); }, netFail("ping"));
+            ["pinging the server", () => {
+                MG.Api.ping((ms) => { pingMs = ms; next(); }, netFail("ping"));
             }],
-            ["creating a test lobby", function () {
-                MG.Api.create(1, hostTok, function (c) { code = c; next(); },
+            ["creating a test lobby", () => {
+                MG.Api.create(1, hostTok, (c) => { code = c; next(); },
                     function () { fail("create (server unreachable or bad decode)"); });
             }],
-            ["reading lobby status", function () {
-                MG.Api.status(code, hostTok, function (st) {
+            ["reading lobby status", () => {
+                MG.Api.status(code, hostTok, (st) => {
                     if (st.gone || st.players !== 1) { fail("status (got " + st.players + " players, expected 1)"); return; }
                     next();
                 }, netFail("status"));
             }],
-            ["joining own lobby", function () {
-                MG.Api.join(code, joinTok, function (res) {
+            ["joining own lobby", () => {
+                MG.Api.join(code, joinTok, (res) => {
                     if (!res.ok || res.game !== 1) { fail("join (" + (res.reason || "game=" + res.game) + ")"); return; }
                     next();
                 }, netFail("join"));
             }],
-            ["rejecting a foreign-token move", function () {
+            ["rejecting a foreign-token move", () => {
                 // A token seated in neither seat must be refused with reason "token".
-                MG.Api.move(code, mFrom, mTo, 1, foreignTok, function (r) {
+                MG.Api.move(code, mFrom, mTo, 1, foreignTok, (r) => {
                     if (r.ok || r.reason !== "token") { fail("foreign-token move not rejected (" + (r.reason || "accepted") + ")"); return; }
                     next();
                 }, netFail("foreign move"));
             }],
-            ["rejecting an out-of-turn move", function () {
+            ["rejecting an out-of-turn move", () => {
                 // It's white's turn; the joiner (black) moving must be refused with reason "turn".
-                MG.Api.move(code, blkFrom, blkTo, 1, joinTok, function (r) {
+                MG.Api.move(code, blkFrom, blkTo, 1, joinTok, (r) => {
                     if (r.ok || r.reason !== "turn") { fail("out-of-turn move not rejected (" + (r.reason || "accepted") + ")"); return; }
                     next();
                 }, netFail("out-of-turn move"));
             }],
-            ["rejecting an illegal move", function () {
+            ["rejecting an illegal move", () => {
                 // A sideways (non-diagonal) hop by the correct player must be refused as "illegal".
-                MG.Api.move(code, illFrom, illTo, 1, hostTok, function (r) {
+                MG.Api.move(code, illFrom, illTo, 1, hostTok, (r) => {
                     if (r.ok || r.reason !== "illegal") { fail("illegal move not rejected (" + (r.reason || "accepted") + ")"); return; }
                     next();
                 }, netFail("illegal move"));
             }],
-            ["relaying a legal move", function () {
-                MG.Api.move(code, mFrom, mTo, 1, hostTok, function (r) {
+            ["relaying a legal move", () => {
+                MG.Api.move(code, mFrom, mTo, 1, hostTok, (r) => {
                     if (!r.ok) { fail("legal move rejected (" + r.reason + ")"); return; }
                     next();
                 }, netFail("legal move"));
             }],
-            ["polling the move back", function () {
-                MG.Api.poll(code, 0, function (mv) {
+            ["polling the move back", () => {
+                MG.Api.poll(code, 0, (mv) => {
                     if (!mv || mv.from !== mFrom || mv.to !== mTo) { fail("poll (move came back wrong)"); return; }
                     next();
                 }, netFail("poll"));
@@ -1297,10 +1297,10 @@
         const ctx = beginOnlineAction(9);
         setStatus("Starting a solo GeoGuesser run…");
         log("startGeoSolo base=" + MG.Net.getBaseUrl());
-        MG.Api.create(9, ctx.tok, function (code) {
+        MG.Api.create(9, ctx.tok, (code) => {
             if (!bindActionCode(ctx, code)) { discardStaleSeat(ctx, code, false); return; }
             renderGame(9, code, true, true, { solo: true }, ctx);
-        }, function () {
+        }, () => {
             if (!actionAlive(ctx)) return;
             setStatus("Couldn't start solo GeoGuesser. Check the server.");
         }, 0, "", true);
@@ -1346,7 +1346,7 @@
         const go = $.CreatePanel("Button", row, "");
         go.AddClass("mg-btn"); go.AddClass("mg-btn-primary");
         const gl = $.CreatePanel("Label", go, ""); gl.text = "Join";
-        go.SetPanelEvent("onactivate", function () {
+        go.SetPanelEvent("onactivate", () => {
             const rawCode = String(entry.text || "").replace(/[^0-9]/g, "");
             let code = parseInt(rawCode, 10);
             if (!/^\d{1,4}$/.test(rawCode) || code < 0 || code > 1023) {
@@ -1359,7 +1359,7 @@
         const back = $.CreatePanel("Button", row, "");
         back.AddClass("mg-btn");
         const bl = $.CreatePanel("Label", back, ""); bl.text = "Back";
-        back.SetPanelEvent("onactivate", function () { renderMenu(); });
+        back.SetPanelEvent("onactivate", () => { renderMenu(); });
     }
 
     function renderWaiting(code, isPublic, ctx) {
@@ -1388,7 +1388,7 @@
         const cancel = $.CreatePanel("Button", row, "");
         cancel.AddClass("mg-btn");
         const cl = $.CreatePanel("Label", cancel, ""); cl.text = "Cancel";
-        cancel.SetPanelEvent("onactivate", function () {
+        cancel.SetPanelEvent("onactivate", () => {
             // cleanupCurrentView() inside renderMenu() will handle the cancellation
             renderMenu();
         });
@@ -1446,7 +1446,7 @@
         playAgainBtn.AddClass("mg-btn"); playAgainBtn.AddClass("mg-btn-primary");
         playAgainBtn.style.visibility = "collapse";
         const pal = $.CreatePanel("Label", playAgainBtn, ""); pal.text = "Play Again";
-        playAgainBtn.SetPanelEvent("onactivate", function () {
+        playAgainBtn.SetPanelEvent("onactivate", () => {
             if (bot) {
                 if (gameId === 9) {
                     startGeoSolo();
@@ -1463,7 +1463,7 @@
         const leave = $.CreatePanel("Button", row, "");
         leave.AddClass("mg-btn");
         const ll = $.CreatePanel("Label", leave, ""); ll.text = "Leave";
-        leave.SetPanelEvent("onactivate", function () { renderMenu(); });
+        leave.SetPanelEvent("onactivate", () => { renderMenu(); });
     }
 
     // Mount an ONLINE game once its lobby is settled. Checkers carries a server-resolved variant
@@ -1484,7 +1484,7 @@
         }
         function readMatch() {
             if (ctx && !actionAlive(ctx)) return;
-            MG.Api.match(code, function (m) {
+            MG.Api.match(code, (m) => {
                 if (ctx && !actionAlive(ctx)) return;
                 if (m.gone) { kickToMenu("Lobby closed."); return; }
                 if (!m.variant) { retryMatch(); return; }
@@ -1516,12 +1516,12 @@
         let misses = 0;
         function tick() {
             if (token !== rematchPollToken || view !== "game") return;
-            MG.Api.rematch(code, currentTok, baseGen, function (r) {
+            MG.Api.rematch(code, currentTok, baseGen, (r) => {
                 if (token !== rematchPollToken || view !== "game") return;
                 if (r.state === 9) { kickToMenu("Opponent left."); return; } // (9,9) gone / (9,3) bad token
                 if (r.state === 2 || r.gen > baseGen) { rematchGen = r.gen; restart(); return; }
                 $.Schedule(MG.Net.waitDelay(misses++), tick);   // still waiting for consensus
-            }, function () {
+            }, () => {
                 $.Schedule(MG.Net.waitDelay(misses++), tick);   // transport hiccup: retry
             });
         }
@@ -1548,10 +1548,10 @@
         // collapses to 5 min here. Untimed games send 0 (server ignores it anyway).
         // Poker owns its route set (2–4 seats) - pcreate, not the generic 2-cap create.
         if (isPokerOnlineGame(selectedGameId)) {
-            MG.Api.pcreate(pokerSeatCap, ctx.tok, function (res) {
+            MG.Api.pcreate(pokerSeatCap, ctx.tok, (res) => {
                 if (!bindActionCode(ctx, res.code)) { discardStaleSeat(ctx, res.code, true); return; }
                 renderPokerRoom(res.code, true, pokerSeatCap, 0, ctx);
-            }, function (why) {
+            }, (why) => {
                 if (!actionAlive(ctx)) return;
                 setStatus(why === "token" ? "Session error, please retry." : "Couldn't create the poker table.");
             });
@@ -1560,10 +1560,10 @@
         // Durak's private lobby seats 2–4 on its own routes (dcreate/djoin/droom), so Create
         // routes through dcreate - never the generic 2-cap create - exactly like poker.
         if (isDurakOnlineGame(selectedGameId)) {
-            MG.Api.dcreate(durakSeatCap, ctx.tok, function (res) {
+            MG.Api.dcreate(durakSeatCap, ctx.tok, (res) => {
                 if (!bindActionCode(ctx, res.code)) { discardStaleSeat(ctx, res.code, true); return; }
                 renderDurakRoom(res.code, true, durakSeatCap, 0, ctx);
-            }, function (why) {
+            }, (why) => {
                 if (!actionAlive(ctx)) return;
                 setStatus(why === "token" ? "Session error, please retry." : "Couldn't create the Durak table.");
             });
@@ -1572,12 +1572,12 @@
         const tc = isTimedGame(selectedGameId) ? concreteTc(selectedTimeControl) : 0;
         const cv = hasVariant(selectedGameId) ? concreteVariant(selectedVariant) : "";
         log("startCreate game=" + selectedGameId + " base=" + MG.Net.getBaseUrl() + " tc=" + tc + " cv=" + cv);
-        MG.Api.create(ctx.gameId, ctx.tok, function (code) {
+        MG.Api.create(ctx.gameId, ctx.tok, (code) => {
             log("create ok, code=" + code);
             if (!bindActionCode(ctx, code)) { discardStaleSeat(ctx, code, true); return; }
             renderWaiting(code, false, ctx);
             waitForJoiner(code, tc, ctx);
-        }, function () {
+        }, () => {
             if (!actionAlive(ctx)) return;
             log("create FAILED (request errored)");
             setStatus("Couldn't create lobby. Check the server.");
@@ -1655,9 +1655,9 @@
             const startBtn = $.CreatePanel("Button", row, "");
             startBtn.AddClass("mg-btn"); startBtn.AddClass("mg-btn-primary");
             const sl = $.CreatePanel("Label", startBtn, ""); sl.text = cfg.startLabel;
-            startBtn.SetPanelEvent("onactivate", function () {
+            startBtn.SetPanelEvent("onactivate", () => {
                 setStatus(cfg.startingMsg);
-                cfg.startApi(code, roomTok, function (r) {
+                cfg.startApi(code, roomTok, (r) => {
                     if (ctx && !actionAlive(ctx)) return;
                     if (r.ok) {
                         currentTok = roomTok;
@@ -1668,13 +1668,13 @@
                     else if (r.reason === "host") setStatus("Only the host can " + cfg.startVerb + ".");
                     else if (r.reason === "token") setStatus("Session desync - please recreate the table.");
                     else setStatus("Couldn't " + cfg.startVerb + " (" + (r.reason || "error") + ").");
-                }, function () { if (!ctx || actionAlive(ctx)) setStatus("Server unavailable."); });
+                }, () => { if (!ctx || actionAlive(ctx)) setStatus("Server unavailable."); });
             });
         }
         const back = $.CreatePanel("Button", row, "");
         back.AddClass("mg-btn");
         const bl = $.CreatePanel("Label", back, ""); bl.text = "Cancel";
-        back.SetPanelEvent("onactivate", function () { renderMenu(); });
+        back.SetPanelEvent("onactivate", () => { renderMenu(); });
 
         setStatus(isHost ? cfg.waitHost : cfg.waitJoiner);
         pollLobbyRoom(cfg, cap, seat, seatLabels);
@@ -1687,7 +1687,7 @@
         let code = cfg.code, isHost = cfg.isHost, ctx = cfg.ctx;
         function tick() {
             if (token !== statusPollToken || view !== "room" || (ctx && !actionAlive(ctx))) return;
-            cfg.roomApi(code, ctx ? ctx.tok : currentTok, function (r) {
+            cfg.roomApi(code, ctx ? ctx.tok : currentTok, (r) => {
                 if (token !== statusPollToken || view !== "room" || (ctx && !actionAlive(ctx))) return;
                 // kickToMenu, not renderMenu: it clears currentCode first, so cleanupCurrentView
                 // does not fire /api/leave at a lobby the server has already reported gone.
@@ -1704,7 +1704,7 @@
                 if (isHost) setStatus(r.players >= 2 ? cfg.readyMsg(r.players) : cfg.waitHost);
                 else setStatus(cfg.waitJoiner);
                 $.Schedule(MG.Net.waitDelay(misses++), tick);
-            }, function () { $.Schedule(MG.Net.waitDelay(misses++), tick); });
+            }, () => { $.Schedule(MG.Net.waitDelay(misses++), tick); });
         }
         tick();
     }
@@ -1769,7 +1769,7 @@
         let misses = 0;
         function tick() {
             if (token !== statusPollToken || (ctx && !actionAlive(ctx))) return;
-            MG.Api.status(code, ctx ? ctx.tok : currentTok, function (st) {
+            MG.Api.status(code, ctx ? ctx.tok : currentTok, (st) => {
                 if (token !== statusPollToken || (ctx && !actionAlive(ctx))) return;
                 if (st.players === 2) { mountOnlineGame(selectedGameId, code, true, { timeControl: tc | 0 }, ctx); return; }
                 // A swept or cancelled lobby answers `gone`. Without this the host sat on
@@ -1777,7 +1777,7 @@
                 // cadence - waitForMultiMatch has always handled it; this copy had not.
                 if (st.gone) { kickToMenu("Lobby closed."); return; }
                 $.Schedule(MG.Net.waitDelay(misses++), tick);
-            }, function () { $.Schedule(MG.Net.waitDelay(misses++), tick); });
+            }, () => { $.Schedule(MG.Net.waitDelay(misses++), tick); });
         }
         tick();
     }
@@ -1796,7 +1796,7 @@
         const tcArg = isTimedGame(selectedGameId) ? (selectedTimeControl === -1 ? "any" : selectedTimeControl) : 0;
         const cvArg = hasVariant(selectedGameId) ? selectedVariant : "";   // "any"/"russian"/"english"
         log("startQuickMatch game=" + selectedGameId + " tc=" + tcArg + " cv=" + cvArg);
-        MG.Api.quick(selectedGameId, ctx.tok, function (res) {
+        MG.Api.quick(selectedGameId, ctx.tok, (res) => {
             if (!bindActionCode(ctx, res.code)) { discardStaleSeat(ctx, res.code, res.role !== "joiner"); return; }
             if (res.role === "joiner") {
                 log("quick joined, code=" + res.code);
@@ -1808,7 +1808,7 @@
                 renderWaiting(res.code, true, ctx);
                 waitForJoiner(res.code, 0, ctx);
             }
-        }, function () {
+        }, () => {
             if (!actionAlive(ctx)) return;
             log("quick FAILED (request errored)");
             setStatus("Couldn't reach matchmaking. Check the server.");
@@ -1848,7 +1848,7 @@
         quickBtn.AddClass("mg-btn"); quickBtn.AddClass("mg-btn-primary"); quickBtn.AddClass("mg-btn-quick"); quickBtn.AddClass("mg-btn-solo");
         if (n === 0) quickBtn.AddClass("mg-btn-disabled");
         const ql = $.CreatePanel("Label", quickBtn, ""); ql.text = n > 0 ? ("QUICK MATCH (" + n + ")") : "PICK AT LEAST ONE";
-        quickBtn.SetPanelEvent("onactivate", function () { startMultiQuick(); });
+        quickBtn.SetPanelEvent("onactivate", () => { startMultiQuick(); });
         const quickCap = $.CreatePanel("Label", detailPanel, "");
         quickCap.AddClass("mg-caption");
         quickCap.text = "Public match in any of the ticked games.";
@@ -1864,7 +1864,7 @@
         createBtn.AddClass("mg-btn"); createBtn.AddClass("mg-btn-solo");
         if (n === 0) createBtn.AddClass("mg-btn-disabled");
         const cl = $.CreatePanel("Label", createBtn, ""); cl.text = "CREATE (RANDOM)";
-        createBtn.SetPanelEvent("onactivate", function () { startCreateRandom(); });
+        createBtn.SetPanelEvent("onactivate", () => { startCreateRandom(); });
     }
 
     function multiCheckedNames() {
@@ -1909,7 +1909,7 @@
         const tcArg = selectedTimeControl === -1 ? "any" : selectedTimeControl;
         const cvArg = selectedVariant;   // "any"/"russian"/"english"
         log("startMultiQuick games=" + ids.join(",") + " tc=" + tcArg + " cv=" + cvArg);
-        MG.Api.mquick(ids, ctx.tok, function (res) {
+        MG.Api.mquick(ids, ctx.tok, (res) => {
             if (!bindActionCode(ctx, res.code)) { discardStaleSeat(ctx, res.code, res.role !== "joiner"); return; }
             if (res.role === "joiner") {
                 // We were paired instantly; the server FIXED the game. Resolve it via status,
@@ -1922,7 +1922,7 @@
                 renderWaiting(res.code, true, ctx);
                 waitForMultiMatch(res.code, true, ctx);
             }
-        }, function (why) {
+        }, (why) => {
             if (!actionAlive(ctx)) return;
             log("mquick FAILED (" + why + ")");
             setStatus(why === "games" ? "Pick at least one valid game." : "Couldn't reach matchmaking. Check the server.");
@@ -1938,7 +1938,7 @@
         let misses = 0;
         function tick() {
             if (token !== statusPollToken || (ctx && !actionAlive(ctx))) return;
-            MG.Api.status(code, ctx ? ctx.tok : currentTok, function (st) {
+            MG.Api.status(code, ctx ? ctx.tok : currentTok, (st) => {
                 if (token !== statusPollToken || (ctx && !actionAlive(ctx))) return;
                 if (st.gone) { renderMenu(); setStatus("⚠ Lobby closed."); return; }
                 if (st.players === 2 && st.game > 0) {
@@ -1951,7 +1951,7 @@
                     return;
                 }
                 $.Schedule(MG.Net.waitDelay(misses++), tick);
-            }, function () { $.Schedule(MG.Net.waitDelay(misses++), tick); });
+            }, () => { $.Schedule(MG.Net.waitDelay(misses++), tick); });
         }
         tick();
     }
@@ -1964,7 +1964,7 @@
         // table cap) rather than the generic 2-seat join. The Join screen is shared, so we try
         // pjoin first ONLY when the user is browsing poker - otherwise fall through to join.
         if (isPokerOnlineGame(selectedGameId)) {
-            MG.Api.pjoin(code, ctx.tok, function (res) {
+            MG.Api.pjoin(code, ctx.tok, (res) => {
                 if (res.ok) {
                     if (!bindActionCode(ctx, code)) { discardStaleSeat(ctx, code, false); return; }
                     renderPokerRoom(code, false, res.cap, res.seat, ctx); return;
@@ -1974,13 +1974,13 @@
                 else if (res.reason === "full") setStatus("That table is full.");
                 else if (res.reason === "started") setStatus("That hand has already started.");
                 else setStatus("Couldn't join the table.");
-            }, function () { if (actionAlive(ctx)) setStatus("Server unavailable."); });
+            }, () => { if (actionAlive(ctx)) setStatus("Server unavailable."); });
             return;
         }
         // Durak private tables (2–4 seats) live on their own routes too; join via djoin so the
         // joiner learns its seat + the table cap. Same shape as poker's pjoin branch above.
         if (isDurakOnlineGame(selectedGameId)) {
-            MG.Api.djoin(code, ctx.tok, function (res) {
+            MG.Api.djoin(code, ctx.tok, (res) => {
                 if (res.ok) {
                     if (!bindActionCode(ctx, code)) { discardStaleSeat(ctx, code, false); return; }
                     renderDurakRoom(code, false, res.cap, res.seat, ctx); return;
@@ -1990,10 +1990,10 @@
                 else if (res.reason === "full") setStatus("That table is full.");
                 else if (res.reason === "started") setStatus("That game has already started.");
                 else setStatus("Couldn't join the table.");
-            }, function () { if (actionAlive(ctx)) setStatus("Server unavailable."); });
+            }, () => { if (actionAlive(ctx)) setStatus("Server unavailable."); });
             return;
         }
-        MG.Api.join(code, ctx.tok, function (res) {
+        MG.Api.join(code, ctx.tok, (res) => {
             if (res.ok) {
                 // The game id must decode to a real, playable game - mounting a
                 // disabled stub would leave the host playing against a ghost.
@@ -2011,7 +2011,7 @@
             if (res.reason === "missing") setStatus("Lobby " + codeStr(code) + " not found.");
             else if (res.reason === "full") setStatus("Lobby is already full.");
             else setStatus("Connection error.");
-        }, function () { if (actionAlive(ctx)) setStatus("Server unavailable."); });
+        }, () => { if (actionAlive(ctx)) setStatus("Server unavailable."); });
     }
 
     // ── show / hide ───────────────────────────────────────────────────────────

@@ -19,7 +19,7 @@
  *   session = { code, isHost, onStatus(text) }
  */
 
-(function () {
+(() => {
     const MG = ($.MG = $.MG || {});
     if (MG.Games) return;
 
@@ -123,7 +123,7 @@
         const RESYNC_S = 8;
         function resyncTick() {
             if (stopped) return;
-            MG.Api.clocks(code, function (r) {
+            MG.Api.clocks(code, (r) => {
                 if (stopped) return;
                 if (r) {
                     if (!revealed && wrap.IsValid()) { wrap.style.visibility = "visible"; revealed = true; }
@@ -139,7 +139,7 @@
                 }
                 // Before the first reveal a transport hiccup should retry soon (don't leave the
                 // clock invisible for 8s); once revealed, resume the slow authoritative cadence.
-            }, function () { if (!stopped) $.Schedule(revealed ? RESYNC_S : 1.2, resyncTick); });
+            }, () => { if (!stopped) $.Schedule(revealed ? RESYNC_S : 1.2, resyncTick); });
         }
 
         lastTick = Date.now();
@@ -281,7 +281,7 @@
                 warned10 = true;
                 if (MG.Sound) MG.Sound.play("TenSeconds");
             }
-            $.Schedule(0.2, function () { tick(myGen); });
+            $.Schedule(0.2, () => { tick(myGen); });
         }
 
         return {
@@ -303,8 +303,8 @@
                 // Arm the CSS drain one frame later (the .mg-piece/.mg-anim arming trick): the
                 // full-snap must commit first, or the browser coalesces both writes and the bar
                 // jumps straight to empty with no slide.
-                $.Schedule(0.0, function () { if (!dead && gen === myGen && running) arm(); });
-                $.Schedule(0.2, function () { tick(myGen); });
+                $.Schedule(0.0, () => { if (!dead && gen === myGen && running) arm(); });
+                $.Schedule(0.2, () => { tick(myGen); });
             },
             // Take the human off the clock (they acted, or it's someone else's turn). Fades the
             // fill + blanks the seconds (the empty channel stays, keeping the footprint) and

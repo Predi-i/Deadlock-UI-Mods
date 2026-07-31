@@ -58,8 +58,8 @@ function imageSize(bytes) {
 
 (async function main() {
     const pool = JSON.parse(fs.readFileSync(POOL, "utf8"));
-    const rows = sample(pool.filter(function (r) { return r.source === 1; }), SAMPLE_PER_SOURCE)
-        .concat(sample(pool.filter(function (r) { return r.source === 0; }), SAMPLE_PER_SOURCE));
+    const rows = sample(pool.filter((r) => { return r.source === 1; }), SAMPLE_PER_SOURCE)
+        .concat(sample(pool.filter((r) => { return r.source === 0; }), SAMPLE_PER_SOURCE));
 
     console.log("checking " + rows.length + " panoramas from a pool of " + pool.length);
     if (!TOKEN) console.log("! MLY_TOKEN not set - Mapillary rows will be reported as unreachable");

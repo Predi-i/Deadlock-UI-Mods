@@ -24,7 +24,7 @@
  * rank 0..12 = 2..9,T,J,Q,K,A. Face art = deck/<SUIT><RANK>.vtex (e.g. "SA", "H2", "DT").
  */
 
-(function () {
+(() => {
     const MG = ($.MG = $.MG || {});
     if (MG._pokerLoaded) return;
     MG._pokerLoaded = true;
@@ -305,24 +305,24 @@
             if (la.canRaise) {
                 if (pendingBet < la.minRaiseTo || pendingBet > la.maxRaiseTo) pendingBet = la.minRaiseTo;
                 const stepRow = $.CreatePanel("Panel", controlsZone, ""); stepRow.AddClass("mg-pk-steprow");
-                mkStep(stepRow, "-", function () { pendingBet = Math.max(la.minRaiseTo, pendingBet - BB); buildControls(); });
+                mkStep(stepRow, "-", () => { pendingBet = Math.max(la.minRaiseTo, pendingBet - BB); buildControls(); });
                 const amt = $.CreatePanel("Label", stepRow, ""); amt.AddClass("mg-pk-betamt"); amt.text = String(pendingBet);
-                mkStep(stepRow, "+", function () { pendingBet = Math.min(la.maxRaiseTo, pendingBet + BB); buildControls(); });
-                mkStep(stepRow, "Pot", function () {
+                mkStep(stepRow, "+", () => { pendingBet = Math.min(la.maxRaiseTo, pendingBet + BB); buildControls(); });
+                mkStep(stepRow, "Pot", () => {
                     const pot = P.totalPot(st);
                     pendingBet = Math.min(la.maxRaiseTo, Math.max(la.minRaiseTo, st.currentBet + pot));
                     buildControls();
                 });
-                mkStep(stepRow, "Max", function () { pendingBet = la.maxRaiseTo; buildControls(); });
+                mkStep(stepRow, "Max", () => { pendingBet = la.maxRaiseTo; buildControls(); });
             }
 
             const row = $.CreatePanel("Panel", controlsZone, ""); row.AddClass("mg-pk-actionrow");
-            if (la.canFold) mkButton(row, "Fold", "mg-btn", function () { doAction({ type: "fold" }); });
-            if (la.canCheck) mkButton(row, "Check", "mg-btn-primary", function () { doAction({ type: "check" }); });
-            if (la.canCall) mkButton(row, "Call " + la.callAmount, "mg-btn-primary", function () { doAction({ type: "call" }); });
+            if (la.canFold) mkButton(row, "Fold", "mg-btn", () => { doAction({ type: "fold" }); });
+            if (la.canCheck) mkButton(row, "Check", "mg-btn-primary", () => { doAction({ type: "check" }); });
+            if (la.canCall) mkButton(row, "Call " + la.callAmount, "mg-btn-primary", () => { doAction({ type: "call" }); });
             if (la.canRaise) {
                 const raiseLabel = (st.currentBet === 0) ? "Bet " : "Raise to ";
-                mkButton(row, raiseLabel + pendingBet, "mg-btn-primary", function () {
+                mkButton(row, raiseLabel + pendingBet, "mg-btn-primary", () => {
                     doAction({ type: "raise", to: pendingBet });
                 });
             }
@@ -339,7 +339,7 @@
                 if (session.onGameOver) session.onGameOver(last === mySeat ? "win" : "lose");
                 return;
             }
-            mkButton(controlsZone, "Next hand", "mg-btn-primary", function () {
+            mkButton(controlsZone, "Next hand", "mg-btn-primary", () => {
                 if (online) { requestNextHand(); return; }
                 startHand();
             });
@@ -427,7 +427,7 @@
             if (seat < 0) return;
             if (seat === mySeat) { status(streetName() + ": your action."); return; }
             status(nameOf(seat) + " is thinking…");
-            $.Schedule(0.6, function () { botStep(seat); });
+            $.Schedule(0.6, () => { botStep(seat); });
         }
 
         function botStep(seat) {
@@ -517,13 +517,13 @@
         function pullHole(done) {
             if (destroyed) return;
             if (holeCursor >= 2) { wantHole = false; done(); return; }
-            MG.Api.pdraw(session.code, session.tok, holeCursor, function (card) {
+            MG.Api.pdraw(session.code, session.tok, holeCursor, (card) => {
                 if (destroyed) return;
                 if (card == null) { done(); return; }      // not dealt at that index yet - retry via poll
                 if (st && st.hole[mySeat]) st.hole[mySeat][holeCursor] = card;
                 holeCursor++;
                 pullHole(done);
-            }, function () { if (!destroyed) $.Schedule(0.4, function () { pullHole(done); }); });
+            }, () => { if (!destroyed) $.Schedule(0.4, () => { pullHole(done); }); });
         }
 
         function onlineStatus() {
@@ -542,16 +542,16 @@
         function startPolling() { pollGen++; pollMisses = 0; pollLoop(pollGen); }
         function pollLoop(gen) {
             if (destroyed || gameOver || gen !== pollGen) return;
-            MG.Api.plog(session.code, logSeq, function (ev) {
+            MG.Api.plog(session.code, logSeq, (ev) => {
                 if (destroyed || gen !== pollGen) return;
                 // Nothing new: back off on the shared adaptive cadence (see MG.Net.pollDelay) so a
                 // long think doesn't burn ~2 req/s. A real event resets the miss counter below.
-                if (!ev) { $.Schedule(MG.Net.pollDelay(pollMisses++), function () { pollLoop(gen); }); return; }   // nothing new
+                if (!ev) { $.Schedule(MG.Net.pollDelay(pollMisses++), () => { pollLoop(gen); }); return; }   // nothing new
                 pollMisses = 0;
                 logSeq++;
                 applyOnlineEvent(ev);
                 if (wantHole) {
-                    pullHole(function () {
+                    pullHole(() => {
                         if (gen !== pollGen) return;
                         render(); onlineStatus(); pollLoop(gen);
                     });
@@ -561,9 +561,9 @@
                 onlineStatus();
                 if (gameOver) { finishOnline(); return; }
                 pollLoop(gen);                                 // drain any burst immediately
-            }, function () {
+            }, () => {
                 if (!destroyed && gen === pollGen) {
-                    $.Schedule(MG.Net.pollDelay(pollMisses++), function () { pollLoop(gen); });
+                    $.Schedule(MG.Net.pollDelay(pollMisses++), () => { pollLoop(gen); });
                 }
             });
         }
@@ -587,7 +587,7 @@
             pendingAct = true;
             refreshTimer();                                             // park immediately, before the request starts
             status("Sending…");
-            MG.Api.pact(session.code, session.tok, a, to, function (r) {
+            MG.Api.pact(session.code, session.tok, a, to, (r) => {
                 pendingAct = false;
                 if (r && r.ok) { startPolling(); return; }        // pull the echo promptly (single chain)
                 if (r && r.reason === "turn") status("Not your turn.");
@@ -595,7 +595,7 @@
                 else if (r && r.reason === "gone") { if (MG.UI && MG.UI.kickToMenu) MG.UI.kickToMenu("Lobby closed."); }
                 else status("Move rejected.");
                 refreshTimer();                                      // rejected: re-arm the unchanged local turn
-            }, function () {
+            }, () => {
                 pendingAct = false;
                 status("Server unavailable.");
                 refreshTimer();                                      // transport failed: permit a retry with a fresh clock
@@ -605,11 +605,11 @@
         function requestNextHand() {
             if (destroyed) return;
             status("Dealing next hand…");
-            MG.Api.pnext(session.code, session.tok, function (r) {
+            MG.Api.pnext(session.code, session.tok, (r) => {
                 // Success OR "wait" (someone else already dealt) - the poll will pick up the HAND
                 // event either way. Only a token/gone failure is worth surfacing.
                 if (r && !r.ok && r.reason === "gone" && MG.UI && MG.UI.kickToMenu) MG.UI.kickToMenu("Lobby closed.");
-            }, function () { status("Server unavailable."); });
+            }, () => { status("Server unavailable."); });
         }
 
         // ── deal watchdog ─────────────────────────────────────────────────────────────
@@ -619,7 +619,7 @@
             if (destroyed || gameOver || !online) return;
             if (logSeq > 0) return;
             if (tries >= 6) { status("Still dealing… check your connection or try again."); return; }
-            $.Schedule(3.0, function () {
+            $.Schedule(3.0, () => {
                 if (destroyed || gameOver || logSeq > 0) return;
                 startPolling();
                 dealWatchdog(tries + 1);

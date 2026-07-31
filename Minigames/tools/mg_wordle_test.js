@@ -47,7 +47,7 @@ check(source.indexOf("ANSWERS = MG.WordleWords.answers") >= 0,
 check(layoutSource.indexOf("mg_wordle_words.generated.vjs_c") <
     layoutSource.indexOf("mg_wordle.vjs_c"), "dictionary loads before the controller");
 const allWords = wordLists.answers.concat(wordLists.guesses);
-check(allWords.every(function (word) { return /^[A-Z]{5}$/.test(word); }),
+check(allWords.every((word) => { return /^[A-Z]{5}$/.test(word); }),
     "every dictionary entry is exactly five ASCII letters");
 check(new Set(allWords).size === allWords.length, "dictionary entries are unique");
 

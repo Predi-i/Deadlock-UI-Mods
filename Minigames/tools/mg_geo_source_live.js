@@ -113,7 +113,7 @@ async function placeName(code, tok) {
 
     console.log("\nsources: mapillary=" + sources.Mapillary + " panoramax=" + sources.Panoramax +
         " unknown=" + sources.unknown);
-    console.log("places: " + Object.keys(regionsSeen).map(function (name) {
+    console.log("places: " + Object.keys(regionsSeen).map((name) => {
         return name + "x" + regionsSeen[name];
     }).join(", "));
     console.log("slowest lobby create: " + slowestCreate + "ms (prebuilt pool means no catalog call)");

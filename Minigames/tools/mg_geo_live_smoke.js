@@ -155,7 +155,7 @@ try {
 }
 }
 
-main().catch(function (error) {
+main().catch((error) => {
   console.error(error && error.stack ? error.stack : error);
   process.exitCode = 1;
 });

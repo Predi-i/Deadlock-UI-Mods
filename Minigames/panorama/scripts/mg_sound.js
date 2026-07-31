@@ -8,7 +8,7 @@
 //
 // Load order (base_hud.xml): mg_net -> mg_sound -> rules/* -> games, so controllers see $.MG.Sound.
 // Settings are session-only (Panorama has no localStorage; persist is a separate task).
-(function () {
+(() => {
     const MG = ($.MG = $.MG || {});
     if (MG.Sound) return;
 

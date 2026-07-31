@@ -8,7 +8,7 @@
  * hidden TextEntry. It self-registers game id 8 after mg_games.js has created the shared
  * registry.
  */
-(function () {
+(() => {
     const MG = $.MG = $.MG || {};
     if (MG.Wordle) return;
     MG.Wordle = {};
@@ -230,12 +230,12 @@
             krow.AddClass("mg-wordle-kbd-row");
             krow.AddClass("mg-wordle-kbd-row" + (kr + 1));
             for (let kc = 0; kc < KBD_ROWS[kr].length; kc++) {
-                (function (letter) {
+                ((letter) => {
                     var btn = $.CreatePanel("Button", krow, "");
                     btn.AddClass("mg-wordle-kbd-key");
                     addLabel(btn, "mg-wordle-kbd-label", letter);
                     keyButtons[letter] = btn;
-                    btn.SetPanelEvent("onactivate", function () {
+                    btn.SetPanelEvent("onactivate", () => {
                         if (destroyed || over) return;
                         if (current.length < 5) {
                             current += letter;
@@ -256,7 +256,7 @@
         backBtn.AddClass("mg-wordle-kbd-key");
         backBtn.AddClass("mg-wordle-kbd-wide");
         addLabel(backBtn, "mg-wordle-kbd-label", "BACK");
-        backBtn.SetPanelEvent("onactivate", function () {
+        backBtn.SetPanelEvent("onactivate", () => {
             if (destroyed || over || !current.length) return;
             current = current.substring(0, current.length - 1);
             syncing = true;
@@ -269,7 +269,7 @@
         enterBtn.AddClass("mg-wordle-kbd-key");
         enterBtn.AddClass("mg-wordle-kbd-wide");
         addLabel(enterBtn, "mg-wordle-kbd-label", "ENTER");
-        enterBtn.SetPanelEvent("onactivate", function () { submit(); refocus(); });
+        enterBtn.SetPanelEvent("onactivate", () => { submit(); refocus(); });
 
         function setKeyState(letter, value) {
             // First assignment always applies (even absent=0); afterwards only UPGRADE

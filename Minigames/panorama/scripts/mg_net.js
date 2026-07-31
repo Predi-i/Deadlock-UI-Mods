@@ -50,7 +50,7 @@
  * downlink and can't be guessed. See $.MG.Session below.
  */
 
-(function () {
+(() => {
     const MG = ($.MG = $.MG || {});
     if (MG.Net) return; // already initialised
 
@@ -208,7 +208,7 @@
         const job = reqQueue.shift();
         if (!job) { releaseHost(); return; } // idle: drop the host so it stops covering the menu
         reqActive = true;
-        const success = function (a, b, c) {
+        const success = (a, b, c) => {
             // Keep reqActive latched through the callback and release frame. Callbacks
             // commonly enqueue their next poll synchronously; clearing it here would let
             // that request bypass the intended gap and start inside this callback.
@@ -218,10 +218,10 @@
                     else job.onDone(a, b);
                 }
             } finally {
-                $.Schedule(0.05, function () { reqActive = false; drainQueue(); });
+                $.Schedule(0.05, () => { reqActive = false; drainQueue(); });
             }
         };
-        const failure = function (e) {
+        const failure = (e) => {
             // The Panorama image loader is intermittently flaky (a URL that loads
             // instantly in a browser sometimes stalls to a timeout here). One silent
             // re-queue at the front of the line recovers most of those. This is a
@@ -230,13 +230,13 @@
             if (job.tries < 2) {
                 log("↻ retry " + (job.path || job.url) + " (attempt " + (job.tries + 1) + ")");
                 reqQueue.unshift(job);
-                $.Schedule(0.05, function () { reqActive = false; drainQueue(); });
+                $.Schedule(0.05, () => { reqActive = false; drainQueue(); });
                 return;
             }
             try {
                 if (job.onError) job.onError(e);
             } finally {
-                $.Schedule(0.05, function () { reqActive = false; drainQueue(); });
+                $.Schedule(0.05, () => { reqActive = false; drainQueue(); });
             }
         };
         if (job.kind === "image") imageRequestNow(job.url, job.attributes, success, failure);
@@ -409,7 +409,7 @@
             log("✗ probe " + why + " " + PROBE_ATTEMPTS + " times; giving up");
             failCalib();
         }
-        rawRequest("/api/probe", null, function (w, hh) {
+        rawRequest("/api/probe", null, (w, hh) => {
             // Unswapped ~ (600s, 1000s); swapped ~ (1000s, 600s). 600 < 1000, so
             // width > height means the engine swapped the two dimensions.
             let sw = false;
@@ -431,7 +431,7 @@
             swap = sw; scaleX = sx; scaleY = sy;
             log("calibrated swap=" + swap + " scaleX=" + scaleX.toFixed(3) + " scaleY=" + scaleY.toFixed(3));
             finishCalib();
-        }, function () {
+        }, () => {
             retryOrFail("failed");
         });
     }
@@ -476,7 +476,7 @@
 
     function request(path, params, onDone, onError) {
         function go() {
-            rawRequest(path, params, function (w, hh) {
+            rawRequest(path, params, (w, hh) => {
                 const d = decode(w, hh);
                 onDone(d.w, d.h);
             }, onError);
@@ -582,9 +582,9 @@
         // engine's cold image-loader start (and calibration) - many seconds that
         // say nothing about the server. Warm up with one request, time the second.
         ping: function (cb, err) {
-            request("/api/ping", null, function () {
+            request("/api/ping", null, () => {
                 const start = Date.now();
-                request("/api/ping", null, function () {
+                request("/api/ping", null, () => {
                     cb(Date.now() - start);
                 }, err);
             }, err);
@@ -596,7 +596,7 @@
             const params = { game: game, tok: tok, tc: tc || 0 };
             if (cv) params.cv = cv;                       // "russian"/"english"; checkers only. Joiner learns it via match()
             if (solo) params.solo = 1;                    // GeoGuesser only: server fills the opponent seat
-            request("/api/create", params, function (w, h) {
+            request("/api/create", params, (w, h) => {
                 if (w === 9 && h === 4) { if (err) err("busy"); return; } // rate-limited, don't recalibrate
                 const dc = decodeCode(w, h);
                 log("create decoded w=" + w + " h=" + h + " => code=" + (dc ? dc.code : "?"));
@@ -619,7 +619,7 @@
             const params = { game: game, tok: tok };
             if (tc != null && tc !== 0) params.tc = tc;   // "any" or concrete secs; omit for untimed
             if (cv) params.cv = cv;                       // "any"/"russian"/"english"; checkers only
-            request("/api/quick", params, function (w, h) {
+            request("/api/quick", params, (w, h) => {
                 if (w === 9 && h === 4) { if (err) err("busy"); return; } // rate-limited
                 const dc = decodeCode(w, h);
                 if (!dc) {
@@ -642,7 +642,7 @@
             const params = { games: list, tok: tok };
             if (tc != null && tc !== 0) params.tc = tc;   // "any" or concrete secs (chess/checkers in the set)
             if (cv) params.cv = cv;                       // "any"/"russian"/"english" (checkers in the set)
-            request("/api/mquick", params, function (w, h) {
+            request("/api/mquick", params, (w, h) => {
                 if (w === 9 && h === 4) { if (err) err("busy"); return; } // rate-limited
                 if (w === 9) {                                   // (9,6) no valid ids · (9,3) bad token
                     suspectDecode("mquick w=" + w + " h=" + h);
@@ -663,7 +663,7 @@
         // seat token: the server only honours a cancel from a SEATED player while the lobby is
         // still waiting, so a 4-digit-code guesser can't nuke someone else's active match.
         cancel: function (code, tok, cb, err) {
-            request("/api/cancel", { code: code, tok: tok || "" }, function (w, h) { if (cb) cb(true); }, err);
+            request("/api/cancel", { code: code, tok: tok || "" }, (w, h) => { if (cb) cb(true); }, err);
         },
 
         // Leave a game already in progress. Unlike cancel (which only works while a lobby waits),
@@ -671,12 +671,12 @@
         // down (their next poll returns (9,9) → "Opponent left."), while a 3–4-seat durak/poker
         // table folds this seat out and plays on. Fire-and-forget - the caller is leaving anyway.
         leave: function (code, tok, cb, err) {
-            request("/api/leave", { code: code, tok: tok || "" }, function (w, h) { if (cb) cb(true); }, err);
+            request("/api/leave", { code: code, tok: tok || "" }, (w, h) => { if (cb) cb(true); }, err);
         },
 
 
         join: function (code, tok, cb, err) {
-            request("/api/join", { code: code, tok: tok }, function (w, h) {
+            request("/api/join", { code: code, tok: tok }, (w, h) => {
                 log("join decoded w=" + w + " h=" + h);
                 // h carries the host's time control as a small INDEX (0=untimed,1=60,2=180,
                 // 3=300,4=600), not raw seconds - 600 would overflow a level. tcFromIndex maps
@@ -693,7 +693,7 @@
         },
 
         status: function (code, tok, cb, err) {
-            request("/api/status", { code: code, tok: tok || "" }, function (w, h) {
+            request("/api/status", { code: code, tok: tok || "" }, (w, h) => {
                 log("status(" + code + ") decoded w=" + w + " h=" + h);
                 if (w === 9 && h === 4) { if (err) err("busy"); return; } // rate-limited: caller retries
                 if (w === 9 && h === 1) {
@@ -721,7 +721,7 @@
         // need their own channel. width = game (1..9); height = tcIndex*2 + variantBit + 1.
         // Returns { gone } for a swept / still-undecided lobby, else { game, tc, variant }.
         match: function (code, cb, err) {
-            request("/api/match", { code: code }, function (w, h) {
+            request("/api/match", { code: code }, (w, h) => {
                 if (w === 9 && h === 4) { if (err) err("busy"); return; } // rate-limited: caller retries
                 if (w === 9 && h === 1) { cb({ gone: true }); return; }    // gone/undecided
                 if (w === 9) { if (err) err("transient"); return; }
@@ -762,7 +762,7 @@
         // shared rules engine the server used, applied to the caller's board. When omitted,
         // end defaults to 1 (every TTT/chess/C4 move ends the turn; only checkers chains).
         poll: function (code, since, cb, err, validate, deriveEnd) {
-            request("/api/poll", { code: code, since: since }, function (w, h) {
+            request("/api/poll", { code: code, since: since }, (w, h) => {
                 if (w === 9 && h === 9) {
                     log("opponent left (9x9 received)");
                     if (MG.UI && MG.UI.kickToMenu) MG.UI.kickToMenu("Opponent left.");
@@ -783,7 +783,7 @@
 
         // ── GeoGuesser (authoritative target, guesses, score and reveal gate) ──
         geoState: function (code, tok, cb, err) {
-            request("/api/geostate", { code: code, tok: tok }, function (w, h) {
+            request("/api/geostate", { code: code, tok: tok }, (w, h) => {
                 if (w === 9) {
                     if (h === 9 && MG.UI && MG.UI.kickToMenu) MG.UI.kickToMenu("Opponent left.");
                     else if (err) err(h === 3 ? "token" : "state");
@@ -819,14 +819,14 @@
         },
 
         geoGuess: function (code, tok, cell, cb, err) {
-            request("/api/geoguess", { code: code, tok: tok, cell: cell }, function (w, h) {
+            request("/api/geoguess", { code: code, tok: tok, cell: cell }, (w, h) => {
                 if (!cb) return;
                 cb({ ok: w === 1 && h === 1, reason: w === 9 ? h : 0 });
             }, err);
         },
 
         geoNext: function (code, tok, cb, err) {
-            request("/api/geonext", { code: code, tok: tok }, function (w, h) {
+            request("/api/geonext", { code: code, tok: tok }, (w, h) => {
                 if (!cb) return;
                 cb({ ok: w === 1 && h === 1, reason: w === 9 ? h : 0 });
             }, err);
@@ -837,7 +837,7 @@
         // no longer fits. axis 0 -> x (0..511), axis 1 -> y (0..255). The caller issues both and
         // assembles the pair. h === 63 is still the error sentinel.
         geoPointAxis: function (route, params, limit, cb, err) {
-            request(route, params, function (w, h) {
+            request(route, params, (w, h) => {
                 if (h === 63) { if (err) err(w); return; }
                 const value = h * 63 + w;
                 if (w < 0 || w >= 63 || value < 0 || value >= limit) {
@@ -860,7 +860,7 @@
         },
 
         geoScore: function (code, tok, seat, cb, err) {
-            request("/api/geoscore", { code: code, tok: tok, seat: seat }, function (w, h) {
+            request("/api/geoscore", { code: code, tok: tok, seat: seat }, (w, h) => {
                 if (h === 63) { if (err) err(w); return; }
                 const score = h * 63 + w;
                 if (w < 0 || w >= 63 || score < 0 || score > 4095) {
@@ -880,7 +880,7 @@
         // build time. Folding all three into one code costs nothing - a reply holds 3969 values
         // and 122 countries reach 737 - and it means the country needs no extra request.
         geoPlace: function (code, tok, cb, err) {
-            request("/api/geoinfo", { code: code, tok: tok }, function (w, h) {
+            request("/api/geoinfo", { code: code, tok: tok }, (w, h) => {
                 if (h === 63) { if (err) err(w); return; }
                 const place = h * 63 + w;
                 const limit = 6 + (MG.GeoCountries ? MG.GeoCountries.length : 0) * 6;
@@ -897,7 +897,7 @@
         // This used to walk the string two characters per request (up to 26 chained round-trips for
         // one label), and the reveal button waited on all of them.
         geoCredit: function (code, tok, cb, err) {
-            request("/api/geocredit", { code: code, tok: tok }, function (w, h) {
+            request("/api/geocredit", { code: code, tok: tok }, (w, h) => {
                 if (h === 63) { if (err) err(w); return; }
                 const index = h * 63 + w;
                 const list = MG.GeoCredits || [];
@@ -926,7 +926,7 @@
         clocks: function (code, cb, err) {
             function fail(reason) { if (err) err(reason); }
             function readSeat(seat, next) {
-                request("/api/clocks", { code: code, seat: seat }, function (w, h) {
+                request("/api/clocks", { code: code, seat: seat }, (w, h) => {
                     // Only the explicit (9,8) sentinel means "this lobby is untimed". A gone,
                     // server-error or transport failure must take the error path so createClock
                     // retries instead of permanently deleting/freezing a real timed clock.
@@ -942,9 +942,9 @@
                     next(sec);
                 }, fail);
             }
-            readSeat(0, function (s0) {
+            readSeat(0, (s0) => {
                 if (s0 === null) { if (cb) cb(null); return; } // authoritative untimed sentinel
-                readSeat(1, function (s1) {
+                readSeat(1, (s1) => {
                     if (s1 === null) { if (cb) cb(null); return; }
                     // The running seat that hits 0 is the flag-fall loser; the server floors it
                     // at 0 and never lets the other tick past it, so at most one seat reads 0.
@@ -972,7 +972,7 @@
         // private reads are authorised by the seat token. Event dimensions deliberately stay
         // small (<= ~63) and no real event is (1,1), so (1,1) remains "nothing new".
         room: function (code, tok, cb, err) {
-            request("/api/room", { code: code, tok: tok || "" }, function (w, h) {
+            request("/api/room", { code: code, tok: tok || "" }, (w, h) => {
                 // ONLY (9,1) means the lobby is truly gone (swept/closed). Any OTHER 9,x - an
                 // unknown route on a stale-deployed worker (9,8), a server error (9,7), etc. - is
                 // treated as a TRANSIENT error so the poll retries instead of instantly kicking the
@@ -990,7 +990,7 @@
 
 
         start: function (code, tok, cb, err) {
-            request("/api/start", { code: code, tok: tok }, function (w, h) {
+            request("/api/start", { code: code, tok: tok }, (w, h) => {
                 if (!cb) return;
                 if (w === 1 && h === 1) { cb({ ok: true }); return; }
                 if (w === 9) {
@@ -1004,7 +1004,7 @@
         },
 
         dact: function (code, tok, a, pair, card, cb, err) {
-            request("/api/dact", { code: code, tok: tok, a: a, p: pair || 0, c: card || 0 }, function (w, h) {
+            request("/api/dact", { code: code, tok: tok, a: a, p: pair || 0, c: card || 0 }, (w, h) => {
                 if (!cb) return;
                 if (w === 1 && h === 1) { cb({ ok: true }); return; }
                 if (w === 9) {
@@ -1018,7 +1018,7 @@
         },
 
         dlog: function (code, since, cb, err) {
-            request("/api/dlog", { code: code, since: since }, function (w, h) {
+            request("/api/dlog", { code: code, since: since }, (w, h) => {
                 if (w === 1 && h === 1) { cb(null); return; }
                 if (w === 9 && h === 9) {
                     if (MG.UI && MG.UI.kickToMenu) MG.UI.kickToMenu("Opponent left.");
@@ -1049,7 +1049,7 @@
         },
 
         ddraw: function (code, tok, index, cb, err) {
-            request("/api/ddraw", { code: code, tok: tok, i: index }, function (w, h) {
+            request("/api/ddraw", { code: code, tok: tok, i: index }, (w, h) => {
                 if (w === 1 && h === 1) { cb(null); return; }
                 if (w === 9 && h === 3) { if (err) err("token"); return; }
                 if (w === 9 && h === 9) { if (err) err("gone"); return; }
@@ -1066,7 +1066,7 @@
         // pcreate/pjoin/proom); only public heads-up Quick uses the generic room. Once the host
         // deals via /api/start, play runs through dact/dlog/ddraw above - seat-count agnostic.
         dcreate: function (cap, tok, cb, err) {
-            request("/api/dcreate", { n: cap, tok: tok }, function (w, h) {
+            request("/api/dcreate", { n: cap, tok: tok }, (w, h) => {
                 if (w === 9 && h === 4) { if (err) err("busy"); return; }   // rate-limited
                 if (w === 9 && h === 3) { if (err) err("token"); return; }
                 const dc = decodeCode(w, h);   // host/joiner flag folded into the width band
@@ -1080,7 +1080,7 @@
         },
 
         djoin: function (code, tok, cb, err) {
-            request("/api/djoin", { code: code, tok: tok }, function (w, h) {
+            request("/api/djoin", { code: code, tok: tok }, (w, h) => {
                 if (w === 9 && h === 4) { cb({ ok: false, reason: "busy" }); return; }   // rate-limited
                 if (w === 9 && h === 3) { cb({ ok: false, reason: "token" }); return; }
                 if (w === 20) { cb({ ok: false, reason: "missing" }); return; }
@@ -1094,7 +1094,7 @@
         },
 
         droom: function (code, tok, cb, err) {
-            request("/api/droom", { code: code, tok: tok || "" }, function (w, h) {
+            request("/api/droom", { code: code, tok: tok || "" }, (w, h) => {
                 // Same transient-vs-gone discipline as room(): only (9,1) is truly gone.
                 if (w === 9 && h === 1) { cb({ gone: true, players: 0, cap: 0, started: false }); return; }
                 if (w === 9) { if (err) err("transient"); return; }
@@ -1117,7 +1117,7 @@
         // replays the shared betting engine (card-independent → parity) and fills board /
         // revealed hole cards / winners from the log. Codes stay small; no real value is (1,1).
         pcreate: function (cap, tok, cb, err) {
-            request("/api/pcreate", { n: cap, tok: tok }, function (w, h) {
+            request("/api/pcreate", { n: cap, tok: tok }, (w, h) => {
                 if (w === 9 && h === 4) { if (err) err("busy"); return; }   // rate-limited
                 if (w === 9 && h === 3) { if (err) err("token"); return; }
                 const dc = decodeCode(w, h);   // host/joiner flag folded into the width band
@@ -1131,7 +1131,7 @@
         },
 
         pjoin: function (code, tok, cb, err) {
-            request("/api/pjoin", { code: code, tok: tok }, function (w, h) {
+            request("/api/pjoin", { code: code, tok: tok }, (w, h) => {
                 if (w === 9 && h === 4) { cb({ ok: false, reason: "busy" }); return; }   // rate-limited
                 if (w === 9 && h === 3) { cb({ ok: false, reason: "token" }); return; }
                 if (w === 20) { cb({ ok: false, reason: "missing" }); return; }
@@ -1145,7 +1145,7 @@
         },
 
         proom: function (code, tok, cb, err) {
-            request("/api/proom", { code: code, tok: tok || "" }, function (w, h) {
+            request("/api/proom", { code: code, tok: tok || "" }, (w, h) => {
                 // Same transient-vs-gone discipline as room(): only (9,1) is truly gone.
                 if (w === 9 && h === 1) { cb({ gone: true, players: 0, cap: 0, started: false }); return; }
                 if (w === 9) { if (err) err("transient"); return; }
@@ -1163,7 +1163,7 @@
         },
 
         pstart: function (code, tok, cb, err) {
-            request("/api/pstart", { code: code, tok: tok }, function (w, h) {
+            request("/api/pstart", { code: code, tok: tok }, (w, h) => {
                 if (!cb) return;
                 if (w === 1 && h === 1) { cb({ ok: true }); return; }
                 if (w === 9) {
@@ -1178,7 +1178,7 @@
 
         // a: 0 fold · 1 check · 2 call · 3 raise (to = raise-to amount for a raise).
         pact: function (code, tok, a, to, cb, err) {
-            request("/api/pact", { code: code, tok: tok, a: a, to: to || 0 }, function (w, h) {
+            request("/api/pact", { code: code, tok: tok, a: a, to: to || 0 }, (w, h) => {
                 if (!cb) return;
                 if (w === 1 && h === 1) { cb({ ok: true }); return; }
                 if (w === 9) {
@@ -1192,7 +1192,7 @@
         },
 
         pnext: function (code, tok, cb, err) {
-            request("/api/pnext", { code: code, tok: tok }, function (w, h) {
+            request("/api/pnext", { code: code, tok: tok }, (w, h) => {
                 if (!cb) return;
                 if (w === 1 && h === 1) { cb({ ok: true }); return; }
                 if (w === 9) { cb({ ok: false, reason: h === 3 ? "token" : "wait" }); return; }
@@ -1202,7 +1202,7 @@
         },
 
         plog: function (code, since, cb, err) {
-            request("/api/plog", { code: code, since: since }, function (w, h) {
+            request("/api/plog", { code: code, since: since }, (w, h) => {
                 if (w === 1 && h === 1) { cb(null); return; }        // nothing new
                 if (w === 9 && h === 9) {
                     if (MG.UI && MG.UI.kickToMenu) MG.UI.kickToMenu("Opponent left.");
@@ -1239,7 +1239,7 @@
         },
 
         pdraw: function (code, tok, index, cb, err) {
-            request("/api/pdraw", { code: code, tok: tok, i: index }, function (w, h) {
+            request("/api/pdraw", { code: code, tok: tok, i: index }, (w, h) => {
                 if (w === 1 && h === 1) { cb(null); return; }        // not dealt yet
                 if (w === 9 && h === 3) { if (err) err("token"); return; }
                 if (w === 9 && h === 9) { if (err) err("gone"); return; }

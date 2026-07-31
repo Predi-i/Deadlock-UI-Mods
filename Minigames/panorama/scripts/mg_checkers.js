@@ -19,7 +19,7 @@
  * reasoned from the game's CSS idioms, confirmed only after a VPK repack.
  */
 
-(function () {
+(() => {
     const MG = ($.MG = $.MG || {});
     if (MG._checkersLoaded) return;
     MG._checkersLoaded = true;
@@ -177,9 +177,9 @@
             moveListRows.AddClass("mg-movelist-rows");
             const nav = $.CreatePanel("Panel", panel, "");
             nav.AddClass("mg-movelist-nav");
-            navPrevBtn = makeNavBtn(nav, "< Prev", function () { navPrev(); });
-            navLiveBtn = makeNavBtn(nav, "Live", function () { navLive(); });
-            navNextBtn = makeNavBtn(nav, "Next >", function () { navNext(); });
+            navPrevBtn = makeNavBtn(nav, "< Prev", () => { navPrev(); });
+            navLiveBtn = makeNavBtn(nav, "Live", () => { navLive(); });
+            navNextBtn = makeNavBtn(nav, "Next >", () => { navNext(); });
             renderMoveList();
         })();
         // Clock rows are indexed by SERVER seat (0 = host = white, 1 = joiner = black). Name them
@@ -229,25 +229,25 @@
                     var cell = $.CreatePanel("Panel", rowPanel, "cell_" + i);
                     cell.AddClass("mg-cell");
                     cell.AddClass(isDark(r, c) ? "mg-cell-dark" : "mg-cell-light");
-                    (function (square) {
-                        cell.SetPanelEvent("onactivate", function () { onCellClick(square); });
+                    ((square) => {
+                        cell.SetPanelEvent("onactivate", () => { onCellClick(square); });
                         // Drop target for drag-and-drop. In Panorama a panel only becomes a
                         // valid drop target when its DragEnter handler returns true - without
                         // it, DragDrop never fires on the cell (that was why the drop didn't
                         // land). DragEnter also lets us remember which square the cursor is
                         // over, so DragEnd can commit the move even if DragDrop is flaky.
-                        $.RegisterEventHandler("DragEnter", cell, function () {
+                        $.RegisterEventHandler("DragEnter", cell, () => {
                             if (dragActive) { dragOverSq = square; dragEnterCount++; }
                             return true; // accept the drop
                         });
-                        $.RegisterEventHandler("DragLeave", cell, function () {
+                        $.RegisterEventHandler("DragLeave", cell, () => {
                             if (dragActive && dragOverSq === square) dragOverSq = -1;
                         });
-                        $.RegisterEventHandler("DragDrop", cell, function () { onCellDrop(square); });
+                        $.RegisterEventHandler("DragDrop", cell, () => { onCellDrop(square); });
                         // Second, independent source for the hovered square: plain mouse-over.
                         // If the engine suppresses DragEnter mid-drag but still updates hover,
                         // this keeps dragOverSq current so DragEnd can commit from it.
-                        cell.SetPanelEvent("onmouseover", function () { if (dragActive) dragOverSq = square; });
+                        cell.SetPanelEvent("onmouseover", () => { if (dragActive) dragOverSq = square; });
                     })(i);
                     cells[i] = cell;
                 }
@@ -323,7 +323,7 @@
             // then on every transform/opacity/scale change animates. This is the same idiom
             // the game uses (transition on a class, toggled after the value is set).
             piece.style.transform = transformFor(realIdx);
-            $.Schedule(0.0, function () {
+            $.Schedule(0.0, () => {
                 if (piece && piece.IsValid && piece.IsValid()) piece.AddClass("mg-anim");
             });
             piece._sq = realIdx;          // live square this piece sits on (updated on slide)
@@ -341,7 +341,7 @@
         function setupPieceInput(piece) {
             // A tap on a piece selects it (or, if it's already a legal target square of
             // the current selection, plays the hop) - identical to clicking its cell.
-            piece.SetPanelEvent("onactivate", function () {
+            piece.SetPanelEvent("onactivate", () => {
                 if (piece._sq === undefined) return;
                 onCellClick(piece._sq);
             });
@@ -350,7 +350,7 @@
             if (colorOf(board[piece._sq]) !== myColor) return;
             piece.SetDraggable(true);
 
-            $.RegisterEventHandler("DragStart", piece, function (_p, dragEvent) {
+            $.RegisterEventHandler("DragStart", piece, (_p, dragEvent) => {
                 if (destroyed || reviewIndex !== null) return; // no dragging while reviewing history
                 // Allow a drag both on my turn (a real move) AND on the opponent's turn (to queue a
                 // premove). Only block it when neither is possible (game over etc.).
@@ -395,7 +395,7 @@
                 }
             });
 
-            $.RegisterEventHandler("DragEnd", piece, function (_p, droppedPanel) {
+            $.RegisterEventHandler("DragEnd", piece, (_p, droppedPanel) => {
                 // THE hard part. Every single-channel drop scheme we tried failed in-game.
                 // Don't trust any ONE signal - gather EVERY candidate square we can and
                 // commit the first that is a legal target. A wrong/garbage candidate simply
@@ -649,12 +649,12 @@
             } else {
                 const cur = (reviewIndex === null) ? history.length - 1 : reviewIndex;
                 for (let i = 0; i < history.length; i++) {
-                    (function (idx) {
+                    ((idx) => {
                         var row = $.CreatePanel("Label", moveListRows, "");
                         row.AddClass("mg-move-row");
                         if (idx === cur) row.AddClass("mg-move-current");
                         row.text = (idx + 1) + ". " + history[idx].label;
-                        row.SetPanelEvent("onactivate", function () { gotoReview(idx); });
+                        row.SetPanelEvent("onactivate", () => { gotoReview(idx); });
                     })(i);
                 }
             }
@@ -766,7 +766,7 @@
                 // was the "flies up-left" artifact. opacity + scale animate via .mg-piece.
                 dead.AddClass("mg-captured");
                 dead.style.preTransformScale2d = "0.2";
-                (function (d) { $.Schedule(0.22, function () { try { d.DeleteAsync(0); } catch (e) {} }); })(dead);
+                ((d) => { $.Schedule(0.22, () => { try { d.DeleteAsync(0); } catch (e) {} }); })(dead);
             }
             const piece = pieceEls[from];
             delete pieceEls[from];
@@ -813,7 +813,7 @@
             mustCapToken++;
             const tok = mustCapToken;
             for (let k = 0; k < sqs.length; k++) if (cells[sqs[k]]) cells[sqs[k]].AddClass("mg-mustcap");
-            $.Schedule(0.9, function () {
+            $.Schedule(0.9, () => {
                 if (destroyed || tok !== mustCapToken) return;
                 for (let j = 0; j < sqs.length; j++) if (cells[sqs[j]]) cells[sqs[j]].RemoveClass("mg-mustcap");
             });
@@ -999,14 +999,14 @@
             if (res.captured) botTurnCapture = true;
             animateHop(seq[h].from, seq[h].to, res.capIdx, res.promoted);
             sfx(res.promoted ? "Promote" : (res.captured ? "Capture" : "MoveOpp"));
-            $.Schedule(0.35, function () { applyBotSeq(seq, h + 1); }); // step hops for visibility
+            $.Schedule(0.35, () => { applyBotSeq(seq, h + 1); }); // step hops for visibility
         }
 
         function sendHops(hops, i) {
             if (destroyed) return;
             if (i >= hops.length) { afterTurnSwitch(); return; }
             const hop = hops[i];
-            Api.move(code, hop.from, hop.to, hop.end, session.tok, function (r) {
+            Api.move(code, hop.from, hop.to, hop.end, session.tok, (r) => {
                 if (r.ok) {
                     appliedSeq++; // our own hop is now in the shared server list
                     sendHops(hops, i + 1);
@@ -1016,8 +1016,8 @@
                 // bad token). Our optimistic prediction is now wrong - roll the whole
                 // turn back to the last server-confirmed state and resync via poll.
                 rejectAndResync(r.reason);
-            }, function () {
-                $.Schedule(0.6, function () { sendHops(hops, i); }); // transport hiccup: retry same hop
+            }, () => {
+                $.Schedule(0.6, () => { sendHops(hops, i); }); // transport hiccup: retry same hop
             });
         }
 
@@ -1052,7 +1052,7 @@
                 else { status("Move rejected. Resyncing…"); startPolling(); }
                 return;
             }
-            Api.poll(code, seq, function (mv) {
+            Api.poll(code, seq, (mv) => {
                 if (destroyed) return;
                 if (mv) {
                     applyHop(board, mv.from, mv.to);
@@ -1063,7 +1063,7 @@
                     appliedSeq = seq;
                     replayAccepted(seq);
                 }
-            }, function () { $.Schedule(0.4, function () { replayAccepted(seq); }); },
+            }, () => { $.Schedule(0.4, () => { replayAccepted(seq); }); },
             function (from, to) {
                 const fr = (from / 8) | 0, fc = from % 8, tr = (to / 8) | 0, tc = to % 8;
                 return Math.abs(tr - fr) === Math.abs(tc - fc);
@@ -1090,7 +1090,7 @@
         function pollOnce(myToken) {
             if (destroyed || myToken !== pollToken) return;
             if (turn === myColor) return; // it's our turn; nothing to poll
-            Api.poll(code, appliedSeq, function (mv) {
+            Api.poll(code, appliedSeq, (mv) => {
                 if (destroyed || myToken !== pollToken) return;
                 if (mv) {
                     pollMisses = 0;                             // real move → next wait starts fast
@@ -1111,13 +1111,13 @@
                         if (!gameOver) { refreshHighlights(); status("Your turn."); tryPremove(); }
                         return; // stop polling; wait for player input
                     }
-                    $.Schedule(0.05, function () { pollOnce(myToken); }); // drain chain fast
+                    $.Schedule(0.05, () => { pollOnce(myToken); }); // drain chain fast
                 } else {
-                    $.Schedule(MG.Net.pollDelay(pollMisses++), function () { pollOnce(myToken); });
+                    $.Schedule(MG.Net.pollDelay(pollMisses++), () => { pollOnce(myToken); });
                 }
-            }, function () {
-                $.Schedule(MG.Net.pollDelay(pollMisses++), function () { pollOnce(myToken); });
-            }, function (from, to) {
+            }, () => {
+                $.Schedule(MG.Net.pollDelay(pollMisses++), () => { pollOnce(myToken); });
+            }, (from, to) => {
                 // A real hop is always a diagonal between two board squares; anything
                 // else is a mis-scaled read and must never reach applyHop.
                 const fr = (from / 8) | 0, fc = from % 8, tr = (to / 8) | 0, tc = to % 8;

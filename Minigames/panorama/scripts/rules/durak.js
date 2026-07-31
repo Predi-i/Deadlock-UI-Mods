@@ -35,7 +35,7 @@
     // relies on this, and online the server owns the seed.
     function makeRng(seed) {
         let s = seed | 0;
-        return function () {
+        return () => {
             s = (s + 0x6D2B79F5) | 0;
             let t = Math.imul(s ^ (s >>> 15), 1 | s);
             t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
@@ -341,7 +341,7 @@
     // Trumps sort far above non-trumps so the bot spends its cheapest, non-trump cards first.
     function cardValue(id, trump) { return rankOf(id) + (suitOf(id) === trump ? 100 : 0); }
     function sortByValue(arr, trump) {
-        arr.sort(function (a, b) { return cardValue(a, trump) - cardValue(b, trump); });
+        arr.sort((a, b) => { return cardValue(a, trump) - cardValue(b, trump); });
         return arr;
     }
     // Returns the card to attack/throw-in with, or -1 to end the bout (Bito).

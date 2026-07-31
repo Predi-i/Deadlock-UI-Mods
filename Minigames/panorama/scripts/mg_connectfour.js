@@ -24,7 +24,7 @@
  * idioms + the checkers/ttt controllers, confirmed only after a VPK repack.
  */
 
-(function () {
+(() => {
     const MG = ($.MG = $.MG || {});
     if (MG._c4Loaded) return;
     MG._c4Loaded = true;
@@ -99,8 +99,8 @@
                     cell.AddClass("mg-cf-cell");
                     const hole = $.CreatePanel("Panel", cell, "");   // the round "hole" the disc shows through
                     hole.AddClass("mg-cf-hole");
-                    (function (col) {
-                        cell.SetPanelEvent("onactivate", function () { onColClick(col); });
+                    ((col) => {
+                        cell.SetPanelEvent("onactivate", () => { onColClick(col); });
                     })(c);
                     cells[i] = cell;
                 }
@@ -145,7 +145,7 @@
             if (animate) {
                 const startY = -CELL + INSET;   // one cell above the plate's top edge (above the clip box)
                 disc.style.transform = "translate3d(" + p.x + "px, " + startY + "px, 0px)";
-                $.Schedule(0.0, function () {
+                $.Schedule(0.0, () => {
                     if (destroyed || !disc.IsValid()) return;
                     disc.AddClass("mg-cf-anim");
                     disc.style.transform = "translate3d(" + p.x + "px, " + p.y + "px, 0px)";
@@ -240,15 +240,15 @@
         // ── relay + polling (mirrors tic-tac-toe) ────────────────────────────
         function sendMove(col, attempt) {
             if (destroyed) return;
-            Api.move(code, col, 7, 1, session.tok, function (r) {
+            Api.move(code, col, 7, 1, session.tok, (r) => {
                 if (r.ok) {
                     appliedSeq++;                        // our own drop is now in the shared log
                     if (!gameOver) startPolling();
                     return;
                 }
                 rejectAndResync(r.reason);               // server refused (full col / not our turn / bad token)
-            }, function () {
-                $.Schedule(0.6, function () { sendMove(col, (attempt || 0) + 1); });
+            }, () => {
+                $.Schedule(0.6, () => { sendMove(col, (attempt || 0) + 1); });
             });
         }
 
@@ -268,7 +268,7 @@
                 else { status("Move rejected. Resyncing…"); startPolling(); }
                 return;
             }
-            Api.poll(code, seq, function (mv) {
+            Api.poll(code, seq, (mv) => {
                 if (destroyed) return;
                 if (mv) {
                     const mk = (seq % 2 === 0) ? RED : YEL; // red placed the even-indexed drops
@@ -277,7 +277,7 @@
                     turn = (mk === RED ? YEL : RED);
                     replayAccepted(seq + 1);
                 } else { appliedSeq = seq; replayAccepted(seq); }
-            }, function () { $.Schedule(0.4, function () { replayAccepted(seq); }); },
+            }, () => { $.Schedule(0.4, () => { replayAccepted(seq); }); },
             function (from, to) { return from >= 0 && from <= 6 && to === 7; });
         }
 
@@ -285,7 +285,7 @@
         function pollOnce(myToken) {
             if (destroyed || myToken !== pollToken || gameOver) return;
             if (turn === myMark) return;                 // our move; nothing to poll
-            Api.poll(code, appliedSeq, function (mv) {
+            Api.poll(code, appliedSeq, (mv) => {
                 if (destroyed || myToken !== pollToken) return;
                 if (mv) {
                     pollMisses = 0;                       // real move → next wait starts fast again
@@ -297,11 +297,11 @@
                     status("Your turn.");
                     refreshTimer();                       // my turn opened → arm the clock
                 } else {
-                    $.Schedule(MG.Net.pollDelay(pollMisses++), function () { pollOnce(myToken); });
+                    $.Schedule(MG.Net.pollDelay(pollMisses++), () => { pollOnce(myToken); });
                 }
-            }, function () {
-                $.Schedule(MG.Net.pollDelay(pollMisses++), function () { pollOnce(myToken); });
-            }, function (from, to) {
+            }, () => {
+                $.Schedule(MG.Net.pollDelay(pollMisses++), () => { pollOnce(myToken); });
+            }, (from, to) => {
                 return from >= 0 && from <= 6 && to === 7;
             });
         }

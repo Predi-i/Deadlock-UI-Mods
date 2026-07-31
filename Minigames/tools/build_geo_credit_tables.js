@@ -91,7 +91,7 @@ const SOURCES = ["Panoramax", "Mapillary"];
 // The credit line the reveal renders. Assembled on the CLIENT from these tables, so the exact
 // wording lives in one place and costs no bandwidth. CC BY-SA 4.0 requires naming the creator and
 // the licence; both providers serve their panoramas under it.
-const creditLines = pairs.map(function (key) {
+const creditLines = pairs.map((key) => {
     const cut = key.indexOf("|");
     const source = SOURCES[Number(key.slice(0, cut)) === 1 ? 1 : 0];
     const provider = key.slice(cut + 1);

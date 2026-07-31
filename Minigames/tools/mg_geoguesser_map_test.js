@@ -31,7 +31,7 @@ assert(mapW === 2048 && mapH === 1024,
 // settlement tone, and the grey wash on top only muddied the land colour it exists to show.
 ["ne_50m_admin_0_countries", "ne_50m_lakes", "ne_50m_rivers_lake_centerlines",
     "ne_110m_admin_1_states_provinces_lines",
-    "ne_110m_populated_places"].forEach(function (layer) {
+    "ne_110m_populated_places"].forEach((layer) => {
     const file = path.join(assetDir, layer + ".geojson");
     assert(fs.existsSync(file), "missing Natural Earth layer: " + layer);
 });

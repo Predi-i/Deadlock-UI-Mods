@@ -24,7 +24,7 @@ function empty() { return new Array(64).fill(0); }
 
 // English draughts differ from Russian draughts in the two rule branches that
 // matter to move validation: men only jump forward, and kings move one square.
-(function () {
+(() => {
     ok(!!E, "English draughts rules are exposed");
     if (!E) return;
 
@@ -35,15 +35,15 @@ function empty() { return new Array(64).fill(0); }
 
     b = empty();
     b[E.idx(7, 0)] = 2; // white king
-    let moves = E.simpleMoves(b, E.idx(7, 0)).map(function (m) { return m.to; });
+    let moves = E.simpleMoves(b, E.idx(7, 0)).map((m) => { return m.to; });
     ok(moves.length === 1 && moves[0] === E.idx(6, 1), "English king moves one diagonal square");
 
     // English king captures forward AND backward (one square over), but NOT at range.
     b = empty();
     b[E.idx(4, 4)] = 2; b[E.idx(3, 3)] = 3; b[E.idx(5, 5)] = 3;
     const caps = E.captureMoves(b, E.idx(4, 4));
-    ok(caps.some(function (c) { return c.to === E.idx(2, 2); }), "English king captures forward");
-    ok(caps.some(function (c) { return c.to === E.idx(6, 6); }), "English king captures backward");
+    ok(caps.some((c) => { return c.to === E.idx(2, 2); }), "English king captures forward");
+    ok(caps.some((c) => { return c.to === E.idx(6, 6); }), "English king captures backward");
     b = empty();
     b[E.idx(7, 0)] = 2; b[E.idx(5, 2)] = 3; // enemy 2 squares away - no gap to land
     ok(E.captureMoves(b, E.idx(7, 0)).length === 0, "English king cannot capture at range");
@@ -56,20 +56,20 @@ function empty() { return new Array(64).fill(0); }
 })();
 
 // Russian: promotion during capture - man becomes king and MUST continue as flying king.
-(function () {
+(() => {
     // White man at (2,1), black at (1,2) and (1,4). After capturing (1,2) and landing on (0,3)
     // the man is crowned; as a flying king it can now capture (1,4) and land on (2,5) or (3,6).
     let b = empty();
     b[M.idx(2, 1)] = 1; b[M.idx(1, 2)] = 3; b[M.idx(1, 4)] = 3;
     const seqs = M.legalSequences(b, M.WHITE);
-    ok(seqs.length > 0 && seqs.every(function (s) { return s.length === 2; }),
+    ok(seqs.length > 0 && seqs.every((s) => { return s.length === 2; }),
         "Russian promotion mid-capture: turn continues as flying king (2-hop sequence)");
-    ok(seqs.some(function (s) { return s[0].to === M.idx(0, 3); }),
+    ok(seqs.some((s) => { return s[0].to === M.idx(0, 3); }),
         "Russian promotion mid-capture: first hop lands on crowning row (0,3)");
 })();
 
 // 1) Man captures BACKWARD (white moves up, this capture goes down a row).
-(function () {
+(() => {
     const b = empty();
     b[M.idx(3, 3)] = 1; // white man
     b[M.idx(4, 4)] = 3; // black man behind it
@@ -80,7 +80,7 @@ function empty() { return new Array(64).fill(0); }
 })();
 
 // 2) Flying king slides multiple squares on an empty diagonal.
-(function () {
+(() => {
     const b = empty();
     b[M.idx(7, 0)] = 2; // white king, bottom-left corner
     const moves = M.simpleMoves(b, M.idx(7, 0)).map(m => m.to);
@@ -89,7 +89,7 @@ function empty() { return new Array(64).fill(0); }
 })();
 
 // 3) Flying king captures at range and may land beyond the taken piece.
-(function () {
+(() => {
     const b = empty();
     b[M.idx(7, 0)] = 2;  // white king
     b[M.idx(4, 3)] = 3;  // black man in its path
@@ -101,7 +101,7 @@ function empty() { return new Array(64).fill(0); }
 })();
 
 // 4) applyHop removes the piece on the diagonal (ranged king capture) & keeps king.
-(function () {
+(() => {
     const b = empty();
     b[M.idx(7, 0)] = 2;
     b[M.idx(4, 3)] = 3;
@@ -113,7 +113,7 @@ function empty() { return new Array(64).fill(0); }
 })();
 
 // 5) Man promotion on a simple forward move still works.
-(function () {
+(() => {
     const b = empty();
     b[M.idx(1, 2)] = 1; // white man one step from the back rank
     const res = M.applyHop(b, M.idx(1, 2), M.idx(0, 1));
@@ -125,7 +125,7 @@ function empty() { return new Array(64).fill(0); }
 // them a king-vs-king endgame shuffles forever and this test hit the 300-move safety cap ~15%
 // of the time (the bot's tie-break is an unseeded Math.random, so it was a genuine flake and
 // not a fixed-seed failure).
-(function () {
+(() => {
     let b = M.initialBoard();
     let color = M.WHITE, moves = 0, allLegal = true, idleTurns = 0, ended = "";
     const t0 = Date.now();
@@ -156,7 +156,7 @@ function empty() { return new Array(64).fill(0); }
 
 // ── tic-tac-toe ──────────────────────────────────────────────────────────────
 // X=1, O=2, empty=0; cells 0..8 left→right, top→bottom.
-(function () {
+(() => {
     // 7) detect a row / column / diagonal win
     ok(M.tttWinner([1, 1, 1, 0, 2, 0, 2, 0, 0]).mark === 1, "top row is an X win");
     ok(M.tttWinner([2, 0, 0, 2, 1, 1, 2, 0, 1]).mark === 2, "left column is an O win");
@@ -173,14 +173,14 @@ function empty() { return new Array(64).fill(0); }
     // 10) bot blocks the opponent's imminent win
     ok(M.tttBotMove([2, 2, 0, 1, 0, 0, 0, 0, 0], 1) === 2, "bot blocks O's top-row threat");
     // 11) bot must not mutate the board it evaluates
-    (function () {
+    (() => {
         const before = [1, 1, 0, 2, 2, 0, 0, 0, 0];
         const snap = before.slice();
         M.tttBotMove(before, 1);
         ok(before.join() === snap.join(), "bot move leaves the board unmutated");
     })();
     // 12) a heuristic bot never loses to itself: self-play always ends in a draw
-    (function () {
+    (() => {
         let b = new Array(9).fill(0), mark = 1, safety = 0, decided = null;
         while (safety++ < 9) {
             const mv = M.tttBotMove(b, mark);

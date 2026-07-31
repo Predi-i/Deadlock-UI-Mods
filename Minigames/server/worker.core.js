@@ -1547,7 +1547,7 @@ function parseGameSet(raw) {
     const n = parseInt(parts[i], 10);
     if (!isNaN(n) && MQUICK_GAMES[n] && !seen[n]) { seen[n] = 1; out.push(n); }
   }
-  out.sort(function (a, b) { return a - b; });
+  out.sort((a, b) => { return a - b; });
   return out;
 }
 
@@ -1736,7 +1736,7 @@ function autoStartDealerIfFull(lobby) {
 // Remove every stale copy defensively so rematch consensus and later leave counts see it as live.
 function restoreLeftSeat(lobby, seat) {
   if (!lobby.left || !lobby.left.length) return;
-  lobby.left = lobby.left.filter(function (leftSeat) { return leftSeat !== seat; });
+  lobby.left = lobby.left.filter((leftSeat) => { return leftSeat !== seat; });
 }
 
 // Index of the first seat a pre-start leave vacated, or -1 if the table is dense. Seat 0 (the
@@ -2804,7 +2804,7 @@ async function applyPixelBatch(hub, account, batch, ip) {
   // version, audit action, and ownership attribution all-or-nothing. Work on a cloned in-memory
   // tile cache and publish it only after commit; an aborted transaction therefore cannot leave
   // this isolate serving uncommitted pixels from RAM.
-  return pixelStorageTransaction(hub, function (txHub) {
+  return pixelStorageTransaction(hub, (txHub) => {
     return applyPixelChanges(txHub, account, changed);
   }, tiles);
 }
@@ -2919,7 +2919,7 @@ async function logPixelAction(hub, input) {
     kind: input.kind || "paint",
     note: input.note || "",
     targetActionId: input.targetActionId || "",
-    deltas: input.deltas.map(function (p) {
+    deltas: input.deltas.map((p) => {
       return [p.x, p.y, p.before, p.after, p.beforeOwnerActionId || ""];
     })
   };
@@ -3407,7 +3407,7 @@ async function pixelCanvasPng(hub) {
     return pngResponse(hub.pxCanvasCache.bytes);
   }
   const tiles = await pixelTiles(hub);
-  const bytes = await indexedPngBytes(PX_W, PX_H, PX_PALETTE, function (x, y) {
+  const bytes = await indexedPngBytes(PX_W, PX_H, PX_PALETTE, (x, y) => {
     return pixelAt(tiles, x, y);
   }, PX_ALPHA);
   hub.pxCanvasCache = { version: version, bytes: bytes };
@@ -3425,7 +3425,7 @@ function pixelLandAt(x, y) {
 
 async function pixelAdminCanvasPng(hub) {
   const tiles = await pixelTiles(hub);
-  return pngResponse(await indexedPngBytes(PX_W, PX_H, PX_VIEW_PALETTE, function (x, y) {
+  return pngResponse(await indexedPngBytes(PX_W, PX_H, PX_VIEW_PALETTE, (x, y) => {
     const paint = pixelAt(tiles, x, y);
     return paint ? paint + 1 : (pixelLandAt(x, y) ? 1 : 0);
   }));
@@ -3449,7 +3449,7 @@ async function pixelViewPng(hub, originX, originY, zoom, ip) {
         paint ? paint + 1 : (pixelLandAt(mapX, mapY) ? 1 : 0);
     }
   }
-  const bytes = await indexedPngBytes(PX_VIEW_W, PX_VIEW_H, PX_VIEW_PALETTE, function (x, y) {
+  const bytes = await indexedPngBytes(PX_VIEW_W, PX_VIEW_H, PX_VIEW_PALETTE, (x, y) => {
     const col = Math.min(viewCols - 1, Math.floor(x * viewCols / PX_VIEW_W));
     const row = Math.min(viewRows - 1, Math.floor(y * viewRows / PX_VIEW_H));
     return logical[row * viewCols + col];

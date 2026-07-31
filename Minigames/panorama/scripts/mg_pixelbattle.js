@@ -6,7 +6,7 @@
  * hit cell is exactly one 512x256 canvas pixel. This keeps the panel count bounded
  * while still allowing precise placement.
  */
-(function () {
+(() => {
     "use strict";
 
     const MG = $.MG = $.MG || {};
@@ -97,9 +97,9 @@
             if (accessCache.status === "waiting-id") return;   // a retry chain is already running
             accessCache.status = "waiting-id";
             (function retry(n) {
-                if (findAccountId()) { accessCache.status = "unknown"; checkAccess(function () {}); return; }
+                if (findAccountId()) { accessCache.status = "unknown"; checkAccess(() => {}); return; }
                 if (n >= 10) { accessCache.status = "unknown"; finishAccess("error", "", BANK_CAP); return; }
-                $.Schedule(1, function () { retry(n + 1); });
+                $.Schedule(1, () => { retry(n + 1); });
             })(attempt);
             return;
         }
@@ -118,7 +118,7 @@
         accessCache.callbacks.push(callback);
         if (accessCache.status === "checking") return;
         accessCache.status = "checking";
-        MG.Net.request("/api/pxbank", { id: accountId }, function (w, h) {
+        MG.Net.request("/api/pxbank", { id: accountId }, (w, h) => {
             if (h === 63 && w === 5) {
                 finishAccess("banned", accountId, 0);
                 return;
@@ -129,7 +129,7 @@
                 return;
             }
             finishAccess("error", accountId, BANK_CAP);
-        }, function () {
+        }, () => {
             finishAccess("error", accountId, BANK_CAP);
         });
     }
@@ -239,9 +239,9 @@
         navigationTop.AddClass("mg-px-navigation-row");
         const navigationBottom = $.CreatePanel("Panel", navigationZoom, "");
         navigationBottom.AddClass("mg-px-navigation-row");
-        addButton(navigationTop, "mg-px-tool", "−", function () { setZoom(zoom / 2); });
-        addButton(navigationTop, "mg-px-tool", "+", function () { setZoom(zoom * 2); });
-        addButton(navigationBottom, "mg-px-tool mg-px-tool-reset", "RESET", function () {
+        addButton(navigationTop, "mg-px-tool", "−", () => { setZoom(zoom / 2); });
+        addButton(navigationTop, "mg-px-tool", "+", () => { setZoom(zoom * 2); });
+        addButton(navigationBottom, "mg-px-tool mg-px-tool-reset", "RESET", () => {
             zoom = 1;
             viewX = 0;
             viewY = 0;
@@ -255,27 +255,27 @@
         dpadTop.AddClass("mg-px-dpad-row");
         const dpadTopSpacer = $.CreatePanel("Panel", dpadTop, "");
         dpadTopSpacer.AddClass("mg-px-dpad-spacer");
-        addButton(dpadTop, "mg-px-tool", "↑", function () { pan(0, -1); });
+        addButton(dpadTop, "mg-px-tool", "↑", () => { pan(0, -1); });
         const dpadBottom = $.CreatePanel("Panel", dpad, "");
         dpadBottom.AddClass("mg-px-dpad-row");
-        addButton(dpadBottom, "mg-px-tool", "←", function () { pan(-1, 0); });
-        addButton(dpadBottom, "mg-px-tool", "↓", function () { pan(0, 1); });
-        addButton(dpadBottom, "mg-px-tool", "→", function () { pan(1, 0); });
+        addButton(dpadBottom, "mg-px-tool", "←", () => { pan(-1, 0); });
+        addButton(dpadBottom, "mg-px-tool", "↓", () => { pan(0, 1); });
+        addButton(dpadBottom, "mg-px-tool", "→", () => { pan(1, 0); });
 
         const palette = $.CreatePanel("Panel", controls, "");
         palette.AddClass("mg-px-palette");
         const paletteButtons = [];
         for (let color = 1; color <= PALETTE.length; color++) {
-            (function (colorIndex) {
+            ((colorIndex) => {
                 var swatch = $.CreatePanel("Button", palette, "");
                 swatch.AddClass("mg-px-swatch");
                 if (colorIndex > 16) swatch.AddClass("mg-px-swatch-terrain");
                 swatch.style.backgroundColor = PALETTE[colorIndex - 1] || "#ffffff";
-                swatch.SetPanelEvent("onmouseover", function () {
+                swatch.SetPanelEvent("onmouseover", () => {
                     coordLabel.text = "COLOR  " +
                         String(PALETTE_NAMES[colorIndex - 1] || colorIndex).toUpperCase();
                 });
-                swatch.SetPanelEvent("onactivate", function () {
+                swatch.SetPanelEvent("onactivate", () => {
                     selectedColor = colorIndex;
                     updatePalette();
                 });
@@ -285,7 +285,7 @@
 
         const actions = $.CreatePanel("Panel", controls, "");
         actions.AddClass("mg-px-editor-actions");
-        const eraserButton = addButton(actions, "mg-px-action mg-px-eraser", "ERASE", function () {
+        const eraserButton = addButton(actions, "mg-px-action mg-px-eraser", "ERASE", () => {
             selectedColor = 0;
             updatePalette();
         });
@@ -543,7 +543,7 @@
                 encoded.push(pixel.x + "," + pixel.y + "," + pixel.color);
             }
 
-            MG.Net.request("/api/pxput", { id: accountId, b: encoded.join(";") }, function (w, h) {
+            MG.Net.request("/api/pxput", { id: accountId, b: encoded.join(";") }, (w, h) => {
                 if (destroyed) return;
                 const result = decodeBank(w, h);
                 if (!result.ok) {
@@ -568,7 +568,7 @@
                 setServerBalance(result.balance);
                 if (knownVersion >= 0) knownVersion = (knownVersion + 1) & 4095;
                 sendNextBatch();
-            }, function () {
+            }, () => {
                 if (destroyed) return;
                 sending = false;
                 updateStats();
@@ -578,12 +578,12 @@
 
         function requestBank() {
             if (!accountId || destroyed || banned) return;
-            MG.Net.request("/api/pxbank", { id: accountId }, function (w, h) {
+            MG.Net.request("/api/pxbank", { id: accountId }, (w, h) => {
                 if (destroyed) return;
                 const result = decodeBank(w, h);
                 if (result.ok) setServerBalance(result.balance);
                 else if (result.reason === 5) showBanned();
-            }, function () {
+            }, () => {
                 if (!destroyed) outerStatus("Using the local pixel estimate until the server responds.");
             });
         }
@@ -602,7 +602,7 @@
             crispImage.style.visibility = "collapse";
             crispGen++;
             const myGen = crispGen;
-            $.Schedule(0.12, function () { if (!destroyed && myGen === crispGen) refreshCrispView(); });
+            $.Schedule(0.12, () => { if (!destroyed && myGen === crispGen) refreshCrispView(); });
         }
 
         function refreshRemote() {
@@ -621,7 +621,7 @@
             const url = MG.Net.getBaseUrl() + "/api/pxview.png?x=" + viewX +
                 "&y=" + viewY + "&z=" + zoom + "&id=" + accountId +
                 "&v=" + version;
-            MG.Net.loadImage(url, function (loaded, loadedW, loadedH) {
+            MG.Net.loadImage(url, (loaded, loadedW, loadedH) => {
                 if (destroyed || banned || myGen !== crispGen) {
                     try { loaded.SetImage(""); } catch (e0) {}
                     try { loaded.DeleteAsync(0); } catch (e1) {}
@@ -640,7 +640,7 @@
                     try { loaded.SetImage(""); } catch (e2) {}
                     try { loaded.DeleteAsync(0); } catch (e3) {}
                     outerStatus("Map server is busy. Retrying…");
-                    $.Schedule(1.2, function () {
+                    $.Schedule(1.2, () => {
                         if (!destroyed && !banned && myGen === crispGen) refreshCrispView();
                     });
                     return;
@@ -667,7 +667,7 @@
                     try { loaded.DeleteAsync(0); } catch (e9) {}
                     outerStatus("Couldn't display the pixel-perfect map viewport.");
                 }
-            }, function () {
+            }, () => {
                 if (!destroyed && !banned && myGen === crispGen)
                     outerStatus("Couldn't load the pixel-perfect map viewport.");
             }, { scaling: "none" });
@@ -679,7 +679,7 @@
                 scheduleVersionPoll(POLL_ACTIVE_S);
                 return;
             }
-            MG.Net.request("/api/pxversion", { id: accountId }, function (w, h) {
+            MG.Net.request("/api/pxversion", { id: accountId }, (w, h) => {
                 if (destroyed) return;
                 if (h === 63 && w === 5) {
                     showBanned();
@@ -700,14 +700,14 @@
                 const delay = versionMisses < 2 ? POLL_ACTIVE_S :
                     (versionMisses < 6 ? POLL_WARM_S : POLL_IDLE_S);
                 scheduleVersionPoll(delay);
-            }, function () {
+            }, () => {
                 if (!destroyed) scheduleVersionPoll(POLL_IDLE_S);
             });
         }
 
         function scheduleVersionPoll(delay) {
             const generation = pollGeneration;
-            $.Schedule(delay, function () {
+            $.Schedule(delay, () => {
                 if (!destroyed && !banned && generation === pollGeneration) pollVersion();
             });
         }
@@ -717,17 +717,17 @@
             rowPanel.AddClass("mg-px-grid-row");
             gridCells[row] = [];
             for (let col = 0; col < GRID_COLS; col++) {
-                (function (cellCol, cellRow) {
+                ((cellCol, cellRow) => {
                     var cell = $.CreatePanel("Panel", rowPanel, "");
                     cell.AddClass("mg-px-grid-cell");
                     gridCells[cellRow][cellCol] = cell;
-                    cell.SetPanelEvent("onmouseover", function () {
+                    cell.SetPanelEvent("onmouseover", () => {
                         var point = mapPoint(cellCol, cellRow);
                         coordLabel.text = zoom === MAX_ZOOM
                             ? ("PIXEL  " + point.x + ", " + point.y)
                             : ("REGION  " + point.x + ", " + point.y + "   ·   CLICK TO ZOOM");
                     });
-                    cell.SetPanelEvent("onactivate", function () {
+                    cell.SetPanelEvent("onactivate", () => {
                         // Grid geometry changes immediately on pan/zoom, while its matching
                         // server-rasterised frame arrives asynchronously. Never let a click
                         // target a blank or stale map while that frame is still in the FIFO.
@@ -770,7 +770,7 @@
         updateStats();
         tickStats();
         outerStatus("Checking Pixel Battle access…");
-        checkAccess(function (result) {
+        checkAccess((result) => {
             if (destroyed) return;
             accountId = result.accountId || "";
             if (result.status === "banned") {

@@ -44,7 +44,7 @@ function readBody(request, limit) {
   return new Promise(function (resolveBody, rejectBody) {
     const chunks = [];
     let size = 0;
-    request.on("data", function (chunk) {
+    request.on("data", (chunk) => {
       size += chunk.length;
       if (size > limit) {
         rejectBody(Object.assign(new Error("Request body is too large"), { statusCode: 413 }));
@@ -53,7 +53,7 @@ function readBody(request, limit) {
       }
       chunks.push(chunk);
     });
-    request.on("end", function () {
+    request.on("end", () => {
       resolveBody(chunks.length ? Buffer.concat(chunks) : null);
     });
     request.on("error", rejectBody);
@@ -90,7 +90,7 @@ export function createMinigamesServer(options) {
       function () { return hub.fetch(request); },
       function () { return hub.fetch(request); }
     );
-    hubTail = current.catch(function () {});
+    hubTail = current.catch(() => {});
     return current;
   }
 
@@ -152,7 +152,7 @@ export function createMinigamesServer(options) {
   server.keepAliveTimeout = 65000;
   server.headersTimeout = 70000;
   server.requestTimeout = 30000;
-  server.on("clientError", function (error, socket) {
+  server.on("clientError", (error, socket) => {
     if (!socket.writable) return;
     socket.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
   });
@@ -162,7 +162,7 @@ export function createMinigamesServer(options) {
     storage: storage,
     close: function () {
       return new Promise(function (resolveClose, rejectClose) {
-        server.close(function (error) {
+        server.close((error) => {
           if (error) { rejectClose(error); return; }
           storage.close();
           resolveClose();
@@ -181,7 +181,7 @@ if (isMainModule()) {
   const port = envInteger("PORT", 8787, 0, 65535);
   const host = process.env.HOST || "127.0.0.1";
   const runtime = createMinigamesServer();
-  runtime.server.listen(port, host, function () {
+  runtime.server.listen(port, host, () => {
     const address = runtime.server.address();
     console.log("deadlock-minigames listening on " + address.address + ":" + address.port);
   });
@@ -199,6 +199,6 @@ if (isMainModule()) {
       process.exit(1);
     }
   }
-  process.on("SIGTERM", function () { shutdown("SIGTERM"); });
-  process.on("SIGINT", function () { shutdown("SIGINT"); });
+  process.on("SIGTERM", () => { shutdown("SIGTERM"); });
+  process.on("SIGINT", () => { shutdown("SIGINT"); });
 }
