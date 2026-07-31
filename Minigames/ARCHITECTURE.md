@@ -1141,39 +1141,72 @@ is built but **not yet in-game verified**.
 
 - GeoGuesser (game id 9) uses the existing two-seat Quick Match/private-room lifecycle and a
   server-backed Play Solo variant. A match has five rounds. The server selects five non-repeating
-  locations from Panoramax's public federated catalog, accepts one map-cell guess per human seat,
+  locations from a **prebuilt worldwide pool**, accepts one map-cell guess per human seat,
   calculates distance scores, and hides all reveal data until the round is complete. In solo it owns
   an opaque synthetic seat, fills that seat's guess/ready state, and therefore reveals and advances
   without a second client.
-- New lobbies query six world regions **split into 50 sub-cells** for reusable CC-BY-SA 4.0
-  pictures whose reported field of view is exactly 360°. Only one frame per Panoramax
-  collection/sequence is admitted and the five rounds prefer distinct regions. The resulting pool
-  is cached for ten minutes to avoid abusing the public catalog, but each lobby shuffles its own
-  server-private set. There is no manually curated location list and no Google API key or billing
-  dependency.
-- **Trap: one wide bbox per region collapses the pool onto a single street.** Panoramax returns
-  frames in sequence/upload order, so a wide bbox drains one densely-mapped route before reaching
-  anywhere else. Measured 2026-07-31: `bbox=-10,35,30,60` (all of Europe) returned exactly **one**
-  sequence, and a single Asia bbox returned two — which reads like "Panoramax has no coverage
-  there" and is wrong. The coverage was always present; the query shape hid it. Splitting each
-  region into sub-cells and taking a frame from each lifted Europe to 11+ sequences and Asia to 57,
-  spread across Turkey, Nepal, Tokyo, India, Bangkok, Manila and Baikal. Two fixes that do **not**
-  work and should not be re-tried: a bigger `limit` (40 → 1000 kept Europe at one sequence), and
-  the two-step `/api/collections` → `search?collections=` route (collections **ignores** the bbox —
-  an Oceania cell came back with German coordinates — and returns nothing for `field_of_view`).
-  Cost: 50 catalog requests instead of 6 on a cold pool, then ten minutes of cache.
-- `/api/geoview` is authenticated with the lobby seat token and proxies the current Panoramax SD
-  image through the VPS. It constructs the federation image route from a validated UUID rather than
-  trusting an arbitrary asset URL. A bounded 12-image LRU protects memory. The picture id, exact
-  coordinates and producer never reach the client before reveal.
+- The pool ships with the server (`server/geo_pool.generated.js`, compiled from
+  `server/geo_pool.json`), so **forming a lobby makes zero catalog requests** — a match starts
+  instantly instead of waiting on a cold sweep. It mixes two CC-BY-SA 4.0 sources, Panoramax and
+  Mapillary, under an equal per-region quota with a 500 m minimum separation, and the five rounds
+  prefer distinct regions. There is still no manually curated location list, no Google API key and
+  no billing dependency.
+- **Trap: the world cannot be swept live, for two different reasons.** Panoramax returns frames in
+  sequence/upload order, so a wide bbox drains one densely-mapped route before reaching anywhere
+  else — measured 2026-07-31, `bbox=-10,35,30,60` (all of Europe) returned exactly **one** sequence
+  even at `limit=1000`, which reads like "no coverage there" and is wrong. Mapillary refuses the
+  opposite way: its bbox is capped at **0.010 square degrees everywhere**, even over empty desert,
+  putting a thorough worldwide sweep at ~2.5 M cells. Sub-celling Panoramax fixed the spread but a
+  live sweep still could not be both quick and varied, so the pool moved offline
+  (`tools/build_geo_pool.js`, harvesting Mapillary's z6 coverage **tiles** rather than bboxes).
+  Two routes that do **not** work and should not be re-tried: a bigger Panoramax `limit`
+  (40 → 1000 kept Europe at one sequence), and the two-step `/api/collections` →
+  `search?collections=` (collections **ignores** the bbox — an Oceania cell came back with German
+  coordinates — and returns nothing for `field_of_view`).
+- **Trap: a Mapillary coverage tile's geometry is not its image's position.** A z6 tile feature is
+  a whole sequence (a LineString of a full drive) carrying one `image_id`. Taking any point off
+  that line puts the target somewhere the photo was never shot: measured over 24 pooled rows, the
+  sequence midpoint sat a median **427 m** and up to **18.9 km** away, and a full re-resolve of
+  2400 rows corrected a median 511 m with a worst case of 111 km. In a guessing game that is not a
+  rounding error — the panorama shows one town while the reveal marks another. Every pooled id is
+  therefore resolved against `/images/{id}` at build time and stored with its own
+  `computed_geometry`, which also supplies the creator credit and drops the ~4% of tile ids that
+  404. Verified after the fix: worst delta 0.1 m.
+- **Trap: `camera_type` is usually `spherical`, not `equirectangular`.** Both mean a true 2:1
+  strip. Filtering on `equirectangular` alone reported **zero** 360° coverage in all 14 sampled
+  metros, which looks exactly like "Mapillary has nothing here".
+- **Trap: a catalog claiming 360° does not guarantee a 2:1 image.** The field of view describes the
+  camera, not the derivative that gets served. Measured 2026-08-01: 11 of 58 pooled Panoramax rows
+  delivered partial panoramas, ratios from 0.87 to 7.67 (e.g. 2048×267), which the wrap engine
+  renders as a smear. `tools/build_geo_pool.js --verify-images` measures the delivered bytes and
+  drops them.
+- Mapillary is optional and server-side only. `MG_MAPILLARY_TOKEN` lives in
+  `/etc/deadlock-minigames.env` and never reaches a client: `thumb_2048_url` is signed and expires,
+  so it is resolved per reveal and never cached or stored in the pool. Without a token the game
+  runs on the pool's Panoramax rows. Coverage is genuinely complementary — of 14 sampled metros,
+  Panoramax was empty in 8 and Mapillary in 4; together they cover 12. Mapillary alone rescues
+  Seoul, Bangkok, Sydney, Delhi, Nairobi and Melbourne, while Panoramax alone covers Tokyo and
+  Berlin.
+- `/api/geoview` is authenticated with the lobby seat token and proxies the current panorama
+  through the VPS. Panoramax URLs are constructed from a validated UUID; resolved Mapillary URLs
+  are accepted only from `*.fbcdn.net`. Either way an upstream response cannot point the proxy at
+  an arbitrary host. A bounded 12-image LRU protects memory, keyed by `source:id`. The picture id,
+  exact coordinates and producer never reach the client before reveal.
+- **Trap: `*.fbcdn.net` is blocked on some networks**, including the maintainer's workstation
+  (measured 2026-07-31: it resolved to 127.0.0.1 there, while the VPS fetched the same image fine).
+  `graph.mapillary.com` keeps answering, so the failure looks like a black round rather than a
+  network fault. `tools/mg_geo_source_check.js` samples the live pool and must be run **on the
+  VPS**. The same interception hits `tiles.mapillary.com`, which answers 200 with an HTML login
+  page; the pool builder treats that as a hard error rather than an empty tile, because swallowing
+  it once silently wrote a degraded pool over a good one.
 - `MG.Net.loadImage` reports the request panel's **layout** dimensions, not necessarily the source
-  image's intrinsic dimensions. Its 640px request host can clamp the remote Panoramax image before
+  image's intrinsic dimensions. Its 640px request host can clamp the remote image before
   reporting dimensions, so GeoGuesser must not aspect-check those values.
   `MG.Net.isLevelEncodedSize` instead detects the calibrated 0..63 Worker error-PNG range; every
   successful panorama lies outside it.
 - Panorama has no projection shader available to this mod. The client therefore displays a clipped
   2:1 equirectangular strip three times side by side and translates the strip to wrap heading at
-  360 degrees. Panoramax SD images fill a fixed 2880×1440 stage (`scaling: "cover"` — an unknown
+  360 degrees. The 2048×1024 sources fill a fixed 2880×1440 stage (`scaling: "cover"` — an unknown
   token such as the old `"stretch-to-fit"` silently paints the source at native size, centred, see
   trap 24), so the 860px viewport is roughly a 107-degree crop. Copies use a shared 2878px step
   (2px overlap), which removes the old 240px black seam, and all three load through the shared FIFO

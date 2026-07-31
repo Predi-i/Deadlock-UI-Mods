@@ -77,7 +77,10 @@ export function createMinigamesServer(options) {
     process.env.MG_PUBLIC_ORIGIN || "").replace(/\/+$/, "");
   const bodyLimit = envInteger("MG_BODY_LIMIT", DEFAULT_BODY_LIMIT, 1024, 4 * 1024 * 1024);
   const storage = new SqliteStorage(databasePath);
-  const hub = new Hub({ storage: storage });
+  // Second argument mirrors the Durable Object contract (state, env). GeoGuesser reads
+  // MG_MAPILLARY_TOKEN from it; without one, its Mapillary rounds cannot resolve an image URL and
+  // the game falls back to the pool's Panoramax rows.
+  const hub = new Hub({ storage: storage }, process.env);
 
   // A Durable Object processes one request at a time. Preserve that property here so
   // read-modify-write lobby updates and SQLite transactions cannot interleave.

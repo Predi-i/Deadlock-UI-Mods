@@ -126,8 +126,10 @@ function ok(cond, msg) {
 }
 
 // Host with token TH, joiner with token TJ, into a fresh private lobby for `game`.
-async function seatedLobby(game, TH, TJ) {
-    var hub = new Hub({ storage: new FakeStorage() });
+// `env` is the Durable Object's second constructor argument; GeoGuesser reads
+// MG_MAPILLARY_TOKEN from it to resolve a (signed, expiring) Mapillary image URL.
+async function seatedLobby(game, TH, TJ, env) {
+    var hub = new Hub({ storage: new FakeStorage() }, env);
     var d = await req(hub, "/api/create.png?game=" + game + "&tok=" + TH);
     var code = decCode(d);
     await req(hub, "/api/join.png?code=" + code + "&tok=" + TJ);
@@ -712,47 +714,52 @@ async function main() {
         restoredOwner.body.action.steamid === "11111111",
         "undo restores both the previous colour and the previous pixel owner");
 
-    // ── GeoGuesser: dynamic Panoramax pool, hidden panorama and authoritative reveal ──
-    // The catalog is now queried per SUB-CELL, not once per region: Panoramax returns frames in
-    // sequence order, so one wide bbox drains a single densely-mapped route (measured: all of
-    // Europe = 1 sequence even at limit=1000). Each cell here answers with its own collection so
-    // the pool's spread is observable.
+    // ── GeoGuesser: PREBUILT pool, hidden panorama and authoritative reveal ──
+    // Locations come from server/geo_pool.generated.js, so forming a lobby must make NO catalog
+    // request at all. This replaced a live sweep that could not be both fast and varied: Panoramax
+    // returns frames in sequence order (one wide bbox = one street), and Mapillary caps a bbox at
+    // 0.010 square degrees, so a thorough sweep needs ~2.5M cells. The counter below is the
+    // regression guard - if anything reintroduces a lobby-time catalog call it goes above zero.
     var geoCatalogFetches = 0;
-    var geoCellsSeen = {};
+    var geoUrlResolves = [];
     globalThis.MG_GEO_CATALOG_FETCH = async function (url) {
         geoCatalogFetches++;
-        var bbox = decodeURIComponent(String(url).replace(/^.*[?&]bbox=/, "").replace(/&.*$/, ""));
-        geoCellsSeen[bbox] = (geoCellsSeen[bbox] || 0) + 1;
-        // Region index from the cell's longitude/latitude, so each region still yields a
-        // distinct coordinate band and the round chooser can spread across them.
-        var west = Number(bbox.split(",")[0]) || 0;
-        var south = Number(bbox.split(",")[1]) || 0;
-        var region = Math.abs(Math.round(west / 40) + Math.round(south / 30)) % 6;
-        var suffix = bbox.replace(/[^0-9]/g, "").slice(0, 10) || "0";
-        var feature = {
-            id: "00000000-0000-4000-8000-" + ("00000000000" + suffix).slice(-12),
-            collection: "test-collection-" + suffix,
-            type: "Feature",
-            geometry: { type: "Point", coordinates: [west + 1, south + 1] },
-            providers: [{ name: "Test Mapper " + region }],
-            properties: {
-                license: "CC-BY-SA-4.0",
-                "pers:interior_orientation": { field_of_view: 360 }
-            }
-        };
-        return new Response(JSON.stringify({ features: [feature] }), {
-            headers: { "Content-Type": "application/geo+json" }
-        });
+        // The only legitimate catalog call left is resolving a Mapillary image URL at reveal time
+        // (its thumb URL is signed and expires, so it can never be baked into the pool).
+        geoUrlResolves.push(String(url));
+        return new Response(JSON.stringify({
+            thumb_2048_url: "https://scontent-arn2-1.xx.fbcdn.net/test-panorama.jpg"
+        }), { headers: { "Content-Type": "application/json" } });
     };
-    var geo = await seatedLobby(9, "GEOHOST01", "GEOJOIN01");
-    // One request per sub-cell, each cell queried exactly once. The count is the whole point of
-    // the fix: six wide bboxes drained six dense routes, while 50 cells spread the pool. If a
-    // future edit collapses cells back into one bbox per region this drops to 6 and fails here.
-    var geoCellList = Object.keys(geoCellsSeen);
-    ok(geoCellList.length === 50 && geoCatalogFetches === 50,
-        "geo: the location pool is built from 50 sub-cells, not six wide region bboxes");
-    ok(geoCellList.every(function (bbox) { return geoCellsSeen[bbox] === 1; }),
-        "geo: every sub-cell is queried exactly once per pool build");
+    var geo = await seatedLobby(9, "GEOHOST01", "GEOJOIN01",
+        { MG_MAPILLARY_TOKEN: "MLY|test|token" });
+    ok(geoCatalogFetches === 0,
+        "geo: forming a lobby makes zero catalog requests (pool is prebuilt)");
+    // Five rounds drawn from a 2380-row pool must be five DIFFERENT places, and each must carry a
+    // source tag so the reveal can credit the right provider.
+    var geoLobby = await geo.hub.storage.get("l:" + geo.code);
+    var geoIds = geoLobby.state.locations.map(function (loc) { return loc.source + ":" + loc.id; });
+    ok(geoIds.length === 5 && new Set(geoIds).size === 5,
+        "geo: a match draws five distinct pooled locations");
+    ok(geoLobby.state.locations.every(function (loc) {
+        return (loc.source === 0 || loc.source === 1) &&
+            Number.isFinite(loc.lat) && Number.isFinite(loc.lon) &&
+            loc.lat >= -90 && loc.lat <= 90 && loc.lon >= -180 && loc.lon <= 180 &&
+            Number.isInteger(loc.region) && loc.region >= 0 && loc.region < 6;
+    }), "geo: every pooled location has a known source, sane coordinates and a labelled region");
+
+    // The draw is random, so pin round 1 to a Mapillary row and round 2 to a Panoramax one. Both
+    // paths then get asserted deterministically: the URL resolve, the host allowlist and the two
+    // different credit lines.
+    geoLobby.state.locations[0] = {
+        source: 1, id: "1234567890123456", lat: 48.858, lon: 2.294, region: 0,
+        provider: "Test Mapillary"
+    };
+    geoLobby.state.locations[1] = {
+        source: 0, id: "539493be-7921-4607-bb76-b57dea3d4c09", lat: -33.87, lon: 151.21,
+        region: 5, provider: "Test Panoramax"
+    };
+    await geo.hub.storage.put("l:" + geo.code, geoLobby);
     d = await req(geo.hub, "/api/geostate.png?code=" + geo.code + "&tok=GEOHOST01");
     ok(d.w === 1 && d.h === 1, "geo: round 1 starts unrevealed with no guesses");
     d = await req(geo.hub, "/api/geostate.png?code=" + geo.code + "&tok=GEOSTRANGER");
@@ -761,8 +768,10 @@ async function main() {
     ok(d.w === 1 && d.h === 63, "geo: target is hidden before both players guess");
 
     var geoFetches = 0;
-    globalThis.MG_GEO_IMAGE_FETCH = async function () {
+    var geoImageUrls = [];
+    globalThis.MG_GEO_IMAGE_FETCH = async function (url) {
         geoFetches++;
+        geoImageUrls.push(String(url));
         return new Response(new Uint8Array([0xff, 0xd8, 0xff, 0xd9]), {
             headers: { "Content-Type": "image/jpeg", "Content-Length": "4" }
         });
@@ -776,9 +785,63 @@ async function main() {
         ok(geoImage.headers.get("content-type") === "image/jpeg" &&
             geoImageBytes.length === 4 && geoImageBytes[0] === 0xff,
             "geo: seated player receives the proxied panorama image");
+        // Round 1 is the pinned Mapillary row: its URL had to be resolved through the Graph API
+        // (never baked into the pool, because thumb URLs are signed and expire) and the proxy must
+        // then fetch the fbcdn host that resolve returned.
+        ok(geoCatalogFetches === 1 &&
+            geoUrlResolves[0].indexOf("graph.mapillary.com/1234567890123456") !== -1 &&
+            geoUrlResolves[0].indexOf("thumb_2048_url") !== -1,
+            "geo: a Mapillary round resolves its image URL at reveal time, not at lobby time");
+        ok(geoImageUrls[0] === "https://scontent-arn2-1.xx.fbcdn.net/test-panorama.jpg",
+            "geo: the proxy fetches the resolved Mapillary CDN URL");
         await geo.hub.fetch(new Request(
             "https://mg.test/api/geoview.png?code=" + geo.code + "&tok=GEOJOIN01"));
         ok(geoFetches === 1, "geo: panorama source is cached once for both players");
+        ok(geoCatalogFetches === 1,
+            "geo: a cached panorama does not re-resolve the signed URL");
+
+        // An upstream that answers with a NON-Mapillary host must be refused: the proxy would
+        // otherwise fetch any host the catalog names. Panoramax gets this for free because its URL
+        // is constructed from a validated UUID, so only the resolved path needs the allowlist.
+        var evilHub = new Hub({ storage: new FakeStorage() },
+            { MG_MAPILLARY_TOKEN: "MLY|test|token" });
+        d = await req(evilHub, "/api/create.png?game=9&tok=GEOEVIL01&solo=1");
+        var evilCode = decCode(d);
+        var evilLobby = await evilHub.storage.get("l:" + evilCode);
+        evilLobby.state.locations[0] = {
+            source: 1, id: "9999999999999", lat: 0, lon: 0, region: 0, provider: "Evil"
+        };
+        await evilHub.storage.put("l:" + evilCode, evilLobby);
+        var evilResolves = 0;
+        globalThis.MG_GEO_CATALOG_FETCH = async function () {
+            evilResolves++;
+            return new Response(JSON.stringify({
+                thumb_2048_url: "https://evil.example.com/not-a-panorama.jpg"
+            }), { headers: { "Content-Type": "application/json" } });
+        };
+        var evilFetches = geoFetches;
+        d = await req(evilHub, "/api/geoview.png?code=" + evilCode + "&tok=GEOEVIL01");
+        ok(evilResolves === 1 && d.w === 6 && d.h === 63 && geoFetches === evilFetches,
+            "geo: a resolved URL outside the Mapillary CDN is refused, not proxied");
+
+        // No token at all (fresh install, or the operator revoked it): Mapillary rounds simply
+        // cannot render, and must fail with the ordinary no-image sentinel rather than throw.
+        var noTokenHub = new Hub({ storage: new FakeStorage() }, {});
+        d = await req(noTokenHub, "/api/create.png?game=9&tok=GEONOTOK1&solo=1");
+        var noTokenCode = decCode(d);
+        var noTokenLobby = await noTokenHub.storage.get("l:" + noTokenCode);
+        noTokenLobby.state.locations[0] = {
+            source: 1, id: "1234567890123456", lat: 0, lon: 0, region: 0, provider: "Test"
+        };
+        await noTokenHub.storage.put("l:" + noTokenCode, noTokenLobby);
+        var noTokenResolves = 0;
+        globalThis.MG_GEO_CATALOG_FETCH = async function () {
+            noTokenResolves++;
+            return new Response("{}", { headers: { "Content-Type": "application/json" } });
+        };
+        d = await req(noTokenHub, "/api/geoview.png?code=" + noTokenCode + "&tok=GEONOTOK1");
+        ok(d.w === 6 && d.h === 63 && noTokenResolves === 0,
+            "geo: without a Mapillary token the round yields the no-image sentinel and makes no call");
     } finally {
         delete globalThis.MG_GEO_IMAGE_FETCH;
     }
@@ -819,19 +882,23 @@ async function main() {
     ok(joinerPick.x === 511 && joinerPick.y === 255,
         "geo: joiner's revealed map pick round-trips at the far corner");
     d = await req(geo.hub, "/api/geoinfo.png?code=" + geo.code + "&tok=GEOHOST01");
-    ok(d.w >= 1 && d.w <= 6 && d.h === 1, "geo: reveal exposes the dynamic source region");
-    d = await req(geo.hub, "/api/geocredit.png?code=" + geo.code + "&tok=GEOHOST01&i=0");
-    var creditLength = d.w, creditAlphabet =
-        " ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.";
-    var creditText = "";
-    for (var creditPart = 1; creditText.length < creditLength; creditPart++) {
-        d = await req(geo.hub, "/api/geocredit.png?code=" + geo.code +
-            "&tok=GEOHOST01&i=" + creditPart);
-        creditText += creditAlphabet.charAt(d.w);
-        if (creditText.length < creditLength) creditText += creditAlphabet.charAt(d.h);
+    ok(d.w === 1 && d.h === 1, "geo: reveal exposes the pooled location's region (Europe)");
+    var creditAlphabet = " ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.";
+    async function geoCreditFor(tok) {
+        var head = await req(geo.hub, "/api/geocredit.png?code=" + geo.code + "&tok=" + tok + "&i=0");
+        var length = head.w, text = "";
+        for (var part = 1; text.length < length; part++) {
+            var chunk = await req(geo.hub, "/api/geocredit.png?code=" + geo.code +
+                "&tok=" + tok + "&i=" + part);
+            text += creditAlphabet.charAt(chunk.w);
+            if (text.length < length) text += creditAlphabet.charAt(chunk.h);
+        }
+        return text;
     }
-    ok(/Test Mapper \d  Panoramax  CC BY SA 4\.0/.test(creditText),
-        "geo: reveal transmits the dynamic Panoramax producer attribution");
+    // Round 1 is the pinned Mapillary row, so the credit must name Mapillary, not Panoramax. The
+    // whole point of tagging the source: crediting the wrong project is a licence problem.
+    ok(await geoCreditFor("GEOHOST01") === "Test Mapillary  Mapillary  CC BY SA 4.0",
+        "geo: a Mapillary round credits Mapillary and its contributor");
     var firstGeoScores = [];
     for (var geoSeat = 0; geoSeat < 2; geoSeat++) {
         d = await req(geo.hub, "/api/geoscore.png?code=" + geo.code +
@@ -849,8 +916,21 @@ async function main() {
     d = await req(geo.hub, "/api/geostate.png?code=" + geo.code + "&tok=GEOJOIN01");
     ok(d.w === 2 && d.h === 1, "geo: both ready seats advance to round 2");
 
+    // Round 2 is the pinned Panoramax row. Reveal it and read the credit: the same route must now
+    // name Panoramax, proving the attribution follows the location's source rather than a constant.
+    await req(geo.hub, "/api/geoguess.png?code=" + geo.code + "&tok=GEOHOST01&cell=100");
+    await req(geo.hub, "/api/geoguess.png?code=" + geo.code + "&tok=GEOJOIN01&cell=200");
+    ok(await geoCreditFor("GEOHOST01") === "Test Panoramax  Panoramax  CC BY SA 4.0",
+        "geo: a Panoramax round credits Panoramax, from the same reveal route");
+    d = await req(geo.hub, "/api/geoinfo.png?code=" + geo.code + "&tok=GEOHOST01");
+    ok(d.w === 6 && d.h === 1, "geo: the region hint follows the pooled row (Oceania)");
+    await req(geo.hub, "/api/geonext.png?code=" + geo.code + "&tok=GEOHOST01");
+    await req(geo.hub, "/api/geonext.png?code=" + geo.code + "&tok=GEOJOIN01");
+    d = await req(geo.hub, "/api/geostate.png?code=" + geo.code + "&tok=GEOHOST01");
+    ok(d.w === 3 && d.h === 1, "geo: the match continues into round 3");
+
     var lastGeoScores = firstGeoScores;
-    for (var geoRound = 1; geoRound < 5; geoRound++) {
+    for (var geoRound = 2; geoRound < 5; geoRound++) {
         await req(geo.hub, "/api/geoguess.png?code=" + geo.code +
             "&tok=GEOHOST01&cell=" + geoRound);
         await req(geo.hub, "/api/geoguess.png?code=" + geo.code +

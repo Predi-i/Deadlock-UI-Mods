@@ -1,4 +1,4 @@
-/* global CompressionStream, PX_ALPHA, PX_LAND_SPANS, PX_PALETTE, PX_VIEW_PALETTE, adminAssetResponse, atob */
+/* global CompressionStream, GEO_POOL_PACKED, PX_ALPHA, PX_LAND_SPANS, PX_PALETTE, PX_VIEW_PALETTE, adminAssetResponse, atob */
 /**
  * Deadlock Minigames relay - Worker-compatible CORE (authored source).
  *
@@ -370,7 +370,7 @@ async function authorizeAdmin(request, env) {
 }
 
 export class Hub {
-  constructor(state) {
+  constructor(state, env) {
     this.state = state;
     this.storage = state.storage;
     // In-memory per-IP sliding window for the lobby-FORMATION routes (create/join family).
@@ -390,9 +390,10 @@ export class Hub {
     this.pxTiles = null;          // lazily hydrated sparse 32x32 canvas tiles
     this.pxViewCache = new Map(); // version+origin -> native-size edit viewport PNG
     this.pxCanvasCache = null;    // { version, bytes } for the compatibility canvas route
-    this.geoImageCache = new Map(); // Panoramax picture id -> { bytes, type }; bounded LRU
-    this.geoLocationPool = [];      // short-lived public-catalog snapshot, shared by new lobbies
-    this.geoLocationPoolAt = 0;
+    this.geoImageCache = new Map(); // "source:id" -> { bytes, type }; bounded LRU
+    // Mapillary needs a token to resolve an image URL at reveal time. Absent (or on a fresh
+    // install) the game still runs on the Panoramax rows of the prebuilt pool.
+    this.geoMapillaryToken = String(env && env.MG_MAPILLARY_TOKEN || "").trim();
   }
 
   // Sliding-window rate check for one IP. Returns true if this request is ALLOWED. A null/
@@ -666,7 +667,7 @@ export class Hub {
         const tc = clockSecFor(game, q.get("tc"));         // 0 unless chess/checkers with a bank
         const cv = checkersVariantFor(game, q.get("cv"));
         const solo = game === 9 && q.get("solo") === "1";
-        const geoState = game === 9 ? await geoCreateState(this) : null;
+        const geoState = game === 9 ? geoCreateState() : null;
         if (game === 9 && !geoState) return d(9, 5);
         const lobby = {
           game, players: solo ? 2 : 1, moves: [], pub: 0, t: nowSeq(),
@@ -729,7 +730,7 @@ export class Hub {
         const cv = checkersVariantFor(game, rawCv);
         const newCode = await this.freshCode();
         if (newCode < 0) return d(9, 5);                 // all 1024 lobby codes are occupied
-        const geoState = game === 9 ? await geoCreateState(this) : null;
+        const geoState = game === 9 ? geoCreateState() : null;
         if (game === 9 && !geoState) return d(9, 5);
         const lobby = {
           game, players: 1, moves: [], pub: 1, t: nowSeq(),
@@ -1074,7 +1075,7 @@ export class Hub {
           if (lobby.game === 9) {
             const previousLocations = lobby.state && lobby.state.locations
               ? geoShuffle(lobby.state.locations.slice()) : [];
-            lobby.state = await geoCreateState(this) || geoNewState(previousLocations);
+            lobby.state = geoCreateState() || geoNewState(previousLocations);
           } else {
             lobby.state = initState(lobby.game, lobby.cv, lobby.seats ? lobby.seats.length : 2);
           }
@@ -1760,53 +1761,63 @@ function seatHole(lobby) {
 const GEO_GRID_W = 512;
 const GEO_GRID_H = 256;
 const GEO_ROUNDS = 5;
-const GEO_CATALOG = "https://api.panoramax.xyz/api/search";
-const GEO_POOL_TTL_MS = 10 * 60 * 1000;
-// ⚠ Each region is queried as SUB-CELLS, not one big bbox. Panoramax returns frames in
-// upload/sequence order, so a single wide bbox drains one densely-mapped route before reaching
-// anywhere else: measured 2026-07-31, `bbox=-10,35,30,60` (all of Europe) returned exactly ONE
-// sequence even at limit=1000, and one Asia bbox returned 2. Splitting the same areas into cells
-// and taking a frame from each lifted Europe to 11+ sequences and Asia to 57, spread across
-// Turkey, Nepal, Tokyo, India, Bangkok, Manila and Baikal. The coverage was always there; the
-// query shape was hiding it.
+// Panorama sources. The id shape differs per source and both are validated before use:
+// Panoramax ids are UUIDs and its picture URL is CONSTRUCTED from them, so a catalog entry can
+// never point the proxy at an arbitrary host. Mapillary ids are numeric and its image URL has to
+// be fetched (see geoResolveImageUrl), so the answer is host-checked instead.
+const GEO_SRC_PANORAMAX = 0;
+const GEO_SRC_MAPILLARY = 1;
+const GEO_MAPILLARY_GRAPH = "https://graph.mapillary.com/";
+// Mapillary serves images off Facebook's CDN. Anchored to a leading dot so a lookalike host like
+// "evilfbcdn.net" cannot match.
+const GEO_MAPILLARY_IMAGE_HOST = ".fbcdn.net";
+// ⚠ A resolved Mapillary URL is SIGNED and EXPIRES. Only the bytes may be cached, never the URL,
+// so each cache miss re-resolves. That is one extra request per round, on the round that is about
+// to download ~330 KiB anyway.
+const GEO_URL_TIMEOUT_MS = 8000;
+
+// The pool is PREBUILT (server/geo_pool.generated.js, refreshed by tools/build_geo_pool.js) and
+// parsed once on first use. Starting a lobby therefore makes ZERO catalog requests: it picks five
+// rows out of memory.
 //
-// Two things that do NOT work and should not be re-tried:
-//  - a bigger `limit` (40 -> 1000 kept Europe at one sequence);
-//  - the two-step `/api/collections` then `search?collections=`: that filter IGNORES bbox (an
-//    Oceania cell came back with German coordinates) and returns nothing for `field_of_view`.
-const GEO_REGIONS = [
-  {
-    name: "Europe",
-    cells: ["-10,36,0,45", "0,36,10,45", "10,36,22,45", "-10,45,0,55",
-      "0,45,10,55", "10,45,20,55", "20,45,30,55", "5,55,20,60"]
-  },
-  {
-    name: "North America",
-    cells: ["-125,32,-105,45", "-105,32,-90,45", "-90,32,-75,45", "-80,32,-60,45",
-      "-125,45,-100,55", "-100,45,-80,55", "-80,45,-60,55", "-115,25,-95,32"]
-  },
-  {
-    name: "South America",
-    cells: ["-80,-10,-60,5", "-60,-10,-40,5", "-70,-25,-50,-10", "-50,-25,-35,-10",
-      "-75,-40,-55,-25", "-55,-40,-40,-25", "-75,-55,-60,-40", "-70,0,-50,10"]
-  },
-  {
-    name: "Africa",
-    cells: ["-18,5,0,20", "0,5,20,20", "20,5,40,20", "-18,20,10,35",
-      "10,20,35,35", "10,-15,35,5", "10,-35,30,-15", "30,-25,50,-5"]
-  },
-  {
-    name: "Asia",
-    cells: ["30,25,50,45", "50,25,70,45", "70,25,90,45", "110,25,130,45",
-      "130,25,150,45", "70,5,90,25", "90,5,110,25", "110,5,130,25",
-      "90,45,120,60", "60,45,90,60"]
-  },
-  {
-    name: "Oceania",
-    cells: ["113,-35,130,-20", "130,-35,145,-20", "145,-40,155,-25", "165,-47,180,-34",
-      "113,-25,135,-12", "140,-25,155,-12", "145,-45,150,-38", "155,-25,175,-12"]
+// It replaced a live per-region sweep that could not be made both fast and varied. Two measured
+// facts killed it: Panoramax returns catalog frames in sequence order, so one wide bbox drains a
+// single densely-mapped route (all of Europe = 1 sequence even at limit=1000), and Mapillary caps
+// a bbox at 0.010 square degrees EVERYWHERE, so covering the inhabited world needs ~2.5M cells.
+// Sweeping properly takes hours; sweeping cheaply gives five rounds on one street. Doing it
+// offline is what makes "varied" and "instant" stop being a trade-off.
+let geoPoolRows = null;
+
+function geoPool() {
+  if (geoPoolRows) return geoPoolRows;
+  const rows = [];
+  const lines = GEO_POOL_PACKED.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const parts = lines[i].split("|");
+    if (parts.length < 5) continue;
+    const source = parts[0] === "1" ? GEO_SRC_MAPILLARY : GEO_SRC_PANORAMAX;
+    const id = parts[1];
+    const lat = Number(parts[2]), lon = Number(parts[3]);
+    const region = Number(parts[4]);
+    // The generator already validated every field; this is the cheap re-check that a corrupted
+    // deploy artifact degrades the pool instead of feeding NaN coordinates into scoring.
+    if (!Number.isFinite(lat) || !Number.isFinite(lon) ||
+        !Number.isInteger(region) || region < 0 || region >= GEO_REGION_COUNT) continue;
+    if (source === GEO_SRC_MAPILLARY ? !/^[0-9]{5,25}$/.test(id) : !/^[0-9a-f-]{36}$/i.test(id)) continue;
+    rows.push({
+      source: source,
+      id: id,
+      lat: lat,
+      lon: lon,
+      region: region,
+      provider: geoSafeProvider(parts[5])
+    });
   }
-];
+  geoPoolRows = rows;
+  return rows;
+}
+
+const GEO_REGION_COUNT = 6;
 const GEO_CREDIT_ALPHABET = " ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.";
 
 function geoShuffle(values) {
@@ -1825,120 +1836,82 @@ function geoSafeProvider(value) {
 }
 
 function geoCreditText(location) {
-  return geoSafeProvider(location && location.provider) + "  Panoramax  CC BY SA 4.0";
+  const provider = geoSafeProvider(location && location.provider);
+  return location && location.source === GEO_SRC_MAPILLARY
+    ? provider + "  Mapillary  CC BY SA 4.0"
+    : provider + "  Panoramax  CC BY SA 4.0";
 }
 
-function geoCatalogLocation(feature, region) {
-  if (!feature || !/^[0-9a-f-]{36}$/i.test(String(feature.id || ""))) return null;
-  const coordinates = feature.geometry && feature.geometry.coordinates;
-  const orientation = feature.properties && feature.properties["pers:interior_orientation"];
-  const license = String(feature.properties && feature.properties.license || "");
-  if (!Array.isArray(coordinates) || coordinates.length < 2 ||
-      !Number.isFinite(Number(coordinates[0])) || !Number.isFinite(Number(coordinates[1])) ||
-      !orientation || Number(orientation.field_of_view) !== 360 ||
-      license !== "CC-BY-SA-4.0") return null;
-  const providers = Array.isArray(feature.providers) ? feature.providers : [];
-  return {
-    id: String(feature.id),
-    collection: String(feature.collection || feature.id),
-    lat: Number(coordinates[1]),
-    lon: Number(coordinates[0]),
-    region: region,
-    provider: geoSafeProvider(providers[0] && providers[0].name),
-    // The federation endpoint redirects to the owning public instance. Constructing it from
-    // the validated UUID prevents an upstream feature from supplying an arbitrary proxy URL.
-    url: "https://api.panoramax.xyz/api/pictures/" + feature.id + "/sd.jpg"
-  };
-}
-
-async function geoCatalogCell(fetcher, bbox, index) {
-  const url = GEO_CATALOG + "?limit=20&filter=" +
-    encodeURIComponent("field_of_view = 360") + "&bbox=" + encodeURIComponent(bbox);
+// Where the panorama bytes come from. Panoramax builds its URL from the validated UUID. Mapillary
+// has to be asked, because thumb_2048_url is signed and time-limited - see GEO_URL_TIMEOUT_MS.
+// Returns "" when the token is absent or the answer is not a Mapillary CDN URL, which the caller
+// turns into the normal "no image" sentinel: no token simply means Mapillary rounds do not render,
+// while Panoramax rounds keep working.
+async function geoResolveImageUrl(location, token) {
+  if (!location) return "";
+  if (location.source !== GEO_SRC_MAPILLARY) {
+    return "https://api.panoramax.xyz/api/pictures/" + location.id + "/sd.jpg";
+  }
+  if (!token) return "";
+  const fetcher = typeof globalThis.MG_GEO_CATALOG_FETCH === "function"
+    ? globalThis.MG_GEO_CATALOG_FETCH : fetch;
   try {
-    const response = await fetcher(url, {
-      headers: { "Accept": "application/geo+json", "User-Agent": "Deadlock-Minigames/1.0" },
-      signal: AbortSignal.timeout(8000)
-    });
-    if (!response.ok) return [];
+    const response = await fetcher(
+      GEO_MAPILLARY_GRAPH + location.id + "?fields=thumb_2048_url&access_token=" +
+        encodeURIComponent(token),
+      { headers: { "Accept": "application/json" }, signal: AbortSignal.timeout(GEO_URL_TIMEOUT_MS) }
+    );
+    if (!response.ok) return "";
     const body = await response.json();
-    const features = body && Array.isArray(body.features) ? body.features : [];
-    const byCollection = new Map();
-    for (let i = 0; i < features.length; i++) {
-      const location = geoCatalogLocation(features[i], index);
-      if (!location) continue;
-      // A sequence can contain hundreds of near-identical frames. Keep one random frame per
-      // collection so a five-round match cannot become five steps along the same road.
-      if (!byCollection.has(location.collection)) byCollection.set(location.collection, location);
-    }
-    return Array.from(byCollection.values());
+    const raw = String(body && body.thumb_2048_url || "");
+    if (!raw) return "";
+    // Never hand the proxy a host the upstream chose. Same guarantee the constructed Panoramax
+    // URL gets for free.
+    const parsed = new URL(raw);
+    if (parsed.protocol !== "https:") return "";
+    if (!parsed.hostname.endsWith(GEO_MAPILLARY_IMAGE_HOST)) return "";
+    return parsed.href;
   } catch (error) {
-    return [];
+    return "";
   }
 }
 
-// One request per sub-cell. A dead or empty cell simply contributes nothing (geoCatalogCell
-// swallows its own errors), so a regional outage degrades the spread instead of failing the pool.
-async function geoCatalogRegion(fetcher, region, index) {
-  const batches = await Promise.all(region.cells.map(function (bbox) {
-    return geoCatalogCell(fetcher, bbox, index);
-  }));
-  const seen = new Set(), out = [];
-  for (let i = 0; i < batches.length; i++) {
-    for (let j = 0; j < batches[i].length; j++) {
-      const location = batches[i][j];
-      // Cells are drawn not to overlap, but dedupe anyway: a frame on a shared edge would
-      // otherwise get two chances at being picked for a round.
-      if (seen.has(location.collection)) continue;
-      seen.add(location.collection);
-      out.push(location);
-    }
-  }
-  return out;
-}
-
-async function geoLocationsForLobby(hub) {
-  const fresh = Date.now() - hub.geoLocationPoolAt < GEO_POOL_TTL_MS;
-  if (!fresh || hub.geoLocationPool.length < GEO_ROUNDS) {
-    const catalogFetch = typeof globalThis.MG_GEO_CATALOG_FETCH === "function"
-      ? globalThis.MG_GEO_CATALOG_FETCH : fetch;
-    const requests = [];
-    for (let i = 0; i < GEO_REGIONS.length; i++) {
-      requests.push(geoCatalogRegion(catalogFetch, GEO_REGIONS[i], i));
-    }
-    const batches = await Promise.all(requests);
-    const pool = [];
-    for (let i = 0; i < batches.length; i++) {
-      for (let j = 0; j < batches[i].length; j++) pool.push(batches[i][j]);
-    }
-    if (pool.length >= GEO_ROUNDS) {
-      hub.geoLocationPool = pool;
-      hub.geoLocationPoolAt = Date.now();
-    }
-  }
-  if (hub.geoLocationPool.length < GEO_ROUNDS) return null;
+// Five rounds, each from a different region where the pool allows it. No network, no TTL, no
+// shared snapshot: the pool is a constant, so every lobby draws independently.
+function geoLocationsForLobby() {
+  const pool = geoPool();
+  if (pool.length < GEO_ROUNDS) return null;
 
   const byRegion = [];
-  for (let i = 0; i < GEO_REGIONS.length; i++) byRegion.push([]);
-  for (let i = 0; i < hub.geoLocationPool.length; i++) {
-    const location = hub.geoLocationPool[i];
-    if (byRegion[location.region]) byRegion[location.region].push(location);
+  for (let i = 0; i < GEO_REGION_COUNT; i++) byRegion.push([]);
+  for (let i = 0; i < pool.length; i++) {
+    if (byRegion[pool[i].region]) byRegion[pool[i].region].push(pool[i]);
   }
   const chosen = [], used = new Set();
-  const regionOrder = geoShuffle(GEO_REGIONS.map(function (_region, index) { return index; }));
+  const regionOrder = geoShuffle([0, 1, 2, 3, 4, 5]);
   for (let i = 0; i < regionOrder.length && chosen.length < GEO_ROUNDS; i++) {
     const candidates = byRegion[regionOrder[i]];
     if (!candidates.length) continue;
-    geoShuffle(candidates);
-    chosen.push(candidates[0]);
-    used.add(candidates[0].id);
+    const pick = candidates[geoRandomIndex(candidates.length)];
+    chosen.push(pick);
+    used.add(pick.source + ":" + pick.id);
   }
-  if (chosen.length < GEO_ROUNDS) {
-    const extras = geoShuffle(hub.geoLocationPool.slice());
-    for (let i = 0; i < extras.length && chosen.length < GEO_ROUNDS; i++) {
-      if (!used.has(extras[i].id)) { chosen.push(extras[i]); used.add(extras[i].id); }
-    }
+  // Fewer than six populated regions, or fewer than five rounds filled: top up from anywhere.
+  let guard = 0;
+  while (chosen.length < GEO_ROUNDS && guard++ < 200) {
+    const pick = pool[geoRandomIndex(pool.length)];
+    const key = pick.source + ":" + pick.id;
+    if (used.has(key)) continue;
+    used.add(key);
+    chosen.push(pick);
   }
   return chosen.length === GEO_ROUNDS ? chosen : null;
+}
+
+function geoRandomIndex(length) {
+  const random = new Uint32Array(1);
+  crypto.getRandomValues(random);
+  return random[0] % length;
 }
 
 function geoNewState(locations) {
@@ -1952,8 +1925,10 @@ function geoNewState(locations) {
   };
 }
 
-async function geoCreateState(hub) {
-  const locations = await geoLocationsForLobby(hub);
+// Synchronous now that the pool is prebuilt: no catalog request stands between pressing Create
+// and the first round.
+function geoCreateState() {
+  const locations = geoLocationsForLobby();
   return locations ? geoNewState(locations) : null;
 }
 
@@ -2047,12 +2022,19 @@ function geoAdvanceRound(st) {
 
 async function geoPanoramaResponse(hub, location) {
   if (!location) return d(6, 63);
-  let cached = hub.geoImageCache.get(location.id);
+  // Key by source as well as id. A Panoramax UUID and a Mapillary number cannot collide today,
+  // but the pool carries both and an id-only key would silently serve the wrong bytes if that
+  // ever stopped being true.
+  const cacheKey = location.source + ":" + location.id;
+  let cached = hub.geoImageCache.get(cacheKey);
   if (!cached) {
     try {
+      // Resolved on every cache miss and never stored: a Mapillary URL is signed and expires.
+      const url = await geoResolveImageUrl(location, hub.geoMapillaryToken);
+      if (!url) return d(6, 63);
       const imageFetch = typeof globalThis.MG_GEO_IMAGE_FETCH === "function"
         ? globalThis.MG_GEO_IMAGE_FETCH : fetch;
-      const response = await imageFetch(location.url, {
+      const response = await imageFetch(url, {
         headers: { "Accept": "image/jpeg,image/png", "User-Agent": "Deadlock-Minigames/1.0" },
         signal: AbortSignal.timeout(10000)
       });
@@ -2067,7 +2049,7 @@ async function geoPanoramaResponse(hub, location) {
         const oldest = hub.geoImageCache.keys().next().value;
         if (oldest !== undefined) hub.geoImageCache.delete(oldest);
       }
-      hub.geoImageCache.set(location.id, cached);
+      hub.geoImageCache.set(cacheKey, cached);
     } catch (error) {
       return d(6, 63);
     }

@@ -156,24 +156,40 @@ Never commit or paste these secrets into source files.
 - The Node listener is loopback-only and overwrites `CF-Connecting-IP` with the real socket IP,
   so a direct caller cannot bypass per-IP rate limits with a forged header.
 - Node resolves outbound hosts IPv4-first because this VPS has IPv4 egress but no routed IPv6;
-  this keeps GeoGuesser's Panoramax catalog/image fetches from selecting an unreachable AAAA record.
+  this keeps GeoGuesser's panorama fetches from selecting an unreachable AAAA record.
 - A 1 GiB swap file with low swappiness protects the 2 GiB VPS from transient OOM conditions.
 - Dimension-only PNGs use native synchronous zlib on Node. This reduced a typical clock response
   from roughly 81 KiB to about 449 bytes and raised the measured clock-route throughput from
   about 89 to 872 requests/second on the NLs-1 VPS.
-- GeoGuesser needs no paid map API or secret key. New lobbies query Panoramax's public federation
-  for CC-BY-SA 4.0 equirectangular pictures across six regions split into 50 sub-cells, keep at
-  most one frame from each sequence, and cache the catalog snapshot for ten minutes. The sub-cells
-  are load-bearing, not cosmetic: Panoramax answers in sequence order, so one wide bbox per region
-  drained a single dense route (all of Europe returned one sequence even at `limit=1000`). Cold
-  pool cost is 50 requests, amortised over the ten-minute cache. The proxy URL is constructed from
-  the catalog's validated UUID; user input can never become an upstream URL. Proxied images are
-  capped at 8 MiB and the in-memory image LRU is capped at 12 entries.
+- GeoGuesser draws from a PREBUILT worldwide pool (`server/geo_pool.generated.js`, compiled from
+  `server/geo_pool.json` by `tools/build_geo_pool_module.js`), so **forming a lobby makes zero
+  catalog requests** and starts instantly. The pool holds CC-BY-SA 4.0 equirectangular locations
+  from two sources, balanced with an equal per-region quota and a 500 m minimum separation.
+  Refresh it with `tools/build_geo_pool.js`, then rebuild the module and `worker.js`.
+  Sweeping live was abandoned for measured reasons: Panoramax answers in sequence order, so one
+  wide bbox drained a single dense route (all of Europe returned one sequence even at
+  `limit=1000`), while Mapillary caps a bbox at 0.010 square degrees *everywhere*, putting a
+  thorough worldwide sweep at roughly 2.5 M cells. Doing it offline is what lets the pool be both
+  varied and instant.
+- Mapillary is optional and needs `MG_MAPILLARY_TOKEN` in `/etc/deadlock-minigames.env`. The token
+  never reaches a client: only the server calls Mapillary, because `thumb_2048_url` is signed and
+  expires and therefore must be resolved per reveal (never cached, never stored in the pool).
+  Without the token the game still runs on the pool's Panoramax rows. Resolved URLs are accepted
+  only from `*.fbcdn.net`; Panoramax URLs are constructed from a validated UUID. Either way an
+  upstream response cannot point the proxy at an arbitrary host. Proxied images are capped at
+  8 MiB and the in-memory image LRU at 12 entries.
+- Two facts about panorama sources that are easy to get wrong and were both measured:
+  Mapillary reports `camera_type` as **`spherical` or `equirectangular`** (filtering on the latter
+  alone reports zero coverage worldwide), and a catalog claiming 360° does **not** guarantee the
+  delivered image is a 2:1 strip. Run `tools/build_geo_pool.js --verify-images` when refreshing:
+  11 of 58 pooled Panoramax rows once delivered partial panoramas, up to 2048×267.
+  `tools/mg_geo_source_check.js` samples the live pool and must be run **on the VPS** - some
+  networks do not resolve `*.fbcdn.net`, which looks like a black round rather than a network fault.
 - Reveal points and guesses use a 512×256 server-owned grid (~78km per cell). A guess arrives as
   one linear `cell` on the unlimited uplink, but a reveal point exceeds what two base-63 PNG levels
   can carry, so `/api/geotarget` and `/api/geopick` take an `axis` parameter and return one
   coordinate per request (height 63 stays reserved for errors). Scoring uses the picture's exact
-  Panoramax coordinates, not the cell. The producer credit is revealed through `/api/geocredit`,
-  preserving Panoramax's attribution requirement.
+  coordinates, not the cell. The producer credit is revealed through `/api/geocredit` and names
+  whichever project the location came from, preserving both attribution requirements.
 - Pixel Battle starts with a clean database after the Cloudflare migration; old Worker canvas,
   audit, bank and ban records were deliberately not imported.

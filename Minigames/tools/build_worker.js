@@ -24,6 +24,7 @@ const rulesDir = path.join(root, "panorama", "scripts", "rules");
 const RULES = ["checkers.js", "ttt.js", "chess.js", "connectfour.js", "durak.js", "poker.js"];
 const corePath = path.join(root, "server", "worker.core.js");
 const pixelMapPath = path.join(root, "server", "pixelbattle_map.generated.js");
+const geoPoolPath = path.join(root, "server", "geo_pool.generated.js");
 const adminPanelPath = path.join(root, "server", "admin_panel.js");
 const outPath = path.join(root, "server", "worker.js");
 
@@ -35,6 +36,7 @@ const banner =
     " * Produced by `node tools/build_worker.js` from:\n" +
     " *   panorama/scripts/rules/*.js                              (shared with client)\n" +
     " *   server/pixelbattle_map.generated.js                     (generated land mask)\n" +
+    " *   server/geo_pool.generated.js                            (prebuilt GeoGuesser pool)\n" +
     " *   server/admin_panel.js                                   (browser admin assets)\n" +
     " *   server/worker.core.js                                    (authored core)\n" +
     " * Edit those sources, then rebuild. See server/README.md.\n" +
@@ -48,6 +50,8 @@ for (const name of RULES) {
 }
 out += "/* ── generated Pixel Battle land mask ── */\n";
 out += read(pixelMapPath).replace(/\s*$/, "") + "\n\n";
+out += "/* ── generated GeoGuesser panorama pool ── */\n";
+out += read(geoPoolPath).replace(/\s*$/, "") + "\n\n";
 out += "/* ── authored Pixel Battle browser admin assets ── */\n";
 out += read(adminPanelPath).replace(/\s*$/, "") + "\n\n";
 out += "/* ── authored core (from server/worker.core.js) ── */\n";

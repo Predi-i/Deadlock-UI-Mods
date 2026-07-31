@@ -327,11 +327,33 @@ assert(/\$\.CreatePanel\("Slider"[\s\S]*?onvaluechanged[\s\S]*?yaw = nextYaw/.te
 assert(/revealReadsPending = solo \? 7 : 10;[\s\S]*?setAction\("LOADING RESULT…", false/.test(geo) &&
     /revealReadsPending === 0[\s\S]*?setAction\(currentRound/.test(geo),
     "GeoGuesser must not allow next/finish before every authoritative reveal read completes");
+// The pool is PREBUILT (server/geo_pool.generated.js) rather than swept live, so this no longer
+// looks for a catalog URL. What still matters: the pool is large and two-source, the reveal credits
+// whichever project the location came from, and nobody has quietly gone back to a handful of
+// hard-coded places.
 assert(/geoCredit:\s*function[\s\S]*?\/api\/geocredit/.test(net) &&
     /MG\.Api\.geoCredit\(code, tok/.test(geo) &&
-    /api\.panoramax\.xyz\/api\/search/.test(worker) &&
+    /Mapillary  CC BY SA 4\.0/.test(worker) && /Panoramax  CC BY SA 4\.0/.test(worker) &&
     !/const GEO_LOCATIONS =/.test(worker),
-    "GeoGuesser must use the dynamic Panoramax catalog and surface its producer attribution");
+    "GeoGuesser must credit both panorama sources and keep its locations out of a hard-coded list");
+(function () {
+    // The pool lives in the GENERATED artifact, not the authored core, so read that one here.
+    const built = fs.readFileSync(path.join(ROOT, "server", "worker.js"), "utf8");
+    const packed = /const GEO_POOL_PACKED = "([^"]*)"/.exec(built);
+    assert(packed, "the generated worker must carry the prebuilt GeoGuesser pool");
+    const rows = packed[1].split("\\n").filter(Boolean);
+    assert(rows.length >= 1000,
+        "the GeoGuesser pool must stay large (found " + rows.length + " locations, want 1000+)");
+    // Even coverage is the whole point of the offline build: a pool that is 90% Europe makes five
+    // rounds feel like one country. Every labelled region must be represented.
+    const perRegion = [0, 0, 0, 0, 0, 0];
+    for (const row of rows) {
+        const region = Number(row.split("|")[4]);
+        if (region >= 0 && region < 6) perRegion[region]++;
+    }
+    assert(perRegion.every(function (count) { return count >= 50; }),
+        "every GeoGuesser region needs 50+ pooled locations, got " + perRegion.join("/"));
+})();
 assert(/bl\.text = selectedGameId === 9 \? "PLAY SOLO" : "PLAY VS BOT"/.test(ui) &&
     /function startGeoSolo\(\)[\s\S]*?MG\.Api\.create\(9,[\s\S]*?\{ solo: true \}/.test(ui) &&
     /if \(access\.lobby\.solo\) st\.ready\[1\] = 1/.test(worker) &&
