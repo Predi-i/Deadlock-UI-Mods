@@ -186,7 +186,12 @@
     let reqActive = false;
 
     function rawRequest(path, params, onDone, onError) {
-        reqQueue.push({ kind: "protocol", path: path, params: params, onDone: onDone, onError: onError });
+        reqQueue.push({
+            kind: "protocol", path: path, params: params, onDone: onDone, onError: onError,
+            // The probe owns its own retry policy (PROBE_ATTEMPTS in probeOnce); letting
+            // drainQueue retry it too multiplied the two into a 48s calibration stall.
+            noRetry: path === "/api/probe"
+        });
         drainQueue();
     }
 
@@ -226,8 +231,16 @@
             // instantly in a browser sometimes stalls to a timeout here). One silent
             // re-queue at the front of the line recovers most of those. This is a
             // mitigation, not a proven fix - it can't be verified without in-game runs.
+            // ⚠ The probe opts OUT of this layer (job.noRetry). probeOnce runs its OWN
+            // PROBE_ATTEMPTS loop, so applying both multiplied them: 3 attempts x 2 tries x
+            // REQ_TIMEOUT_MS = 48 SECONDS before failCalib, and every protocol request is
+            // parked in calibWaiters for that whole time (request() won't even enqueue while
+            // uncalibrated). In-game that read as a total freeze with no status change - moves
+            // appearing locally, nothing arriving - then everything erroring at once and the
+            // controllers retrying into another chain. Neither retry layer was wrong on its
+            // own; their product was intended by neither. One owner: probeOnce.
             job.tries = (job.tries || 0) + 1;
-            if (job.tries < 2) {
+            if (!job.noRetry && job.tries < 2) {
                 log(`↻ retry ${job.path || job.url} (attempt ${job.tries + 1})`);
                 reqQueue.unshift(job);
                 $.Schedule(0.05, () => { reqActive = false; drainQueue(); });
@@ -478,7 +491,19 @@
     // use this discriminator to reject an error sentinel without treating host clamping as a bad
     // photograph. Calibration removes display/UI scale and dimension swapping first.
     function isLevelEncodedSize(w, hh) {
-        if (!calibrated) return false;
+        // ⚠ FAIL CLOSED. This used to `return false` while uncalibrated, i.e. "definitely a real
+        // image" - the one answer it cannot possibly justify, since discriminating a 582px-max
+        // level PNG from a host-clamped photograph is exactly what the scale is needed for.
+        // suspectDecode() sets calibrated=false before re-probing, so the window is reachable in
+        // normal play, and in it a d(6,63) busy sentinel or a d(9,x) access rejection from
+        // /api/geoview was accepted as a panorama: GeoGuesser stretched a ~15x582px error PNG
+        // across the 2880x1440 stage and asked the player to guess a location from a smear, with
+        // the camera live and the round timer running.
+        // Answering "sentinel" instead costs only a 1.5s retry on the caller's existing path (the
+        // same one the busy sentinel already uses), and by then calibration has usually finished.
+        // If it never finishes the round is unplayable regardless - no protocol request can be
+        // decoded at all - so this trades a wrong picture for an honest "retrying".
+        if (!calibrated) return true;
         const levels = decode(Number(w), Number(hh));
         return levels.w >= 0 && levels.w <= 63 && levels.h >= 0 && levels.h <= 63;
     }
@@ -704,10 +729,21 @@
             request("/api/join", { code: code, tok: tok }, (w, h) => {
                 log(`join decoded w=${w} h=${h}`);
                 // h carries the host's time control as a small INDEX (0=untimed,1=60,2=180,
-                // 3=300,4=600), not raw seconds - 600 would overflow a level. tcFromIndex maps
-                // it back. join's width is the game id (1..9); tc rides the height.
+                // 3=300,4=600), not raw seconds - 600 would overflow a level. join's width is
+                // the game id (1..9); tc rides the height.
+                // ⚠ The wire value is tcIndex + 1, not tcIndex. The worker sends
+                // `d(lobby.game, tcIndex(lobby.tc || 0) + 1)` (worker.core.js:921/933) - the +1
+                // keeps h clear of 0 - so the index must be recovered with h-1. Reading
+                // tcFromIndex(h) shifted EVERY bank by one step for the joiner: a 60s host became
+                // 180s, 300s became 600s, and the two ends of the table wrapped across the
+                // timed/untimed boundary - an UNTIMED lobby gave the joiner a 60s clock panel,
+                // while a 600s lobby gave them none at all. The banks themselves are
+                // server-authoritative (/api/clocks), so the numbers still ticked correctly once
+                // the first resync landed; what was wrong was whether the clock UI existed and
+                // what it showed until then. `match` already decodes its own height with `h - 1`
+                // (matchTcFromHeight) - this is the same codec, so it must do the same.
                 if (w === 9 && h === 4) { cb({ ok: false, reason: "busy" }); return; } // rate-limited
-                if (w >= 1 && w <= 9) cb({ ok: true, game: w, tc: tcFromIndex(h) });
+                if (w >= 1 && w <= 9) cb({ ok: true, game: w, tc: tcFromIndex(h - 1) });
                 else if (w === 20) cb({ ok: false, reason: "missing" });
                 else if (w === 21) cb({ ok: false, reason: "full" });
                 else {
@@ -892,7 +928,11 @@
             request(route, params, (w, h) => {
                 if (h === 63) { if (err) err(w); return; }
                 const value = h * 63 + w;
-                if (w < 0 || w >= 63 || value < 0 || value >= limit) {
+                // Bound `h` directly too, not just the assembled value: a level is 0..63 by
+                // construction, so h > 62 (63 is the error sentinel) is a stale-scale read. See
+                // geoScore - relying on the assembled bound alone let impossible dims through
+                // whenever the limit happened to sit above 63*63.
+                if (w < 0 || w >= 63 || h < 0 || h > 62 || value < 0 || value >= limit) {
                     suspectDecode(route + " w=" + w + " h=" + h);
                     if (err) err("decode");
                     return;
@@ -915,7 +955,15 @@
             request("/api/geoscore", { code: code, tok: tok, seat: seat }, (w, h) => {
                 if (h === 63) { if (err) err(w); return; }
                 const score = h * 63 + w;
-                if (w < 0 || w >= 63 || score < 0 || score > 4095) {
+                // ⚠ Bound `h` DIRECTLY. A level is 0..63 by construction, so h=64/65 is impossible
+                // and means a stale scale - but the old guard only tested the assembled `score`
+                // against 4095, and h=64,w=0 assembles to 4032 (h=65,w=0 to exactly 4095), both of
+                // which slipped through and were reported as a real total. Worse, 4095 is not even
+                // reachable: five rounds cap at 750 each = 3750, so max h is 59. The 4095 in the
+                // server's clamp is itself misleading - `Math.floor(4095/63)` is 65, a level that
+                // cannot be encoded. Checking the dims is the honest test; suspectDecode then
+                // repairs the scale instead of the player seeing an invented score.
+                if (w < 0 || w >= 63 || h < 0 || h > 62 || score < 0 || score > 3968) {
                     suspectDecode(`geoscore w=${w} h=${h}`);
                     if (err) err("decode");
                     return;

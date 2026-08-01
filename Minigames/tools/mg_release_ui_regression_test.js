@@ -216,6 +216,40 @@ assert(/clearQueue:\s*function[\s\S]{0,2400}onError\("cancelled"\)/.test(net),
     assert(!/kickToMenu\("Opponent left\."\);\s*\r?\n\s*else if \(err\)/.test(net),
         "a kick must not be mutually exclusive with the error callback");
 })();
+// The join reply's height is tcIndex + 1 (the worker's `+ 1` keeps h clear of 0), so the index
+// must be recovered with h - 1. Reading tcFromIndex(h) shifted every bank by one step for the
+// JOINER and wrapped across the timed/untimed boundary in both directions: an untimed lobby handed
+// the joiner a 60s clock panel, a 600s lobby handed them none. `match` already decodes h - 1.
+(() => {
+    const joinSrc = net.match(/join:\s*function[\s\S]*?\r?\n        \},/);
+    assert(joinSrc, "MG.Api.join must be present");
+    assert(/tcFromIndex\(h - 1\)/.test(joinSrc[0]),
+        "MG.Api.join must decode the time control as tcFromIndex(h - 1); the wire value is tcIndex + 1");
+    assert(/tcIndex\(lobby\.tc \|\| 0\) \+ 1/.test(worker),
+        "the worker must still send tcIndex + 1 (the +1 this decode compensates for)");
+})();
+// A level is 0..63 by construction, so the reveal decoders must bound `h` DIRECTLY. Testing only
+// the assembled value let impossible dims through wherever the limit sat above 63*63: h=64,w=0
+// assembled to 4032 and h=65,w=0 to exactly 4095, both under the old `score > 4095` guard, and
+// both were reported to the player as a real total. (4095 is not even reachable - five rounds cap
+// at 750 each = 3750 - and floor(4095/63) is 65, a level that cannot be encoded at all.)
+assert(/geoScore:\s*function[\s\S]{0,1600}h < 0 \|\| h > 62/.test(net),
+    "geoScore must bound h directly, not just the assembled score");
+assert(/geoPointAxis:\s*function[\s\S]{0,1600}h < 0 \|\| h > 62/.test(net),
+    "geoPointAxis must bound h directly, not just the assembled value");
+// The probe owns its own retry loop (PROBE_ATTEMPTS); letting drainQueue retry it too multiplied
+// the two into 3 x 2 x REQ_TIMEOUT_MS = 48s of wedged FIFO before failCalib, with every protocol
+// request parked in calibWaiters for the duration - an in-game freeze with no status change.
+assert(/noRetry: path === "\/api\/probe"/.test(net),
+    "the probe must opt out of drainQueue's retry layer so the two retry policies cannot multiply");
+assert(/if \(!job\.noRetry && job\.tries < 2\)/.test(net),
+    "drainQueue must honour the noRetry flag");
+// isLevelEncodedSize must fail CLOSED: while uncalibrated it cannot tell a 582px-max level PNG
+// from a host-clamped photograph, and answering "real image" fed GeoGuesser a d(6,63) busy
+// sentinel stretched across the 2880x1440 stage as if it were a panorama.
+assert(/function isLevelEncodedSize[\s\S]{0,1200}if \(!calibrated\) return true;/.test(net),
+    "isLevelEncodedSize must fail closed while uncalibrated, not vouch for an unverifiable payload");
+
 assert(/clocks:\s*function[\s\S]*?w === 9 && h === 8/.test(net) &&
     /if \(w === 9\) \{ fail\(/.test(net) &&
     /request\("\/api\/clocks"[\s\S]{0,1000}\}, fail\);/.test(net),

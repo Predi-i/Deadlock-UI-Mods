@@ -286,6 +286,36 @@ dim. Only `/api/probe` stays **literal pixels** — it's the calibration referen
 >    `view`), which for Durak/Poker is the table's only event stream — a permanently frozen game.
 >    `geoState` had the same bug in `else if (err)` form, where kicking and reporting were mutually
 >    exclusive. All now call `err("gone")` unconditionally after attempting the kick.
+>
+> 3. **Bound each DIMENSION, not just the value you assemble from them.** A level is `0..63` by
+>    construction, so `h > 62` (63 is the error sentinel) is already proof of a stale scale.
+>    `geoScore` and `geoPointAxis` tested only the assembled number, which leaves a gap whenever
+>    the limit sits above `63*63`: `h=64,w=0` assembles to 4032 and `h=65,w=0` to exactly 4095 —
+>    both slipped under the old `score > 4095` guard and were shown to the player as a real total.
+>    That 4095 was doubly wrong: five rounds cap at 750 each = **3750**, and `floor(4095/63)` is 65,
+>    a level that cannot be encoded at all.
+> 4. **Decode with the same `±1` the worker encoded with.** `/api/join` sends
+>    `d(game, tcIndex + 1)` — the `+1` keeps `h` clear of 0 — but the client read `tcFromIndex(h)`,
+>    so every bank shifted one step **for the joiner only**: 60s→180s, 300s→600s, and both ends
+>    wrapped across the timed/untimed boundary (an untimed lobby gave the joiner a 60s clock panel;
+>    a 600s lobby gave them none). The banks are server-authoritative, so the numbers self-corrected
+>    on the first `/api/clocks` resync — what was wrong was whether the clock UI existed at all.
+>    `match` always decoded this correctly (`matchTcFromHeight` uses `h - 1`); `join` was the outlier.
+>    Not found by the audit agents — surfaced by tabulating the codec end-to-end.
+>
+> Two coupled calibration rules, same origin:
+> - **One owner per retry policy.** `probeOnce` runs `PROBE_ATTEMPTS`, and `drainQueue` retried the
+>   same job again, so the two multiplied into `3 × 2 × REQ_TIMEOUT_MS` = **48s** of wedged FIFO
+>   before `failCalib`. `request()` won't even enqueue while uncalibrated, so every game poll and
+>   clock resync parked in `calibWaiters` for the whole window: an in-game freeze with no status
+>   change, then everything erroring at once. The probe now sets `noRetry`.
+> - **`isLevelEncodedSize` fails CLOSED.** It returned `false` ("definitely a real image") while
+>   uncalibrated — the one answer it cannot justify, since telling a 582px-max level PNG from a
+>   host-clamped photograph is exactly what the scale is for. `suspectDecode` clears `calibrated`
+>   before re-probing, so the window is reachable in normal play, and in it a `d(6,63)` busy
+>   sentinel from `/api/geoview` was accepted as a panorama: GeoGuesser stretched a ~15×582px error
+>   PNG across the 2880×1440 stage, camera live, timer running. Returning `true` costs a 1.5s retry
+>   on the caller's existing path.
 
 - **Seat token.** Each client mints one random `tok` per online game (`MG.Session.newToken`)
   and sends it up on create/quick/join/move/reset — **never downward**, so it can't leak
