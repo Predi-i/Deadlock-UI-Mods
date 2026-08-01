@@ -971,6 +971,34 @@ async function main() {
     ok(lastGeoScores[0] <= 3750 && lastGeoScores[1] <= 3750,
         "geo: cumulative scores fit the collision-free 12-bit score codec");
 
+    // ── leaving, on both sides of the final round ──
+    // Asymmetric on purpose, and each half was a real bug found by probing the running Hub:
+    //  - MID-match, a departure genuinely ends the game. There is no way to play GeoGuesser
+    //    heads-up with one seat (the reveal is gated on BOTH guesses), so the lobby goes and the
+    //    remaining client reads (9,9) and returns to the menu. That is correct, not a kick.
+    //  - AFTER the match, both players sit on the scoreboard and the last reveal's reads may still
+    //    be in flight. Deleting the lobby there kicked the reader off their own results screen
+    //    with "Opponent left." Nothing in a finished lobby is secret, so it survives one seat
+    //    leaving and keeps answering the done reply.
+    d = await req(geo.hub, `/api/leave.png?code=${geo.code}&tok=GEOJOIN01`);
+    ok(d.w === 1 && d.h === 1, "geo: leaving a finished match is accepted");
+    ok(!!(await geo.hub.storage.get(`l:${geo.code}`)),
+        "geo: a FINISHED lobby survives one seat leaving, so the other can read the scoreboard");
+    d = await req(geo.hub, `/api/geostate.png?code=${geo.code}&tok=GEOHOST01`);
+    ok(d.w === 6 && d.h === 40,
+        "geo: the remaining player still reads 'match over', NOT a (9,9) kick");
+    d = await req(geo.hub, `/api/geostate.png?code=${geo.code}&tok=GEOSTRANGER`);
+    ok(d.w === 9 && d.h === 3,
+        "geo: a finished lobby is still token-gated - only its seats may read it");
+
+    // The mid-match half of the same rule, on a fresh lobby.
+    const geoQuit = await seatedLobby(9, "GEOQHOST1", "GEOQJOIN1");
+    d = await req(geoQuit.hub, `/api/leave.png?code=${geoQuit.code}&tok=GEOQJOIN1`);
+    ok(d.w === 1 && d.h === 1, "geo: leaving mid-match is accepted");
+    d = await req(geoQuit.hub, `/api/geostate.png?code=${geoQuit.code}&tok=GEOQHOST1`);
+    ok(d.w === 9 && d.h === 9,
+        "geo: a MID-match departure ends the lobby - the game cannot continue one-sided");
+
     // Solo is still a real authoritative lobby: the server owns an opaque synthetic second
     // seat, supplies its guess/ready state, and never exposes the hidden target to the client.
     const geoSoloHub = new Hub({ storage: new FakeStorage() });

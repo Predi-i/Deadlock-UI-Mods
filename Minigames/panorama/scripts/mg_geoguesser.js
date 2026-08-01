@@ -548,6 +548,10 @@
             image.style.height = PANO_H + "px";
             image.style.transform = `translate3d(${offset}px, 0px, 0px)`;
             try { image.SetAttributeString("hittest", "false"); } catch (e) {}
+            // loadImage returns the panel at opacity 0 so a 2048px-wide panorama cannot flash at
+            // the net host's top-left corner mid-load; it is parented and positioned now, so show
+            // it. All three copies (centre + both wrap neighbours) come through here.
+            MG.Net.showLoadedImage(image);
             panoImages.push(image);
         }
 

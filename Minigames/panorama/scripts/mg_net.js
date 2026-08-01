@@ -246,12 +246,24 @@
     // Load an ordinary PNG into an intrinsic-size panel. Unlike rawRequestNow,
     // success does NOT clear/delete the image: the caller receives the loaded
     // panel and owns its remaining lifetime.
+    //
+    // ⚠ The panel is created INVISIBLE and stays that way until the caller shows it. The host is
+    // a real on-screen panel at 2% opacity pinned near the modal's top-left (it has to be on
+    // screen or the engine skips the load entirely, §5), and the loading <Image> lays out at the
+    // source's intrinsic size inside it. So between SetImage and the caller re-parenting it, a
+    // full-size frame painted in the top-left corner for a frame or two - the "images flash in the
+    // corner" report (maintainer, 2026-08-01) in BOTH Pixel Battle and GeoGuesser.
+    // `opacity: 0` rather than `visibility: collapse`: a collapsed panel is not laid out, and the
+    // whole mechanism depends on the engine laying this image out to report its dimensions.
+    // Callers that re-parent into the UI must clear it (MG.Net.showLoadedImage does exactly that);
+    // callers that only read dimensions and delete never need to.
     function imageRequestNow(url, attributes, onDone, onError) {
         let img;
         try {
             const h = ensureHost();
             img = $.CreatePanel("Image", h, `mgimg_${reqCounter++}`, attributes || {});
             img.style.position = "0px 0px 0px";
+            img.style.opacity = "0.0";
             log(`→ IMG ${url}`);
             img.SetImage(url);
         } catch (e) {
@@ -487,6 +499,14 @@
     MG.Net = {
         request: request,
         loadImage: loadImage,
+        // Reveal an image that loadImage handed back, AFTER the caller has re-parented and sized
+        // it. loadImage deliberately creates it at opacity 0 (see imageRequestNow) so it cannot
+        // flash at the net host's top-left corner while loading; this is the one call that undoes
+        // that, and forgetting it leaves an invisible image rather than a misplaced one.
+        showLoadedImage: function (img) {
+            if (!img) return;
+            try { img.style.opacity = "1.0"; } catch (e) {}
+        },
         isLevelEncodedSize: isLevelEncodedSize,
         // Authoritative guess resolution. MUST match GEO_GRID_W/H in server/worker.core.js: the
         // client sends a cell index in this space and decodes reveal points against it.

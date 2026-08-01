@@ -179,6 +179,28 @@ const trackW = Number(/\b(?:var|let|const) TRACK_W = (\d+);/.exec(games)[1]);
 // change would drain the bar to the wrong place with nothing failing.
 assert(new RegExp(`\\.mg-tt-horiz \\.mg-tt-track\\s*\\{[^}]*width:\\s*${trackW}px`).test(css),
     "the horizontal track's CSS width must match TRACK_W in createTurnTimer");
+// The horizontal fill must slide by NEGATIVE TRACK_W: the remaining time is anchored at the LEFT
+// edge, so it has to leave through the left. A positive slide drained the wrong way in-game.
+assert(new RegExp(`horizontal[\\s\\S]{0,120}translate3d\\(-\\$\\{TRACK_W\\}px`).test(games),
+    "the horizontal timer must drain right-to-left (negative TRACK_W slide)");
+// Two digits must fit beside the bar. At 26px the engine ellipsised "60" to "6…" while a single
+// digit was fine, so this pins headroom rather than an exact width.
+const numW = Number(/\.mg-tt-horiz \.mg-tt-num\s*\{[^}]*width:\s*(\d+)px/.exec(css)[1]);
+assert(numW >= 34,
+    `the horizontal timer's seconds label is ${numW}px; two 17px bold digits need >= 34px or ` +
+    "Panorama truncates them to an ellipsis");
+
+// Images load INVISIBLE and are revealed only once re-parented. The net host is a real on-screen
+// panel near the modal's top-left, so a loading <Image> otherwise painted there for a frame or
+// two - the "pictures flash in the corner" report, in both Pixel Battle and GeoGuesser.
+const net = fs.readFileSync(path.join(ROOT, "panorama", "scripts", "mg_net.js"), "utf8");
+assert(/img\.style\.opacity = "0\.0";/.test(net) && /showLoadedImage/.test(net),
+    "loadImage must create its <Image> hidden and expose a reveal helper");
+assert(/MG\.Net\.showLoadedImage\(image\);/.test(controller),
+    "GeoGuesser must reveal each panorama copy after parenting it");
+const pixel = fs.readFileSync(path.join(ROOT, "panorama", "scripts", "mg_pixelbattle.js"), "utf8");
+assert(/MG\.Net\.showLoadedImage\(loaded\);/.test(pixel),
+    "Pixel Battle must reveal its viewport image after parenting it");
 
 console.log("GeoGuesser map passed: Natural Earth layers, 2048x1024, " +
     cityCount + " cities, 512x256 guess space");

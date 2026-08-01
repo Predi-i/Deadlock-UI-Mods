@@ -198,7 +198,7 @@
         // outside the 860px stack. TRACK_W must match .mg-tt-horiz .mg-tt-track's width in mg.css,
         // exactly as TRACK_H must match the vertical track's height: it IS the drain distance.
         const horizontal = !!(opts && opts.horizontal);
-        const TRACK_W = 806;                 // px; MUST match .mg-tt-horiz .mg-tt-track width in mg.css
+        const TRACK_W = 792;                 // px; MUST match .mg-tt-horiz .mg-tt-track width in mg.css
         const wrap = $.CreatePanel("Panel", parent, "");
         wrap.AddClass("mg-turn-timer");
         if (horizontal) wrap.AddClass("mg-tt-horiz");
@@ -271,11 +271,13 @@
             // transition-property list (transform, background-color). This also restores a real
             // duration after snapFull zeroed it, so the low/crit recolours during the turn still fade.
             fill.style.transitionDuration = curSecs + "s, 0.3s";
-            // Drain along the bar's own long axis: top→bottom for the column, left→right for the
-            // horizontal variant. Sliding a 806px-wide fill DOWN by 280 would just empty it
-            // vertically and leave the full width showing.
+            // Drain along the bar's own long axis. Vertical: slide DOWN so the column empties from
+            // the top. Horizontal: slide by NEGATIVE width so the fill leaves through the LEFT edge
+            // and the remaining time stays anchored at the left, shrinking right→left like any
+            // depleting progress bar. A POSITIVE slide looked backwards in-game (2026-08-01): the
+            // green block sat against the RIGHT edge and marched away from the left.
             fill.style.transform = horizontal
-                ? `translate3d(${TRACK_W}px, 0px, 0px)`
+                ? `translate3d(-${TRACK_W}px, 0px, 0px)`
                 : `translate3d(0px, ${TRACK_H}px, 0px)`;
         }
 

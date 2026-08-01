@@ -342,6 +342,14 @@ swapped**. So on boot-ish (lazily; see trap below) the client fetches `/api/prob
   ordinary remote images (the update marker and Pixel Battle viewport) therefore share the same
   strict FIFO (`reqQueue`, `reqActive`, `MG.Net.loadImage`); polls, actions and asset loads never
   overlap. A successful ordinary load transfers its already-loaded `<Image>` to the caller.
+  ⚠ **That `<Image>` is created at `opacity: 0` and must be revealed with
+  `MG.Net.showLoadedImage` once the caller has re-parented and sized it.** The net host is a REAL
+  on-screen panel (it has to be, or the engine skips the load) pinned near the modal's top-left,
+  and a loading image lays out there at its intrinsic size — so a full-size frame flashed in the
+  corner for ~0.1s before every Pixel Battle viewport and GeoGuesser panorama (maintainer,
+  2026-08-01). `opacity`, NOT `visibility: collapse`: a collapsed panel is not laid out, and the
+  whole transport depends on the engine laying the image out to report its dimensions. Callers that
+  only read dimensions and delete (the update marker) need no reveal.
 - **A started request always runs to completion** (response or 8s timeout). There is
   deliberately **no abort**: a silent abort once left `calibrating` latched true forever,
   deadlocking all networking.
@@ -1295,6 +1303,23 @@ is built but **not yet in-game verified**.
   including the de-glow specificity fight in trap 22, which only documents anything while real
   panels carry those selectors. They stay wired (`applyCamera` still writes their values); the row
   is just `visible = false`, which collapses it so the timer occupies the space.
+- **Pacing is deliberately "both, then both": nobody is rushed and nobody is skipped.** A round
+  reveals only once **both** seats have guessed, and advances only once **both** press next — so a
+  player who solves it in 15s waits on the reveal screen for one who takes a minute, and the slow
+  player is never cut off mid-thought. The 60s round timer is what bounds that wait (an expiry
+  submits the selected cell, or cell 0), and the reveal's own 10s countdown bounds the second half.
+  A seat cannot change a locked guess (`(9,1)`), cannot advance before the reveal (`(9,2)`) and
+  cannot read the target early (`(1,63)`) — all verified against the running Hub.
+- **Leaving is ASYMMETRIC around the final round, and both halves were real bugs.** Mid-match a
+  departure genuinely ends the lobby: the reveal is gated on both guesses, so a one-sided game
+  cannot continue, and the remaining client reads `(9,9)` and returns to the menu. **After** the
+  fifth round both players sit on the scoreboard with reveal reads possibly still in flight, and
+  deleting the lobby there kicked the reader off their own results with "Opponent left." A finished
+  lobby therefore **survives** one seat leaving — the seat is nulled, `geoLobbyAccess` exempts a
+  completed match from its two-seat check (nothing in it is secret to its own seats any more, and
+  it stays token-gated against strangers), and the remaining client keeps reading the `(6,40)` done
+  reply until it leaves on its own. The 30-minute sweep still collects it. Covered by
+  `mg_server_test.js` on both sides.
 - Panoramax reports exact coordinates and the server keeps them exact — `geoRoundScore` measures
   from the true lat/lon, never from a quantised cell. Only the player's guess is quantised, which
   is why raising its resolution costs nothing on the scoring side.
@@ -1454,10 +1479,15 @@ Two DIFFERENT time widgets, both built in `mg_games.js` and exposed on `MG.Widge
     (GeoGuesser). Its stack is 860 wide and its camera row only 38 tall, so a 280px column does not
     fit beside a 360px viewport and the gutter placement has nowhere to sit. In this mode the bar is
     a plain flow child of the game's own column — no `boardW` shove, no `VNUDGE` (that offset
-    corrects a `flow-children:down` wrap, which this is not) — and the fill drains **left→right** by
-    `TRACK_W`. ⚠ `TRACK_W` (806) must match `.mg-tt-horiz .mg-tt-track`'s CSS width exactly as
-    `TRACK_H` must match the vertical track's height: it IS the drain distance, so a CSS-only edit
-    would empty the bar to the wrong place with nothing failing.
+    corrects a `flow-children:down` wrap, which this is not) — and the fill drains by
+    **negative** `TRACK_W`, i.e. it leaves through the LEFT edge so the remaining time stays
+    anchored left and shrinks right→left like any depleting bar. (A positive slide parks the green
+    block against the RIGHT edge and reads backwards — in-game, 2026-08-01.) ⚠ `TRACK_W` (792) must
+    match `.mg-tt-horiz .mg-tt-track`'s CSS width exactly as `TRACK_H` must match the vertical
+    track's height: it IS the drain distance, so a CSS-only edit empties the bar to the wrong place
+    with nothing failing. The seconds label sits BESIDE the bar at **40px** — at 26 the engine
+    ellipsised a two-digit count to `6…` while one digit was fine, and `text-overflow: clip` only
+    trades the ellipsis for a chopped glyph.
   - **An authoritative action in flight parks the timer.** Durak/Poker set `pendingAct` and call
     `refreshTimer()` before entering the network FIFO, so an expiry callback cannot forfeit a move
     that the server is already processing. A rejection or transport failure clears `pendingAct`

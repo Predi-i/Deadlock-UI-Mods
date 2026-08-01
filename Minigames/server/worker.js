@@ -3254,6 +3254,20 @@ export class Hub {
           await this.storage.put(`l:${code}`, lobby);
           return d(1, 1);
         }
+        // A FINISHED GeoGuesser match must not be torn down under the player still reading it.
+        // Both seats sit on the final screen (and the last reveal's score/place/credit reads may
+        // still be in flight); whoever closes first used to delete the lobby, so the other one's
+        // next poll answered (9,9) = "lobby gone" and the client kicked them to the menu with
+        // "Opponent left." mid-scoreboard. Nothing is secret once the match is over, so keep the
+        // lobby and just empty the seat - the remaining client keeps reading the done reply and
+        // leaves on its own terms. The 30-minute sweep still collects it.
+        if (lobby.game === 9 && lobby.state && lobby.state.round >= GEO_ROUNDS &&
+            liveSeatCount(lobby) >= 1) {
+          lobby.seats[seat] = null;
+          lobby.t = nowSeq();
+          await this.storage.put(`l:${code}`, lobby);
+          return d(1, 1);
+        }
         // Pair game, pre-start pair/host lobby, or the table just dropped to one player → tear it down.
         await this.storage.delete(`l:${code}`);
         await this.clearQueuesFor(lobby, code);
@@ -4362,6 +4376,12 @@ async function geoLobbyAccess(hub, code, tok) {
   if (!lobby || lobby.game !== 9 || !lobby.state) return { ok: false, code: 9 };
   const seat = seatOf(lobby, tok);
   if (seat < 0) return { ok: false, code: 3 };
+  // A FINISHED match is readable by whoever is still here. /api/leave keeps a completed lobby
+  // alive and nulls the departing seat (see the leave route), so without this exemption the
+  // remaining player's next poll would fail the two-seat check and get kicked off the scoreboard -
+  // the same bug from the other direction. Everything a finished lobby can answer is already
+  // public to both seats, so there is nothing to protect here.
+  if (lobby.state.round >= GEO_ROUNDS) return { ok: true, lobby: lobby, seat: seat };
   if (presentCount(lobby) < 2) return { ok: false, code: 1 };
   return { ok: true, lobby: lobby, seat: seat };
 }

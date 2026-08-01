@@ -651,6 +651,9 @@
                     loaded.style.width = "800px";
                     loaded.style.height = "400px";
                     loaded.style.visibility = "visible";
+                    // loadImage hands the panel back at opacity 0 so it cannot flash at the net
+                    // host's corner while loading; reveal it now that it is parented and sized.
+                    MG.Net.showLoadedImage(loaded);
                     try { loaded.SetAttributeString("hittest", "false"); } catch (e4) {}
                     const old = crispImage;
                     crispImage = loaded;

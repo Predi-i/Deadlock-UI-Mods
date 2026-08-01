@@ -1097,10 +1097,11 @@
    GeoGuesser's stack is 860 wide and its camera row only 38 tall, so the 280px column the other
    games use physically does not fit beside a 360px viewport. This lays the same widget out as a
    wide row in the slot the LOOK/TILT sliders used to occupy.
-   ⚠ .mg-tt-horiz .mg-tt-track's WIDTH is the drain distance and MUST match TRACK_W (806) in
+   ⚠ .mg-tt-horiz .mg-tt-track's WIDTH is the drain distance and MUST match TRACK_W (792) in
    createTurnTimer, exactly as the vertical track's height must match TRACK_H. The fill slides
-   left→right by its own width; overriding the width alone without the JS constant would leave the
-   bar draining to the wrong place.
+   left by its own width, so the remaining time stays anchored at the LEFT edge and shrinks
+   right→left; overriding the width alone without the JS constant would leave the bar draining to
+   the wrong place.
    Still NO @keyframes (ARCHITECTURE trap 17) - the motion is the same transition on a transform. */
 .mg-turn-timer.mg-tt-horiz {
     width: 860px;
@@ -1116,19 +1117,24 @@
     border: 1px solid #293847;
 }
 .mg-turn-timer.mg-tt-horiz .mg-tt-track {
-    width: 806px;                        /* MUST match TRACK_W in createTurnTimer */
+    width: 792px;                        /* MUST match TRACK_W in createTurnTimer */
     height: 10px;
     horizontal-align: left;
     vertical-align: center;
 }
 .mg-turn-timer.mg-tt-horiz .mg-tt-fill {
-    width: 806px;                        /* fills the track; slides RIGHT by its own width to empty */
+    width: 792px;                        /* fills the track; slides LEFT by its own width to empty */
     height: 10px;
 }
 /* Beside the bar rather than under it: a row has no room below, and the fixed width keeps the
-   track from reflowing as the digits change (60 -> 9 is a two-glyph swing). */
+   track from reflowing as the digits change.
+   ⚠ 40px, not 26. At 26 a TWO-digit count rendered as a truncated "6…" while a single digit was
+   fine (maintainer, 2026-08-01): 17px bold radiance needs low-20s px for two glyphs, and Panorama
+   ellipsises rather than overflowing. `text-overflow: clip` is NOT the fix - that just trades the
+   ellipsis for a chopped glyph. The track gives up the 14px instead, so the row still totals 840
+   inside its 849px content box. */
 .mg-turn-timer.mg-tt-horiz .mg-tt-num {
-    width: 26px;
+    width: 40px;
     height: 22px;
     margin-top: 0px;
     margin-left: 8px;
