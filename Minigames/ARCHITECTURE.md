@@ -417,6 +417,51 @@ swapped**. So on boot-ish (lazily; see trap below) the client fetches `/api/prob
   larger than the biggest response (the probe) — a culled/clamped panel makes the engine
   skip the image load or mis-read dims. It renders at 2% opacity so it's invisible.
 
+### 5.2 Request statistics (`/admin/stats`)
+
+The relay counts its own traffic. The page lives at `/admin/stats`, behind the same signed
+GitHub session that gates the Pixel Battle admin, and the two link to each other in the header.
+
+**Where the counting happens is the whole design.** Counting inside `Hub` would put a SQLite
+write on every `/api/poll` — the hottest route in the mod, about one per player per second. So
+`node_server.js` accumulates counters **in memory** and flushes batched deltas every 30s through
+the same serialized `hubTail` that lobby writes use (`serialHubTask`), keeping the persistence
+ordering guarantee while the hot path stays read-only. `close()` flushes the final partial window,
+so a deploy restart doesn't drop up to 30s of counters.
+
+Per hour: totals, per-route counts, HTTP status counts, sentinel counts, summed + peak latency,
+response bytes, peak unique IPs. 48 hourly buckets, rolled into daily totals kept 90 days.
+
+- **No IP is ever persisted.** A bounded per-hour `Set` is kept only to size it; only the COUNT
+  is stored. That separates "ten players" from "one script in a loop" without putting personal
+  data in SQLite or the daily backups.
+- **The key space is bounded by construction.** `statsRouteKey` folds any unrecognised path into
+  `/api/*`, `/admin/*` or `other`, so a scanner hitting random paths can't mint storage keys.
+- **Collection can never fail a request.** `stats.record` runs in a `finally` on every response
+  and swallows everything — an exception there would turn a working route into a client error.
+
+⚠ **TRAP — `(w, h)` alone CANNOT identify a sentinel, and classifying on the pair alone
+manufactures errors out of normal play.** The downlink is 12 bits, so the protocol reuses the
+same small-integer space for real data. Three collisions are reachable in ordinary play:
+
+| Route | Encoder | Collides with |
+|---|---|---|
+| `/api/join` | `d(game, tcIndex+1)` | GeoGuesser is game 9 → a **successful** join is `(9,1)` |
+| `/api/poll` | `d(from, to)` RAW | a legal move 9→1 is `(9,1)` |
+| `/api/pdraw` | `d(card+2, 1)` | hole card 18 is `(20,1)` = "lobby missing" |
+
+So `statsSentinelKey(route, w, h)` classifies **per route**, in four modes: `FULL` (width 9 is
+unreachable as data), `GAME` (width *is* a game id, so only `h>=6` plus the 20/21/22 formation
+widths are unambiguous — a game-9 lobby is untimed and never sends `h>2`), `H63` (only `h=63` is
+reserved), and `RAW` (only `(1,1)` and `(9,9)` are safe, both because a real move has
+`from != to`). The invariant is that **no real data reply is ever counted as an error**, and
+`mg_vps_server_test.js` asserts each collision above directly. Found by re-reading the encoders
+after writing the classifier, not by any test — a route-blind version passed the whole suite.
+
+This table is the diagnostic worth watching: it makes the §5.1 failure modes visible per hour
+instead of weeks later. Rising `(9,7)` = storage errors, `(9,4)` = the limiter is biting real
+players, `(9,3)` = seat-token mismatches.
+
 ---
 
 ## 6. Panorama gotchas (⚠ TRAPS — several cost hours)

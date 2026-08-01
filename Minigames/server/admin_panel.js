@@ -19,7 +19,7 @@ const ADMIN_HTML = `<!doctype html>
       <p class="eyebrow">DEADLOCK MINIGAMES</p>
       <h1>Pixel Battle Admin</h1>
     </div>
-    <div class="identity"><span id="adminLogin">Authenticating…</span><a href="/admin/logout">Sign out</a></div>
+    <div class="identity"><span id="adminLogin">Authenticating…</span><a href="/admin/stats">Server stats</a><a href="/admin/logout">Sign out</a></div>
   </header>
   <main>
     <section class="panel canvas-panel">
@@ -363,13 +363,299 @@ const ADMIN_JS = `"use strict";
   Promise.all([loadState(),loadActions(true)]).catch(function(e){notify(e.message,true);});
 })();`;
 
+/*
+ * Server statistics page. Same fail-closed GitHub session gate as the Pixel Battle admin
+ * (worker.core.js authorizes before any /admin route reaches these assets), and the same
+ * strict CSP: no inline script, no third-party origin, so the chart is hand-drawn on a
+ * <canvas> rather than pulled from a CDN.
+ */
+const STATS_HTML = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Server Stats</title>
+  <link rel="stylesheet" href="/admin/style.css">
+</head>
+<body>
+  <header>
+    <div>
+      <p class="eyebrow">DEADLOCK MINIGAMES</p>
+      <h1>Server Stats</h1>
+    </div>
+    <div class="identity"><span id="statsRange">Loading…</span><a href="/admin">Pixel Battle</a><a href="/admin/logout">Sign out</a></div>
+  </header>
+  <main>
+    <section class="panel">
+      <div class="section-head">
+        <div><h2>Overview</h2><p id="statsMeta">Reading counters…</p></div>
+        <div class="toolbar">
+          <label class="auto-label"><input id="autoRefresh" type="checkbox" checked> Auto</label>
+          <button id="reloadStats" class="secondary" type="button">Reload</button>
+        </div>
+      </div>
+      <div id="cards" class="cards"></div>
+    </section>
+
+    <section class="panel">
+      <div class="section-head">
+        <div><h2>Requests per hour</h2><p>Last 48 hours. Hover a bar for the exact hour.</p></div>
+        <div id="chartLegend" class="chart-legend"></div>
+      </div>
+      <div class="chart-wrap"><canvas id="chart" width="1320" height="260"></canvas></div>
+      <p id="chartHover" class="hint">&nbsp;</p>
+    </section>
+
+    <section class="panel">
+      <div class="section-head">
+        <div><h2>Routes</h2><p>Busiest first, over the retained window.</p></div>
+        <div class="toolbar">
+          <button id="scopeDay" class="secondary active" type="button">Last 24h</button>
+          <button id="scopeAll" class="secondary" type="button">Full window</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Route</th><th>Requests</th><th>Share</th></tr></thead>
+          <tbody id="routeRows"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="section-head">
+        <div><h2>Protocol replies</h2><p>Dimension sentinels, classified per route so real game data is never counted as an error. Rising error rows are the useful signal.</p></div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Reply</th><th>Meaning</th><th>Count</th></tr></thead>
+          <tbody id="sentinelRows"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="section-head">
+        <div><h2>Daily</h2><p>Newest first. Peak unique is the highest single hour that day.</p></div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Day</th><th>Requests</th><th>Avg ms</th><th>Traffic</th><th>Peak unique/h</th></tr></thead>
+          <tbody id="dayRows"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script src="/admin/stats.js" defer></script>
+</body>
+</html>`;
+
+const STATS_CSS = `.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(178px,1fr));gap:1px;background:#232c38}
+.card{padding:17px 19px;background:#111720}.card-label{color:#8290a1;font-size:10px;font-weight:800;letter-spacing:.11em;text-transform:uppercase}
+.card-value{margin-top:7px;font:700 25px/1.1 ui-monospace,SFMono-Regular,Consolas,monospace;color:#f2f6fa}
+.card-note{margin-top:5px;color:#7f8c9c;font-size:11px}.card.warn .card-value{color:#ffb27a}.card.bad .card-value{color:#ff8f98}
+.chart-wrap{padding:18px 22px 6px;overflow-x:auto}#chart{display:block;width:100%;min-width:760px;height:260px}
+.chart-legend{display:flex;flex-wrap:wrap;gap:13px;color:#8996a6;font-size:11px}
+.chart-legend span{display:flex;align-items:center;gap:6px}.chart-legend i{width:10px;height:10px;border-radius:3px;display:inline-block}
+.auto-label{display:flex;align-items:center;gap:7px;color:#8996a6;font-size:12px}.auto-label input{height:auto;width:auto;padding:0}
+button.active{background:#244b43;border-color:#5cc6aa;color:#b8ffeb}
+td.num,th.num{text-align:right;font-family:ui-monospace,SFMono-Regular,Consolas,monospace}
+.bar-cell{min-width:150px}.bar{height:7px;border-radius:4px;background:#2f8f78}
+tr.err td:first-child{color:#ff9aa2}`;
+
+const STATS_JS = `"use strict";
+(function(){
+  var data=null,scope="day",timer=null,hoverIndex=-1;
+  var canvas=document.getElementById("chart"),ctx=canvas.getContext("2d");
+  var toast=document.getElementById("toast");
+  // Protocol sentinels, decoded. Kept in step with worker.core.js statsSentinelKey().
+  var MEANING={
+    "1,1":"OK / nothing new","9,1":"Not your turn / gone","9,2":"Illegal move","9,3":"Bad or foreign token",
+    "9,4":"Throttled, retry","9,5":"No free lobby code","9,6":"Unsupported game","9,7":"Server error",
+    "9,8":"Unknown route / untimed","9,9":"Lobby gone","20,1":"Lobby missing","21,1":"Lobby full",
+    "22,1":"Already started","1,63":"Bad account id","2,63":"Bad pixel batch","3,63":"No credit index",
+    "4,63":"Upload rate limited","5,63":"Banned","6,63":"No panorama yet"
+  };
+  var ERRORS={"9,2":1,"9,3":1,"9,4":1,"9,5":1,"9,6":1,"9,7":1,"4,63":1,"5,63":1};
+  function notify(message,bad){toast.textContent=message;toast.style.borderColor=bad?"#8d4249":"#3a4a5d";toast.classList.add("show");setTimeout(function(){toast.classList.remove("show");},2600);}
+  function num(value){return (value||0).toLocaleString("en-US");}
+  function bytes(value){
+    var units=["B","KiB","MiB","GiB","TiB"],i=0,n=value||0;
+    while(n>=1024&&i<units.length-1){n/=1024;i++;}
+    return (i?n.toFixed(1):String(Math.round(n)))+" "+units[i];
+  }
+  function sumMaps(buckets,field){
+    var out={};
+    buckets.forEach(function(b){var m=b[field]||{};Object.keys(m).forEach(function(k){out[k]=(out[k]||0)+m[k];});});
+    return out;
+  }
+  function totals(buckets){
+    var t={total:0,msSum:0,bytes:0,msMax:0,ipPeak:0};
+    buckets.forEach(function(b){
+      t.total+=b.total||0;t.msSum+=b.msSum||0;t.bytes+=b.bytes||0;
+      t.msMax=Math.max(t.msMax,b.msMax||0);t.ipPeak=Math.max(t.ipPeak,b.ipPeak||0);
+    });
+    return t;
+  }
+  function scoped(){return scope==="day"?data.hours.slice(-24):data.hours;}
+  function card(label,value,note,cls){
+    return "<div class=\\"card"+(cls?" "+cls:"")+"\\"><div class=\\"card-label\\">"+label+
+      "</div><div class=\\"card-value\\">"+value+"</div><div class=\\"card-note\\">"+(note||"&nbsp;")+"</div></div>";
+  }
+  function renderCards(){
+    var day=totals(data.hours.slice(-24)),all=totals(data.hours),last=data.hours[data.hours.length-1];
+    var statuses=sumMaps(data.hours.slice(-24),"statuses"),bad=0,ok=0;
+    Object.keys(statuses).forEach(function(code){if(Number(code)>=400)bad+=statuses[code];else ok+=statuses[code];});
+    var sent=sumMaps(data.hours.slice(-24),"sentinels"),protoErr=0;
+    Object.keys(sent).forEach(function(k){if(ERRORS[k])protoErr+=sent[k];});
+    var avg=day.total?Math.round(day.msSum/day.total):0;
+    var errPct=(ok+bad)?(bad/(ok+bad)*100):0;
+    document.getElementById("cards").innerHTML=
+      card("Requests / 24h",num(day.total),num(all.total)+" in window")+
+      card("This hour",num(last?last.total:0),"resets hourly")+
+      card("Peak unique IPs / h",num(day.ipPeak),"highest hour today")+
+      card("Avg latency",avg+" ms","peak "+num(day.msMax)+" ms",avg>250?"warn":"")+
+      card("Traffic / 24h",bytes(day.bytes),bytes(all.bytes)+" in window")+
+      card("HTTP errors",num(bad),errPct.toFixed(2)+"% of 24h",bad?(errPct>2?"bad":"warn"):"")+
+      card("Protocol errors",num(protoErr),"sentinel replies, 24h",protoErr?"warn":"")+
+      card("Live lobbies",num(data.live.lobbies),num(data.live.seated)+" seated players");
+    document.getElementById("statsMeta").textContent=
+      "Hourly buckets retained: "+data.hoursKept+" \\u00b7 generated "+new Date(data.now).toLocaleString();
+    document.getElementById("statsRange").textContent=num(day.total)+" req / 24h";
+  }
+  function drawChart(){
+    var buckets=data.hours,w=canvas.width,h=canvas.height,padL=54,padR=12,padT=14,padB=30;
+    var plotW=w-padL-padR,plotH=h-padT-padB;
+    ctx.clearRect(0,0,w,h);
+    var peak=1;buckets.forEach(function(b){peak=Math.max(peak,b.total||0);});
+    var ticks=4;
+    ctx.font="11px ui-monospace,Consolas,monospace";ctx.textBaseline="middle";
+    for(var t=0;t<=ticks;t++){
+      var y=padT+plotH-plotH*t/ticks,label=Math.round(peak*t/ticks);
+      ctx.strokeStyle="#1e2733";ctx.beginPath();ctx.moveTo(padL,y+0.5);ctx.lineTo(w-padR,y+0.5);ctx.stroke();
+      ctx.fillStyle="#6f7d8d";ctx.textAlign="right";ctx.fillText(String(label),padL-9,y);
+    }
+    var slot=plotW/buckets.length,barW=Math.max(2,slot-3);
+    buckets.forEach(function(b,i){
+      var x=padL+slot*i+(slot-barW)/2,total=b.total||0;
+      var errs=0,sent=b.sentinels||{};
+      Object.keys(sent).forEach(function(k){if(ERRORS[k])errs+=sent[k];});
+      var httpErr=0,st=b.statuses||{};
+      Object.keys(st).forEach(function(code){if(Number(code)>=400)httpErr+=st[code];});
+      var barH=plotH*total/peak,okH=plotH*Math.max(0,total-errs-httpErr)/peak;
+      if(total){
+        ctx.fillStyle=i===hoverIndex?"#8ce0c6":"#2f8f78";
+        ctx.fillRect(x,padT+plotH-okH,barW,okH);
+        if(errs){ctx.fillStyle="#d9a13c";ctx.fillRect(x,padT+plotH-barH+plotH*httpErr/peak,barW,plotH*errs/peak);}
+        if(httpErr){ctx.fillStyle="#d1555f";ctx.fillRect(x,padT+plotH-barH,barW,plotH*httpErr/peak);}
+      }
+      if(i%6===0){
+        ctx.fillStyle="#6f7d8d";ctx.textAlign="center";
+        ctx.fillText(b.key.substring(11)+"h",x+barW/2,h-padB/2);
+      }
+    });
+    document.getElementById("chartLegend").innerHTML=
+      "<span><i style=\\"background:#2f8f78\\"></i>OK</span>"+
+      "<span><i style=\\"background:#d9a13c\\"></i>Protocol error</span>"+
+      "<span><i style=\\"background:#d1555f\\"></i>HTTP 4xx/5xx</span>";
+  }
+  canvas.addEventListener("mousemove",function(e){
+    if(!data)return;
+    var r=canvas.getBoundingClientRect(),padL=54,padR=12;
+    var scaleX=canvas.width/r.width,x=(e.clientX-r.left)*scaleX;
+    var plotW=canvas.width-padL-padR,slot=plotW/data.hours.length;
+    var index=Math.floor((x-padL)/slot);
+    if(index<0||index>=data.hours.length){hoverIndex=-1;document.getElementById("chartHover").innerHTML="&nbsp;";drawChart();return;}
+    hoverIndex=index;
+    var b=data.hours[index],avg=b.total?Math.round(b.msSum/b.total):0;
+    document.getElementById("chartHover").textContent=
+      b.key.replace("T"," ")+":00 \\u2014 "+num(b.total)+" requests \\u00b7 "+avg+" ms avg \\u00b7 "+
+      bytes(b.bytes)+" \\u00b7 "+num(b.ipPeak)+" unique IPs";
+    drawChart();
+  });
+  canvas.addEventListener("mouseleave",function(){hoverIndex=-1;document.getElementById("chartHover").innerHTML="&nbsp;";drawChart();});
+  function renderRoutes(){
+    var buckets=scoped(),routes=sumMaps(buckets,"routes"),rows=Object.keys(routes).map(function(k){return{route:k,count:routes[k]};});
+    rows.sort(function(a,b){return b.count-a.count;});
+    var total=rows.reduce(function(sum,r){return sum+r.count;},0),host=document.getElementById("routeRows");
+    host.textContent="";
+    if(!rows.length){host.innerHTML="<tr><td colspan=\\"3\\">No requests recorded yet.</td></tr>";return;}
+    rows.forEach(function(r){
+      var pct=total?r.count/total*100:0,tr=document.createElement("tr");
+      tr.innerHTML="<td>"+r.route+"</td><td class=\\"num\\">"+num(r.count)+
+        "</td><td class=\\"bar-cell\\"><div class=\\"bar\\" style=\\"width:"+Math.max(1,pct)+"%\\"></div>"+
+        pct.toFixed(1)+"%</td>";
+      host.appendChild(tr);
+    });
+  }
+  function renderSentinels(){
+    var sent=sumMaps(scoped(),"sentinels"),rows=Object.keys(sent).map(function(k){return{key:k,count:sent[k]};});
+    rows.sort(function(a,b){return b.count-a.count;});
+    var host=document.getElementById("sentinelRows");host.textContent="";
+    if(!rows.length){host.innerHTML="<tr><td colspan=\\"3\\">No dimension replies recorded yet.</td></tr>";return;}
+    rows.forEach(function(r){
+      var tr=document.createElement("tr");
+      if(ERRORS[r.key])tr.className="err";
+      tr.innerHTML="<td>("+r.key+")</td><td>"+(MEANING[r.key]||"unknown")+"</td><td class=\\"num\\">"+num(r.count)+"</td>";
+      host.appendChild(tr);
+    });
+  }
+  function renderDays(){
+    var host=document.getElementById("dayRows");host.textContent="";
+    var days=data.days.slice().reverse();
+    if(!days.length){host.innerHTML="<tr><td colspan=\\"5\\">No daily rollups yet.</td></tr>";return;}
+    days.forEach(function(d){
+      var avg=d.total?Math.round(d.msSum/d.total):0,tr=document.createElement("tr");
+      tr.innerHTML="<td>"+d.key+"</td><td class=\\"num\\">"+num(d.total)+"</td><td class=\\"num\\">"+avg+
+        "</td><td class=\\"num\\">"+bytes(d.bytes)+"</td><td class=\\"num\\">"+num(d.ipPeak)+"</td>";
+      host.appendChild(tr);
+    });
+  }
+  function renderAll(){renderCards();drawChart();renderRoutes();renderSentinels();renderDays();}
+  async function load(){
+    try{
+      var response=await fetch("/admin/api/stats",{headers:{"X-MG-Admin":"1"}});
+      if(!response.ok){
+        var detail=null;try{detail=await response.json();}catch(e){}
+        throw new Error(detail&&detail.error?detail.error:"Request failed ("+response.status+")");
+      }
+      data=await response.json();renderAll();
+    }catch(e){notify(e.message,true);}
+  }
+  function setScope(next){
+    scope=next;
+    document.getElementById("scopeDay").classList.toggle("active",next==="day");
+    document.getElementById("scopeAll").classList.toggle("active",next==="all");
+    if(data){renderRoutes();renderSentinels();}
+  }
+  function setAuto(on){
+    if(timer){clearInterval(timer);timer=null;}
+    if(on)timer=setInterval(load,30000);
+  }
+  document.getElementById("reloadStats").addEventListener("click",load);
+  document.getElementById("scopeDay").addEventListener("click",function(){setScope("day");});
+  document.getElementById("scopeAll").addEventListener("click",function(){setScope("all");});
+  document.getElementById("autoRefresh").addEventListener("change",function(e){setAuto(e.target.checked);});
+  setAuto(true);
+  load();
+})();`;
+
 function adminAssetResponse(path) {
   let body = "", type = "";
   if (path === "/admin" || path === "/admin/") {
     body = ADMIN_HTML;
     type = "text/html; charset=utf-8";
+  } else if (path === "/admin/stats" || path === "/admin/stats/") {
+    body = STATS_HTML;
+    type = "text/html; charset=utf-8";
+  } else if (path === "/admin/stats.js") {
+    body = STATS_JS;
+    type = "text/javascript; charset=utf-8";
   } else if (path === "/admin/style.css") {
-    body = ADMIN_CSS;
+    // One stylesheet for both pages: the stats page reuses the header, panel, table and
+    // toast rules verbatim and only adds cards/chart on top.
+    body = ADMIN_CSS + "\n" + STATS_CSS;
     type = "text/css; charset=utf-8";
   } else if (path === "/admin/app.js") {
     body = ADMIN_JS;

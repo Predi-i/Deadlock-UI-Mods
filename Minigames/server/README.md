@@ -167,6 +167,36 @@ curl -s -o /dev/null -w '%{http_code}\n' -k https://127.0.0.1/admin   # 302 = co
 
 Never commit or paste these secrets into source files.
 
+## Request statistics
+
+The relay counts its own traffic and exposes it at `https://178.236.246.13/admin/stats`, behind the
+same GitHub session gate as the Pixel Battle admin. The two pages link to each other in the header.
+
+Where the counting happens is deliberate. Doing it inside `Hub` would add a SQLite write to every
+`/api/poll` — the hottest route in the mod, roughly one per player per second. Instead
+`node_server.js` accumulates counters in memory and flushes batched deltas every 30 seconds through
+the same serialized Hub tail that lobby writes use, so persistence keeps its ordering guarantee
+while the hot path stays read-only. `close()` flushes the final partial window, so a deploy restart
+does not drop up to 30 seconds of counters.
+
+Recorded per hour: total requests, per-route counts, HTTP status counts, protocol sentinel counts,
+summed and peak latency, response bytes, and the peak number of unique client IPs. Hourly buckets
+are kept for 48 hours and rolled into daily totals kept for 90 days.
+
+- **No IP address is ever persisted.** The adapter keeps a bounded per-hour `Set` of addresses only
+  to size it and stores the count alone, which separates "ten players" from "one script in a loop"
+  without putting personal data in SQLite or the daily backups.
+- **The key space is bounded by construction.** `statsRouteKey` folds any unrecognised path into
+  `/api/*`, `/admin/*` or `other`, and `statsSentinelKey` names only the known protocol sentinels,
+  so a scanner hitting random paths cannot grow storage.
+- **Collection can never fail a request.** `stats.record` runs in a `finally` block on every
+  response and swallows everything; an exception there would turn a working route into an error for
+  the client.
+
+The sentinel table is the diagnostic worth watching, because it makes the failure modes in
+`ARCHITECTURE.md` §5.1 visible per hour instead of weeks later: rising `(9,7)` means storage errors,
+`(9,4)` means the rate limiter is biting real players, `(9,3)` means seat-token mismatches.
+
 ## Security and capacity notes
 
 - UFW exposes only SSH, HTTP and HTTPS.

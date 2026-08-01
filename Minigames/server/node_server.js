@@ -4,10 +4,115 @@ import { isIP } from "node:net";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { deflateSync } from "node:zlib";
-import worker, { Hub } from "./worker.js";
+import worker, { Hub, statsRouteKey, statsSentinelKey } from "./worker.js";
 import { SqliteStorage } from "./node_storage.js";
 
 const DEFAULT_BODY_LIMIT = 512 * 1024;
+const STATS_FLUSH_MS = 30000;
+// Bound on distinct client IPs tracked per hour. Only the SIZE of this set is ever
+// persisted - no address reaches SQLite or the daily backups. The cap means a spoofed-IP
+// flood costs a fixed amount of memory and merely under-reports the unique count.
+const STATS_MAX_IPS = 20000;
+
+/**
+ * In-memory request counters, flushed to storage as batched deltas.
+ *
+ * Counting inside the Hub would add a SQLite write to every /api/poll - one per player per
+ * second. Instead each response updates plain objects here, and a timer hands the whole
+ * batch to Hub.recordStats through the same serialized tail that lobby writes use.
+ *
+ * record() is called from the request handler's finally block, so it MUST NOT throw: an
+ * exception there would surface to the client as a failed request on a route that actually
+ * worked. Every field is defensive for that reason.
+ */
+class StatsCollector {
+  constructor() {
+    this.hour = "";
+    this.batch = null;
+    this.ips = null;
+    // Batches closed by an hour rollover or returned by a failed flush. Drained ahead of
+    // the live batch. A queue, not a single slot: two rollovers before a successful flush
+    // (or a rollover plus a write failure) must not discard the earlier hour's counters.
+    this.pending = [];
+    this.resetBatch(new Date().toISOString().substring(0, 13));
+  }
+
+  resetBatch(hour) {
+    this.hour = hour;
+    this.batch = {
+      hour: hour, total: 0, routes: {}, statuses: {}, sentinels: {},
+      msSum: 0, msMax: 0, bytes: 0, ipCount: 0
+    };
+    this.ips = new Set();
+  }
+
+  record(entry) {
+    try {
+      const hour = new Date().toISOString().substring(0, 13);
+      // Crossing an hour boundary starts a fresh unique-IP set, so the count is per hour
+      // rather than cumulative. Any unflushed counters are carried into the new batch's
+      // hour key by the flush that follows; totals are deltas, so nothing is lost.
+      if (hour !== this.hour) {
+        const carried = this.batch;
+        this.resetBatch(hour);
+        if (carried.total) this.pending.push(carried);
+      }
+      const batch = this.batch;
+      batch.total++;
+      const route = statsRouteKey(entry.pathname);
+      batch.routes[route] = (batch.routes[route] || 0) + 1;
+      const status = String(entry.status || 0);
+      batch.statuses[status] = (batch.statuses[status] || 0) + 1;
+      batch.msSum += entry.ms;
+      if (entry.ms > batch.msMax) batch.msMax = entry.ms;
+      batch.bytes += entry.bytes;
+      if (entry.sentinel) {
+        batch.sentinels[entry.sentinel] = (batch.sentinels[entry.sentinel] || 0) + 1;
+      }
+      if (entry.ip && this.ips.size < STATS_MAX_IPS) this.ips.add(entry.ip);
+      batch.ipCount = this.ips.size;
+    } catch (error) {
+      // Statistics are never worth failing a request over.
+    }
+  }
+
+  // Hand over everything accumulated so far and start clean. Counters are deltas, so a
+  // failed write can be re-merged by the caller without double-counting anything else.
+  drain() {
+    const out = this.pending;
+    this.pending = [];
+    if (this.batch.total) {
+      out.push(this.batch);
+      this.resetBatchPreservingIps();
+    }
+    return out;
+  }
+
+  // Return unwritten batches to the front of the queue, preserving chronological order.
+  requeue(batches) {
+    if (batches.length) this.pending = batches.concat(this.pending);
+  }
+
+  // A flush mid-hour must not forget which IPs were already seen, or the next flush would
+  // report a smaller unique count and the stored max would stay stale.
+  resetBatchPreservingIps() {
+    const ips = this.ips;
+    this.batch = {
+      hour: this.hour, total: 0, routes: {}, statuses: {}, sentinels: {},
+      msSum: 0, msMax: 0, bytes: 0, ipCount: ips.size
+    };
+    this.ips = ips;
+  }
+}
+
+// Read the PNG dimensions back out of a protocol reply so the sentinel can be named.
+// Only the IHDR fields are touched, and only for small image responses.
+function sentinelFromBody(route, contentType, body) {
+  if (!body || body.length < 24 || body.length > 4096) return "";
+  if (String(contentType || "").indexOf("image/png") < 0) return "";
+  const width = body.readUInt32BE(16), height = body.readUInt32BE(20);
+  return statsSentinelKey(route, width, height);
+}
 
 // The production VPS has working IPv4 egress but no routed IPv6. Node's fetch can otherwise
 // select upload.wikimedia.org's AAAA record first and fail GeoGuesser panorama proxying even
@@ -81,6 +186,7 @@ export function createMinigamesServer(options) {
   // MG_MAPILLARY_TOKEN from it; without one, its Mapillary rounds cannot resolve an image URL and
   // the game falls back to the pool's Panoramax rows.
   const hub = new Hub({ storage: storage }, process.env);
+  const stats = new StatsCollector();
 
   // A Durable Object processes one request at a time. Preserve that property here so
   // read-modify-write lobby updates and SQLite transactions cannot interleave.
@@ -94,6 +200,31 @@ export function createMinigamesServer(options) {
     return current;
   }
 
+  // Persisting counters is a read-modify-write on the same storage the Hub owns, so it must
+  // join the same queue rather than race it. On failure the batch is merged back so the next
+  // flush retries it: counters are deltas, so a retry cannot double-count.
+  function serialHubTask(task) {
+    const current = hubTail.then(task, task);
+    hubTail = current.catch(() => {});
+    return current;
+  }
+
+  async function flushStats() {
+    const batches = stats.drain();
+    for (let i = 0; i < batches.length; i++) {
+      const batch = batches[i];
+      try {
+        await serialHubTask(function () { return hub.recordStats(batch); });
+      } catch (error) {
+        // Keep this batch AND every later one, so a transient write failure cannot
+        // reorder or drop counters.
+        console.error("stats flush failed:", error);
+        stats.requeue(batches.slice(i));
+        return;
+      }
+    }
+  }
+
   const workerEnv = Object.assign({}, process.env, {
     HUB: {
       idFromName: function () { return "hub"; },
@@ -104,10 +235,14 @@ export function createMinigamesServer(options) {
   });
 
   const server = createServer(async function (incoming, outgoing) {
+    const startedAt = Date.now();
+    let statsPath = incoming.url || "/";
+    let statsStatus = 500, statsBytes = 0, statsSentinel = "", statsIp = "";
     try {
       const host = incoming.headers.host || "127.0.0.1";
       const origin = publicOrigin || `http://${host}`;
       const url = new URL(incoming.url || "/", origin);
+      statsPath = url.pathname;
       const headers = new Headers();
       for (const name of Object.keys(incoming.headers)) {
         const value = incoming.headers[name];
@@ -121,7 +256,9 @@ export function createMinigamesServer(options) {
       // Never trust a caller-supplied Cloudflare header. Production Nginx reaches this
       // loopback-only service and overwrites X-Real-IP with its socket's remote address.
       headers.delete("CF-Connecting-IP");
-      headers.set("CF-Connecting-IP", trustedClientIp(incoming));
+      const clientIp = trustedClientIp(incoming);
+      statsIp = clientIp;
+      headers.set("CF-Connecting-IP", clientIp);
 
       const method = incoming.method || "GET";
       const body = method === "GET" || method === "HEAD" ?
@@ -130,6 +267,10 @@ export function createMinigamesServer(options) {
       if (body) requestInit.body = body;
       const response = await worker.fetch(new Request(url, requestInit), workerEnv);
       const responseBody = Buffer.from(await response.arrayBuffer());
+      statsStatus = response.status;
+      statsBytes = responseBody.length;
+      statsSentinel = sentinelFromBody(statsRouteKey(url.pathname),
+        response.headers.get("content-type"), responseBody);
 
       outgoing.statusCode = response.status;
       copyResponseHeaders(response, outgoing);
@@ -139,6 +280,7 @@ export function createMinigamesServer(options) {
     } catch (error) {
       const status = error && error.statusCode ? error.statusCode : 500;
       const message = status === 413 ? "Request body too large" : "Internal server error";
+      statsStatus = status;
       if (status >= 500) console.error("Request failed:", error);
       if (!outgoing.headersSent) {
         outgoing.statusCode = status;
@@ -146,6 +288,15 @@ export function createMinigamesServer(options) {
         outgoing.setHeader("cache-control", "no-store");
       }
       outgoing.end(message);
+    } finally {
+      stats.record({
+        pathname: statsPath,
+        status: statsStatus,
+        ms: Date.now() - startedAt,
+        bytes: statsBytes,
+        sentinel: statsSentinel,
+        ip: statsIp
+      });
     }
   });
 
@@ -157,13 +308,25 @@ export function createMinigamesServer(options) {
     socket.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
   });
 
+  // unref() so a pending flush timer can never hold the process open during shutdown.
+  const flushTimer = setInterval(function () { flushStats(); }, STATS_FLUSH_MS);
+  if (typeof flushTimer.unref === "function") flushTimer.unref();
+
   return {
     server: server,
     storage: storage,
+    stats: stats,
+    flushStats: flushStats,
     close: function () {
+      clearInterval(flushTimer);
       return new Promise(function (resolveClose, rejectClose) {
-        server.close((error) => {
+        server.close(async (error) => {
           if (error) { rejectClose(error); return; }
+          // Persist the final partial window before the database closes, so a deploy
+          // restart does not silently drop up to STATS_FLUSH_MS of counters.
+          try { await flushStats(); } catch (flushError) {
+            console.error("final stats flush failed:", flushError);
+          }
           storage.close();
           resolveClose();
         });

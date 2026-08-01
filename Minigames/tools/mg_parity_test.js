@@ -32,6 +32,9 @@ function loadServerRules() {
     let src = fs.readFileSync(path.join(root, "server", "worker.js"), "utf8");
     // Strip the ESM exports so it evaluates as a plain script; expose a sandbox globalThis.
     src = src.replace("export default", "const __d =").replace("export class Hub", "class Hub");
+    // Named helper exports (statsRouteKey, …) go generically, so adding another one cannot
+    // break this harness with a bare "Unexpected token 'export'".
+    src = src.replace(/^export function /gm, "function ");
     src += "\n;return globalThis.MGRules;";
     const sandbox = {};
     return new Function("globalThis", src)(sandbox);

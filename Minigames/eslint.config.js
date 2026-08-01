@@ -80,6 +80,10 @@ const SHARED_GLOBALS = {
     decodeURIComponent: "readonly",
     setTimeout: "readonly",
     clearTimeout: "readonly",
+    // The VPS adapter flushes its in-memory request counters on an interval. Panorama has
+    // no setInterval (it uses $.Schedule), so this only ever resolves in the Node scope.
+    setInterval: "readonly",
+    clearInterval: "readonly",
 };
 
 // The one rule set that matters here. `no-undef` is the guard; the rest defend against silent
