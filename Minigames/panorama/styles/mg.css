@@ -1093,6 +1093,49 @@
     margin-top: 6px;
 }
 
+/* ── HORIZONTAL variant (GeoGuesser) ──────────────────────────────────────────
+   GeoGuesser's stack is 860 wide and its camera row only 38 tall, so the 280px column the other
+   games use physically does not fit beside a 360px viewport. This lays the same widget out as a
+   wide row in the slot the LOOK/TILT sliders used to occupy.
+   ⚠ .mg-tt-horiz .mg-tt-track's WIDTH is the drain distance and MUST match TRACK_W (806) in
+   createTurnTimer, exactly as the vertical track's height must match TRACK_H. The fill slides
+   left→right by its own width; overriding the width alone without the JS constant would leave the
+   bar draining to the wrong place.
+   Still NO @keyframes (ARCHITECTURE trap 17) - the motion is the same transition on a transform. */
+.mg-turn-timer.mg-tt-horiz {
+    width: 860px;
+    height: 38px;
+    flow-children: right;
+    horizontal-align: center;
+    vertical-align: center;
+    margin-left: 0px;
+    margin-top: 6px;
+    margin-bottom: 8px;
+    padding: 3px 5px 3px 6px;
+    background-color: #0d151f;
+    border: 1px solid #293847;
+}
+.mg-turn-timer.mg-tt-horiz .mg-tt-track {
+    width: 806px;                        /* MUST match TRACK_W in createTurnTimer */
+    height: 10px;
+    horizontal-align: left;
+    vertical-align: center;
+}
+.mg-turn-timer.mg-tt-horiz .mg-tt-fill {
+    width: 806px;                        /* fills the track; slides RIGHT by its own width to empty */
+    height: 10px;
+}
+/* Beside the bar rather than under it: a row has no room below, and the fixed width keeps the
+   track from reflowing as the digits change (60 -> 9 is a two-glyph swing). */
+.mg-turn-timer.mg-tt-horiz .mg-tt-num {
+    width: 26px;
+    height: 22px;
+    margin-top: 0px;
+    margin-left: 8px;
+    vertical-align: center;
+    text-align: right;
+}
+
 /* ── time-control segmented picker (detail column, chess/checkers) ───────────
    One row of segments (1/3/5/10 min + Off); the picked one carries .mg-on. Mirrors the
    button palette but reads as a compact toggle strip. Rendered by renderTimeControl. */
@@ -2426,17 +2469,22 @@
 }
 .mg-geo-lower {
     width: 860px;
-    height: 272px;
+    height: 280px;
     flow-children: right;
 }
 .mg-geo-map-col {
-    width: 500px;
-    height: 272px;
+    width: 512px;
+    height: 280px;
     flow-children: down;
 }
+/* ⚠ 512x256, and it MUST stay an exact multiple of the 64x32 hit grid (MAP_W/MAP_H in
+   mg_geoguesser.js). At the old 500x250 a cell was 7.8125px, which the engine rounds to 8 when it
+   lays the row out, so the painted cells and the click arithmetic addressed different pixels - a
+   drift that started at x=47 and reached two cells at the right edge ("always one cell to the
+   left"). 512/64 and 256/32 are both exactly 8, so there is no rounding to disagree about. */
 .mg-geo-map {
-    width: 500px;
-    height: 250px;
+    width: 512px;
+    height: 256px;
     flow-children: none;
     overflow: clip;
     /* Matches the map's own sea colour, so the frame reads as part of the water rather than as a
@@ -2444,14 +2492,14 @@
     background-color: #8acae2;
     border: 1px solid #4d7688;
 }
-/* Zoom layer. ⚠ The map window (.mg-geo-map) stays 500x250 and clips; only this wrapper grows, so
+/* Zoom layer. ⚠ The map window (.mg-geo-map) stays 512x256 and clips; only this wrapper grows, so
    the image AND the 64x32 hit grid scale together and a cell keeps covering the same piece of
    world. The controller sets width/height/transform in px — real layout sizing, not a
    pre-transform-scale2d, so the .vtex re-rasterises crisply at 2x/4x instead of turning into a
    blurry upscale, and MG.Widgets.winPos hit maths keeps working. */
 .mg-geo-map-zoom {
-    width: 500px;
-    height: 250px;
+    width: 512px;
+    height: 256px;
     flow-children: none;
 }
 .mg-geo-map-image {
@@ -2526,14 +2574,20 @@
     border-color: #ffffff;
 }
 /* The answer. Green would fight the vegetation, so the reveal pin is violet: nothing on a
-   natural-colour map is purple, which makes it unmistakable at a glance. */
+   natural-colour map is purple, which makes it unmistakable at a glance.
+   ⚠ BIGGER than the guess dots (15 vs 9, matching TARGET_SZ in mg_geoguesser.js) and re-parented
+   to the front by raiseTargetMarkers. At 1x the world is 500px wide, so an accurate guess lands
+   sub-pixel away and a same-size dot created later hid the answer completely. The size difference
+   is what keeps a violet ring visible even on a dead-on guess; the z-order alone would not. */
 .mg-geo-target {
+    width: 15px;
+    height: 15px;
     background-color: #7b3fc4f2;
     border-color: #ffffff;
 }
 .mg-geo-side {
-    width: 342px;
-    height: 250px;
+    width: 330px;
+    height: 256px;
     margin-left: 18px;
     flow-children: down;
 }
@@ -2543,7 +2597,7 @@
    "выглядит странно оборвано". `height: fit-children` collapses an empty Label to 0, and the
    spacer below eats whatever is left so the button still pins to the bottom edge. */
 .mg-geo-prompt {
-    width: 342px;
+    width: 330px;
     height: fit-children;
     font-family: radiance;
     font-size: 16px;
@@ -2551,7 +2605,7 @@
     white-space: normal;
 }
 .mg-geo-place {
-    width: 342px;
+    width: 330px;
     height: fit-children;
     margin-top: 8px;
     font-family: radiance;
@@ -2561,7 +2615,7 @@
     white-space: normal;
 }
 .mg-geo-credit {
-    width: 342px;
+    width: 330px;
     height: fit-children;
     margin-top: 4px;
     font-family: radiance;
@@ -2570,16 +2624,16 @@
     white-space: normal;
 }
 .mg-geo-side-spacer {
-    width: 342px;
+    width: 330px;
     height: fill-parent-flow(1);
 }
 .mg-geo-action {
-    width: 342px;
+    width: 330px;
     height: 46px;
 }
 /* Zoom hint / level readout under the map. Sits in the map row, not the side column. */
 .mg-geo-map-hint {
-    width: 500px;
+    width: 512px;
     height: 18px;
     margin-top: 4px;
     font-family: radiance;

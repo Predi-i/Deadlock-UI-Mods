@@ -192,8 +192,16 @@
     const TURN_SECS = 25;                    // per-turn budget; matches .mg-tt-anim transition-duration in mg.css
     function createTurnTimer(parent, opts) {
         const TRACK_H = 280;                 // px; MUST match .mg-tt-track height in mg.css (drain distance)
+        // opts.horizontal: lay the bar out as a WIDE row instead of a tall column. GeoGuesser uses
+        // it because its own row is 860 wide and only 38 tall - a 280px column simply does not fit
+        // beside a 360px panorama viewport, and the gutter placement the other games use would sit
+        // outside the 860px stack. TRACK_W must match .mg-tt-horiz .mg-tt-track's width in mg.css,
+        // exactly as TRACK_H must match the vertical track's height: it IS the drain distance.
+        const horizontal = !!(opts && opts.horizontal);
+        const TRACK_W = 806;                 // px; MUST match .mg-tt-horiz .mg-tt-track width in mg.css
         const wrap = $.CreatePanel("Panel", parent, "");
         wrap.AddClass("mg-turn-timer");
+        if (horizontal) wrap.AddClass("mg-tt-horiz");
         // Position the wrap with ONE inline transform (inline beats any CSS transform):
         //  • Y: the wrap is vertical-align:center in the flow:none host, but it's flow-children:down
         //    (track 280 + 6 gap + 22 num = 308 tall), so the TRACK's centre sits half the below-track
@@ -207,7 +215,11 @@
         //    and the left gutter already sits right at the felt's edge - keep the gutter placement.
         const VNUDGE = 14;                   // (num margin-top 6 + num height 22) / 2 - see mg.css .mg-tt-num
         let vx = 0;
-        if (opts && opts.boardW) {
+        if (horizontal) {
+            // The horizontal bar is a plain flow child of an 860px column: no gutter shove and no
+            // VNUDGE (that offset corrects a flow-children:down stack, which this is not).
+            wrap.style.transform = "translate3d(0px, 0px, 0px)";
+        } else if (opts && opts.boardW) {
             // .mg-tt-attached centres the wrap in the 844px inner zone; shove it left so its RIGHT
             // edge sits GAP px before the board's left edge. Wide felts (poker 760) leave < 48px of
             // margin, so clamp the shove: the wrap's LEFT edge never crosses EDGE px from the modal's
@@ -218,7 +230,7 @@
             const minVx = EDGE + TIMER_W / 2 - INNER_W / 2;   // keeps wrapLeft >= EDGE
             if (vx < minVx) vx = minVx;
         }
-        wrap.style.transform = `translate3d(${vx}px, ${VNUDGE}px, 0px)`;
+        if (!horizontal) wrap.style.transform = `translate3d(${vx}px, ${VNUDGE}px, 0px)`;
         const track = $.CreatePanel("Panel", wrap, "");
         track.AddClass("mg-tt-track");
         const fill = $.CreatePanel("Panel", track, "");
@@ -259,7 +271,12 @@
             // transition-property list (transform, background-color). This also restores a real
             // duration after snapFull zeroed it, so the low/crit recolours during the turn still fade.
             fill.style.transitionDuration = curSecs + "s, 0.3s";
-            fill.style.transform = `translate3d(0px, ${TRACK_H}px, 0px)`;   // drain top→bottom over curSecs
+            // Drain along the bar's own long axis: top→bottom for the column, left→right for the
+            // horizontal variant. Sliding a 806px-wide fill DOWN by 280 would just empty it
+            // vertically and leave the full width showing.
+            fill.style.transform = horizontal
+                ? `translate3d(${TRACK_W}px, 0px, 0px)`
+                : `translate3d(0px, ${TRACK_H}px, 0px)`;
         }
 
         function tick(myGen) {

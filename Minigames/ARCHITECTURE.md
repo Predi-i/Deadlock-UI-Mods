@@ -709,6 +709,29 @@ These are the mistakes to NOT repeat. Every one was confirmed against the game's
     - `mg_release_ui_regression_test.js` whitelists the valid tokens across every shipped script,
       because this failure mode is invisible to `node --check`, to lint and to the rules tests.
 
+25. **A protocol change is TWO deploys, and the tests cannot see the second one.** Every check in
+    this repo reads the working tree: `npm test` proves the client and `server/worker.js` agree with
+    each other, and `build_worker --check` proves `worker.js` matches its sources. **Nothing proves
+    the VPS is running that `worker.js`.** So a reveal-protocol change that is green locally can be
+    live-broken, because the client speaks the new codec to a server still speaking the old one.
+    - **How it presented (2026-08-01):** GeoGuesser named a country that was never right — a Canadian
+      road labelled `Oceania · Belgium`, a New Zealand park `Africa · Benin`, a Berlin street
+      `Asia · Belgium` — while the map dot landed correctly. That split is the tell: **points were
+      fine, labels were garbage**, because only the label routes had changed codec.
+    - **The arithmetic pinned it before any code was touched.** The old `/api/geoinfo` answered
+      `d(region + 1, 1)`; the new client decodes `place = h*63 + w`, i.e. `63 + region + 1`. Region 1
+      → 65 → `Oceania · Belgium`; region 5 → 69 → `Africa · Benin`; region 0 → 64 → `Asia · Belgium`.
+      Three of three, exactly as screenshotted. The credit line broke the same way: the old route
+      with no `&i=` took its `Number(null) === 0` branch and returned `d(text.length, 0)`, so the
+      client used a **string length** as a table index — which is why plausible-looking but wrong
+      contributors appeared. Confirmed on the box: the deployed `worker.js` still contained
+      `region + 1, 1` and no `geoPlaceCode`, dated a day before the commit that changed it.
+    - **Rule going forward:** when a route's encoding changes, redeploy (`server/README.md`) and
+      verify against the running server, not the working tree —
+      `node tools/mg_geo_live_smoke.js https://<host>` prints the real `placeCode`/`creditCode`, and
+      decoding one of them by hand is the only check that covers this gap. A green `npm test` says
+      nothing about it.
+
 ---
 
 ## 7. Checkers internals (mg_checkers.js)
@@ -1239,11 +1262,39 @@ is built but **not yet in-game verified**.
   immediately — zoom never debounces the guess. A new round resets to 1×.
 - **Zoom is what buys precision, and that only works because the hit grid does NOT scale.** The
   grid is 64×32 real `Button` panels — a global 512×256 grid would be 131k panels and destroy
-  layout — so it is a **sibling** of the zoom wrapper, pinned over the 500×250 window. At zoom Z
+  layout — so it is a **sibling** of the zoom wrapper, pinned over the 512×256 window. At zoom Z
   it spans 1/Z of the world, giving an addressable 64Z × 32Z; at the 8× cap that is exactly the
   authoritative 512×256, i.e. ~78km per cell instead of the old flat 64×32's ~626km. When the grid
   lived *inside* the wrapper it scaled with the map, so zooming only made the same coarse cells
   bigger. `FULL_W/FULL_H` (client) must equal `GEO_GRID_W/H` (worker) and `GRID_* × MAP_ZOOM_MAX`.
+- **The map window must divide EXACTLY by the hit grid, or every guess lands left of the cursor.**
+  The window was 500×250 against a 64×32 grid, i.e. **7.8125px** per cell — and Panorama lays
+  panels out on whole pixels, so the engine rounded each `.mg-geo-cell` to 8px while `clickCell`'s
+  arithmetic still believed 7.8125. The two agree only at the left edge and drift apart across the
+  map: they first disagree at x=47 and the error reaches **two cells** at the right edge. That was
+  the maintainer's "always selects one cell to the left" report (2026-08-01) — genuinely left of
+  the cursor, and worse the further right you clicked. Fix: **512×256** (512/64 and 256/32 are both
+  exactly 8), with the right column 342→330 so the row still totals 860. `mg_geoguesser_map_test.js`
+  now asserts the DIVISIBILITY rather than a magic number, and that the CSS window matches `MAP_W/H`
+  — a resize stays free as long as it stays exact. ⚠ The same trap applies to any future hit grid:
+  a fractional cell size is silently rounded, and the resulting drift looks like an input bug.
+- **The reveal target is bigger than the guess dots AND painted last.** Panorama paints siblings in
+  creation order and `showReveal` reads the target first, so the guess dot — created later — covered
+  it. At 1× the whole world is one map wide, so an accurate guess is sub-pixel away: a 743/750 round
+  (~23km) put the two 9px dots **0.29px** apart and the violet answer vanished completely (the
+  maintainer's round-1 screenshot showed no target at all). Both halves are load-bearing — the size
+  difference (`TARGET_SZ` 15 vs `MARKER_SZ` 9) keeps a ring visible on a dead-on guess, and
+  `raiseTargetMarkers` re-parents the target to the front so it is not simply hidden.
+- **The reveal auto-advances after 10s**, counting down in the button's own label
+  (`NEXT ROUND (9)`) rather than adding a second widget; clicking still works and just runs the same
+  idempotent `readyNext`. ⚠ It needs its own `$.Schedule` generation counter (the `createTurnTimer`
+  `gen` lesson): `beginRound`, `finishGame`, `readyNext` and `destroy` all cancel it, or a stale tick
+  fires `readyNext` during the NEXT round.
+- **The LOOK/TILT slider row is hidden, not deleted**, and the round timer takes its slot as a
+  horizontal bar. The sliders are kept as the working reference for the next slider we add —
+  including the de-glow specificity fight in trap 22, which only documents anything while real
+  panels carry those selectors. They stay wired (`applyCamera` still writes their values); the row
+  is just `visible = false`, which collapses it so the timer occupies the space.
 - Panoramax reports exact coordinates and the server keeps them exact — `geoRoundScore` measures
   from the true lat/lon, never from a quantised cell. Only the player's guess is quantised, which
   is why raising its resolution costs nothing on the scoring side.
@@ -1382,7 +1433,8 @@ Two DIFFERENT time widgets, both built in `mg_games.js` and exposed on `MG.Widge
     backend load — ~2 short games ran up ~1200 requests almost entirely from this
     loop. Local interpolation keeps the display live for ~free; the 8s resync corrects drift.
 - **Per-turn countdown timer** (`createTurnTimer`) — a `TURN_SECS = 25` budget per turn in
-  **durak, poker, TTT & Connect Four**. The controller calls `start(onExpire)` when the LOCAL human
+  **durak, poker, TTT & Connect Four**, and a 60s round timer in **GeoGuesser**. The controller calls
+  `start(onExpire)` when the LOCAL human
   is put on the clock and `stop()` the instant they act (or a bot / online opponent takes over). If
   the bar empties, `onExpire()` fires exactly once — the controller turns that into a forfeit /
   elimination (offline decided locally, online sent as a forfeit). Key constraints, all already
@@ -1398,6 +1450,14 @@ Two DIFFERENT time widgets, both built in `mg_games.js` and exposed on `MG.Widge
     measures its height from the board, not the bar.
   - **`opts.boardW`** attaches the bar to that board's LEFT EDGE (TTT/C4 pass it — narrow centred
     boards; durak/poker omit it and keep the wide-felt gutter placement).
+  - **`opts.horizontal`** lays the same widget out as a WIDE row instead of a tall column
+    (GeoGuesser). Its stack is 860 wide and its camera row only 38 tall, so a 280px column does not
+    fit beside a 360px viewport and the gutter placement has nowhere to sit. In this mode the bar is
+    a plain flow child of the game's own column — no `boardW` shove, no `VNUDGE` (that offset
+    corrects a `flow-children:down` wrap, which this is not) — and the fill drains **left→right** by
+    `TRACK_W`. ⚠ `TRACK_W` (806) must match `.mg-tt-horiz .mg-tt-track`'s CSS width exactly as
+    `TRACK_H` must match the vertical track's height: it IS the drain distance, so a CSS-only edit
+    would empty the bar to the wrong place with nothing failing.
   - **An authoritative action in flight parks the timer.** Durak/Poker set `pendingAct` and call
     `refreshTimer()` before entering the network FIFO, so an expiry callback cannot forfeit a move
     that the server is already processing. A rejection or transport failure clears `pendingAct`

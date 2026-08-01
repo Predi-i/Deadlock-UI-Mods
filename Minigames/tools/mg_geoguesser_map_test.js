@@ -114,12 +114,71 @@ assert(/\.mg-geo-marker\s*\{[^}]*border:\s*1px solid #ffffff/.test(css),
 // ES6 pass (and any later one) cannot break a check that is really about 64x32 / 512x256.
 assert(/\b(?:var|let|const) GRID_W = 64, GRID_H = 32/.test(controller),
     "GeoGuesser hit grid must stay 64x32 panels");
-assert(/\b(?:var|let|const) FULL_W = 512, FULL_H = 256;/.test(controller) &&
-    /\b(?:var|let|const) MAP_W = 500, MAP_H = 250, MAP_ZOOM_MAX = 8;/.test(controller),
+const mapDecl = /\b(?:var|let|const) MAP_W = (\d+), MAP_H = (\d+), MAP_ZOOM_MAX = (\d+);/.exec(controller);
+assert(/\b(?:var|let|const) FULL_W = 512, FULL_H = 256;/.test(controller) && mapDecl,
     "authoritative guess space must be GRID * MAP_ZOOM_MAX = 512x256");
+const winW = Number(mapDecl[1]), winH = Number(mapDecl[2]), zoomMax = Number(mapDecl[3]);
+assert(64 * zoomMax === 512 && 32 * zoomMax === 256,
+    "MAP_ZOOM_MAX must take the 64x32 grid exactly to the authoritative 512x256");
+// ⚠ The REAL constraint on the window size, and the one that shipped broken: a hit cell is
+// MAP_W / GRID_W px, and Panorama lays panels out on whole pixels. At the old 500x250 that was
+// 7.8125px, which the engine rounded to 8 — so the painted cells and the click arithmetic
+// addressed different pixels, drifting from x=47 and reaching two cells at the right edge (the
+// "always selects one cell to the left" report). Pin divisibility, not a magic number, so any
+// future resize is free as long as it stays exact.
+assert(winW % 64 === 0 && winH % 32 === 0,
+    `map window ${winW}x${winH} must divide evenly by the 64x32 hit grid, or a laid-out cell ` +
+    "rounds to a different pixel than the click maths and the selection drifts left");
+// The CSS window must agree with the JS constant, or the same drift returns from the other side.
+assert(new RegExp(`\\.mg-geo-map\\s*\\{[^}]*width:\\s*${winW}px[^}]*height:\\s*${winH}px`).test(css),
+    ".mg-geo-map must match MAP_W/MAP_H in the controller");
 const worker = fs.readFileSync(path.join(ROOT, "server", "worker.core.js"), "utf8");
 assert(/const GEO_GRID_W = 512;/.test(worker) && /const GEO_GRID_H = 256;/.test(worker),
     "worker GEO_GRID_W/H must match the client's FULL_W/H");
+
+// ── reveal + camera row ──────────────────────────────────────────────────────────────────────
+// The target marker must survive an accurate guess. Panorama paints siblings in creation order
+// and showReveal reads the target FIRST, so a same-size guess dot created later covered it: at 1x
+// the world is one map wide, a good guess is sub-pixel away, and the answer vanished entirely.
+// BOTH halves are load-bearing - the size difference alone leaves a dead-on guess ambiguous, and
+// the z-order alone is invisible when the dots coincide exactly.
+assert(/\b(?:var|let|const) TARGET_SZ = (\d+);/.test(controller),
+    "the reveal target needs its own marker size");
+const targetSz = Number(/\b(?:var|let|const) TARGET_SZ = (\d+);/.exec(controller)[1]);
+const markerSz = Number(/\b(?:var|let|const) MARKER_SZ = (\d+);/.exec(controller)[1]);
+assert(targetSz > markerSz,
+    "the reveal target must be LARGER than a guess dot or an accurate guess hides it");
+assert(/function raiseTargetMarkers\(\)/.test(controller) &&
+    /raiseTargetMarkers\(\);/.test(controller),
+    "the reveal target must be raised above the guess dots");
+assert(new RegExp(`\\.mg-geo-target\\s*\\{[^}]*width:\\s*${targetSz}px`).test(css),
+    ".mg-geo-target CSS size must match TARGET_SZ");
+
+// The reveal auto-advances. Without it a player who looked away simply stopped playing. Every
+// path that ends a reveal must cancel the countdown, or a stale $.Schedule tick fires readyNext
+// during the NEXT round (the createTurnTimer `gen` lesson).
+assert(/\b(?:var|let|const) AUTO_NEXT_SECS = \d+;/.test(controller) &&
+    /function startAutoNext\(\)/.test(controller),
+    "the reveal must count down to the next round on its own");
+["function beginRound", "function finishGame", "function readyNext"].forEach((fn) => {
+    const at = controller.indexOf(fn);
+    assert(at > 0 && /stopAutoNext\(\);/.test(controller.slice(at, at + 700)),
+        `${fn} must cancel the auto-advance countdown`);
+});
+
+// The LOOK/TILT camera row is hidden, and the timer takes its slot as a horizontal bar. The
+// controls are kept (not deleted) as the working reference for the next slider, including the
+// de-glow specificity fight in trap 22 - so both facts are pinned.
+assert(/cameraControls\.visible = false;/.test(controller),
+    "the camera slider row must be hidden");
+assert(/createTurnTimer\(root, \{ horizontal: true \}\)/.test(controller),
+    "GeoGuesser's round timer must be the horizontal variant, parented into its own column");
+const games = fs.readFileSync(path.join(ROOT, "panorama", "scripts", "mg_games.js"), "utf8");
+const trackW = Number(/\b(?:var|let|const) TRACK_W = (\d+);/.exec(games)[1]);
+// Same class of coupling as TRACK_H: the fill slides by exactly this many px, so a CSS-only
+// change would drain the bar to the wrong place with nothing failing.
+assert(new RegExp(`\\.mg-tt-horiz \\.mg-tt-track\\s*\\{[^}]*width:\\s*${trackW}px`).test(css),
+    "the horizontal track's CSS width must match TRACK_W in createTurnTimer");
 
 console.log("GeoGuesser map passed: Natural Earth layers, 2048x1024, " +
     cityCount + " cities, 512x256 guess space");

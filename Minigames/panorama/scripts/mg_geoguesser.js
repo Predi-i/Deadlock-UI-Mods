@@ -27,7 +27,15 @@
     // map row below it (all four GeoGuesser rows are 860).
     const VIEW_W = 860, VIEW_H = 360;
     // ⚠ Must match .mg-geo-map / .mg-geo-map-zoom.
-    const MAP_W = 500, MAP_H = 250, MAP_ZOOM_MAX = 8;
+    // ⚠ 512x256, NOT 500x250, and the two numbers are load-bearing: MAP_W / GRID_W must be a WHOLE
+    // number of pixels. At 500 a cell was 500/64 = 7.8125px, which the engine cannot lay out - it
+    // rounds each .mg-geo-cell to 8px, so the Nth cell starts at 8N while the click maths believed
+    // 7.8125N. The two agree only at the left edge and drift apart across the map: they first
+    // disagree at x=47 and the error reaches TWO cells at the right edge. That is the maintainer's
+    // "always selects one cell to the left" report - the selected cell was genuinely left of the
+    // cursor, and worse the further right you clicked. 512/64 = 8 and 256/32 = 8 exactly, so the
+    // laid-out grid and the arithmetic address the same pixels with no rounding anywhere.
+    const MAP_W = 512, MAP_H = 256, MAP_ZOOM_MAX = 8;
     // Two clicks inside this window are a double-click. The engine has no ondblclick event.
     const MULTI_CLICK_MS = 400;
     const PANO_W = 2880, PANO_H = 1440, PANO_STEP = PANO_W - 2;
@@ -137,8 +145,17 @@
         const dragHandle = $.CreatePanel("Panel", viewport, "");
         dragHandle.AddClass("mg-geo-drag-handle");
 
+        // ── camera controls (HIDDEN) ──────────────────────────────────────────────────────
+        // The LOOK/TILT sliders, their arrow buttons and RESET are still BUILT, but the row is
+        // collapsed (`visible = false` → visibility:collapse, so it reserves no layout space and the
+        // timer below takes its slot). Every control keeps working — applyCamera still writes the
+        // slider values, and the de-glow rules in trap 22 still describe real panels — so this stays
+        // the working reference for the next slider we add, including the specificity fight that
+        // de-glow needed. Deleting them would throw that away.
+        // Looking around is unaffected: dragging the image is the primary path and always was.
         const cameraControls = $.CreatePanel("Panel", root, "");
         cameraControls.AddClass("mg-geo-camera-controls");
+        cameraControls.visible = false;
         addLabel(cameraControls, "mg-geo-slider-label", "LOOK");
         addButton(cameraControls, "mg-geo-camera-button", "◀", () => { turn(-20, 0); });
         const yawSlider = $.CreatePanel("Slider", cameraControls, "", { direction: "horizontal" });
@@ -165,14 +182,16 @@
         // 60s per location, not the shared 25s default: a GeoGuesser round is explore-then-place,
         // and 25s is barely enough to spin the panorama once. The widget takes a per-call override.
         //
-        // Attached to `container` (.mg-game-host, flow-children:none), NOT to the .mg-geo column:
-        // the bar positions itself with vertical-align, which a flow-children:down parent ignores,
-        // and inside the column it would push the panorama down instead of floating beside it.
-        // No boardW either - GeoGuesser is 860 wide against an 844 inner zone, so the board-edge
-        // shove clamps back to the gutter anyway (poker/durak omit it for the same reason).
+        // HORIZONTAL, and parented into `root` (the 860px column) right after the hidden camera row,
+        // so it occupies the slot the LOOK/TILT sliders used to. The other games hang their timer off
+        // `container` (.mg-game-host, flow-children:none) and position it with vertical-align in the
+        // left gutter; that placement was never available here - GeoGuesser is 860 wide against an
+        // 844 inner zone, so a gutter bar has nowhere to sit, and a 280px column does not fit beside
+        // a 360px viewport at all. As a plain flow child of a flow-children:down column it simply
+        // takes its own row, which is why opts.boardW/VNUDGE do not apply (see createTurnTimer).
         const ROUND_SECS = 60;
         const roundTimer = (MG.Widgets && MG.Widgets.createTurnTimer)
-            ? MG.Widgets.createTurnTimer(container, {}) : null;
+            ? MG.Widgets.createTurnTimer(root, { horizontal: true }) : null;
         let timerOn = false;
 
         // On the clock only while this seat can still act: a round is live once the panorama is up
@@ -221,7 +240,7 @@
         markerLayer.AddClass("mg-geo-marker-layer");
         try { markerLayer.SetAttributeString("hittest", "false"); } catch (e0c) {}
 
-        // The hit grid: 64x32 transparent buttons pinned to the 500x250 window. At zoom Z they
+        // The hit grid: 64x32 transparent buttons pinned to the 512x256 window. At zoom Z they
         // span 1/Z of the world, so the addressable resolution is 64Z x 32Z — 512x256 at 8x.
         const grid = $.CreatePanel("Panel", map, "");
         grid.AddClass("mg-geo-grid");
@@ -384,7 +403,7 @@
             const limit = cityRankLimit();
             const placed = [];
             // The window's own rectangle in the zoom layer's px space. Labels outside it are
-            // culled BEFORE the overlap test: the layer is far wider than the 500px window once
+            // culled BEFORE the overlap test: the layer is far wider than the 512px window once
             // zoomed, and an off-screen name must not win a slot from a visible one.
             const viewLeft = panX * MAP_W * mapZoomLevel;
             const viewTop = panY * MAP_H * mapZoomLevel;
@@ -435,6 +454,20 @@
         // A marker is a world position, not a grid cell: it must stay put when the player zooms
         // or pans (the old code tagged a grid button, which pointed at a different place the
         // moment the window moved).
+        //
+        // ⚠ The TARGET must stay visible when a guess is accurate. Panorama paints siblings in
+        // CREATION order, and showReveal reads the target first, so the guess dot - created later -
+        // painted OVER it. At 1x the whole world is 500px, so a good guess is a sub-pixel away and
+        // the 9px dots coincide exactly: the maintainer's round-1 screenshot showed no violet dot at
+        // all, and a 743/750 round (~23km) put them 0.29px apart. Two independent fixes, because
+        // either alone still fails at a dead-on guess: the target is drawn BIGGER (a ring of it
+        // shows around any dot centred on it) and re-parented LAST so it is on top.
+        const TARGET_SZ = 15;
+
+        function markerSize(cls) {
+            return cls === "mg-geo-target" ? TARGET_SZ : MARKER_SZ;
+        }
+
         function addMarker(cell, cls) {
             if (cell == null || cell < 0) return;
             markers.push({
@@ -458,9 +491,23 @@
                 const at = fractionToWindow(m.x, m.y);
                 m.panel.visible = !!at;
                 if (!at) continue;
+                const sz = markerSize(m.cls);
                 m.panel.style.transform = "translate3d(" +
-                    Math.round(m.x * MAP_W * mapZoomLevel - MARKER_SZ / 2) + "px, " +
-                    Math.round(m.y * MAP_H * mapZoomLevel - MARKER_SZ / 2) + "px, 0px)";
+                    Math.round(m.x * MAP_W * mapZoomLevel - sz / 2) + "px, " +
+                    Math.round(m.y * MAP_H * mapZoomLevel - sz / 2) + "px, 0px)";
+            }
+            raiseTargetMarkers();
+        }
+
+        // Re-parenting moves a panel to the END of its parent's child list, i.e. to the front. Only
+        // needed when a guess dot was created after the target; idempotent and cheap (at most one
+        // target per round).
+        function raiseTargetMarkers() {
+            for (let i = 0; i < markers.length; i++) {
+                const m = markers[i];
+                if (m.cls !== "mg-geo-target" || !m.panel) continue;
+                if (i === markers.length - 1) continue;
+                try { m.panel.SetParent(markerLayer); } catch (e) {}
             }
         }
 
@@ -636,6 +683,8 @@
             sendingGuess = false;
             sendingNext = false;
             guessLocked = false;
+            // Kill any reveal countdown still in flight from the previous round.
+            stopAutoNext();
             yaw = Math.floor(Math.random() * 24) * 15;
             pitch = 0;
             clearMapMarkers();
@@ -675,7 +724,43 @@
             updateScoreText();
             if (revealReadsPending === 0) {
                 setAction(currentRound + 1 >= ROUNDS ? "FINISH" : "NEXT ROUND", true, readyNext);
+                // Only NOW: the countdown must not start while the reveal is still loading, or a
+                // slow read could advance the round before the player has seen the answer at all.
+                startAutoNext();
             }
+        }
+
+        // ── auto-advance ──────────────────────────────────────────────────────────────────
+        // The reveal used to sit on NEXT ROUND forever, so a player who looked away simply stopped
+        // playing. The button now counts itself down and fires on its own, keeping the label as the
+        // countdown ("NEXT ROUND (9)") rather than adding a second widget.
+        //
+        // The click path is unchanged and always wins: readyNext is idempotent (its `sendingNext`
+        // guard), so pressing the button early just cancels the timer and does the same thing.
+        // ⚠ Own $.Schedule generation counter, like createTurnTimer's `gen`: a new round or an
+        // early press must invalidate the in-flight tick, otherwise a stale one keeps decrementing
+        // and fires readyNext during the NEXT round.
+        const AUTO_NEXT_SECS = 10;
+        let autoNextGen = 0;
+
+        function stopAutoNext() {
+            autoNextGen++;
+        }
+
+        function startAutoNext() {
+            stopAutoNext();
+            const myGen = autoNextGen;
+            const finish = currentRound + 1 >= ROUNDS;
+            const base = finish ? "FINISH" : "NEXT ROUND";
+            function tick(left) {
+                if (destroyed || myGen !== autoNextGen) return;
+                // The reveal ended (or the round moved on) while we were counting: drop it.
+                if (finished || sendingNext || revealRound !== currentRound) return;
+                if (left <= 0) { readyNext(); return; }
+                setAction(`${base} (${left})`, true, readyNext);
+                $.Schedule(1.0, () => { tick(left - 1); });
+            }
+            tick(AUTO_NEXT_SECS);
         }
 
         function readReveal(fetcher, apply) {
@@ -751,13 +836,18 @@
 
         function readyNext() {
             if (sendingNext || finished || revealRound !== currentRound) return;
+            // Whether we got here from the countdown or from a click, the countdown is done.
+            stopAutoNext();
             sendingNext = true;
             setAction(solo ? "LOADING NEXT ROUND…" : "WAITING FOR OPPONENT", false, readyNext);
             MG.Api.geoNext(code, tok, (result) => {
                 if (destroyed) return;
                 if (!result.ok) {
                     sendingNext = false;
+                    // The server refused; hand the round back to the player AND restart the
+                    // countdown, or a rejected auto-advance would strand them on a dead button.
                     setAction(currentRound + 1 >= ROUNDS ? "FINISH" : "NEXT ROUND", true, readyNext);
+                    startAutoNext();
                     return;
                 }
                 prompt.text = solo ? "Loading next round…" : "Ready. Waiting for the opponent…";
@@ -766,12 +856,14 @@
                 if (destroyed) return;
                 sendingNext = false;
                 setAction(currentRound + 1 >= ROUNDS ? "FINISH" : "NEXT ROUND", true, readyNext);
+                startAutoNext();
             });
         }
 
         function finishGame() {
             if (finished) return;
             finished = true;
+            stopAutoNext();
             refreshTimer();
             const mine = scores[mySeat], theirs = scores[1 - mySeat];
             if (solo) {
@@ -877,6 +969,7 @@
             destroy: function () {
                 destroyed = true;
                 panoramaGen++;
+                stopAutoNext();
                 // Before the panel goes: the timer owns $.Schedule callbacks that would otherwise
                 // keep firing against a deleted panel after the player leaves.
                 if (roundTimer) roundTimer.destroy();
