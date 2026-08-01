@@ -186,7 +186,12 @@
     let reqActive = false;
 
     function rawRequest(path, params, onDone, onError) {
-        reqQueue.push({ kind: "protocol", path: path, params: params, onDone: onDone, onError: onError });
+        reqQueue.push({
+            kind: "protocol", path: path, params: params, onDone: onDone, onError: onError,
+            // The probe owns its own retry policy (PROBE_ATTEMPTS in probeOnce); letting
+            // drainQueue retry it too multiplied the two into a 48s calibration stall.
+            noRetry: path === "/api/probe"
+        });
         drainQueue();
     }
 
@@ -226,8 +231,16 @@
             // instantly in a browser sometimes stalls to a timeout here). One silent
             // re-queue at the front of the line recovers most of those. This is a
             // mitigation, not a proven fix - it can't be verified without in-game runs.
+            // ⚠ The probe opts OUT of this layer (job.noRetry). probeOnce runs its OWN
+            // PROBE_ATTEMPTS loop, so applying both multiplied them: 3 attempts x 2 tries x
+            // REQ_TIMEOUT_MS = 48 SECONDS before failCalib, and every protocol request is
+            // parked in calibWaiters for that whole time (request() won't even enqueue while
+            // uncalibrated). In-game that read as a total freeze with no status change - moves
+            // appearing locally, nothing arriving - then everything erroring at once and the
+            // controllers retrying into another chain. Neither retry layer was wrong on its
+            // own; their product was intended by neither. One owner: probeOnce.
             job.tries = (job.tries || 0) + 1;
-            if (job.tries < 2) {
+            if (!job.noRetry && job.tries < 2) {
                 log(`↻ retry ${job.path || job.url} (attempt ${job.tries + 1})`);
                 reqQueue.unshift(job);
                 $.Schedule(0.05, () => { reqActive = false; drainQueue(); });
@@ -478,7 +491,19 @@
     // use this discriminator to reject an error sentinel without treating host clamping as a bad
     // photograph. Calibration removes display/UI scale and dimension swapping first.
     function isLevelEncodedSize(w, hh) {
-        if (!calibrated) return false;
+        // ⚠ FAIL CLOSED. This used to `return false` while uncalibrated, i.e. "definitely a real
+        // image" - the one answer it cannot possibly justify, since discriminating a 582px-max
+        // level PNG from a host-clamped photograph is exactly what the scale is needed for.
+        // suspectDecode() sets calibrated=false before re-probing, so the window is reachable in
+        // normal play, and in it a d(6,63) busy sentinel or a d(9,x) access rejection from
+        // /api/geoview was accepted as a panorama: GeoGuesser stretched a ~15x582px error PNG
+        // across the 2880x1440 stage and asked the player to guess a location from a smear, with
+        // the camera live and the round timer running.
+        // Answering "sentinel" instead costs only a 1.5s retry on the caller's existing path (the
+        // same one the busy sentinel already uses), and by then calibration has usually finished.
+        // If it never finishes the round is unplayable regardless - no protocol request can be
+        // decoded at all - so this trades a wrong picture for an honest "retrying".
+        if (!calibrated) return true;
         const levels = decode(Number(w), Number(hh));
         return levels.w >= 0 && levels.w <= 63 && levels.h >= 0 && levels.h <= 63;
     }
@@ -503,17 +528,33 @@
         GEO_GRID_H: 256,
         clearQueue: function () {
             // Drop pending UI traffic (stale status/poll ticks from a view we just
-            // left) - their callers are token-guarded, so silence is fine. Two things
-            // are deliberately NOT touched:
+            // left). Two things are deliberately NOT touched:
             //  - the calibration probe: dropping it would strand `calibrating` at
             //    true and deadlock every future request;
             //  - the active in-flight request: it finishes naturally (see
             //    rawRequestNow), keeping loads strictly one-at-a-time.
+            // ⚠ A dropped job MUST still get its onError. This used to discard jobs silently on the
+            // reasoning that "their callers are token-guarded, so silence is fine" - true for the
+            // poll loops, which re-arm from their own $.Schedule chain, but NOT for a caller whose
+            // next step lives inside the dropped callback. Two of those exist: MG.Api.clocks issues
+            // seat 1 only from inside seat 0's callback, and mg_geoguesser chains its second cached
+            // panorama copy from the first. Silence there is terminal - createClock's resyncTick is
+            // only re-armed by its error path, so the clock panel never appears (or freezes at its
+            // last value while the server keeps counting down, and you lose on time with minutes
+            // apparently left); GeoGuesser sits on "Loading panorama…" with no retry.
+            // Every existing onError treats an unknown reason as a retryable transport failure, so
+            // this restores those loops without touching a single caller.
             const kept = [];
+            const dropped = [];
             for (let i = 0; i < reqQueue.length; i++) {
                 if (reqQueue[i].path === "/api/probe") kept.push(reqQueue[i]);
+                else dropped.push(reqQueue[i]);
             }
             reqQueue = kept;
+            for (let i = 0; i < dropped.length; i++) {
+                // Never let one caller's throw strand the rest of the list.
+                try { if (dropped[i].onError) dropped[i].onError("cancelled"); } catch (e) {}
+            }
         },
         recalibrate: function (cb) { calibrated = false; calibrate(cb); },
         pollDelay: pollDelay,
@@ -688,10 +729,21 @@
             request("/api/join", { code: code, tok: tok }, (w, h) => {
                 log(`join decoded w=${w} h=${h}`);
                 // h carries the host's time control as a small INDEX (0=untimed,1=60,2=180,
-                // 3=300,4=600), not raw seconds - 600 would overflow a level. tcFromIndex maps
-                // it back. join's width is the game id (1..9); tc rides the height.
+                // 3=300,4=600), not raw seconds - 600 would overflow a level. join's width is
+                // the game id (1..9); tc rides the height.
+                // ⚠ The wire value is tcIndex + 1, not tcIndex. The worker sends
+                // `d(lobby.game, tcIndex(lobby.tc || 0) + 1)` (worker.core.js:921/933) - the +1
+                // keeps h clear of 0 - so the index must be recovered with h-1. Reading
+                // tcFromIndex(h) shifted EVERY bank by one step for the joiner: a 60s host became
+                // 180s, 300s became 600s, and the two ends of the table wrapped across the
+                // timed/untimed boundary - an UNTIMED lobby gave the joiner a 60s clock panel,
+                // while a 600s lobby gave them none at all. The banks themselves are
+                // server-authoritative (/api/clocks), so the numbers still ticked correctly once
+                // the first resync landed; what was wrong was whether the clock UI existed and
+                // what it showed until then. `match` already decodes its own height with `h - 1`
+                // (matchTcFromHeight) - this is the same codec, so it must do the same.
                 if (w === 9 && h === 4) { cb({ ok: false, reason: "busy" }); return; } // rate-limited
-                if (w >= 1 && w <= 9) cb({ ok: true, game: w, tc: tcFromIndex(h) });
+                if (w >= 1 && w <= 9) cb({ ok: true, game: w, tc: tcFromIndex(h - 1) });
                 else if (w === 20) cb({ ok: false, reason: "missing" });
                 else if (w === 21) cb({ ok: false, reason: "full" });
                 else {
@@ -747,16 +799,28 @@
         // board and returns (1,1) on accept or (9,x) on reject - the client maps x to a
         // reason so the controller can roll back its prediction and resync:
         //   (9,1) turn · (9,2) illegal · (9,3) token · (9,9) gone.
+        // ⚠ ACCEPT ONLY EXACTLY (1,1). This used to be `else cb({ok:true})`, which read every
+        // non-9 width as success - so on a stale UI scale a mis-decoded (1,1) drifting to (0,0) or
+        // (2,2) still counted as accepted, AND a real (9,2) rejection whose width mis-read as 8 or
+        // 10 was reported as accepted too. Because nothing tripped suspectDecode, the bad scale was
+        // never repaired: the client kept a prediction the server had refused, and the next poll
+        // replayed the opponent's move onto a board one ply out of sync - the "corrupted moves that
+        // eat pieces" failure §5's calibration notes warn about, through the one unguarded door.
+        // Every sibling write (pact/dact/start/pstart) already asserts (1,1); this is the same shape.
+        // All four callers ignore `reason` and rebuild from the accepted log, so "decode" is safe.
         move: function (code, from, to, end, tok, cb, err) {
             request("/api/move", { code: code, from: from, to: to, end: end ? 1 : 0, tok: tok },
-                function (w, h) {
+                function (w, h) {       // NOT an arrow: `(w, h) =>` would start this line with `(`,
+                                        // the Valve-minifier ASI trigger the invariants test guards.
                     if (!cb) return;
+                    if (w === 1 && h === 1) { cb({ ok: true }); return; }
                     if (w === 9) {
                         const reason = h === 1 ? "turn" : h === 2 ? "illegal" : h === 3 ? "token" : "gone";
                         cb({ ok: false, reason: reason });
-                    } else {
-                        cb({ ok: true });
+                        return;
                     }
+                    suspectDecode(`move w=${w} h=${h}`);
+                    cb({ ok: false, reason: "decode" });
                 }, err);
         },
 
@@ -775,6 +839,16 @@
                 if (w === 9 && h === 9) {
                     log("opponent left (9x9 received)");
                     if (MG.UI && MG.UI.kickToMenu) MG.UI.kickToMenu("Opponent left.");
+                    // ⚠ Still call the error handler. kickToMenu is conditional (view must be
+                    // "game"/"waiting"/"room"), so when it refuses the kick this return used to leave
+                    // the poll chain with no reschedule and no way to re-arm. The reachable window:
+                    // a (9,9) arrives mid-flight while the player navigates away - renderJoin sets
+                    // view="join", the kick returns early, and the controller's poll stops dead
+                    // (normally its destroyed/pollToken guard would make that harmless, but
+                    // cleanupCurrentView already destroyed it). For dlog/plog this is the ONLY event
+                    // stream, so a refused kick is terminal: the table stays frozen with no cards, no
+                    // turn, no error. Call err so the retry logic stays armed.
+                    if (err) err("gone");
                     return;
                 }
                 const from = w, to = h;   // RAW squares 0..63 now (worker dropped the +1 / +100)
@@ -794,8 +868,13 @@
         geoState: function (code, tok, cb, err) {
             request("/api/geostate", { code: code, tok: tok }, (w, h) => {
                 if (w === 9) {
+                    // The kick is conditional (view must be game/waiting/room) and can decline, so
+                    // `err` must fire on EVERY branch - pollState re-arms only from cb or err, and
+                    // this route is GeoGuesser's whole round state machine. The old `else if (err)`
+                    // meant a (9,9) that failed to kick left the game frozen mid-round: no reveal,
+                    // no Next, no error. Same trap as poll/dlog/plog.
                     if (h === 9 && MG.UI && MG.UI.kickToMenu) MG.UI.kickToMenu("Opponent left.");
-                    else if (err) err(h === 3 ? "token" : "state");
+                    if (err) err(h === 9 ? "gone" : (h === 3 ? "token" : "state"));
                     return;
                 }
                 if (w === 6 && h === 40) {
@@ -849,7 +928,11 @@
             request(route, params, (w, h) => {
                 if (h === 63) { if (err) err(w); return; }
                 const value = h * 63 + w;
-                if (w < 0 || w >= 63 || value < 0 || value >= limit) {
+                // Bound `h` directly too, not just the assembled value: a level is 0..63 by
+                // construction, so h > 62 (63 is the error sentinel) is a stale-scale read. See
+                // geoScore - relying on the assembled bound alone let impossible dims through
+                // whenever the limit happened to sit above 63*63.
+                if (w < 0 || w >= 63 || h < 0 || h > 62 || value < 0 || value >= limit) {
                     suspectDecode(route + " w=" + w + " h=" + h);
                     if (err) err("decode");
                     return;
@@ -872,7 +955,15 @@
             request("/api/geoscore", { code: code, tok: tok, seat: seat }, (w, h) => {
                 if (h === 63) { if (err) err(w); return; }
                 const score = h * 63 + w;
-                if (w < 0 || w >= 63 || score < 0 || score > 4095) {
+                // ⚠ Bound `h` DIRECTLY. A level is 0..63 by construction, so h=64/65 is impossible
+                // and means a stale scale - but the old guard only tested the assembled `score`
+                // against 4095, and h=64,w=0 assembles to 4032 (h=65,w=0 to exactly 4095), both of
+                // which slipped through and were reported as a real total. Worse, 4095 is not even
+                // reachable: five rounds cap at 750 each = 3750, so max h is 59. The 4095 in the
+                // server's clamp is itself misleading - `Math.floor(4095/63)` is 65, a level that
+                // cannot be encoded. Checking the dims is the honest test; suspectDecode then
+                // repairs the scale instead of the player seeing an invented score.
+                if (w < 0 || w >= 63 || h < 0 || h > 62 || score < 0 || score > 3968) {
                     suspectDecode(`geoscore w=${w} h=${h}`);
                     if (err) err("decode");
                     return;
@@ -970,9 +1061,32 @@
         //   cb({ state, gen }): state 1 = armed, waiting · 2 = consensus reached (reset done)
         //                       9 = lobby gone / bad token (gen carries 3=bad-token, 9=gone)
         //   gen = the lobby's current generation (grows by 1 each rematch).
+        // ⚠ RANGE-CHECK BOTH DIMS. This used to pass `w` and `h-1` straight through with no guard,
+        // and the consumer acts on `state === 2 || gen > baseGen` by restarting the board. So on a
+        // stale scale a "still waiting" (1, gen+1) whose width mis-read as 2 - or ANY height
+        // inflation, since gen was unbounded - restarted one client while the server lobby was
+        // untouched and the opponent still sat on the game-over screen. Worse, the garbage gen was
+        // then latched into rematchGen, and the server only arms a seat when callerGen === lobby.gen
+        // (worker.core.js:1070), so that seat could never arm a rematch again. Presented as
+        // "opponent rage-quit and Play Again is dead".
+        // Server vocabulary: w is 1 (waiting), 2 (consensus) or 9 (gone/bad-token); h is always
+        // gen+1 with gen wrapped into 6 bits (`lobby.gen = (lobby.gen + 1) % 63`), so h is 1..63.
         rematch: function (code, tok, gen, cb, err) {
             request("/api/rematch", { code: code, tok: tok, gen: gen || 0 },
-                function (w, h) { if (cb) cb({ state: w, gen: h - 1 }); }, err);
+                function (w, h) {       // NOT an arrow - see move() above (ASI trigger `(`).
+                    if (!cb) return;
+                    const known = w === 1 || w === 2 || w === 9;
+                    if (!known || h < 1 || h > 63) {
+                        suspectDecode(`rematch w=${w} h=${h}`);
+                        // Route to the ERROR path, never a bare return: startRematch re-arms its
+                        // poll only from cb or err (mg_ui.js), so swallowing this would strand the
+                        // player on the game-over screen with a dead Play Again - the same
+                        // no-callback trap fixed in poll/dlog/plog below.
+                        if (err) err("decode");
+                        return;
+                    }
+                    cb({ state: w, gen: h - 1 });
+                }, err);
         },
 
         // ── Durak online (authoritative dealer, 2–4 seats) ──────────────────
@@ -1031,6 +1145,7 @@
                 if (w === 1 && h === 1) { cb(null); return; }
                 if (w === 9 && h === 9) {
                     if (MG.UI && MG.UI.kickToMenu) MG.UI.kickToMenu("Opponent left.");
+                    if (err) err("gone");   // see MG.Api.poll: a refused kick must not kill the loop
                     return;
                 }
                 // Seat ranges span 0..3 (2–4 players). ROLES(4, a*4+d+1) is the server-owned
@@ -1214,7 +1329,11 @@
             request("/api/plog", { code: code, since: since }, (w, h) => {
                 if (w === 1 && h === 1) { cb(null); return; }        // nothing new
                 if (w === 9 && h === 9) {
+                    // kickToMenu is a no-op unless view is game/waiting/room, so it can decline.
+                    // Report "gone" either way - a declined kick used to leave the poll chain with
+                    // no callback at all, freezing the table's only event stream. See dlog.
                     if (MG.UI && MG.UI.kickToMenu) MG.UI.kickToMenu("Opponent left.");
+                    if (err) err("gone");
                     return;
                 }
                 let ev = null;

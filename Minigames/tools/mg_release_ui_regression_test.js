@@ -154,6 +154,102 @@ assert(/function mountOnlineGame[\s\S]*?function retryMatch[\s\S]*?MG\.Api\.matc
     !/function mountOnlineGame[\s\S]{0,1400}opts\.variant\s*=\s*"russian"/.test(ui),
     "online checkers must retry authoritative match metadata instead of guessing Russian");
 const net = source("mg_net.js");
+// ── decode guards on the write/handshake routes ──────────────────────────────────────────────
+// `move` is the most safety-critical write in the mod and was the ONLY one accepting any non-9
+// width as success (`else cb({ok:true})`). On a stale UI scale that read a mis-decoded reply as
+// accepted AND a real (9,2) rejection as accepted, and because nothing tripped suspectDecode the
+// bad scale was never repaired - the client kept a prediction the server refused and the board
+// desynced progressively. Every sibling write already asserts exactly (1,1).
+(() => {
+    const moveSrc = net.match(/move:\s*function[\s\S]*?\r?\n        \},/);
+    assert(moveSrc, "MG.Api.move must be present");
+    assert(/if \(w === 1 && h === 1\) \{ cb\(\{ ok: true \}\); return; \}/.test(moveSrc[0]),
+        "MG.Api.move must accept ONLY an exact (1,1); any other width read as success desyncs the board");
+    assert(/suspectDecode\(`move w=/.test(moveSrc[0]),
+        "an out-of-vocabulary /api/move reply must trip suspectDecode so the stale scale is repaired");
+    assert(!/\}\s*else\s*\{\s*cb\(\{ ok: true \}\)/.test(moveSrc[0]),
+        "MG.Api.move must not fall back to a catch-all success branch");
+})();
+// `rematch` fed `w` and a raw `h-1` straight to a consumer that restarts the board on
+// `state === 2 || gen > baseGen`, so a mis-decoded "still waiting" reply restarted one client
+// unilaterally and latched a garbage gen the server could never match again (dead Play Again).
+// Server vocabulary: w in {1,2,9}; h = gen+1 with gen wrapped to 6 bits, so h is 1..63.
+(() => {
+    const rematchSrc = net.match(/rematch:\s*function[\s\S]*?\r?\n        \},/);
+    assert(rematchSrc, "MG.Api.rematch must be present");
+    assert(/w === 1 \|\| w === 2 \|\| w === 9/.test(rematchSrc[0]) && /h < 1 \|\| h > 63/.test(rematchSrc[0]),
+        "MG.Api.rematch must range-check both dims before acting on a restart");
+    assert(/suspectDecode\(`rematch w=/.test(rematchSrc[0]) && /err\("decode"\)/.test(rematchSrc[0]),
+        "a corrupt rematch reply must trip suspectDecode AND re-arm the poll through err()");
+})();
+// A dropped queue job must still fire onError. Silence is terminal for any caller whose next step
+// lives inside the dropped callback: MG.Api.clocks issues seat 1 only from seat 0's callback, and
+// GeoGuesser chains its second panorama copy from the first. createClock's resyncTick is re-armed
+// ONLY by its error path, so a silent drop freezes the clock while the server keeps counting.
+assert(/clearQueue:\s*function[\s\S]{0,2400}onError\("cancelled"\)/.test(net),
+    "clearQueue must fire onError on every dropped job, or chained callers stall forever");
+// kickToMenu is conditional (view must be game/waiting/room), so it can decline. When it does, a
+// bare `return` left the caller with no callback at all - for dlog/plog, the table's only event
+// stream, that is a permanently frozen game. Inspect each (9,9) branch for the unconditional err.
+(() => {
+    // Extract by indentation rather than by naming the NEXT method: an anchor like `dcard:` is a
+    // guess that silently makes this whole check vacuous when it is wrong. Every MG.Api method
+    // sits at 8 spaces and closes on a bare `        },`, and nested closings are deeper.
+    function apiMethod(name) {
+        const start = net.indexOf(`\n        ${name}: function`);
+        if (start < 0) return null;
+        const end = net.indexOf("\n        },", start);
+        return end < 0 ? null : net.slice(start, end);
+    }
+    for (const name of ["poll", "geoState", "dlog", "plog"]) {
+        const src = apiMethod(name);
+        assert(src, `MG.Api.${name} must be present`);
+        assert(/kickToMenu\("Opponent left\."\)/.test(src), `${name} must have a kickToMenu("Opponent left.") call`);
+        // The critical fix: after calling kickToMenu, the handler must also call err() so a declined
+        // kick cannot strand the poll loop. Look for `if (err) err(` anywhere after the kick.
+        const afterKick = src.slice(src.indexOf('kickToMenu("Opponent left.")'));
+        assert(/if \(err\) err\(/.test(afterKick),
+            `${name}'s (9,9) handler must call err() after kickToMenu so a refused kick cannot kill the poll loop`);
+    }
+    // geoState's guard was `else if (err)`, so the kick branch and the error branch were mutually
+    // exclusive - a (9,9) that declined to kick returned with no callback at all and froze the round.
+    assert(!/kickToMenu\("Opponent left\."\);\s*\r?\n\s*else if \(err\)/.test(net),
+        "a kick must not be mutually exclusive with the error callback");
+})();
+// The join reply's height is tcIndex + 1 (the worker's `+ 1` keeps h clear of 0), so the index
+// must be recovered with h - 1. Reading tcFromIndex(h) shifted every bank by one step for the
+// JOINER and wrapped across the timed/untimed boundary in both directions: an untimed lobby handed
+// the joiner a 60s clock panel, a 600s lobby handed them none. `match` already decodes h - 1.
+(() => {
+    const joinSrc = net.match(/join:\s*function[\s\S]*?\r?\n        \},/);
+    assert(joinSrc, "MG.Api.join must be present");
+    assert(/tcFromIndex\(h - 1\)/.test(joinSrc[0]),
+        "MG.Api.join must decode the time control as tcFromIndex(h - 1); the wire value is tcIndex + 1");
+    assert(/tcIndex\(lobby\.tc \|\| 0\) \+ 1/.test(worker),
+        "the worker must still send tcIndex + 1 (the +1 this decode compensates for)");
+})();
+// A level is 0..63 by construction, so the reveal decoders must bound `h` DIRECTLY. Testing only
+// the assembled value let impossible dims through wherever the limit sat above 63*63: h=64,w=0
+// assembled to 4032 and h=65,w=0 to exactly 4095, both under the old `score > 4095` guard, and
+// both were reported to the player as a real total. (4095 is not even reachable - five rounds cap
+// at 750 each = 3750 - and floor(4095/63) is 65, a level that cannot be encoded at all.)
+assert(/geoScore:\s*function[\s\S]{0,1600}h < 0 \|\| h > 62/.test(net),
+    "geoScore must bound h directly, not just the assembled score");
+assert(/geoPointAxis:\s*function[\s\S]{0,1600}h < 0 \|\| h > 62/.test(net),
+    "geoPointAxis must bound h directly, not just the assembled value");
+// The probe owns its own retry loop (PROBE_ATTEMPTS); letting drainQueue retry it too multiplied
+// the two into 3 x 2 x REQ_TIMEOUT_MS = 48s of wedged FIFO before failCalib, with every protocol
+// request parked in calibWaiters for the duration - an in-game freeze with no status change.
+assert(/noRetry: path === "\/api\/probe"/.test(net),
+    "the probe must opt out of drainQueue's retry layer so the two retry policies cannot multiply");
+assert(/if \(!job\.noRetry && job\.tries < 2\)/.test(net),
+    "drainQueue must honour the noRetry flag");
+// isLevelEncodedSize must fail CLOSED: while uncalibrated it cannot tell a 582px-max level PNG
+// from a host-clamped photograph, and answering "real image" fed GeoGuesser a d(6,63) busy
+// sentinel stretched across the 2880x1440 stage as if it were a panorama.
+assert(/function isLevelEncodedSize[\s\S]{0,1200}if \(!calibrated\) return true;/.test(net),
+    "isLevelEncodedSize must fail closed while uncalibrated, not vouch for an unverifiable payload");
+
 assert(/clocks:\s*function[\s\S]*?w === 9 && h === 8/.test(net) &&
     /if \(w === 9\) \{ fail\(/.test(net) &&
     /request\("\/api\/clocks"[\s\S]{0,1000}\}, fail\);/.test(net),
@@ -427,7 +523,7 @@ assert(/\b(?:var|let|const) aspect = shortSide > 0 \? longSide \/ shortSide : 0;
 assert(/lastOuterStatus === "Map server is busy\. Retrying…"[\s\S]{0,100}Shared world loaded/.test(pixel),
     "Pixel Battle must clear the busy status after a successful viewport retry");
 assert(/if \(!crispReady\)[\s\S]{0,200}Map view is still loading/.test(pixel) &&
-    /function scheduleCrispView[\s\S]{0,250}crispReady = false/.test(pixel),
+    /function scheduleCrispView[\s\S]{0,400}crispReady = false/.test(pixel),
     "Pixel Battle must block grid clicks while the matching viewport frame is loading");
 
 // ── Pixel Battle geometry: client, CSS and server must agree exactly ─────────────────────────
@@ -452,17 +548,51 @@ assert(pxServerView && Number(pxServerView[1]) === pxViewW && Number(pxServerVie
     "PX_VIEW_W/H in worker.core.js must match VIEW_W/H in mg_pixelbattle.js");
 assert(new RegExp(`\\.mg-px-grid\\s*\\{[^}]*width:\\s*${pxViewW}px[^}]*height:\\s*${pxViewH}px`).test(css),
     ".mg-px-grid CSS size must match the client's VIEW_W/VIEW_H");
-// A placed pixel uploads itself, so the server's floor must accept a batch of one. A mismatch here
-// makes the server reject the client's smallest real batch as malformed.
+// A manual UPLOAD of a single pixel is a legitimate batch, so the server's floor must accept one.
+// A mismatch here makes the server reject the client's smallest real batch as malformed.
 const pxMinClient = /\b(?:var|let|const) MIN_BATCH = (\d+);/.exec(pixel);
 const pxMinServer = /const PX_MIN_BATCH = (\d+),/.exec(worker);
 assert(pxMinClient && pxMinServer && pxMinClient[1] === pxMinServer[1] && pxMinServer[1] === "1",
-    "MIN_BATCH and PX_MIN_BATCH must both be 1 now that pixels auto-flush");
-assert(/function scheduleAutoFlush\(\)/.test(pixel) && /scheduleAutoFlush\(\);/.test(pixel),
-    "placing a pixel must schedule an auto-flush instead of waiting for a manual upload");
-// The debounce is what keeps auto-flush off the request limiter; near-zero = one request per click.
-const pxFlush = Number(/\b(?:var|let|const) AUTO_FLUSH_S = ([\d.]+);/.exec(pixel)[1]);
-assert(pxFlush >= 0.3, `AUTO_FLUSH_S is ${pxFlush}s; too small a debounce sends one request per click`);
+    "MIN_BATCH and PX_MIN_BATCH must both be 1 so a single-pixel UPLOAD is accepted");
+// Paint must NEVER commit itself. An auto-flush shipped on 2026-08-01 and was reverted: it took
+// away the player's last chance to change their mind, and in-game it read as pixels placing
+// themselves without UPLOAD ever being pressed. placePixel may only touch local state.
+assert(!/scheduleAutoFlush/.test(pixel) && !/AUTO_FLUSH_S/.test(pixel),
+    "Pixel Battle must not auto-flush: paint commits only when the player presses UPLOAD");
+assert(/function placePixel\(x, y\)[\s\S]*?\n        \}/.exec(pixel) &&
+    !/function placePixel\(x, y\)[\s\S]*?uploadPending\(\)[\s\S]*?\n        \}/.test(
+        /function placePixel\(x, y\)[\s\S]*?\n        \}/.exec(pixel)[0]),
+    "placePixel must not start an upload; only the UPLOAD button calls uploadPending");
+// The version poll cadence. Flat, and slow enough not to be a background traffic drip.
+const pxPoll = /\b(?:var|let|const) POLL_ACTIVE_S = (\d+), POLL_WARM_S = (\d+), POLL_IDLE_S = (\d+);/.exec(pixel);
+assert(pxPoll && Number(pxPoll[1]) >= 20 && Number(pxPoll[2]) >= 20 && Number(pxPoll[3]) >= 20,
+    "Pixel Battle canvas-version poll must be 20s or slower on every tier");
+// The viewport must not be blanked while its replacement loads: the new frame is a debounce plus a
+// full FIFO round-trip away, so collapsing the old one turns every pan/zoom/poll into a ~0.5s black
+// flash. The swap in refreshCrispView is already atomic (parent the new panel, then delete the old).
+assert(!/crispImage\.style\.visibility = "collapse"/.test(pixel),
+    "the loaded Pixel Battle viewport must stay visible until its replacement is parented");
+// Because the stale frame now stays up, a failed viewport load is INVISIBLE: the map looks fine
+// while crispReady stays false and every grid click is refused forever. Both failure paths must
+// therefore self-heal. (The busy-sentinel path always had its own 1.2s retry; these two did not.)
+assert(/function scheduleCrispRetry\(gen\)/.test(pixel),
+    "a failed Pixel Battle viewport load must schedule a retry, or the map wedges unclickable");
+assert((pixel.match(/scheduleCrispRetry\(myGen\);/g) || []).length >= 2,
+    "both the display-exception and the load-error paths must arm the viewport retry");
+// `v` is a CLIENT cache key only - /api/pxview never reads it and always renders the current
+// canvas. The optimistic post-upload bump lied twice: the server skips the version bump entirely
+// when a batch changes nothing (changed.length === 0), and the client wrapped at 4096 against the
+// server's PX_VERSION_MOD of 4032. Once ahead, the refresh requested a `v` it had already cached,
+// so another player's paint silently never appeared.
+assert(!/knownVersion = \(knownVersion \+ 1\)/.test(pixel),
+    "the upload path must not optimistically bump knownVersion; the poll owns the authoritative value");
+assert(/if \(changed\.length === 0\) return \{ ok: true/.test(worker),
+    "worker must still short-circuit a zero-change batch (the reason the optimistic bump was wrong)");
+// Consequence of dropping the bump: refreshing straight after an upload would re-request the
+// pre-upload `v` and Panorama would serve the cached pre-upload bitmap, hiding the player's own
+// paint. Re-read the authoritative version instead and let it drive the refresh.
+assert(/pollGeneration\+\+;\s*\r?\n\s*pollVersion\(\);/.test(pixel),
+    "after an upload drains, Pixel Battle must re-read the authoritative version rather than refresh blind");
 
 for (const entry of [{ name: "Durak", text: durak }, { name: "Poker", text: poker }]) {
     assert(/pendingAct = true;\s*refreshTimer\(\);/.test(entry.text),
