@@ -190,17 +190,36 @@ assert(numW >= 34,
     `the horizontal timer's seconds label is ${numW}px; two 17px bold digits need >= 34px or ` +
     "Panorama truncates them to an ellipsis");
 
-// Images load INVISIBLE and are revealed only once re-parented. The net host is a real on-screen
-// panel near the modal's top-left, so a loading <Image> otherwise painted there for a frame or
-// two - the "pictures flash in the corner" report, in both Pixel Battle and GeoGuesser.
+// Images must NOT be hidden while loading, and must be styled BEFORE they are re-parented.
+// Both halves are scars: `opacity: 0` on the loading <Image> stopped the engine loading it at all
+// (dims stayed 0 for the full 8s timeout, GeoGuesser hung on "Loading panorama…"), and parenting
+// before styling flashed a full-size frame at the visible layer's top-left.
 const net = fs.readFileSync(path.join(ROOT, "panorama", "scripts", "mg_net.js"), "utf8");
-assert(/img\.style\.opacity = "0\.0";/.test(net) && /showLoadedImage/.test(net),
-    "loadImage must create its <Image> hidden and expose a reveal helper");
-assert(/MG\.Net\.showLoadedImage\(image\);/.test(controller),
-    "GeoGuesser must reveal each panorama copy after parenting it");
+const imageReq = net.slice(net.indexOf("function imageRequestNow"),
+    net.indexOf("function rawRequestNow"));
+assert(!/img\.style\.opacity/.test(imageReq),
+    "the loading <Image> must not be given an opacity - a zero-opacity panel is never loaded");
+assert(!/showLoadedImage/.test(net),
+    "the opacity-based reveal helper broke all image loading and must stay removed");
+function parentedLast(source, fn, parentCall) {
+    const at = source.indexOf(fn);
+    if (at < 0) return false;
+    // Wide enough to reach the parent call in refreshCrispView (~3.3k in), which sits behind a
+    // long aspect-sanity guard. Bounded at the call itself so a later unrelated .style.* write
+    // cannot make the check pass or fail by accident.
+    const body = source.slice(at, at + 6000);
+    const parent = body.indexOf(parentCall);
+    if (parent < 0) return false;
+    const before = body.slice(0, parent);
+    const lastStyle = Math.max(before.lastIndexOf(".style.width"), before.lastIndexOf(".style.height"),
+        before.lastIndexOf(".style.transform"));
+    return lastStyle > 0;
+}
+assert(parentedLast(controller, "function configurePanoImage", "SetParent(stage)"),
+    "GeoGuesser must size each panorama copy before parenting it into the stage");
 const pixel = fs.readFileSync(path.join(ROOT, "panorama", "scripts", "mg_pixelbattle.js"), "utf8");
-assert(/MG\.Net\.showLoadedImage\(loaded\);/.test(pixel),
-    "Pixel Battle must reveal its viewport image after parenting it");
+assert(parentedLast(pixel, "function refreshCrispView", "SetParent(crispLayer)"),
+    "Pixel Battle must size its viewport image before parenting it into the visible layer");
 
 console.log("GeoGuesser map passed: Natural Earth layers, 2048x1024, " +
     cityCount + " cities, 512x256 guess space");

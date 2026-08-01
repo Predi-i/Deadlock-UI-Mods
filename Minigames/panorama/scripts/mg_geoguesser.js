@@ -541,17 +541,19 @@
             panoImages = [];
         }
 
+        // ⚠ ORDER MATTERS: size and position the image FIRST, re-parent into the visible stage
+        // LAST. The panel arrives from MG.Net.loadImage still laid out at the source's intrinsic
+        // size with no transform, so parenting it first put a full-size 2048px panorama at the
+        // stage's top-left for the frame before the transform landed - the "images flash in the
+        // corner" report (maintainer, 2026-08-01). It cannot be fixed inside loadImage by hiding
+        // the panel: a zero-opacity <Image> is never loaded at all (see imageRequestNow).
         function configurePanoImage(image, offset) {
-            image.SetParent(stage);
             image.AddClass("mg-geo-pano-image");
             image.style.width = PANO_W + "px";
             image.style.height = PANO_H + "px";
             image.style.transform = `translate3d(${offset}px, 0px, 0px)`;
             try { image.SetAttributeString("hittest", "false"); } catch (e) {}
-            // loadImage returns the panel at opacity 0 so a 2048px-wide panorama cannot flash at
-            // the net host's top-left corner mid-load; it is parented and positioned now, so show
-            // it. All three copies (centre + both wrap neighbours) come through here.
-            MG.Net.showLoadedImage(image);
+            image.SetParent(stage);
             panoImages.push(image);
         }
 

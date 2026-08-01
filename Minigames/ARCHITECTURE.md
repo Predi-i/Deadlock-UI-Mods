@@ -342,14 +342,18 @@ swapped**. So on boot-ish (lazily; see trap below) the client fetches `/api/prob
   ordinary remote images (the update marker and Pixel Battle viewport) therefore share the same
   strict FIFO (`reqQueue`, `reqActive`, `MG.Net.loadImage`); polls, actions and asset loads never
   overlap. A successful ordinary load transfers its already-loaded `<Image>` to the caller.
-  ⚠ **That `<Image>` is created at `opacity: 0` and must be revealed with
-  `MG.Net.showLoadedImage` once the caller has re-parented and sized it.** The net host is a REAL
-  on-screen panel (it has to be, or the engine skips the load) pinned near the modal's top-left,
-  and a loading image lays out there at its intrinsic size — so a full-size frame flashed in the
-  corner for ~0.1s before every Pixel Battle viewport and GeoGuesser panorama (maintainer,
-  2026-08-01). `opacity`, NOT `visibility: collapse`: a collapsed panel is not laid out, and the
-  whole transport depends on the engine laying the image out to report its dimensions. Callers that
-  only read dimensions and delete (the update marker) need no reveal.
+  ⚠ **NEVER hide the loading `<Image>` to stop it flashing.** Tried 2026-08-01 (`opacity: 0`,
+  cleared after re-parenting) and it broke **all** image loading: a zero-opacity panel is skipped
+  by the engine's loader — the same rule `ensureHost` already documents for the host itself — so
+  `actuallayoutwidth` stayed 0 for the full 8s timeout on every request. The engine cheerfully
+  logged `Slow image load - … (dimensions 2048x1024, took 27 msec)` while our poll saw nothing,
+  the update marker timed out twice on boot, and GeoGuesser sat on "Loading panorama…" forever.
+  The whole transport depends on the engine genuinely laying this image out.
+  **The corner flash is a CALLER-side ordering bug, and that is where it is fixed**: the panel
+  arrives laid out at the source's intrinsic size with no transform, so `SetParent` into the
+  visible tree must come **after** the width/height/transform writes, never before. Pixel Battle
+  and GeoGuesser both do it in that order now, and `mg_geoguesser_map_test.js` enforces both
+  halves (no opacity on the loader; parent last).
 - **A started request always runs to completion** (response or 8s timeout). There is
   deliberately **no abort**: a silent abort once left `calibrating` latched true forever,
   deadlocking all networking.

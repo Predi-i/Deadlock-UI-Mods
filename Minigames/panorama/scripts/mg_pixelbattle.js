@@ -646,15 +646,18 @@
                     return;
                 }
                 try {
-                    loaded.SetParent(crispLayer);
+                    // ⚠ Size/position BEFORE re-parenting into the visible layer. The panel comes
+                    // back from loadImage laid out at the source's intrinsic size, so parenting it
+                    // first showed an unscaled frame at the layer's top-left for one frame (the
+                    // "images flash in the corner" report, 2026-08-01). It cannot be fixed by
+                    // hiding the panel during the load: a zero-opacity <Image> is never loaded at
+                    // all - see imageRequestNow in mg_net.js.
                     loaded.style.position = "0px 0px 0px";
                     loaded.style.width = "800px";
                     loaded.style.height = "400px";
                     loaded.style.visibility = "visible";
-                    // loadImage hands the panel back at opacity 0 so it cannot flash at the net
-                    // host's corner while loading; reveal it now that it is parented and sized.
-                    MG.Net.showLoadedImage(loaded);
                     try { loaded.SetAttributeString("hittest", "false"); } catch (e4) {}
+                    loaded.SetParent(crispLayer);
                     const old = crispImage;
                     crispImage = loaded;
                     if (old && old !== loaded) {
