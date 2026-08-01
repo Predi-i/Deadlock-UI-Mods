@@ -123,14 +123,22 @@ backup command or stop the service first so WAL state cannot be missed.
 
 ## Admin OAuth
 
-The browser admin remains fail-closed until `/etc/deadlock-minigames.env` supplies:
+**Пошаговый гайд по включению: [`ADMIN_SETUP.md`](ADMIN_SETUP.md)** — там же объяснено, чем это
+заменило `npx wrangler secret put`, и команда для генерации 32+-символьного секрета.
+
+Кратко: the browser admin stays fail-closed until `/etc/deadlock-minigames.env` supplies all four
+of these. Secrets live in that file now, NOT in Cloudflare — `wrangler.jsonc` is rollback history
+only and production never reads it.
 
 ```text
 GITHUB_CLIENT_ID=...
 GITHUB_CLIENT_SECRET=...
-ADMIN_GITHUB_ID=...
-ADMIN_SESSION_SECRET=at-least-32-random-characters
+ADMIN_GITHUB_ID=...            # numeric GitHub id, not the login (a login can be renamed/taken)
+ADMIN_SESSION_SECRET=...       # >= 32 chars, else adminConfig() refuses and /admin stays 503
 ```
+
+`EnvironmentFile` is read literally: no quotes around values, no spaces around `=`. Do not touch
+`MG_MAPILLARY_TOKEN` in the same file — GeoGuesser's Mapillary panoramas depend on it.
 
 The GitHub OAuth App callback is:
 
@@ -144,6 +152,17 @@ After changing the file:
 chmod 0640 /etc/deadlock-minigames.env
 chown root:minigames /etc/deadlock-minigames.env
 systemctl restart deadlock-minigames
+```
+
+Verify the values reached the PROCESS, not just the file — the usual failure is a typo that leaves
+`/admin` on 503:
+
+```bash
+PID=$(systemctl show -p MainPID --value deadlock-minigames)
+for v in GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET ADMIN_GITHUB_ID ADMIN_SESSION_SECRET; do
+  tr '\0' '\n' < /proc/$PID/environ | grep -q "^$v=" && echo "$v: ok" || echo "$v: MISSING"
+done
+curl -s -o /dev/null -w '%{http_code}\n' -k https://127.0.0.1/admin   # 302 = configured, 503 = not
 ```
 
 Never commit or paste these secrets into source files.
