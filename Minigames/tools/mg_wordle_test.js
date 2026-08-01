@@ -26,14 +26,14 @@ const scoreGuess = new Function(body + "\nreturn scoreGuess;")();
 
 let failed = 0;
 function check(condition, label) {
-    console.log("  " + (condition ? "PASS " : "FAIL ") + label);
+    console.log(`  ${condition ? "PASS " : "FAIL "}${label}`);
     if (!condition) failed++;
 }
 function same(actual, expected, label) {
     const ok = JSON.stringify(actual) === JSON.stringify(expected);
-    console.log("  " + (ok ? "✓ " : "✗ ") + label);
+    console.log(`  ${ok ? "✓ " : "✗ "}${label}`);
     if (!ok) {
-        console.log("    expected " + JSON.stringify(expected) + ", got " + JSON.stringify(actual));
+        console.log(`    expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
         failed++;
     }
 }
@@ -47,7 +47,7 @@ check(source.indexOf("ANSWERS = MG.WordleWords.answers") >= 0,
 check(layoutSource.indexOf("mg_wordle_words.generated.vjs_c") <
     layoutSource.indexOf("mg_wordle.vjs_c"), "dictionary loads before the controller");
 const allWords = wordLists.answers.concat(wordLists.guesses);
-check(allWords.every(function (word) { return /^[A-Z]{5}$/.test(word); }),
+check(allWords.every((word) => { return /^[A-Z]{5}$/.test(word); }),
     "every dictionary entry is exactly five ASCII letters");
 check(new Set(allWords).size === allWords.length, "dictionary entries are unique");
 
@@ -60,7 +60,7 @@ same(scoreGuess("BANAL", "ALARM"), [1, 1, 1, 0, 0],
     "present-letter counts are consumed independently");
 
 if (failed) {
-    console.error("\n" + failed + " WORDLE FAILURE(S)");
+    console.error(`\n${failed} WORDLE FAILURE(S)`);
     process.exitCode = 1;
 } else {
     console.log("\nAll Wordle scoring tests passed.");

@@ -12,9 +12,9 @@
  */
 
 (function () {
-    var R;
+    let R;
     if (typeof $ !== "undefined" && $) {
-        var MG = ($.MG = $.MG || {});
+        const MG = ($.MG = $.MG || {});
         R = (MG.Rules = MG.Rules || {});
     } else if (typeof globalThis !== "undefined") {
         R = (globalThis.MGRules = globalThis.MGRules || {});
@@ -22,44 +22,44 @@
         R = (this.MGRules = this.MGRules || {});
     }
 
-    var COLS = 7, ROWS = 6, CELLS = COLS * ROWS;
+    const COLS = 7, ROWS = 6, CELLS = COLS * ROWS;
 
     function idx(r, c) { return r * COLS + c; }
-    function initialBoard() { var b = new Array(CELLS); for (var i = 0; i < CELLS; i++) b[i] = 0; return b; }
+    function initialBoard() { const b = new Array(CELLS); for (let i = 0; i < CELLS; i++) b[i] = 0; return b; }
 
     // Columns whose TOP cell is empty (i.e. not full).
     function legalCols(b) {
-        var out = [];
-        for (var c = 0; c < COLS; c++) if (b[idx(0, c)] === 0) out.push(c);
+        const out = [];
+        for (let c = 0; c < COLS; c++) if (b[idx(0, c)] === 0) out.push(c);
         return out;
     }
     // Lowest empty row of a column (where a dropped disc lands), or -1 if the column is full.
     function dropRow(b, col) {
         if (col < 0 || col >= COLS) return -1;
-        for (var r = ROWS - 1; r >= 0; r--) if (b[idx(r, col)] === 0) return r;
+        for (let r = ROWS - 1; r >= 0; r--) if (b[idx(r, col)] === 0) return r;
         return -1;
     }
     // Drop a disc for `player` into `col`. Returns { board, row } with a NEW board (the caller
     // decides whether to keep it), or null if the column is full. Board is copied so callers
     // can use it as a predictor without clobbering their own state.
     function drop(b, col, player) {
-        var r = dropRow(b, col);
+        let r = dropRow(b, col);
         if (r < 0) return null;
-        var nb = b.slice();
+        const nb = b.slice();
         nb[idx(r, col)] = player;
         return { board: nb, row: r };
     }
 
     // First player with four-in-a-row (horizontal, vertical, both diagonals), or 0.
-    var DIRS = [[0, 1], [1, 0], [1, 1], [1, -1]];
+    const DIRS = [[0, 1], [1, 0], [1, 1], [1, -1]];
     function winner(b) {
-        for (var r = 0; r < ROWS; r++) {
-            for (var c = 0; c < COLS; c++) {
-                var v = b[idx(r, c)];
+        for (let r = 0; r < ROWS; r++) {
+            for (let c = 0; c < COLS; c++) {
+                const v = b[idx(r, c)];
                 if (!v) continue;
-                for (var d = 0; d < DIRS.length; d++) {
-                    var dr = DIRS[d][0], dc = DIRS[d][1];
-                    var rr = r + dr * 3, cc = c + dc * 3;
+                for (let d = 0; d < DIRS.length; d++) {
+                    const dr = DIRS[d][0], dc = DIRS[d][1];
+                    let rr = r + dr * 3, cc = c + dc * 3;
                     if (rr < 0 || rr >= ROWS || cc < 0 || cc >= COLS) continue;
                     if (b[idx(r + dr, c + dc)] === v && b[idx(r + dr * 2, c + dc * 2)] === v &&
                         b[idx(rr, cc)] === v) return v;
@@ -68,18 +68,18 @@
         }
         return 0;
     }
-    function isFull(b) { for (var i = 0; i < CELLS; i++) if (b[i] === 0) return false; return true; }
+    function isFull(b) { for (let i = 0; i < CELLS; i++) if (b[i] === 0) return false; return true; }
     function isDraw(b) { return !winner(b) && isFull(b); }
 
     // The four-cell winning line for `player` (row-major cell indices), or null. UI-only -
     // lets the controller highlight the winning discs.
     function winningLine(b, player) {
-        for (var r = 0; r < ROWS; r++) {
-            for (var c = 0; c < COLS; c++) {
+        for (let r = 0; r < ROWS; r++) {
+            for (let c = 0; c < COLS; c++) {
                 if (b[idx(r, c)] !== player) continue;
-                for (var d = 0; d < DIRS.length; d++) {
-                    var dr = DIRS[d][0], dc = DIRS[d][1];
-                    var rr = r + dr * 3, cc = c + dc * 3;
+                for (let d = 0; d < DIRS.length; d++) {
+                    const dr = DIRS[d][0], dc = DIRS[d][1];
+                    let rr = r + dr * 3, cc = c + dc * 3;
                     if (rr < 0 || rr >= ROWS || cc < 0 || cc >= COLS) continue;
                     if (b[idx(r + dr, c + dc)] === player && b[idx(r + dr * 2, c + dc * 2)] === player &&
                         b[idx(rr, cc)] === player)
@@ -102,23 +102,23 @@
     // public drop() still copies (its callers rely on that); only the internal search mutates,
     // and it always restores, so cfBotMove leaves the caller's board untouched. DEPTH trimmed
     // 6 → 5 for extra headroom (the win/block shortcuts below keep it tactically sharp).
-    var CENTER_ORDER = [3, 2, 4, 1, 5, 0, 6];
-    var DEPTH = 5;
+    const CENTER_ORDER = [3, 2, 4, 1, 5, 0, 6];
+    const DEPTH = 5;
 
     // Count windows of 4 and score them: a window with only my discs is good, only theirs bad.
     function evalBoard(b, me) {
-        var opp = me === 1 ? 2 : 1, score = 0, r, c, d;
+        let opp = me === 1 ? 2 : 1, score = 0, r, c, d;
         // centre column preference
         for (r = 0; r < ROWS; r++) if (b[idx(r, 3)] === me) score += 3;
         for (r = 0; r < ROWS; r++) {
             for (c = 0; c < COLS; c++) {
                 for (d = 0; d < DIRS.length; d++) {
-                    var dr = DIRS[d][0], dc = DIRS[d][1];
-                    var rr = r + dr * 3, cc = c + dc * 3;
+                    const dr = DIRS[d][0], dc = DIRS[d][1];
+                    let rr = r + dr * 3, cc = c + dc * 3;
                     if (rr < 0 || rr >= ROWS || cc < 0 || cc >= COLS) continue;
-                    var mine = 0, theirs = 0, k;
+                    let mine = 0, theirs = 0, k;
                     for (k = 0; k < 4; k++) {
-                        var v = b[idx(r + dr * k, c + dc * k)];
+                        const v = b[idx(r + dr * k, c + dc * k)];
                         if (v === me) mine++; else if (v === opp) theirs++;
                     }
                     if (mine && theirs) continue;          // mixed window is dead
@@ -134,8 +134,8 @@
     // THROUGH that cell (O(1)) instead of the whole board - the make/undo search's per-node
     // terminal test. `v` is the mover's colour at (r,c).
     function winsAt(b, r, c, v) {
-        for (var d = 0; d < DIRS.length; d++) {
-            var dr = DIRS[d][0], dc = DIRS[d][1], run = 1, k, rr, cc;
+        for (let d = 0; d < DIRS.length; d++) {
+            let dr = DIRS[d][0], dc = DIRS[d][1], run = 1, k, rr, cc;
             for (k = 1; k < 4; k++) {                      // extend one way
                 rr = r + dr * k; cc = c + dc * k;
                 if (rr < 0 || rr >= ROWS || cc < 0 || cc >= COLS || b[idx(rr, cc)] !== v) break;
@@ -151,7 +151,7 @@
         return false;
     }
     // Lowest empty row of `col` on the CURRENT (mutated) board - search's make step. -1 if full.
-    function landRow(b, col) { for (var r = ROWS - 1; r >= 0; r--) if (b[idx(r, col)] === 0) return r; return -1; }
+    function landRow(b, col) { for (let r = ROWS - 1; r >= 0; r--) if (b[idx(r, col)] === 0) return r; return -1; }
 
     // Negamax on ONE working board via make/undo (no per-node allocation - see the PERF note).
     // `lastWin` = the mover of the PARENT node just won by landing at (lastR,lastC); we detect the
@@ -167,15 +167,15 @@
         if (lastR >= 0 && winsAt(b, lastR, lastC, lastV))
             return -(100000 + depth);
         if (depth === 0) return evalBoard(b, player);
-        var best = -1e9, moved = false;
-        for (var i = 0; i < CENTER_ORDER.length; i++) {
-            var col = CENTER_ORDER[i];
-            var r = landRow(b, col);
+        let best = -1e9, moved = false;
+        for (let i = 0; i < CENTER_ORDER.length; i++) {
+            let col = CENTER_ORDER[i];
+            let r = landRow(b, col);
             if (r < 0) continue;                           // full
             moved = true;
-            var cell = idx(r, col);
+            const cell = idx(r, col);
             b[cell] = player;                              // make
-            var val = -negamax(b, player === 1 ? 2 : 1, depth - 1, -beta, -alpha, r, col, player);
+            const val = -negamax(b, player === 1 ? 2 : 1, depth - 1, -beta, -alpha, r, col, player);
             b[cell] = 0;                                   // undo
             if (val > best) best = val;
             if (val > alpha) alpha = val;
@@ -187,25 +187,25 @@
 
     // Returns the column the bot plays, or -1 if the board is full.
     function cfBotMove(b, player) {
-        var cols = legalCols(b);
+        const cols = legalCols(b);
         if (cols.length === 0) return -1;
-        var opp = player === 1 ? 2 : 1, i, col, r;
+        let opp = player === 1 ? 2 : 1, i, col, r;
         // Work on a private copy so the search's make/undo can never touch the caller's board
         // (make/undo always restores, but a copy makes that guarantee unconditional).
-        var w = b.slice();
+        const w = b.slice();
         // 1) take an immediate win
         for (i = 0; i < cols.length; i++) { col = cols[i]; r = landRow(w, col); w[idx(r, col)] = player; if (winsAt(w, r, col, player)) { w[idx(r, col)] = 0; return col; } w[idx(r, col)] = 0; }
         // 2) block the opponent's immediate win
         for (i = 0; i < cols.length; i++) { col = cols[i]; r = landRow(w, col); w[idx(r, col)] = opp; if (winsAt(w, r, col, opp)) { w[idx(r, col)] = 0; return col; } w[idx(r, col)] = 0; }
         // 3) search
-        var bestCol = cols[0], bestVal = -1e9;
+        let bestCol = cols[0], bestVal = -1e9;
         for (i = 0; i < CENTER_ORDER.length; i++) {
             col = CENTER_ORDER[i];
             r = landRow(w, col);
             if (r < 0) continue;
-            var cell = idx(r, col);
+            const cell = idx(r, col);
             w[cell] = player;                              // make
-            var val = -negamax(w, opp, DEPTH - 1, -1e9, 1e9, r, col, player);
+            const val = -negamax(w, opp, DEPTH - 1, -1e9, 1e9, r, col, player);
             w[cell] = 0;                                   // undo
             if (val > bestVal) { bestVal = val; bestCol = col; }
         }

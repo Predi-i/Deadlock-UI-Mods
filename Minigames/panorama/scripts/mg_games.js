@@ -19,8 +19,8 @@
  *   session = { code, isHost, onStatus(text) }
  */
 
-(function () {
-    var MG = ($.MG = $.MG || {});
+(() => {
+    const MG = ($.MG = $.MG || {});
     if (MG.Games) return;
 
     // The per-game rule aliases (checkers/ttt) that used to live here moved WITH their
@@ -39,42 +39,42 @@
     // onFlag(seat) fires once when a side runs out. seatNames labels each clock.
     function createClock(parent, secs, online, code, onFlag, seatNames, mySeat) {
         if (!online && !secs) return { el: null, setTurn: function () {}, stop: function () {}, isTimed: false };
-        var flagged = -1, running = -1, stopped = false, revealed = false;
-        var warned10 = false;          // TenSeconds sfx fires once when MY bank crosses 10s
+        let flagged = -1, running = -1, stopped = false, revealed = false;
+        let warned10 = false;          // TenSeconds sfx fires once when MY bank crosses 10s
         if (typeof mySeat !== "number") mySeat = -1;   // -1 = unknown → never beep (safe default)
         // Seconds banks (floats). OFFLINE: seeded from `secs`. ONLINE: null until the first
         // server resync fills them; from then on the display is driven by LOCAL interpolation
         // between resyncs (see interpTick), NOT by a per-second server poll.
-        var sec = online ? [null, null] : [secs, secs];
-        var lastTick = 0;              // Date.now() of the last local interpolation step
-        var lastResync = 0;            // Date.now() of the last authoritative server read (online)
+        let sec = online ? [null, null] : [secs, secs];
+        let lastTick = 0;              // Date.now() of the last local interpolation step
+        const lastResync = 0;            // Date.now() of the last authoritative server read (online)
 
-        var wrap = $.CreatePanel("Panel", parent, "");
+        const wrap = $.CreatePanel("Panel", parent, "");
         wrap.AddClass("mg-clocks");
         if (online) wrap.style.visibility = "collapse";   // hidden until the first timed poll reveals it
-        var rows = [];
+        const rows = [];
         // Build the two rows TOP→BOTTOM with MY seat at the bottom, so my clock sits under the
         // board I'm playing from (my colour is always the bottom side - see toDisplay). The `rows`
         // array stays SEAT-indexed (paint/setTurn/fireFlag are unchanged); only the visual creation
         // order changes. mySeat unknown (-1) keeps the legacy white-top/black-bottom order.
-        var rowOrder = (mySeat === 0 || mySeat === 1) ? [1 - mySeat, mySeat] : [0, 1];
-        for (var oi = 0; oi < 2; oi++) {
-            var s = rowOrder[oi];
-            var row = $.CreatePanel("Panel", wrap, "");
+        const rowOrder = (mySeat === 0 || mySeat === 1) ? [1 - mySeat, mySeat] : [0, 1];
+        for (let oi = 0; oi < 2; oi++) {
+            let s = rowOrder[oi];
+            const row = $.CreatePanel("Panel", wrap, "");
             row.AddClass("mg-clock-row");
-            var name = $.CreatePanel("Label", row, ""); name.AddClass("mg-clock-name");
-            name.text = (seatNames && seatNames[s]) || ("Seat " + (s + 1));
-            var time = $.CreatePanel("Label", row, ""); time.AddClass("mg-clock-time");
+            const name = $.CreatePanel("Label", row, ""); name.AddClass("mg-clock-name");
+            name.text = (seatNames && seatNames[s]) || (`Seat ${s + 1}`);
+            const time = $.CreatePanel("Label", row, ""); time.AddClass("mg-clock-time");
             rows[s] = { row: row, time: time };
         }
 
         function fmt(sec) {
             sec = Math.max(0, Math.ceil(sec));
-            var m = Math.floor(sec / 60), s = sec % 60;
-            return m + ":" + (s < 10 ? "0" + s : s);
+            let m = Math.floor(sec / 60), s = sec % 60;
+            return m + ":" + (s < 10 ? `0${s}` : s);
         }
         function paint(secArr) {
-            for (var s = 0; s < 2; s++) {
+            for (let s = 0; s < 2; s++) {
                 if (!rows[s].time.IsValid()) continue;
                 rows[s].time.text = fmt(secArr[s]);
                 rows[s].row.SetHasClass("mg-clock-active", s === running && flagged < 0);
@@ -96,7 +96,7 @@
         function interpTick() {
             if (stopped || flagged >= 0) return;
             if (online && sec[0] === null) { $.Schedule(0.25, interpTick); return; } // await first resync
-            var now = Date.now();
+            const now = Date.now();
             if (running >= 0 && lastTick) {
                 sec[running] = Math.max(0, sec[running] - (now - lastTick) / 1000);
                 if (sec[running] === 0 && !online) fireFlag(running);
@@ -120,10 +120,10 @@
         // burned the daily request budget (2 short games ≈ 1200 requests came almost entirely from
         // this loop). Interpolating locally between rare resyncs keeps the display live for ~free.
         // Reveals the shell on the first timed reply; tears it down if the lobby is untimed.
-        var RESYNC_S = 8;
+        const RESYNC_S = 8;
         function resyncTick() {
             if (stopped) return;
-            MG.Api.clocks(code, function (r) {
+            MG.Api.clocks(code, (r) => {
                 if (stopped) return;
                 if (r) {
                     if (!revealed && wrap.IsValid()) { wrap.style.visibility = "visible"; revealed = true; }
@@ -139,7 +139,7 @@
                 }
                 // Before the first reveal a transport hiccup should retry soon (don't leave the
                 // clock invisible for 8s); once revealed, resume the slow authoritative cadence.
-            }, function () { if (!stopped) $.Schedule(revealed ? RESYNC_S : 1.2, resyncTick); });
+            }, () => { if (!stopped) $.Schedule(revealed ? RESYNC_S : 1.2, resyncTick); });
         }
 
         lastTick = Date.now();
@@ -189,11 +189,19 @@
     // by half the board + a gap) instead of the modal's far-left gutter. TTT/C4 pass it (their
     // boards are narrow and centred, so the gutter looked detached); durak/poker omit it and keep
     // the wide-felt gutter placement the maintainer already signed off on.
-    var TURN_SECS = 25;                    // per-turn budget; matches .mg-tt-anim transition-duration in mg.css
+    const TURN_SECS = 25;                    // per-turn budget; matches .mg-tt-anim transition-duration in mg.css
     function createTurnTimer(parent, opts) {
-        var TRACK_H = 280;                 // px; MUST match .mg-tt-track height in mg.css (drain distance)
-        var wrap = $.CreatePanel("Panel", parent, "");
+        const TRACK_H = 280;                 // px; MUST match .mg-tt-track height in mg.css (drain distance)
+        // opts.horizontal: lay the bar out as a WIDE row instead of a tall column. GeoGuesser uses
+        // it because its own row is 860 wide and only 38 tall - a 280px column simply does not fit
+        // beside a 360px panorama viewport, and the gutter placement the other games use would sit
+        // outside the 860px stack. TRACK_W must match .mg-tt-horiz .mg-tt-track's width in mg.css,
+        // exactly as TRACK_H must match the vertical track's height: it IS the drain distance.
+        const horizontal = !!(opts && opts.horizontal);
+        const TRACK_W = 792;                 // px; MUST match .mg-tt-horiz .mg-tt-track width in mg.css
+        const wrap = $.CreatePanel("Panel", parent, "");
         wrap.AddClass("mg-turn-timer");
+        if (horizontal) wrap.AddClass("mg-tt-horiz");
         // Position the wrap with ONE inline transform (inline beats any CSS transform):
         //  • Y: the wrap is vertical-align:center in the flow:none host, but it's flow-children:down
         //    (track 280 + 6 gap + 22 num = 308 tall), so the TRACK's centre sits half the below-track
@@ -205,32 +213,36 @@
         //    centred boards - the far-left gutter looked detached). Poker/durak omit it: their felts
         //    are wide (760/680) so a board-edge shove would push the bar off the modal's left margin,
         //    and the left gutter already sits right at the felt's edge - keep the gutter placement.
-        var VNUDGE = 14;                   // (num margin-top 6 + num height 22) / 2 - see mg.css .mg-tt-num
-        var vx = 0;
-        if (opts && opts.boardW) {
+        const VNUDGE = 14;                   // (num margin-top 6 + num height 22) / 2 - see mg.css .mg-tt-num
+        let vx = 0;
+        if (horizontal) {
+            // The horizontal bar is a plain flow child of an 860px column: no gutter shove and no
+            // VNUDGE (that offset corrects a flow-children:down stack, which this is not).
+            wrap.style.transform = "translate3d(0px, 0px, 0px)";
+        } else if (opts && opts.boardW) {
             // .mg-tt-attached centres the wrap in the 844px inner zone; shove it left so its RIGHT
             // edge sits GAP px before the board's left edge. Wide felts (poker 760) leave < 48px of
             // margin, so clamp the shove: the wrap's LEFT edge never crosses EDGE px from the modal's
             // left (else the bar clips off-screen). Centre = INNER_W/2; wrapLeft = Centre + vx - W/2.
-            var GAP = 14, TIMER_W = 34, INNER_W = 844, EDGE = 4;
+            const GAP = 14, TIMER_W = 34, INNER_W = 844, EDGE = 4;
             wrap.AddClass("mg-tt-attached");
             vx = -(opts.boardW / 2 + GAP + TIMER_W / 2);
-            var minVx = EDGE + TIMER_W / 2 - INNER_W / 2;   // keeps wrapLeft >= EDGE
+            const minVx = EDGE + TIMER_W / 2 - INNER_W / 2;   // keeps wrapLeft >= EDGE
             if (vx < minVx) vx = minVx;
         }
-        wrap.style.transform = "translate3d(" + vx + "px, " + VNUDGE + "px, 0px)";
-        var track = $.CreatePanel("Panel", wrap, "");
+        if (!horizontal) wrap.style.transform = `translate3d(${vx}px, ${VNUDGE}px, 0px)`;
+        const track = $.CreatePanel("Panel", wrap, "");
         track.AddClass("mg-tt-track");
-        var fill = $.CreatePanel("Panel", track, "");
+        const fill = $.CreatePanel("Panel", track, "");
         fill.AddClass("mg-tt-fill");
         fill.style.opacity = "0.0";           // idle: only the empty channel shows (footprint reserved)
-        var num = $.CreatePanel("Label", wrap, "");
+        const num = $.CreatePanel("Label", wrap, "");
         num.AddClass("mg-tt-num");
 
-        var gen = 0;                       // bumps on every start/stop/destroy → stale ticks bail
-        var dead = false, running = false, deadline = 0, expireCb = null;
-        var curSecs = TURN_SECS;           // budget for the CURRENT run (start may override per call)
-        var warned10 = false;              // TenSeconds sfx fires once per turn as the bar crosses 10s
+        let gen = 0;                       // bumps on every start/stop/destroy → stale ticks bail
+        let dead = false, running = false, deadline = 0, expireCb = null;
+        let curSecs = TURN_SECS;           // budget for the CURRENT run (start may override per call)
+        let warned10 = false;              // TenSeconds sfx fires once per turn as the bar crosses 10s
 
         // Snap the fill FULL (no transition) so a fresh turn starts from a full bar; the arm()
         // below then flips on the animated class and pushes it to empty, tweening over TURN_SECS.
@@ -259,16 +271,23 @@
             // transition-property list (transform, background-color). This also restores a real
             // duration after snapFull zeroed it, so the low/crit recolours during the turn still fade.
             fill.style.transitionDuration = curSecs + "s, 0.3s";
-            fill.style.transform = "translate3d(0px, " + TRACK_H + "px, 0px)";   // drain top→bottom over curSecs
+            // Drain along the bar's own long axis. Vertical: slide DOWN so the column empties from
+            // the top. Horizontal: slide by NEGATIVE width so the fill leaves through the LEFT edge
+            // and the remaining time stays anchored at the left, shrinking right→left like any
+            // depleting progress bar. A POSITIVE slide looked backwards in-game (2026-08-01): the
+            // green block sat against the RIGHT edge and marched away from the left.
+            fill.style.transform = horizontal
+                ? `translate3d(-${TRACK_W}px, 0px, 0px)`
+                : `translate3d(0px, ${TRACK_H}px, 0px)`;
         }
 
         function tick(myGen) {
             if (dead || myGen !== gen || !running) return;
-            var remain = (deadline - Date.now()) / 1000;
+            const remain = (deadline - Date.now()) / 1000;
             if (remain <= 0) {
                 running = false;
                 if (num.IsValid()) num.text = "0";
-                var cb = expireCb; expireCb = null;
+                const cb = expireCb; expireCb = null;
                 if (cb) cb();
                 return;
             }
@@ -281,7 +300,7 @@
                 warned10 = true;
                 if (MG.Sound) MG.Sound.play("TenSeconds");
             }
-            $.Schedule(0.2, function () { tick(myGen); });
+            $.Schedule(0.2, () => { tick(myGen); });
         }
 
         return {
@@ -292,7 +311,7 @@
             start: function (onExpire, secs) {
                 if (dead) return;
                 gen++;
-                var myGen = gen;
+                const myGen = gen;
                 running = true;
                 curSecs = (secs && secs > 0) ? secs : TURN_SECS;
                 warned10 = false;
@@ -303,8 +322,8 @@
                 // Arm the CSS drain one frame later (the .mg-piece/.mg-anim arming trick): the
                 // full-snap must commit first, or the browser coalesces both writes and the bar
                 // jumps straight to empty with no slide.
-                $.Schedule(0.0, function () { if (!dead && gen === myGen && running) arm(); });
-                $.Schedule(0.2, function () { tick(myGen); });
+                $.Schedule(0.0, () => { if (!dead && gen === myGen && running) arm(); });
+                $.Schedule(0.2, () => { tick(myGen); });
             },
             // Take the human off the clock (they acted, or it's someone else's turn). Fades the
             // fill + blanks the seconds (the empty channel stays, keeping the footprint) and
@@ -331,9 +350,9 @@
 
     // ── placeholder for not-yet-built games ─────────────────────────────────
     function createStub(container, session, name) {
-        var root = $.CreatePanel("Panel", container, "MG_Stub");
+        const root = $.CreatePanel("Panel", container, "MG_Stub");
         root.AddClass("mg-stub");
-        var l = $.CreatePanel("Label", root, "");
+        const l = $.CreatePanel("Label", root, "");
         l.AddClass("mg-stub-label");
         l.text = (name || "This game") + ": coming soon.";
         return { destroy: function () { try { root.DeleteAsync(0); } catch (e) {} } };
@@ -357,15 +376,15 @@
             { id: 6, key: "poker", name: "Poker", short: "Hold'em", enabled: true },
             { id: 7, key: "pixelbattle", name: "Pixel Battle", enabled: false },
             { id: 8, key: "wordle", name: "Wordle", enabled: false },
-            { id: 9, key: "soon4", name: "Coming Soon", enabled: false },
+            { id: 9, key: "geoguesser", name: "GeoGuesser", enabled: true },
             { id: 10, key: "soon5", name: "Coming Soon", enabled: false },
             { id: 11, key: "soon6", name: "Coming Soon", enabled: false },
             { id: 12, key: "soon7", name: "Coming Soon", enabled: false }
         ],
         _factories: {},
         byId: function (id) {
-            var l = this.list;
-            for (var i = 0; i < l.length; i++) if (l[i].id === id) return l[i];
+            const l = this.list;
+            for (let i = 0; i < l.length; i++) if (l[i].id === id) return l[i];
             return null;
         },
         // opts = { id, create, enabled? }. Registers the mount factory for a game and
@@ -375,14 +394,14 @@
             if (!opts || opts.id == null || typeof opts.create !== "function") return;
             this._factories[opts.id] = opts.create;
             if (typeof opts.enabled === "boolean") {
-                var g = this.byId(opts.id);
+                const g = this.byId(opts.id);
                 if (g) g.enabled = opts.enabled;
             }
         },
         mount: function (gameId, container, session) {
-            var f = this._factories[gameId];
+            const f = this._factories[gameId];
             if (f) return f(container, session);
-            var g = this.byId(gameId);
+            const g = this.byId(gameId);
             return createStub(container, session, g ? g.name : null);
         }
     };
@@ -394,7 +413,7 @@
     // one. Used for card faces/backs (durak, poker), chess pieces and the picker card art - four
     // byte-identical copies of this lived in mg_chess/mg_durak/mg_poker/mg_ui.
     function setFace(container, url) {
-        var img = container._faceImg;
+        let img = container._faceImg;
         if (!img) {
             img = $.CreatePanel("Image", container, "", { scaling: "stretch-to-fit-preserve-aspect" });
             img.AddClass("mg-face-img");
@@ -417,11 +436,11 @@
     // been laid out yet - both are normalised here so callers only see a usable point or null.
     function winPos(panel) {
         if (!panel || !panel.GetPositionWithinWindow) return null;
-        var r;
+        let r;
         try { r = panel.GetPositionWithinWindow(); } catch (e) { return null; }
         if (!r) return null;
-        var x = (typeof r.x === "number") ? r.x : (typeof r[0] === "number" ? r[0] : null);
-        var y = (typeof r.y === "number") ? r.y : (typeof r[1] === "number" ? r[1] : null);
+        const x = (typeof r.x === "number") ? r.x : (typeof r[0] === "number" ? r[0] : null);
+        const y = (typeof r.y === "number") ? r.y : (typeof r[1] === "number" ? r[1] : null);
         if (x === null || y === null || !isFinite(x) || !isFinite(y)) return null;
         if (Math.abs(x) > 100000 || Math.abs(y) > 100000) return null; // FLT_MAX sentinel
         return { x: x, y: y };
@@ -430,18 +449,18 @@
     // First number out of a CSS length string ("60px", "-12.5px" → 60, -12.5), or null.
     function parsePx(v) {
         if (typeof v !== "string" || !v.length) return null;
-        var m = v.match(/-?\d+(\.\d+)?/);
+        const m = v.match(/-?\d+(\.\d+)?/);
         return m ? parseFloat(m[0]) : null;
     }
 
     // Walk up from `panel` looking for a board cell id ("cell_<0..63>"), so a drop that landed on
     // a child (a piece image, a highlight) still resolves to its square. -1 if none within 6 hops.
     function squareFromPanel(p) {
-        for (var hops = 0; p && hops < 6; hops++) {
-            var id = null;
+        for (let hops = 0; p && hops < 6; hops++) {
+            let id = null;
             try { id = p.id; } catch (e) {}
             if (id && id.indexOf("cell_") === 0) {
-                var n = parseInt(id.substring(5), 10);
+                const n = parseInt(id.substring(5), 10);
                 if (isFinite(n) && n >= 0 && n < 64) return n;
             }
             try { p = p.GetParent ? p.GetParent() : null; } catch (e2) { p = null; }
@@ -451,9 +470,9 @@
 
     // Move-list navigation buttons (◀ ▶ live).
     function makeNavBtn(parent, text, onClick) {
-        var b = $.CreatePanel("Button", parent, "");
+        const b = $.CreatePanel("Button", parent, "");
         b.AddClass("mg-nav-btn");
-        var l = $.CreatePanel("Label", b, ""); l.text = text;
+        const l = $.CreatePanel("Label", b, ""); l.text = text;
         b.SetPanelEvent("onactivate", onClick);
         return b;
     }

@@ -14,32 +14,32 @@
  * mg_games.js so MG.Rules.ttt, MG.Widgets.createTurnTimer and the MG.Games registry exist.
  */
 
-(function () {
-    var MG = ($.MG = $.MG || {});
+(() => {
+    const MG = ($.MG = $.MG || {});
     if (MG._tttLoaded) return;
     MG._tttLoaded = true;
 
     // Alias the shared pure engine (rules/ttt.js, loaded first) to the same local names the
     // old inline copy used, so the controller body below is byte-for-byte unchanged.
-    var RT = MG.Rules.ttt;
-    var tttWinner = RT.tttWinner, tttFull = RT.tttFull, tttBotMove = RT.tttBotMove;
+    const RT = MG.Rules.ttt;
+    const tttWinner = RT.tttWinner, tttFull = RT.tttFull, tttBotMove = RT.tttBotMove;
 
     // Wire format reuses the checkers move transport: a placement in cell 0..8 is sent
     // as move(code, cell, 9, end=1). `to`=9 is a fixed non-cell marker so from!=to
     // always holds (from==to is the "nothing new" sentinel) and validation is trivial.
     function createTicTacToe(container, session) {
-        var Api = MG.Api;
-        var code = session.code;
-        var X = 1, O = 2;
-        var myMark = session.isHost ? X : O;   // host plays X and moves first
-        var board = new Array(9);
-        for (var q = 0; q < 9; q++) board[q] = 0;
-        var turn = X;                  // X always starts
-        var appliedSeq = 0;            // placements consumed from the shared server list
-        var pollToken = 0;
-        var pollMisses = 0;            // consecutive empty polls this turn (drives the adaptive cadence)
-        var destroyed = false;
-        var gameOver = false;
+        const Api = MG.Api;
+        const code = session.code;
+        const X = 1, O = 2;
+        const myMark = session.isHost ? X : O;   // host plays X and moves first
+        const board = new Array(9);
+        for (let q = 0; q < 9; q++) board[q] = 0;
+        let turn = X;                  // X always starts
+        let appliedSeq = 0;            // placements consumed from the shared server list
+        let pollToken = 0;
+        let pollMisses = 0;            // consecutive empty polls this turn (drives the adaptive cadence)
+        let destroyed = false;
+        let gameOver = false;
 
         function status(t) { if (session.onStatus) session.onStatus(t); }
         function sfx(n) { if (MG.Sound) MG.Sound.play(n); }
@@ -50,19 +50,19 @@
         // crossed via rotateZ; O = a ring (bordered circle with a transparent hole).
         function drawMark(cell, v) {
             if (v === X) {
-                var x = $.CreatePanel("Panel", cell, "");
+                const x = $.CreatePanel("Panel", cell, "");
                 x.AddClass("mg-ttt-mark"); x.AddClass("mg-x");
-                var b1 = $.CreatePanel("Panel", x, ""); b1.AddClass("mg-x-bar"); b1.AddClass("mg-x-bar-a");
-                var b2 = $.CreatePanel("Panel", x, ""); b2.AddClass("mg-x-bar"); b2.AddClass("mg-x-bar-b");
+                const b1 = $.CreatePanel("Panel", x, ""); b1.AddClass("mg-x-bar"); b1.AddClass("mg-x-bar-a");
+                const b2 = $.CreatePanel("Panel", x, ""); b2.AddClass("mg-x-bar"); b2.AddClass("mg-x-bar-b");
             } else {
-                var o = $.CreatePanel("Panel", cell, "");
+                const o = $.CreatePanel("Panel", cell, "");
                 o.AddClass("mg-ttt-mark"); o.AddClass("mg-o");
             }
         }
 
-        var root = $.CreatePanel("Panel", container, "MG_TttRoot");
+        const root = $.CreatePanel("Panel", container, "MG_TttRoot");
         root.AddClass("mg-ttt");
-        var boardPanel = $.CreatePanel("Panel", root, "MG_TttBoard");
+        const boardPanel = $.CreatePanel("Panel", root, "MG_TttBoard");
         boardPanel.AddClass("mg-ttt-board");
 
         // Per-turn countdown (left gutter of the modal). Parented on `container` (the flow:none game
@@ -71,11 +71,11 @@
         // ruling: timeout = loss). Online I also fire Leave so the opponent's poll learns at once.
         // boardW = 3 cells × (104 + 2×3 margin) + 2 × 3px border = 336 → pin the timer to the
         // board's left edge (narrow centred board; the far-left modal gutter looked detached).
-        var turnTimer = (MG.Widgets && MG.Widgets.createTurnTimer) ? MG.Widgets.createTurnTimer(container, { boardW: 336 }) : null;
-        var timerOn = false;
+        const turnTimer = (MG.Widgets && MG.Widgets.createTurnTimer) ? MG.Widgets.createTurnTimer(container, { boardW: 336 }) : null;
+        let timerOn = false;
         function refreshTimer() {
             if (!turnTimer) return;
-            var live = myTurn();
+            const live = myTurn();
             if (live === timerOn) return;
             timerOn = live;
             if (!live) { turnTimer.stop(); return; }
@@ -91,17 +91,17 @@
             if (session.onGameOver) session.onGameOver("lose");
         }
 
-        var cells = [];
+        const cells = [];
         (function buildCells() {
-            for (var r = 0; r < 3; r++) {
-                var rowPanel = $.CreatePanel("Panel", boardPanel, "ttt_row_" + r);
+            for (let r = 0; r < 3; r++) {
+                const rowPanel = $.CreatePanel("Panel", boardPanel, `ttt_row_${r}`);
                 rowPanel.AddClass("mg-ttt-row");
-                for (var c = 0; c < 3; c++) {
-                    var i = r * 3 + c;
-                    var cell = $.CreatePanel("Panel", rowPanel, "ttt_cell_" + i);
+                for (let c = 0; c < 3; c++) {
+                    let i = r * 3 + c;
+                    var cell = $.CreatePanel("Panel", rowPanel, `ttt_cell_${i}`);
                     cell.AddClass("mg-ttt-cell");
-                    (function (square) {
-                        cell.SetPanelEvent("onactivate", function () { onCellClick(square); });
+                    ((square) => {
+                        cell.SetPanelEvent("onactivate", () => { onCellClick(square); });
                     })(i);
                     cells[i] = cell;
                 }
@@ -109,13 +109,13 @@
         })();
 
         function render(winLine) {
-            for (var i = 0; i < 9; i++) {
-                var cell = cells[i];
+            for (let i = 0; i < 9; i++) {
+                const cell = cells[i];
                 cell.RemoveClass("mg-ttt-win");
                 cell.RemoveAndDeleteChildren();
                 if (board[i]) drawMark(cell, board[i]);
             }
-            if (winLine) for (var k = 0; k < winLine.length; k++) cells[winLine[k]].AddClass("mg-ttt-win");
+            if (winLine) for (let k = 0; k < winLine.length; k++) cells[winLine[k]].AddClass("mg-ttt-win");
             refreshTimer();
         }
 
@@ -123,7 +123,7 @@
 
         // Evaluate terminal state; announce and freeze if the game is decided.
         function checkEnd() {
-            var w = tttWinner(board);
+            const w = tttWinner(board);
             if (w) {
                 gameOver = true;
                 render(w.line);
@@ -163,8 +163,8 @@
         // ── bot (offline) ────────────────────────────────────────────────────
         function botTurn() {
             if (destroyed || gameOver) return;
-            var botMark = (myMark === X ? O : X);
-            var mv = tttBotMove(board, botMark);
+            const botMark = (myMark === X ? O : X);
+            const mv = tttBotMove(board, botMark);
             if (mv < 0) { checkEnd(); return; }
             place(mv, botMark);
             turn = myMark;
@@ -176,15 +176,15 @@
         // ── relay + polling ──────────────────────────────────────────────────
         function sendMove(cell, attempt) {
             if (destroyed) return;
-            Api.move(code, cell, 9, 1, session.tok, function (r) {
+            Api.move(code, cell, 9, 1, session.tok, (r) => {
                 if (r.ok) {
                     appliedSeq++;          // our own placement is now in the shared server list
                     if (!gameOver) startPolling();
                     return;
                 }
                 rejectAndResync(r.reason); // server refused (occupied / not our turn / bad token)
-            }, function () {
-                $.Schedule(0.6, function () { sendMove(cell, (attempt || 0) + 1); }); // transport retry
+            }, () => {
+                $.Schedule(0.6, () => { sendMove(cell, (attempt || 0) + 1); }); // transport retry
             });
         }
 
@@ -192,7 +192,7 @@
         // from the accepted log, and resume polling so the authoritative order drives us.
         function rejectAndResync(reason) {
             gameOver = false;
-            for (var q = 0; q < 9; q++) board[q] = 0;
+            for (let q = 0; q < 9; q++) board[q] = 0;
             turn = X;
             replayAccepted(0);
         }
@@ -204,15 +204,15 @@
                 else { status("Move rejected. Resyncing…"); startPolling(); }
                 return;
             }
-            Api.poll(code, seq, function (mv) {
+            Api.poll(code, seq, (mv) => {
                 if (destroyed) return;
                 if (mv) {
-                    var mk = (seq % 2 === 0) ? X : O; // X placed the even-indexed moves
+                    const mk = (seq % 2 === 0) ? X : O; // X placed the even-indexed moves
                     if (!board[mv.from]) place(mv.from, mk);
                     turn = (mk === X ? O : X);
                     replayAccepted(seq + 1);
                 } else { appliedSeq = seq; replayAccepted(seq); }
-            }, function () { $.Schedule(0.4, function () { replayAccepted(seq); }); },
+            }, () => { $.Schedule(0.4, () => { replayAccepted(seq); }); },
             function (from, to) { return from >= 0 && from <= 8 && to === 9; });
         }
 
@@ -225,11 +225,11 @@
         function pollOnce(myToken) {
             if (destroyed || myToken !== pollToken || gameOver) return;
             if (turn === myMark) return; // our move; nothing to poll
-            Api.poll(code, appliedSeq, function (mv) {
+            Api.poll(code, appliedSeq, (mv) => {
                 if (destroyed || myToken !== pollToken) return;
                 if (mv) {
                     pollMisses = 0;
-                    var oppMark = (myMark === X ? O : X);
+                    const oppMark = (myMark === X ? O : X);
                     if (!board[mv.from]) place(mv.from, oppMark); // from = the cell played
                     appliedSeq++;
                     turn = myMark;
@@ -237,11 +237,11 @@
                     if (checkEnd()) return;
                     status("Your turn.");
                 } else {
-                    $.Schedule(MG.Net.pollDelay(pollMisses++), function () { pollOnce(myToken); });
+                    $.Schedule(MG.Net.pollDelay(pollMisses++), () => { pollOnce(myToken); });
                 }
-            }, function () {
-                $.Schedule(MG.Net.pollDelay(pollMisses++), function () { pollOnce(myToken); });
-            }, function (from, to) {
+            }, () => {
+                $.Schedule(MG.Net.pollDelay(pollMisses++), () => { pollOnce(myToken); });
+            }, (from, to) => {
                 // A placement is a single cell 0..8 with the fixed marker to=9.
                 return from >= 0 && from <= 8 && to === 9;
             });
@@ -250,7 +250,7 @@
         // ── boot ─────────────────────────────────────────────────────────────
         render(null);
         if (myTurn()) {
-            status("Your turn. You play " + (myMark === X ? "✕ (X)." : "◯ (O)."));
+            status(`Your turn. You play ${myMark === X ? "✕ (X)." : "◯ (O)."}`);
         } else if (session.bot) {
             // Offline and it's X's turn but I'm O → the bot (X) opens.
             status("Bot is thinking…");

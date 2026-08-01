@@ -45,6 +45,10 @@ const NODE_GLOBALS = {
     TextDecoder: "readonly",
     fetch: "readonly",
     atob: "readonly",
+    // GeoGuesser's Panoramax proxy bounds every outbound fetch with AbortSignal.timeout().
+    // Present in both runtimes the worker targets (Node 18+ and workerd); listed here because
+    // this config declares its globals explicitly rather than via an `env` preset.
+    AbortSignal: "readonly",
 };
 
 // ES built-ins used across BOTH environments. Listed explicitly so the config doesn't depend
@@ -141,7 +145,12 @@ module.exports = [
     // worker.js is the generated artifact → ignored above. Same Node/Worker globals, but
     // sourceType:module so the top-level `export` parses.
     {
-        files: ["server/worker.core.js", "server/admin_panel.js"],
+        files: [
+            "server/worker.core.js",
+            "server/admin_panel.js",
+            "server/node_server.js",
+            "server/node_storage.js",
+        ],
         languageOptions: {
             ecmaVersion: 2021,
             sourceType: "module",

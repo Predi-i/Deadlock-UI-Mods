@@ -66,8 +66,8 @@ const PROBE_W = 600, PROBE_H = 1000;
 function parseConst(file, name) {
   const src = fs.readFileSync(file, "utf8");
   const code = src.replace(/\/\/[^\n]*/g, "");
-  const m = code.match(new RegExp("(?:const|var|let)[^;\\n]*\\b" + name + "\\s*=\\s*(\\d+)"));
-  if (!m) throw new Error("could not find `" + name + "` in " + path.basename(file));
+  const m = code.match(new RegExp(`(?:const|var|let)[^;\\n]*\\b${name}\\s*=\\s*(\\d+)`));
+  if (!m) throw new Error(`could not find \`${name}\` in ${path.basename(file)}`);
   return parseInt(m[1], 10);
 }
 function verifySourcesMatch() {
@@ -85,7 +85,7 @@ function verifySourcesMatch() {
   const bad = pairs.filter(([, got, want]) => got !== want);
   if (bad.length) {
     console.error("DRIFT: simulator constants no longer match source:");
-    for (const [what, got, want] of bad) console.error("  " + what + " source=" + got + " sim=" + want);
+    for (const [what, got, want] of bad) console.error(`  ${what} source=${got} sim=${want}`);
     console.error("Update mg_simulate_resolutions.js (or the source) so they agree, then re-run.");
     process.exit(2);
   }
@@ -219,7 +219,7 @@ function testResolution(res, maxBias, verbose) {
 
   for (const c of cases) {
     if (c.w > LEVEL_MAX || c.h > LEVEL_MAX || c.w < 0 || c.h < 0) {
-      failures.push({ ...c, reason: "value out of level range 0.." + LEVEL_MAX });
+      failures.push({ ...c, reason: `value out of level range 0..${LEVEL_MAX}` });
       continue;
     }
     // Stress each axis across the full bias range independently.
@@ -264,7 +264,7 @@ function main() {
     const ok = r.failures.length === 0;
     if (!ok) { allPass = false; allFailures.push({ res, failures: r.failures }); }
     console.log("  " + res.name.padEnd(22) + "  " + r.uiScale.toFixed(3).padStart(6) +
-      "  " + String(r.total).padStart(6) + "  " + (ok ? "PASS" : "FAIL (" + r.failures.length + ")"));
+      "  " + String(r.total).padStart(6) + "  " + (ok ? "PASS" : `FAIL (${r.failures.length})`));
   }
 
   console.log("");
@@ -275,9 +275,9 @@ function main() {
     console.log("FAILURES DETECTED.");
     if (verbose) {
       for (const { res, failures } of allFailures) {
-        console.log("\n" + res.name + ":");
-        for (const f of failures.slice(0, 40)) console.log("  [" + f.route + "] " + f.reason);
-        if (failures.length > 40) console.log("  ... +" + (failures.length - 40) + " more");
+        console.log(`\n${res.name}:`);
+        for (const f of failures.slice(0, 40)) console.log(`  [${f.route}] ${f.reason}`);
+        if (failures.length > 40) console.log(`  ... +${failures.length - 40} more`);
       }
     } else {
       console.log("Re-run with --verbose to list every failing value.");

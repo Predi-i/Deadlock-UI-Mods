@@ -9,7 +9,7 @@ const created=[];
 function panel(type,parent,id){
   const p={type,id,_text:"",classes:[],children:[],style:{},
     AddClass(c){this.classes.push(c);}, RemoveClass(c){this.classes=this.classes.filter(x=>x!==c);},
-    SetHasClass(){}, IsValid:()=>true, SetPanelEvent(n,f){this["on_"+n]=f;}, DeleteAsync(){},
+    SetHasClass(){}, IsValid:()=>true, SetPanelEvent(n,f){this[`on_${n}`]=f;}, DeleteAsync(){},
     RemoveAndDeleteChildren(){}, FindChildTraverse:()=>null, GetParent(){return this.parent||null;},
     SetImage(){}, SetAttributeString(){}, GetPositionWithinWindow(){ return this._wp; }};
   Object.defineProperty(p,"text",{get(){return this._text;},set(v){this._text=String(v);}});
@@ -22,7 +22,7 @@ new Function("$", fs.readFileSync("panorama/scripts/mg_games.js","utf8"))($);
 const W=$.MG.Widgets;
 if(!W){ console.log("MG keys:", Object.keys($.MG).join(",")); process.exit(2); }
 let fails=0;
-function ok(c,m){ if(!c){fails++;console.log("  FAIL "+m);} else console.log("  ok   "+m); }
+function ok(c,m){ if(!c){fails++;console.log(`  FAIL ${m}`);} else console.log(`  ok   ${m}`); }
 // parsePx
 ok(W.parsePx("60px")===60,"parsePx('60px')=60");
 ok(W.parsePx("-12.5px")===-12.5,"parsePx negative float");
@@ -53,5 +53,5 @@ btn.on_onactivate(); ok(clicked,"makeNavBtn wires onactivate");
 W.setNavState(btn,false); ok(btn.classes.includes("mg-nav-disabled"),"setNavState(false) disables");
 W.setNavState(btn,true); ok(!btn.classes.includes("mg-nav-disabled"),"setNavState(true) enables");
 W.setNavState(null,true); ok(true,"setNavState(null) is a no-op");
-console.log(fails===0?"\nALL WIDGET HELPER CHECKS PASSED":"\n"+fails+" FAILURES");
+console.log(fails===0?"\nALL WIDGET HELPER CHECKS PASSED":`\n${fails} FAILURES`);
 process.exitCode = fails?1:0;

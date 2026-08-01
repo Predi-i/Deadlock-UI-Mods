@@ -10,7 +10,7 @@ const file = path.join(__dirname, "assets", "pixelbattle_palette.json");
 const palette = JSON.parse(fs.readFileSync(file, "utf8"));
 
 function rgb(hex) {
-    if (!/^#[0-9a-f]{6}$/i.test(hex)) throw new Error("invalid colour " + hex);
+    if (!/^#[0-9a-f]{6}$/i.test(hex)) throw new Error(`invalid colour ${hex}`);
     return [1, 3, 5].map(index => parseInt(hex.slice(index, index + 2), 16) / 255);
 }
 
@@ -62,7 +62,7 @@ for (const entry of regularPaint) {
     }
 }
 assert(nearestTerrain.distance >= 19,
-    "paint too close to terrain: " + nearestTerrain.paint + "/" + nearestTerrain.terrain);
+    `paint too close to terrain: ${nearestTerrain.paint}/${nearestTerrain.terrain}`);
 
 let nearestPair = { distance: Infinity, a: "", b: "" };
 for (let i = 0; i < regularPaint.length; i++) {
@@ -78,7 +78,7 @@ for (let i = 0; i < regularPaint.length; i++) {
     }
 }
 assert(nearestPair.distance >= 16,
-    "paint colours too close: " + nearestPair.a + "/" + nearestPair.b);
+    `paint colours too close: ${nearestPair.a}/${nearestPair.b}`);
 
 console.log("Pixel Battle palette passed: nearest terrain ΔE=" +
     nearestTerrain.distance.toFixed(1) + ", nearest paint pair ΔE=" +

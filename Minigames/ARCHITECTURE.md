@@ -22,7 +22,9 @@ support online play and bots. **Durak** (§8.6) and **Poker** (No-Limit Texas Ho
 worker-as-dealer transport; public Durak matchmaking remains heads-up. Those online
 dealer paths are built + Node-tested but not yet in-game verified. **Pixel Battle** is
 one persistent public canvas backed by the Worker (§8.9). **Wordle** is a fully offline
-single-player game (§8.10).
+single-player game (§8.10). **GeoGuesser** is a five-round game for Quick Match, private
+rooms or server-backed Play Solo: the VPS owns the targets, guesses, reveal gate and score,
+and proxies fixed open-licensed equirectangular panoramas (§8.11).
 
 Shared UI features across the games: a **per-turn countdown timer** (§9.1) in durak / poker /
 TTT / Connect Four, **server-authoritative side clocks** (time-control matchmaking) in chess /
@@ -34,12 +36,14 @@ Picker cards show a custom **`.vtex` image** (drawn by the maintainer, compiled 
 drawn by a child `<Image>` via `setFace()` in `renderMenu` (trap 14) — `s2r://panorama/
 images/cards/<key>.vtex`. Missing art falls back to a plain dark card.
 
-Four ways to play (see `mg_ui.js`):
+Ways to play (see `mg_ui.js`):
 - **Quick Match** — public matchmaking; server pairs you with anyone else who pressed it.
 - **Quick Match → Select Multiple** — one search may offer game ids 1–5 and pairs on set
   intersection. A Durak result always resolves to a two-seat dealer room and auto-starts.
 - **Create / Join** — private match via a shared 4-digit code.
 - **Play vs Bot** — fully offline, no server, no network calls at all.
+- **Play Solo** — GeoGuesser-only authoritative session; the VPS fills the second seat so reveal
+  and Next happen immediately after the player's action.
 
 ---
 
@@ -75,7 +79,7 @@ panorama/
                            include order): mg_net → mg_sound → rules/* (checkers, ttt, chess,
                            connectfour, durak, poker) → mg_games ($.MG.Games + $.MG.Widgets) →
                            mg_checkers → mg_ttt → mg_chess → mg_durak → mg_connectfour → mg_poker
-                           → mg_pixelbattle → mg_wordle → mg_ui. Rule modules load before the controllers that alias them;
+                           → mg_pixelbattle → mg_wordle → mg_geoguesser → mg_ui. Rule modules load before the controllers that alias them;
                            mg_wordle_words.generated loads immediately before mg_wordle;
                            mg_games loads before the per-game controllers (they need MG.Widgets +
                            MG.Games); mg_ui loads last (it drives all views).
@@ -109,17 +113,28 @@ panorama/
                             pinned MIT-licensed ayaanhossain/weldor wordbase.
     mg_wordle.js            Offline Wordle controller + pure duplicate-letter scoring;
                             self-registers game id 8 (§8.10), never touches the Worker.
+    mg_geoguesser.js        Five-round online panorama/map controller; native sliders update
+                            heading/pitch continuously and image drag applies on release;
+                            self-registers game id 9 (§8.11).
     mg_ui.js               Esc-menu button injection + full-screen lobby overlay ($.MG.UI); header
                            UI-scale + volume dropdowns; seat/time-control/variant pickers.
 
-server/                    Cloudflare Worker (dev-only, NOT packed into the VPK)
+server/                    Authoritative backend sources + Node/SQLite VPS runtime
   admin_panel.js           Browser admin HTML/CSS/JS assets (no credentials; GitHub-authenticated).
   worker.core.js           AUTHORED relay + validators + PNG encoder (edit this)
   worker.js                GENERATED (rules/*.js + worker.core.js via tools/build_worker.js) — deploy artifact
+  node_server.js           Node HTTP adapter; serialized Hub execution + trusted client-IP injection
+  node_storage.js          Durable-Object-compatible SQLite storage adapter
+  package.json             ESM boundary + production Node version requirement
+  deploy/                  systemd, Nginx, backup, TLS-renewal and host-hardening configuration
   wrangler.jsonc, README.md
 tools/                     dev-only Node test harnesses + build helpers (NOT packed)
   build_worker.js          concatenate the 6 rules/*.js + worker.core.js → server/worker.js
                            (`--check` verifies the committed worker.js is in sync; first step of `npm test`)
+  mg_geo_live_smoke.js     disposable two-seat production GeoGuesser smoke over HTTPS
+  build_geoguesser_map.js  rasterize the dedicated Natural Earth country map
+  build_ne_raster.js       one-off: downsample Natural Earth II's natural-colour GeoTIFF into
+                           the committed assets/ne2_natural_2048.png the map builder samples
   build_pixelbattle_map.js generate the Pixel Battle land mask from the source map image
   build_wordle_words.js    generate the Wordle answer + guess word lists
   gen_soundevents.js       generate the soundevents manifest consumed by mg_sound.js
@@ -135,6 +150,15 @@ tools/                     dev-only Node test harnesses + build helpers (NOT pac
   mg_pixelbattle_palette_test.js  palette distance sanity
   mg_update_marker_test.js        update-marker image decoding
   mg_simulate_resolutions.js      side-channel decode across 720p–8K
+  es6_codemod.js           one-shot: var -> const/let, and WHY each survivor stayed (§10.2)
+  es6_arrows.js            one-shot: anonymous callbacks -> arrows, same reporting
+  es6_templates.js         one-shot: concat -> template literals; only when the LEFTMOST
+                           operand is a string literal (else the first `+` may be arithmetic)
+  mg_es6_codemod_test.js   codemod safety fixtures: scope/TDZ/loop-capture hazards
+  mg_es6_arrows_test.js    arrow safety fixtures: this/arguments/new + the leading-paren ASI rule
+  mg_es6_templates_test.js template fixtures: arithmetic-vs-concat `+`, escaping, no reflow
+  mg_es6_invariants_test.js STANDING guard on the shipped tree (§10.2), self-tested
+  mg_load_smoke_test.js    evaluates all 23 shipped scripts under a fake $, checks registration
 ```
 
 A Public (non-dev) build ships without comments. That is NOT a step in this repo: run
@@ -159,8 +183,20 @@ Everything shared between the scripts hangs off **`$.MG`** — `$` is the single
 object shared across all scripts loaded in the same panel context. Each script guards with
 `if (MG.X) return;` so a double-include is a no-op.
 
-`BASE_URL` at the top of `mg_net.js` must point at the deployed worker. Until it's set the
-overlay opens but shows "server not configured".
+`BASE_URL` at the top of `mg_net.js` must point at the deployed backend. Production is the
+direct Aéza VPS endpoint `https://178.236.246.13`; no Cloudflare Worker or proxy is in the
+request path. Until `BASE_URL` is set, the overlay opens but shows "server not configured".
+
+**Production hosting (2026-07-30 migration).** Nginx terminates HTTPS directly on the public
+IPv4 and proxies to one Node 24 process bound to `127.0.0.1:8787`. Let’s Encrypt's short-lived
+IP certificate is renewed automatically by a twice-daily systemd timer. `node_server.js` calls
+the same generated Worker entry point and presents one serialized local `HUB`, preserving the
+single-consistency-domain behaviour of the old Durable Object. `node_storage.js` persists its
+values in a WAL-mode SQLite database using V8 structured serialization, including typed Pixel
+Battle tiles. Daily online SQLite backups are compressed and retained for 14 days. See
+`server/README.md` for paths, units, smoke checks and recovery commands.
+Nginx overwrites `X-Real-IP`; the loopback-bound Node adapter accepts that header only from its
+local proxy and replaces `CF-Connecting-IP`, so IP rate limits see the actual public client.
 
 ---
 
@@ -193,9 +229,10 @@ bugs and their fixes:
 
 ## 5. The network protocol (mg_net.js ↔ worker.js)
 
-All routes are GET, all return a PNG, all take `&rnd=<random>` to defeat engine caching.
-Client appends `.png` to every path (Panorama's loader only fetches URLs that look like
-images; the worker strips `.png` before routing).
+All routes are GET and all protocol replies return a PNG. `/api/geoview` is the one payload
+exception: it returns the proxied JPEG/PNG panorama itself. All client requests take
+`&rnd=<random>` to defeat engine caching. Client appends `.png` to every path (Panorama's
+loader only fetches URLs that look like images; the worker strips `.png` before routing).
 
 **Downlink is level-quantised (2026-07-20 rewrite).** Every DATA response carries a small
 *level* per dimension, not a raw pixel: `dim = level*STEP + BASE` (`STEP=9, BASE=15`). The old
@@ -208,7 +245,7 @@ dim. Only `/api/probe` stays **literal pixels** — it's the calibration referen
 |---|---|
 | `/api/probe` | `(600, 1000)` LITERAL px — swap + scale calibration reference |
 | `/api/ping` | `(1, 1)` |
-| `/api/create?game=G&tok=T&tc=..&cv=..` | `dCode(code, host=false)` — new private lobby, host = seat 0 |
+| `/api/create?game=G&tok=T&tc=..&cv=..&solo=1` | `dCode(code, host=false)` — new private lobby; `solo=1` fills GeoGuesser seat 1 on the server |
 | `/api/quick?game=G&tok=T&tc=..&cv=..` | `dCode(code, HOST\|JOINER)` — role is the code **band**, not `+100` |
 | `/api/cancel?code=C` | `(1,1)` |
 | `/api/join?code=C&tok=T` | `(G, tcIndex+1)` ok · `(20,1)` missing · `(21,1)` full · `(9,3)` bad-token |
@@ -218,6 +255,11 @@ dim. Only `/api/probe` stays **literal pixels** — it's the calibration referen
 | `/api/poll?code=C&since=S` | `(from, to)` RAW squares 0..63 · `(1,1)` nothing new |
 | `/api/reset?code=C&game=G&tok=T` | `(1,1)` · `(9,3)` bad-token |
 | `/api/clocks?code=C&seat=S` | `(30 + sec>>6, sec&63)` one seat · `(9,9)` gone · `(9,8)` untimed |
+| `/api/geostate?code=C&tok=T` | current round + authoritative guess/reveal/ready masks |
+| `/api/geoview?code=C&tok=T` | current 2:1 equirectangular image (ordinary JPEG/PNG, not a dimension message) |
+| `/api/geoguess?code=C&tok=T&cell=N` | `(1,1)` accepted · `(9,x)` rejected — `cell` is 0..131071 in the 512×256 authoritative grid (the uplink is unlimited, so precision is free here) |
+| `/api/geonext?code=C&tok=T` | `(1,1)` ready; advances after both players, or immediately in a solo lobby |
+| `/api/geotarget?axis=A`, `/api/geopick?seat=S&axis=A`, `/api/geoscore`, `/api/geoinfo`, `/api/geocredit` | reveal-only target, guesses, totals, place and contributor attribution. `geoinfo` returns a **place code** (`0..5` region only, else `6 + country*6 + continent`) and `geocredit` an **index** into the shipped credit table — one request each, both decoded from two base-63 levels with `h=63` as the error sentinel. **Trap:** a 512×256 point does not fit one downlink reply — two base-63 levels top out at 3968, so each point is read one axis per request (`axis=0` → x, `axis=1` → y) and the client needs 7 reveal reads solo / 10 online |
 
 ### 5.1 Server authority (seats, tokens, validation)
 
@@ -261,7 +303,9 @@ Key encoding tricks and **why** (current codec is STEP=9 level-quantisation, 202
 - **Clocks are per-seat** (a bank is 0..600 = 10 bits, needs both dims): width `30 + (sec>>6)`,
   height `sec&63`; caller passes `&seat=0|1` and reads both. Both clients read the SAME server
   clock, so flag-fall is server-decided with no drift.
-- **State is one Durable Object** ("hub") → strongly consistent, no KV lag between players.
+- **State is one serialized Hub backed by SQLite** → strongly consistent, no cross-process or
+  eventually-consistent cache lag between players. The Node adapter deliberately processes Hub
+  requests one at a time, matching the old single Durable Object's ordering.
 
 ### Soft abuse controls and lobby lifetime
 
@@ -298,6 +342,18 @@ swapped**. So on boot-ish (lazily; see trap below) the client fetches `/api/prob
   ordinary remote images (the update marker and Pixel Battle viewport) therefore share the same
   strict FIFO (`reqQueue`, `reqActive`, `MG.Net.loadImage`); polls, actions and asset loads never
   overlap. A successful ordinary load transfers its already-loaded `<Image>` to the caller.
+  ⚠ **NEVER hide the loading `<Image>` to stop it flashing.** Tried 2026-08-01 (`opacity: 0`,
+  cleared after re-parenting) and it broke **all** image loading: a zero-opacity panel is skipped
+  by the engine's loader — the same rule `ensureHost` already documents for the host itself — so
+  `actuallayoutwidth` stayed 0 for the full 8s timeout on every request. The engine cheerfully
+  logged `Slow image load - … (dimensions 2048x1024, took 27 msec)` while our poll saw nothing,
+  the update marker timed out twice on boot, and GeoGuesser sat on "Loading panorama…" forever.
+  The whole transport depends on the engine genuinely laying this image out.
+  **The corner flash is a CALLER-side ordering bug, and that is where it is fixed**: the panel
+  arrives laid out at the source's intrinsic size with no transform, so `SetParent` into the
+  visible tree must come **after** the width/height/transform writes, never before. Pixel Battle
+  and GeoGuesser both do it in that order now, and `mg_geoguesser_map_test.js` enforces both
+  halves (no opacity on the loader; parent last).
 - **A started request always runs to completion** (response or 8s timeout). There is
   deliberately **no abort**: a silent abort once left `calibrating` latched true forever,
   deadlocking all networking.
@@ -599,6 +655,94 @@ These are the mistakes to NOT repeat. Every one was confirmed against the game's
     per loaded HUD session when the player first presses DL Arcade. The footer button remains a
     manual retry. An outdated result opens a same-class-state popup with no auto-close timer.
     `tools/mg_update_marker_test.js` simulates 50–400% UI scale, swapped axes and ±2px errors.
+
+22. **De-glowing a NATIVE widget needs the game's own selector prefix — and `box-shadow: none`.**
+    The house style has **no outer glow anywhere**, but Deadlock's base stylesheet puts one on every
+    native widget it ships. Two separate facts made the first de-glow pass silently ineffective on
+    the GeoGuesser camera sliders:
+    - **Specificity.** The glow lives on `#SliderThumb { box-shadow: fill brandGreen&11 0px 0px 16px
+      1px }` (green) and `Slider.HorizontalSlider #SliderTrackProgress { box-shadow: offWhite&33 0px
+      0px 8px 0px }` (white) in `citadel_base_styles.css:3506/3540`. A sensible-looking override
+      `.mg-geo-camera-controls #SliderThumb` is **one class + one id = 110**, while the game's rule is
+      **type + class + id = 111** — the game WINS and the glow stays. Our rules must repeat the game's
+      own `Slider.HorizontalSlider` prefix to reach 1111. This binds only while the controller keeps
+      calling `AddClass("HorizontalSlider")`.
+    - **`none`, not a transparent zero.** `box-shadow: 0px 0px 0px 0px #00000000` does not reliably
+      clear a shadow declared with the **`fill` keyword**. The game's own cancel idiom is
+      `box-shadow: none` (`ClientUIDialogPanel #SliderThumb`, `:3516`) — use that.
+    - Also override **`:hover` and `:active`** separately: they are distinct game rules that swap in a
+      brighter radial gradient plus `brightness: 1.5`, so without them the thumb still flares on grab.
+    Other native widgets carry the same glow and are **not yet cleaned**: `DropDown` (`:2836`),
+    `DropDownMenu` (`:2950`), `ToggleButton:selected .TickBox` (`:3151`), `RadioButton .RadioBox`
+    (`:3197`/`:3255`), `.ButtonBevel` (`:3604`), `TextEntryAutocomplete` (`:2450`). The scale/volume
+    dropdowns and Wordle's hidden `TextEntry` are the panels this could still surface on.
+    `mg_release_ui_regression_test.js` now enforces both halves: the four winning slider selectors,
+    and a **repo-wide scan that fails on any zero-offset blurred `box-shadow`** in `mg.css`. The scan
+    tokenises the lengths (a `fill`/colour prefix otherwise shifts the match and reads the SPREAD as
+    the blur), so an offset drop shadow and a zero-blur ring like `.mg-cf-win-disc`'s
+    `0px 0px 0px 3px` both stay legal — only a real halo fails.
+
+23. **Every image load goes through the FIFO — a bare `SetImage` beside it wedges the loader.**
+    §5's "one image load at a time" is not advisory. GeoGuesser's three-copy panorama built its two
+    SIDE copies with its own `$.CreatePanel("Image", …)` + `copy.SetImage(url)`, fired from
+    `$.Schedule` at 0.06s and 0.12s. Those two loads overlapped each other **and** the running
+    poll traffic, which is exactly the documented wedge: the pending loads stall at **dims 0** and
+    never paint. In-game (maintainer's 2026-07-31 screenshots) that read as a **mostly BLACK
+    viewport** with one visible strip, and a nearly empty frame once heading walked onto a copy that
+    did not exist — trivially misdiagnosed as "broken perspective" or a bad seam. It was neither:
+    the seam maths (`PANO_STEP = PANO_W - 2`) were already right, the neighbours were simply absent.
+    **Fix:** route the copies through `MG.Net.loadImage` (same FIFO; the URL is identical so the
+    engine serves them from cache) and **chain** them — left copy, then right copy, then set
+    `panoramaReady` and reveal. The old fixed 0.18s timer declared readiness on faith, with no way
+    to know whether either load had finished. A failed neighbour degrades to "no wrap at that edge"
+    and stays playable rather than erroring.
+    ⚠ Still unfixed by this and NOT a bug: the equirectangular strip is **stretched, not
+    reprojected**. Panorama exposes no shader to this mod, so straight lines still bow near the
+    frame edges. Narrowing the crop (720px of a 2880px strip ≈ 90° instead of 120°) reduces it; only
+    a real rectilinear projection would remove it.
+
+24. **An unknown `<Image>` `scaling` token silently falls back to NATIVE SIZE, centred.** It does
+    not warn and does not error, so the panel keeps the size you gave it while the bitmap paints
+    small in the middle of it. GeoGuesser passed `scaling: "stretch-to-fit"` — a token this engine
+    does **not** have. Every `<Image>` in `G:\GameTracking-Deadlock` uses only
+    `stretch-to-fit-preserve-aspect` (31), `cover` (4), `stretch-to-fit-y-preserve-aspect` (3),
+    `stretch-to-cover-preserve-aspect` (2) or `contain` (2). (`stretch` exists but only on
+    `MoviePanel`.) With a 2048×1024 Panoramax SD source in the 2880×1440 strip, the fallback left
+    **(2880−2048)/2 = 416px** of dead panel each side and **(1440−1024)/2 = 208px** top and bottom.
+    - **How it presented:** a black-framed viewport, and only roughly **95°–270°** of heading
+      looking correct — everything else black or a thin sliver. That reads like "broken perspective"
+      or "bad seam" and is neither. The maintainer's measured window is what pinned it: content
+      began at stage x ≈ 3290 while the strip was positioned at 2878, and 2878 + 416 = **3294**.
+      Arithmetic identified the cause before any code was changed.
+    - **Fix:** `cover`. The yaw/pitch maths assume the strip is exactly `PANO_W × PANO_H`, and
+      `cover` always fills the box. For a 2:1 source it is a pixel-exact fill with no cropping,
+      whereas any `*-preserve-aspect` token silently letterboxes again the moment a source is not
+      exactly 2:1.
+    - `mg_release_ui_regression_test.js` whitelists the valid tokens across every shipped script,
+      because this failure mode is invisible to `node --check`, to lint and to the rules tests.
+
+25. **A protocol change is TWO deploys, and the tests cannot see the second one.** Every check in
+    this repo reads the working tree: `npm test` proves the client and `server/worker.js` agree with
+    each other, and `build_worker --check` proves `worker.js` matches its sources. **Nothing proves
+    the VPS is running that `worker.js`.** So a reveal-protocol change that is green locally can be
+    live-broken, because the client speaks the new codec to a server still speaking the old one.
+    - **How it presented (2026-08-01):** GeoGuesser named a country that was never right — a Canadian
+      road labelled `Oceania · Belgium`, a New Zealand park `Africa · Benin`, a Berlin street
+      `Asia · Belgium` — while the map dot landed correctly. That split is the tell: **points were
+      fine, labels were garbage**, because only the label routes had changed codec.
+    - **The arithmetic pinned it before any code was touched.** The old `/api/geoinfo` answered
+      `d(region + 1, 1)`; the new client decodes `place = h*63 + w`, i.e. `63 + region + 1`. Region 1
+      → 65 → `Oceania · Belgium`; region 5 → 69 → `Africa · Benin`; region 0 → 64 → `Asia · Belgium`.
+      Three of three, exactly as screenshotted. The credit line broke the same way: the old route
+      with no `&i=` took its `Number(null) === 0` branch and returned `d(text.length, 0)`, so the
+      client used a **string length** as a table index — which is why plausible-looking but wrong
+      contributors appeared. Confirmed on the box: the deployed `worker.js` still contained
+      `region + 1, 1` and no `geoPlaceCode`, dated a day before the commit that changed it.
+    - **Rule going forward:** when a route's encoding changes, redeploy (`server/README.md`) and
+      verify against the running server, not the working tree —
+      `node tools/mg_geo_live_smoke.js https://<host>` prints the real `placeCode`/`creditCode`, and
+      decoding one of them by hand is the only check that covers this gap. A green `npm test` says
+      nothing about it.
 
 ---
 
@@ -938,7 +1082,7 @@ is built but **not yet in-game verified**.
 - Anti-abuse is deliberately tolerant of households/NATs: one IP can spend six fresh 100-pixel
   banks immediately, then refills 120 changed pixels/minute. This keeps rotating the
   client-reported Steam32 from resetting the economy without banning the address. Expensive
-  uncached 800x400 viewport renders allow a burst of twelve and one new frame/second; cache hits
+  uncached 768x384 viewport renders allow a burst of twelve and one new frame/second; cache hits
   are free and the client retries the busy-image sentinel.
 - Audit actions are append-only for 180 days. Cleanup removes expired action and per-user-index
   records in bounded 512-action batches; while catching up, every new action runs another batch,
@@ -950,9 +1094,17 @@ is built but **not yet in-game verified**.
 - The immutable `panorama/images/pixelbattle/world_map.png` base is generated from the public-domain
   Natural Earth 1:110m land polygons directly at 512×256. One source texel is one placeable canvas
   pixel, so coastlines cannot contain filtered subpixels inside an editable cell.
-- The 32×16 input grid is reused at every zoom. Overview clicks drill into a region; at 16× each
-  input cell maps to exactly one canvas pixel. At every zoom the Worker composites the base and
-  shared paint into a compressed native 800×400 viewport using nearest-neighbour boundaries,
+- The **64×32** input grid is reused at every zoom. Overview clicks drill into a region; at **8×**
+  (the max) each input cell maps to exactly one canvas pixel. The grid doubled from 32×16 in
+  2026-08-01 precisely so that drawing is reachable at 8× — the old grid only reached one-cell-per-
+  pixel at 16×. ⚠ **The viewport must divide EXACTLY by the grid**: 768/64 = 384/32 = 12px per cell.
+  That is why the frame is 768×384 and not the old 800×400 — 800/64 is 12.5, and a fractional cell
+  reproduces the GeoGuesser off-by-one (§8.11), where the engine rounds the laid-out cell while the
+  click arithmetic does not and the selection drifts further the further right you click.
+  `VIEW_W/VIEW_H` (client), `PX_VIEW_W/H` (worker) and `.mg-px-grid` (CSS) are one number in three
+  places; `mg_release_ui_regression_test.js` fails if they disagree or stop dividing evenly.
+  At every zoom the Worker composites the base and
+  shared paint into a compressed native 768×384 viewport using nearest-neighbour boundaries,
   bypassing Panorama texture filtering in previews as well as the editor. Navigation stores an
   integer top-left pixel rather than a fractional centre, so server pixels and pending client
   pixels share the exact same boundaries. Arrow/reset/zoom controls provide navigation without
@@ -968,13 +1120,24 @@ is built but **not yet in-game verified**.
   On the client, erasing a still-local paint cancels that queued change instead, immediately
   returning its reserved pixel. Navigation uses a fixed two-row zoom group plus keyboard-style
   arrow D-pad so adding controls cannot push a direction button onto a third row.
-- Uploads contain 10–128 unique pixels. The client checks and batches first; the Worker deduplicates,
+- **There is no upload queue any more.** A placed pixel uploads itself: `placePixel` schedules a
+  debounced flush (`AUTO_FLUSH_S`, 0.9s) and the batch goes up on its own, so `MIN_BATCH` /
+  `PX_MIN_BATCH` are **1** (they must stay equal, or the server rejects the client's smallest real
+  batch as malformed). The old 10-pixel floor existed to keep request count down on Cloudflare's
+  shared 100k/day bucket; the VPS is not metered per request, so it is gone. ⚠ The debounce is NOT
+  cosmetic: the upload limiter counts **requests**, not pixels, so one request per click would
+  throttle a fast drawer. `PX_UPLOAD_MAX_HITS` rose 30 → 120 for the same reason. Neither change
+  loosens the real spend ceiling, which counts PIXELS and is unchanged: the 100-pixel account bank
+  and the per-IP pixel budget. UPLOAD remains as a manual "flush now".
+- Uploads contain 1–128 unique pixels. The client checks and batches first; the Worker deduplicates,
   validates the bank again, rate-limits uploads, and persists modified 32×32 tiles. The shared
   per-IP budget described above prevents Steam32 rotation from resetting this protection. Player
   uploads and admin paint/undo commit tiles/version, audit, and ownership in one storage transaction
   (player uploads include the bank debit in that same transaction).
-- Clients poll only the 12-bit canvas version, backing off from 8 to 30 seconds while idle, and
-  download the 512×256 shared PNG only when that version changes.
+- Clients poll only the 12-bit canvas version, every **10 seconds** flat, and download the 512×256
+  shared PNG only when that version changes. The old 8→15→30s idle backoff ladder existed to protect
+  the Cloudflare request bucket; without that constraint a steady cadence is simpler and other
+  players' paint shows up sooner.
 - Every accepted player batch is also stored as an append-only retained audit action containing
   Steam32, timestamp, and exact per-pixel `before → after` deltas. The browser admin at `/admin` can search
   this log by Steam32, paint without using a player's bank, and undo an action. Safe undo skips
@@ -997,7 +1160,7 @@ is built but **not yet in-game verified**.
   live logical pixel coordinates, and interpolated drag painting. The map lives in a bounded
   scroll workspace so high zoom does not push the audit log thousands of pixels down the page.
   It loads a protected native 512×256 composite from `/admin/api/canvas`; it must never reuse
-  Panorama's 800×400 `/pxview`, because that route has already rasterised 512 logical columns
+  Panorama's 768×384 `/pxview`, because that route has already rasterised 512 logical columns
   into a non-integer display width and cannot be losslessly downsampled back for editing.
 - Every current pixel is attributed through a compact `px:o:<tile>` ownership record: one
   deduplicated action-id dictionary plus a `Uint16Array(1024)` per touched 32×32 tile. An
@@ -1010,7 +1173,7 @@ is built but **not yet in-game verified**.
   colours, marks conflicts red, and zooms to the action bounds. Inspect makes one on-demand admin
   request per clicked coordinate and exposes the owning Steam32, action, user log, and ban path.
 - Steam32 is client-reported, not a cryptographic Steam authentication ticket. A modified client
-  can spoof an unbanned ID, and Worker-side rejection happens only after Cloudflare has received
+  can spoof an unbanned ID, and server-side rejection happens only after the VPS has received
   the request. The ban is therefore authoritative for normal clients and all requests using the
   banned ID, but it cannot be an edge-level request-cost firewall without a separate identity
   service or verifiable Steam ticket.
@@ -1039,6 +1202,210 @@ is built but **not yet in-game verified**.
 
 ---
 
+## 8.11 GeoGuesser (mg_geoguesser.js)
+
+- GeoGuesser (game id 9) uses the existing two-seat Quick Match/private-room lifecycle and a
+  server-backed Play Solo variant. A match has five rounds. The server selects five non-repeating
+  locations from a **prebuilt worldwide pool**, accepts one map-cell guess per human seat,
+  calculates distance scores, and hides all reveal data until the round is complete. In solo it owns
+  an opaque synthetic seat, fills that seat's guess/ready state, and therefore reveals and advances
+  without a second client.
+- The pool ships with the server (`server/geo_pool.generated.js`, compiled from
+  `server/geo_pool.json`), so **forming a lobby makes zero catalog requests** — a match starts
+  instantly instead of waiting on a cold sweep. It mixes two CC-BY-SA 4.0 sources, Panoramax and
+  Mapillary, under an equal per-region quota with a 500 m minimum separation, and the five rounds
+  prefer distinct regions. There is still no manually curated location list, no Google API key and
+  no billing dependency.
+- **Trap: the world cannot be swept live, for two different reasons.** Panoramax returns frames in
+  sequence/upload order, so a wide bbox drains one densely-mapped route before reaching anywhere
+  else — measured 2026-07-31, `bbox=-10,35,30,60` (all of Europe) returned exactly **one** sequence
+  even at `limit=1000`, which reads like "no coverage there" and is wrong. Mapillary refuses the
+  opposite way: its bbox is capped at **0.010 square degrees everywhere**, even over empty desert,
+  putting a thorough worldwide sweep at ~2.5 M cells. Sub-celling Panoramax fixed the spread but a
+  live sweep still could not be both quick and varied, so the pool moved offline
+  (`tools/build_geo_pool.js`, harvesting Mapillary's z6 coverage **tiles** rather than bboxes).
+  Two routes that do **not** work and should not be re-tried: a bigger Panoramax `limit`
+  (40 → 1000 kept Europe at one sequence), and the two-step `/api/collections` →
+  `search?collections=` (collections **ignores** the bbox — an Oceania cell came back with German
+  coordinates — and returns nothing for `field_of_view`).
+- **Trap: a Mapillary coverage tile's geometry is not its image's position.** A z6 tile feature is
+  a whole sequence (a LineString of a full drive) carrying one `image_id`. Taking any point off
+  that line puts the target somewhere the photo was never shot: measured over 24 pooled rows, the
+  sequence midpoint sat a median **427 m** and up to **18.9 km** away, and a full re-resolve of
+  2400 rows corrected a median 511 m with a worst case of 111 km. In a guessing game that is not a
+  rounding error — the panorama shows one town while the reveal marks another. Every pooled id is
+  therefore resolved against `/images/{id}` at build time and stored with its own
+  `computed_geometry`, which also supplies the creator credit and drops the ~4% of tile ids that
+  404. Verified after the fix: worst delta 0.1 m.
+- **Trap: `camera_type` is usually `spherical`, not `equirectangular`.** Both mean a true 2:1
+  strip. Filtering on `equirectangular` alone reported **zero** 360° coverage in all 14 sampled
+  metros, which looks exactly like "Mapillary has nothing here".
+- **Trap: a catalog claiming 360° does not guarantee a 2:1 image.** The field of view describes the
+  camera, not the derivative that gets served. Measured 2026-08-01: 11 of 58 pooled Panoramax rows
+  delivered partial panoramas, ratios from 0.87 to 7.67 (e.g. 2048×267), which the wrap engine
+  renders as a smear. `tools/build_geo_pool.js --verify-images` measures the delivered bytes and
+  drops them.
+- Mapillary is optional and server-side only. `MG_MAPILLARY_TOKEN` lives in
+  `/etc/deadlock-minigames.env` and never reaches a client: `thumb_2048_url` is signed and expires,
+  so it is resolved per reveal and never cached or stored in the pool. Without a token the game
+  runs on the pool's Panoramax rows. Coverage is genuinely complementary — of 14 sampled metros,
+  Panoramax was empty in 8 and Mapillary in 4; together they cover 12. Mapillary alone rescues
+  Seoul, Bangkok, Sydney, Delhi, Nairobi and Melbourne, while Panoramax alone covers Tokyo and
+  Berlin.
+- `/api/geoview` is authenticated with the lobby seat token and proxies the current panorama
+  through the VPS. Panoramax URLs are constructed from a validated UUID; resolved Mapillary URLs
+  are accepted only from `*.fbcdn.net`. Either way an upstream response cannot point the proxy at
+  an arbitrary host. A bounded 12-image LRU protects memory, keyed by `source:id`. The picture id,
+  exact coordinates and producer never reach the client before reveal.
+- **Trap: `*.fbcdn.net` is blocked on some networks**, including the maintainer's workstation
+  (measured 2026-07-31: it resolved to 127.0.0.1 there, while the VPS fetched the same image fine).
+  `graph.mapillary.com` keeps answering, so the failure looks like a black round rather than a
+  network fault. `tools/mg_geo_source_check.js` samples the live pool and must be run **on the
+  VPS**. The same interception hits `tiles.mapillary.com`, which answers 200 with an HTML login
+  page; the pool builder treats that as a hard error rather than an empty tile, because swallowing
+  it once silently wrote a degraded pool over a good one.
+- `MG.Net.loadImage` reports the request panel's **layout** dimensions, not necessarily the source
+  image's intrinsic dimensions. Its 640px request host can clamp the remote image before
+  reporting dimensions, so GeoGuesser must not aspect-check those values.
+  `MG.Net.isLevelEncodedSize` instead detects the calibrated 0..63 Worker error-PNG range; every
+  successful panorama lies outside it.
+- Panorama has no projection shader available to this mod. The client therefore displays a clipped
+  2:1 equirectangular strip three times side by side and translates the strip to wrap heading at
+  360 degrees. The 2048×1024 sources fill a fixed 2880×1440 stage (`scaling: "cover"` — an unknown
+  token such as the old `"stretch-to-fit"` silently paints the source at native size, centred, see
+  trap 24), so the 860px viewport is roughly a 107-degree crop. Copies use a shared 2878px step
+  (2px overlap), which removes the old 240px black seam, and all three load through the shared FIFO
+  (trap 23). This is still not a rectilinear lens projection: straight lines bow near the edges.
+- Yaw wrap must not animate. Normalising 359°→0° re-centres the strip by a whole 2878px step, and
+  the 0.04s transition turns that into a fast full spin, so the transition lives on a toggled
+  `.mg-geo-anim` class that `applyCamera` removes for the wrap frame only.
+- All four stacked rows (stats, viewport, camera bar, map row) are **860px** wide. They were 720
+  and centred above an 860 map row, which made the panel read as ragged. The reveal labels are
+  `fit-children` plus a flexible spacer, so an empty place/credit collapses instead of reserving
+  88px of blank column above the action button.
+- Pitch is `PANO_H / 180` = 8px per degree; drag is 1:1 (`360 / PANO_W` degrees per pixel) so the
+  grabbed point stays under the cursor.
+- The map zooms on **double-click** and resets on **triple-click**. The engine exposes no
+  `ondblclick`, so a click run is measured by `Date.now()` timestamps within 400ms; the run is
+  keyed on time only, not on cell identity, because zooming re-centres the clicked cell and a
+  cell-keyed run could never reach three. Only the wrapper grows (real layout width/height, not a
+  raster `pre-transform-scale2d`), so the map `.vtex` stays crisp. The first click still selects
+  immediately — zoom never debounces the guess. A new round resets to 1×.
+- **Zoom is what buys precision, and that only works because the hit grid does NOT scale.** The
+  grid is 64×32 real `Button` panels — a global 512×256 grid would be 131k panels and destroy
+  layout — so it is a **sibling** of the zoom wrapper, pinned over the 512×256 window. At zoom Z
+  it spans 1/Z of the world, giving an addressable 64Z × 32Z; at the 8× cap that is exactly the
+  authoritative 512×256, i.e. ~78km per cell instead of the old flat 64×32's ~626km. When the grid
+  lived *inside* the wrapper it scaled with the map, so zooming only made the same coarse cells
+  bigger. `FULL_W/FULL_H` (client) must equal `GEO_GRID_W/H` (worker) and `GRID_* × MAP_ZOOM_MAX`.
+- **The map window must divide EXACTLY by the hit grid, or every guess lands left of the cursor.**
+  The window was 500×250 against a 64×32 grid, i.e. **7.8125px** per cell — and Panorama lays
+  panels out on whole pixels, so the engine rounded each `.mg-geo-cell` to 8px while `clickCell`'s
+  arithmetic still believed 7.8125. The two agree only at the left edge and drift apart across the
+  map: they first disagree at x=47 and the error reaches **two cells** at the right edge. That was
+  the maintainer's "always selects one cell to the left" report (2026-08-01) — genuinely left of
+  the cursor, and worse the further right you clicked. Fix: **512×256** (512/64 and 256/32 are both
+  exactly 8), with the right column 342→330 so the row still totals 860. `mg_geoguesser_map_test.js`
+  now asserts the DIVISIBILITY rather than a magic number, and that the CSS window matches `MAP_W/H`
+  — a resize stays free as long as it stays exact. ⚠ The same trap applies to any future hit grid:
+  a fractional cell size is silently rounded, and the resulting drift looks like an input bug.
+- **The reveal target is bigger than the guess dots AND painted last.** Panorama paints siblings in
+  creation order and `showReveal` reads the target first, so the guess dot — created later — covered
+  it. At 1× the whole world is one map wide, so an accurate guess is sub-pixel away: a 743/750 round
+  (~23km) put the two 9px dots **0.29px** apart and the violet answer vanished completely (the
+  maintainer's round-1 screenshot showed no target at all). Both halves are load-bearing — the size
+  difference (`TARGET_SZ` 15 vs `MARKER_SZ` 9) keeps a ring visible on a dead-on guess, and
+  `raiseTargetMarkers` re-parents the target to the front so it is not simply hidden.
+- **The reveal auto-advances after 10s**, counting down in the button's own label
+  (`NEXT ROUND (9)`) rather than adding a second widget; clicking still works and just runs the same
+  idempotent `readyNext`. ⚠ It needs its own `$.Schedule` generation counter (the `createTurnTimer`
+  `gen` lesson): `beginRound`, `finishGame`, `readyNext` and `destroy` all cancel it, or a stale tick
+  fires `readyNext` during the NEXT round.
+- **The LOOK/TILT slider row is hidden, not deleted**, and the round timer takes its slot as a
+  horizontal bar. The sliders are kept as the working reference for the next slider we add —
+  including the de-glow specificity fight in trap 22, which only documents anything while real
+  panels carry those selectors. They stay wired (`applyCamera` still writes their values); the row
+  is just `visible = false`, which collapses it so the timer occupies the space.
+- **Pacing is deliberately "both, then both": nobody is rushed and nobody is skipped.** A round
+  reveals only once **both** seats have guessed, and advances only once **both** press next — so a
+  player who solves it in 15s waits on the reveal screen for one who takes a minute, and the slow
+  player is never cut off mid-thought. The 60s round timer is what bounds that wait (an expiry
+  submits the selected cell, or cell 0), and the reveal's own 10s countdown bounds the second half.
+  A seat cannot change a locked guess (`(9,1)`), cannot advance before the reveal (`(9,2)`) and
+  cannot read the target early (`(1,63)`) — all verified against the running Hub.
+- **Leaving is ASYMMETRIC around the final round, and both halves were real bugs.** Mid-match a
+  departure genuinely ends the lobby: the reveal is gated on both guesses, so a one-sided game
+  cannot continue, and the remaining client reads `(9,9)` and returns to the menu. **After** the
+  fifth round both players sit on the scoreboard with reveal reads possibly still in flight, and
+  deleting the lobby there kicked the reader off their own results with "Opponent left." A finished
+  lobby therefore **survives** one seat leaving — the seat is nulled, `geoLobbyAccess` exempts a
+  completed match from its two-seat check (nothing in it is secret to its own seats any more, and
+  it stays token-gated against strangers), and the remaining client keeps reading the `(6,40)` done
+  reply until it leaves on its own. The 30-minute sweep still collects it. Covered by
+  `mg_server_test.js` on both sides.
+- Panoramax reports exact coordinates and the server keeps them exact — `geoRoundScore` measures
+  from the true lat/lon, never from a quantised cell. Only the player's guess is quantised, which
+  is why raising its resolution costs nothing on the scoring side.
+- Reveal markers are **world-anchored panels** in the zoom layer, not tinted grid buttons: a
+  button points at a different place the moment the window pans. The label and marker layers are
+  `hittest: false` so the grid above still receives every click.
+- The map is a 2048×1024 Natural Earth composite (`tools/build_geoguesser_map.js`, pure Node +
+  zlib — no `sharp`/`canvas` in this repo): 1:50m countries/land/lakes/rivers, 1:110m state lines,
+  and 243 populated places as dots. All public domain, no attribution required.
+  **OSM was rejected deliberately**: tiles are ODbL and the tile usage policy forbids proxying or
+  embedding them in an application. Antarctica correctly fills the bottom band — its polygon
+  reaches −89.999° and equirectangular stretches the pole across the full width.
+- **Land colour is sampled from Natural Earth II's natural-colour raster**
+  (`tools/assets/ne2_natural_2048.png`, produced by `build_ne_raster.js` from a 40 MiB public-domain
+  GeoTIFF; only the downsample is committed, so a clone needs neither the source nor a network).
+  The country polygons act purely as a mask, and water is painted separately because that raster
+  renders the ocean flat white. Two FLAT palettes were shipped and rejected — grey, then dark brown
+  — before the real cause was accepted: the problem was never the hue, it is that a single fill
+  cannot show a continent's variety. Amazon green, Sahara sand and Greenland ice now read as
+  themselves.
+- City *names* are Panorama `Label`s fed by the generated `mg_geoguesser_cities.generated.js`
+  rather than baked pixels, because that PNG encoder has no font renderer. Two gates keep them
+  readable and **both are load-bearing**: a `SCALERANK` limit per zoom (1x shows only the 27 rank-0
+  capitals — `rank<=1` put 68 names on a 500px map) and a greedy overlap rejection that drops any
+  label whose box touches one already placed. Rank alone can never separate Ljubljana from Zagreb
+  at 30px apart, which is what made the Balkans an unreadable pile. Off-window labels are culled
+  *before* the overlap test, or at zoom an invisible name steals a slot from a visible one.
+- Because the map is light, the label ink is dark on a white halo and the markers are saturated
+  fills with a white ring. The previous muted set (`#7199ba` blue, `#a9b88a` olive) was tuned
+  against a dark grey map and vanished on cyan sea and green land; the reveal pin is violet
+  precisely because nothing on a natural-colour map is purple.
+- A round is on a **60 s** timer (`MG.Widgets.createTurnTimer` with a per-call override; the shared
+  default is 25 s, which is barely enough to spin the panorama once). It attaches to `container`
+  (`.mg-game-host`, `flow-children: none`) rather than the `.mg-geo` column, because the widget
+  positions itself with `vertical-align` and inside a `flow-children: down` parent it would push the
+  panorama down instead. Expiry submits the selected cell, or cell 0 when nothing is selected: the
+  server reveals only once **both** seats have guessed, so a silent timeout would strand the
+  opponent.
+- Direct image drag reuses the chess/checkers `DragStart`/`DragEnd` + `MG.Widgets.winPos` pattern.
+  Some Panorama builds expose the drag ghost position only at release, so two native `Slider`
+  controls are the continuous path: `onvaluechanged` updates heading and pitch while the thumb moves.
+  Arrow buttons remain an accessible fallback. The sliders are de-glowed by repeating the game's own
+  `Slider.HorizontalSlider` selector prefix (trap 22).
+- The guess itself never sends latitude/longitude: the client resolves its click to a linear cell
+  in the shared 512×256 space and the server converts that back to coordinates, so the hidden
+  location stays server-authoritative. Height 63 remains the point-error sentinel.
+- After reveal the answer is named as `continent · country` (e.g. `Oceania · Australia`). Both the
+  country and the contributor credit are **indices into tables that ship with the mod**
+  (`panorama/scripts/mg_geo_credits.generated.js`), not text on the wire. They are decided offline
+  at pool build time: `tools/lib/country.js` resolves each location against a vendored Natural Earth
+  set (public domain), and `tools/build_geo_credit_tables.js` emits the server and client tables
+  from the same source so their indices cannot drift.
+  **Trap:** the credit used to be transported as text, two characters per request — a 49-character
+  line was 26 chained round-trips, and `showReveal` held the button on `LOADING RESULT…` until the
+  last one landed. That was the whole cause of the long post-guess wait; nothing about the string
+  was ever dynamic. The continent travels with the country because a country does not imply one:
+  Russia, Turkey, Kazakhstan, Egypt and Indonesia straddle a divide and are resolved per point.
+- Server authority and protocol codecs are covered by `mg_server_test.js`; registry/load order and
+  the native-input guards are covered by the release UI regression test. Projection, layout and
+  drag feel still require an in-game VPK check.
+
+---
+
 ## 9. Turn/sync model (the 2-int games)
 
 **Server-authoritative predict-and-confirm.** Each player applies a move locally FIRST for
@@ -1056,25 +1423,28 @@ nothing is polled and no token is used.
 Disconnect signals: `status` returning `(9,1)` while a host waits, or `poll` returning
 `(9,9)`, route to `MG.UI.kickToMenu(reason)`.
 
-**Adaptive poll cadence (request-budget control).** Cloudflare's free tier is ONE shared bucket
-for the whole mod: 100k Worker requests/day AND 100k Durable-Object requests/day (every `/api/*`
-image hits both), reset 00:00 UTC, and blowing it returns **Error 1027 for everyone** until reset.
-So request volume is the release-critical resource, and it's controlled by two DISTINCT cadences,
-both defined ONCE in `mg_net.js`:
+**Adaptive poll cadence (load and latency control).** The direct VPS has no 100k requests/day
+quota—the Cloudflare limit that forced the migration is gone. Polling still dominates active
+traffic, so bounding it protects latency on the single shared vCPU and avoids wasting bandwidth.
+The NLs-1 load test sustained roughly 1,000 empty polls/s; after native-zlib compression of the
+dimension PNGs it sustained roughly 872 clock reads/s (a clock response fell from ~81 KiB to
+~449 bytes). Expected traffic from 200–300 clients is well below both. The two distinct cadences
+remain defined once in `mg_net.js`:
 
 - **`MG.Net.pollDelay(misses)` — IN-GAME opponent polling** (`/api/poll`, `/api/dlog`, `/api/plog`),
-  the dominant cost of an *active* match. `misses < 4` → **1.0s**, `< 12` → **1.6s**, else →
-  **2.5s**. `misses` counts consecutive empty ("nothing new") polls this turn and is reset to 0 on
-  each real move (and in `startPolling`), so a wait starts fast (responsive when the opponent
-  replies quickly) and backs off through two tiers while they think (a long think must not cost
-  ~2.5 req/s). Every game keeps a local `var pollMisses = 0` and passes `pollMisses++` to
+  the dominant cost of an *active* match. `misses < 6` → **0.5s**, `< 18` → **0.9s**, else →
+  **1.5s**. `misses` counts consecutive empty ("nothing new") polls this turn and is reset to 0 on
+  each real move (and in `startPolling`), so a quick opponent reply normally appears within roughly
+  half a second plus network/PNG-loader latency. The long-think tier still caps 300 continuously
+  active clients near 200 empty polls/s instead of consuming most of the measured ~1,000 polls/s.
+  Every game keeps a local `let pollMisses = 0` and passes `pollMisses++` to
   `pollDelay` in both the "nothing new" and transport-error branches.
 - **`MG.Net.waitDelay(misses)` — WAITING-ROOM polling** (lobby/room fill, rematch accept, quick /
   multi matchmaking). Totally different cost profile: nobody's mid-move, latency is irrelevant (a
   chess lobby, not a shooter), and these screens can sit open for MINUTES — so a fixed ~1s poll was
   pure waste that scaled with idle players, not games played. Ramps HARD and monotonically (a
   waiting room has no "real move" to reset on): steps `[1.5, 1.5, 3.0, 3.0, 4.0, 5.0]`s, clamped at
-  5s. Each waiting loop keeps its own `var misses = 0` and passes `misses++` in both branches. The
+  5s. Each waiting loop keeps its own `let misses = 0` and passes `misses++` in both branches. The
   four loops on it: shared `pollLobbyRoom`, `waitForJoiner`, `waitForMultiMatch`, and the rematch
   `tick` (`mg_ui.js`).
 
@@ -1108,10 +1478,11 @@ Two DIFFERENT time widgets, both built in `mg_games.js` and exposed on `MG.Widge
     once-a-second poll issued **2 requests/second for the whole game**, which (a) swamped the strictly
     one-at-a-time image queue in `mg_net.js` and stalled the move-poll so an opponent's move surfaced
     many seconds late (the "20s to see a move" / "his clock ticks on my turn" desync), and (b) burned
-    the request budget — ~2 short games ran up ~1200 Cloudflare requests almost entirely from this
+    backend load — ~2 short games ran up ~1200 requests almost entirely from this
     loop. Local interpolation keeps the display live for ~free; the 8s resync corrects drift.
 - **Per-turn countdown timer** (`createTurnTimer`) — a `TURN_SECS = 25` budget per turn in
-  **durak, poker, TTT & Connect Four**. The controller calls `start(onExpire)` when the LOCAL human
+  **durak, poker, TTT & Connect Four**, and a 60s round timer in **GeoGuesser**. The controller calls
+  `start(onExpire)` when the LOCAL human
   is put on the clock and `stop()` the instant they act (or a bot / online opponent takes over). If
   the bar empties, `onExpire()` fires exactly once — the controller turns that into a forfeit /
   elimination (offline decided locally, online sent as a forfeit). Key constraints, all already
@@ -1127,6 +1498,19 @@ Two DIFFERENT time widgets, both built in `mg_games.js` and exposed on `MG.Widge
     measures its height from the board, not the bar.
   - **`opts.boardW`** attaches the bar to that board's LEFT EDGE (TTT/C4 pass it — narrow centred
     boards; durak/poker omit it and keep the wide-felt gutter placement).
+  - **`opts.horizontal`** lays the same widget out as a WIDE row instead of a tall column
+    (GeoGuesser). Its stack is 860 wide and its camera row only 38 tall, so a 280px column does not
+    fit beside a 360px viewport and the gutter placement has nowhere to sit. In this mode the bar is
+    a plain flow child of the game's own column — no `boardW` shove, no `VNUDGE` (that offset
+    corrects a `flow-children:down` wrap, which this is not) — and the fill drains by
+    **negative** `TRACK_W`, i.e. it leaves through the LEFT edge so the remaining time stays
+    anchored left and shrinks right→left like any depleting bar. (A positive slide parks the green
+    block against the RIGHT edge and reads backwards — in-game, 2026-08-01.) ⚠ `TRACK_W` (792) must
+    match `.mg-tt-horiz .mg-tt-track`'s CSS width exactly as `TRACK_H` must match the vertical
+    track's height: it IS the drain distance, so a CSS-only edit empties the bar to the wrong place
+    with nothing failing. The seconds label sits BESIDE the bar at **40px** — at 26 the engine
+    ellipsised a two-digit count to `6…` while one digit was fine, and `text-overflow: clip` only
+    trades the ellipsis for a chopped glyph.
   - **An authoritative action in flight parks the timer.** Durak/Poker set `pendingAct` and call
     `refreshTimer()` before entering the network FIFO, so an expiry callback cannot forfeit a move
     that the server is already processing. A rejection or transport failure clears `pendingAct`
@@ -1166,9 +1550,12 @@ npm test                                       # the whole harness suite, in one
                                                #   parity                 client predictor ==
                                                #                          server authority
                                                #   update marker          release-marker decoding
+                                               #   es6 codemod / es6 arrows
+                                               #                          the two refactor tools'
+                                               #                          hazard fixtures (§10.2)
 ```
 If `build_worker --check` reports the worker is stale, run `npm run build:worker` and commit the
-regenerated `server/worker.js` with your change — it is the deploy artifact.
+regenerated `server/worker.js` with your change — the Node VPS imports this deploy artifact.
 
 A Public build additionally goes through `../tools/build_mod_strip_comments.ps1` (see §3), which
 strips comments from a throwaway copy and refuses to build if stripping broke any script.
@@ -1180,7 +1567,7 @@ by the maintainer). Don't present unrendered layout or input behavior as confirm
 ### 10.1 The lint net (why it exists, what it does NOT cover)
 
 The Panorama **controllers** (`mg_checkers`, `mg_ttt`, `mg_chess`, `mg_connectfour`, `mg_durak`,
-`mg_poker`, `mg_pixelbattle`, `mg_wordle`, `mg_ui`) have **almost no automated coverage**: they call
+`mg_poker`, `mg_pixelbattle`, `mg_wordle`, `mg_geoguesser`, `mg_ui`) have **almost no automated coverage**: they call
 `$.CreatePanel` / `$.Schedule` /
 `$.RegisterEventHandler`, so they can't run outside the game. `node --check` only parses
 syntax; the `tools/*_test.js` harnesses exercise the pure engines (`rules/*.js`) + the worker,
@@ -1200,7 +1587,8 @@ catches the above) plus a handful of always-safe correctness rules (`no-unreacha
 `no-dupe-keys`, `no-duplicate-case`, `use-isnan`, `valid-typeof`, …). No stylistic rules, so the
 output is signal, not noise, and it stays green on the working, in-game-verified code. The config
 declares the Panorama globals (`$`, `Game`, `GameUI`, …) as read-only so real engine bridges don't
-false-positive; the `server/` block is `sourceType: module` (Cloudflare Worker), tools are CommonJS.
+false-positive; the `server/` block is `sourceType: module` (Worker-compatible core plus the Node
+VPS adapter), tools are CommonJS.
 
 **It still can't render.** Lint proves every referenced name exists and a few structural invariants
 hold; it says NOTHING about layout, animation, drag/drop, timing, or whether a move looks right.
@@ -1210,3 +1598,71 @@ are gitignored and dev-only — nothing here is packed into the VPK.
 When in doubt about a Panorama capability, **grep the game's own files**
 (`G:\GameTracking-Deadlock\game\citadel\pak01_dir\panorama\`) or the maintainer's working
 mod (`D:\GitHub2\QOLLOCK\panorama`) for a proven pattern — do not invent CSS/JS API.
+
+### 10.2 ES6 in the shipped scripts (and the `var`s that must stay)
+
+The Panorama JS runtime accepts `const`/`let`, arrow functions and template literals — not a
+guess: QOLLOCK ships all three into the live HUD (`ql_core.js` uses `const` throughout,
+`ql_hero_testing.js` has `` Cmd(`giveitem ${item}`) `` and `$.Schedule(0.25, () => {…})`).
+Declarations here are `const` by default, `let` when reassigned; anonymous callbacks are arrows;
+string building uses template literals where the leading operand is a string literal.
+
+**Three things are deliberately NOT uniform, and every one is load-bearing:**
+
+1. **33 surviving `var`s** (25 in `panorama/`, 8 in `tools/`). Each one would change behaviour
+   if converted, because `var` is function-scoped and `let` is block-scoped: 21 are captured by
+   a closure inside a loop (`let` would hand each iteration a fresh binding, changing what the
+   handler sees), and 12 are used outside the block that would now scope them. If you touch
+   one, you are changing semantics, not style. `tools/es6_codemod.js` reports the reason per
+   site. (The loop-capture count is low because this code already used the pre-ES6 IIFE
+   capture idiom — `((square) => { … })(i)` — so handlers close over a parameter, not the
+   loop binding.)
+
+2. **253 surviving `function` expressions.** An arrow has no own `this`/`arguments`, no
+   `[[Construct]]`, no self-name for recursion, and ignores a `.bind()` receiver. Panorama
+   calls some handlers with the panel as the receiver, so object-literal method values and
+   anything reading `this` stay `function`. `tools/es6_arrows.js` reports why per site.
+
+3. **862 surviving `+` concatenations.** 775 because the leftmost operand is not a string
+   literal, and that is not fussiness: `a + b + "px"` with numbers sums FIRST ("3px"), while
+   `${a}${b}px` concatenates ("12px"). A template is only equivalent when a leading string
+   literal forces every `+` in the chain to be concatenation. The other 87 span lines, and
+   re-flowing them risks the ASI rule below. `tools/es6_templates.js` reports per site.
+
+
+⚠ **The minifier rule now extends to a leading `(`.** `operator-linebreak` (§10.1) keeps a
+shipped line from starting with `+ - /`, but an arrow conversion can make a line start with
+`(` — `function (a, b) {` at the head of a line becomes `(a, b) => {`. That is in the Valve
+minifier's naive-ASI trigger set (`( [ + - /`), which is what broke a public build at
+mg_games.js:665. ESLint does not cover the paren case, so the codemod does: it skips any
+candidate that opens its line and refuses the file if any line would newly start with one of
+those characters. **If you hand-write a callback, keep the `(` off the start of a line.**
+
+Both codemods are one-shot tools kept for re-runs and for the reasons they record. Their
+harnesses (`mg_es6_codemod_test.js`, `mg_es6_arrows_test.js`) run in `npm test` and are the
+real specification: each executes a hazard fixture before and after and requires identical
+output. They are not decoration — the `var` harness caught a generated
+`for (const i = 0; i < 3; i++)` (instant "Assignment to constant variable") that came from
+eslint-scope leaving top-level references unresolved under `sourceType: "script"`.
+
+⚠ Those harnesses test the **tools**, not the shipped code — they would stay green if someone
+hand-wrote an arrow reading `this`. Two further tests cover the code itself:
+
+- **`mg_es6_invariants_test.js`** enforces the four properties above on the shipped tree: no
+  arrow reads `this` or `arguments`, no `new` on an arrow, and no line newly starts with
+  `( [ + - /` (delta against a recorded baseline of 62, since IIFE openers legitimately do).
+  Its detectors **self-test against injected faults first** — the original version silently
+  passed an arrow using `this` because it looked for the first non-arrow "binder" in the
+  enclosing chain, which always finds the controller IIFE. The right question is whether
+  `chain[0]` is an arrow.
+- **`mg_load_smoke_test.js`** evaluates all 23 shipped scripts under a fake `$` in the real
+  `base_hud.xml` order, and asserts each publishes its entry points (the six engines,
+  `Net`/`Api`/`Sound`/`Widgets`, and a real `create()` for all 9 enabled games rather than a
+  silent `createStub()`). This is the first execution coverage the controllers have ever had;
+  it catches "throws on load", which `node --check` cannot see. It still does not render.
+
+Not adopted: `block-scoped-var` and `no-use-before-define` as ESLint errors. They flag 82
+pre-existing benign sites (module-level consts read inside functions that run later, plus the
+25 deliberately-kept `var`s in shipped code), so the noise outweighs the signal.
+
+

@@ -27,6 +27,9 @@
 		<include src="s2r://panorama/scripts/mg_pixelbattle.vjs_c" />
 		<include src="s2r://panorama/scripts/mg_wordle_words.generated.vjs_c" />
 		<include src="s2r://panorama/scripts/mg_wordle.vjs_c" />
+		<include src="s2r://panorama/scripts/mg_geoguesser_cities.generated.vjs_c" />
+		<include src="s2r://panorama/scripts/mg_geo_credits.generated.vjs_c" />
+		<include src="s2r://panorama/scripts/mg_geoguesser.vjs_c" />
 		<include src="s2r://panorama/scripts/mg_ui.vjs_c" />
 	</scripts>
 	<Panel class="WindowRoot" hittest="false" disallowedstyleflags="hover,descendantfocus">

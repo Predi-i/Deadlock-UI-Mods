@@ -24,31 +24,31 @@
  * idioms + the checkers/ttt controllers, confirmed only after a VPK repack.
  */
 
-(function () {
-    var MG = ($.MG = $.MG || {});
+(() => {
+    const MG = ($.MG = $.MG || {});
     if (MG._c4Loaded) return;
     MG._c4Loaded = true;
 
-    var C = MG.Rules && MG.Rules.connectfour;   // shared pure engine (rules/connectfour.js)
-    var COLS = 7, ROWS = 6, CELL = 60, DISC = 50, INSET = (CELL - DISC) / 2;
+    const C = MG.Rules && MG.Rules.connectfour;   // shared pure engine (rules/connectfour.js)
+    const COLS = 7, ROWS = 6, CELL = 60, DISC = 50, INSET = (CELL - DISC) / 2;
 
     function createConnectFour(container, session) {
-        var Api = MG.Api;
-        var code = session.code;
-        var RED = 1, YEL = 2;
-        var myMark = session.isHost ? RED : YEL;    // host is red and moves first
-        var board = C.initialBoard();
-        var turn = RED;                              // red always opens
-        var appliedSeq = 0;                          // drops consumed from the shared server log
-        var pollToken = 0;
-        var pollMisses = 0;                          // consecutive empty polls this turn (adaptive cadence)
-        var destroyed = false;
-        var gameOver = false;
+        const Api = MG.Api;
+        const code = session.code;
+        const RED = 1, YEL = 2;
+        const myMark = session.isHost ? RED : YEL;    // host is red and moves first
+        let board = C.initialBoard();
+        let turn = RED;                              // red always opens
+        let appliedSeq = 0;                          // drops consumed from the shared server log
+        let pollToken = 0;
+        let pollMisses = 0;                          // consecutive empty polls this turn (adaptive cadence)
+        let destroyed = false;
+        let gameOver = false;
 
         function status(t) { if (session.onStatus) session.onStatus(t); }
         function myTurn() { return turn === myMark && !gameOver; }
 
-        var root = $.CreatePanel("Panel", container, "MG_C4Root");
+        const root = $.CreatePanel("Panel", container, "MG_C4Root");
         root.AddClass("mg-cf");
 
         // Per-turn countdown (left gutter of the modal). Parented on `container` (the flow:none game
@@ -57,11 +57,11 @@
         // maintainer's ruling: timeout = loss). Online I also fire Leave so the opponent learns.
         // boardW = 7 cols × 60px + 2 × 6px plate padding = 432 → the timer pins to the board's
         // left edge (narrow centred board; the far-left modal gutter looked detached).
-        var turnTimer = (MG.Widgets && MG.Widgets.createTurnTimer) ? MG.Widgets.createTurnTimer(container, { boardW: 432 }) : null;
-        var timerOn = false;
+        const turnTimer = (MG.Widgets && MG.Widgets.createTurnTimer) ? MG.Widgets.createTurnTimer(container, { boardW: 432 }) : null;
+        let timerOn = false;
         function refreshTimer() {
             if (!turnTimer) return;
-            var live = myTurn();
+            const live = myTurn();
             if (live === timerOn) return;
             timerOn = live;
             if (!live) { turnTimer.stop(); return; }
@@ -80,27 +80,27 @@
         // .mg-board-wrap idiom). Discs sit on the overlay ABOVE the plate; the overlay is
         // overflow:clip and sized to the plate's inner window, so a falling disc is visible only
         // WITHIN the plate - it drops in from the top slot instead of flying above the modal (п3).
-        var wrap = $.CreatePanel("Panel", root, "MG_C4Wrap");
+        const wrap = $.CreatePanel("Panel", root, "MG_C4Wrap");
         wrap.AddClass("mg-cf-wrap");
-        var boardPanel = $.CreatePanel("Panel", wrap, "MG_C4Board");
+        const boardPanel = $.CreatePanel("Panel", wrap, "MG_C4Board");
         boardPanel.AddClass("mg-cf-board");
 
         // Explicit rows/cols (NOT flow-wrap, trap ARCHITECTURE §6.8). Each cell owns a click
         // that drops into its COLUMN + a hover tint; discs are placed on the overlay.
-        var cells = [];       // cell index -> cell panel
-        var discEls = {};     // cell index -> disc panel (persistent so we don't rebuild every render)
+        const cells = [];       // cell index -> cell panel
+        let discEls = {};     // cell index -> disc panel (persistent so we don't rebuild every render)
         (function buildCells() {
-            for (var r = 0; r < ROWS; r++) {
-                var rowPanel = $.CreatePanel("Panel", boardPanel, "c4_row_" + r);
+            for (let r = 0; r < ROWS; r++) {
+                const rowPanel = $.CreatePanel("Panel", boardPanel, `c4_row_${r}`);
                 rowPanel.AddClass("mg-cf-row");
-                for (var c = 0; c < COLS; c++) {
-                    var i = r * COLS + c;
-                    var cell = $.CreatePanel("Panel", rowPanel, "c4_cell_" + i);
+                for (let c = 0; c < COLS; c++) {
+                    let i = r * COLS + c;
+                    var cell = $.CreatePanel("Panel", rowPanel, `c4_cell_${i}`);
                     cell.AddClass("mg-cf-cell");
-                    var hole = $.CreatePanel("Panel", cell, "");   // the round "hole" the disc shows through
+                    const hole = $.CreatePanel("Panel", cell, "");   // the round "hole" the disc shows through
                     hole.AddClass("mg-cf-hole");
-                    (function (col) {
-                        cell.SetPanelEvent("onactivate", function () { onColClick(col); });
+                    ((col) => {
+                        cell.SetPanelEvent("onactivate", () => { onColClick(col); });
                     })(c);
                     cells[i] = cell;
                 }
@@ -110,13 +110,13 @@
         // Discs overlay: sibling ABOVE the grid, offset by the board's 6px padding (margin) so a
         // disc's translate3d(col*CELL+INSET, row*CELL+INSET) lands centred in its hole. hittest
         // off so clicks pass through to the cells below.
-        var piecesLayer = $.CreatePanel("Panel", wrap, "MG_C4Pieces");
+        const piecesLayer = $.CreatePanel("Panel", wrap, "MG_C4Pieces");
         piecesLayer.AddClass("mg-cf-pieces");
         try { piecesLayer.SetAttributeString("hittest", "false"); } catch (e) {}
         try { piecesLayer.SetAttributeString("hittestchildren", "false"); } catch (e) {}
 
         function discXY(i) {
-            var r = (i / COLS) | 0, c = i % COLS;
+            let r = (i / COLS) | 0, c = i % COLS;
             return { x: c * CELL + INSET, y: r * CELL + INSET };
         }
 
@@ -137,21 +137,21 @@
         // fails to fire the disc still ends at its visible resting spot (never stranded off-screen).
         function placeDisc(i, mark, animate) {
             if (discEls[i]) return discEls[i];
-            var disc = $.CreatePanel("Panel", piecesLayer, "");
+            const disc = $.CreatePanel("Panel", piecesLayer, "");
             disc.AddClass("mg-cf-disc");
             disc.AddClass(mark === RED ? "mg-cf-red" : "mg-cf-yellow");
             discEls[i] = disc;
-            var p = discXY(i);
+            const p = discXY(i);
             if (animate) {
-                var startY = -CELL + INSET;   // one cell above the plate's top edge (above the clip box)
-                disc.style.transform = "translate3d(" + p.x + "px, " + startY + "px, 0px)";
-                $.Schedule(0.0, function () {
+                const startY = -CELL + INSET;   // one cell above the plate's top edge (above the clip box)
+                disc.style.transform = `translate3d(${p.x}px, ${startY}px, 0px)`;
+                $.Schedule(0.0, () => {
                     if (destroyed || !disc.IsValid()) return;
                     disc.AddClass("mg-cf-anim");
-                    disc.style.transform = "translate3d(" + p.x + "px, " + p.y + "px, 0px)";
+                    disc.style.transform = `translate3d(${p.x}px, ${p.y}px, 0px)`;
                 });
             } else {
-                disc.style.transform = "translate3d(" + p.x + "px, " + p.y + "px, 0px)";
+                disc.style.transform = `translate3d(${p.x}px, ${p.y}px, 0px)`;
             }
             return disc;
         }
@@ -159,9 +159,9 @@
         // Full rebuild of the disc layer from `board` (used on reset/resync). Clears then
         // repopulates without fall animation.
         function rebuildDiscs() {
-            for (var k in discEls) if (discEls.hasOwnProperty(k)) { try { discEls[k].DeleteAsync(0); } catch (e) {} }
+            for (let k in discEls) if (discEls.hasOwnProperty(k)) { try { discEls[k].DeleteAsync(0); } catch (e) {} }
             discEls = {};
-            for (var i = 0; i < board.length; i++) if (board[i]) placeDisc(i, board[i], false);
+            for (let i = 0; i < board.length; i++) if (board[i]) placeDisc(i, board[i], false);
         }
 
         // Clear the win styling. It has to clear the DISC class: that is the one with a rule
@@ -169,11 +169,11 @@
         // `mg-cf-win` class from the cells, which no stylesheet has ever defined, so after a
         // server rejection the previous winning line stayed lit on the rebuilt board.
         function clearWinHighlight() {
-            for (var k in discEls) if (discEls.hasOwnProperty(k) && discEls[k]) discEls[k].RemoveClass("mg-cf-win-disc");
+            for (let k in discEls) if (discEls.hasOwnProperty(k) && discEls[k]) discEls[k].RemoveClass("mg-cf-win-disc");
         }
         function highlightWin(mark) {
-            var line = C.winningLine(board, mark);
-            if (line) for (var k = 0; k < line.length; k++) {
+            const line = C.winningLine(board, mark);
+            if (line) for (let k = 0; k < line.length; k++) {
                 if (discEls[line[k]]) discEls[line[k]].AddClass("mg-cf-win-disc");
             }
         }
@@ -181,16 +181,16 @@
         // Apply a drop into `col` for `mark`: returns the landed cell index, or -1 if the
         // column is full. Mutates `board` and drops a disc panel with a fall animation.
         function applyDrop(col, mark) {
-            var row = C.dropRow(board, col);
+            const row = C.dropRow(board, col);
             if (row < 0) return -1;
-            var i = row * COLS + col;
+            let i = row * COLS + col;
             board[i] = mark;
             placeDisc(i, mark, true);
             return i;
         }
 
         function checkEnd() {
-            var w = C.winner(board);
+            const w = C.winner(board);
             if (w) {
                 gameOver = true;
                 highlightWin(w);
@@ -227,8 +227,8 @@
         // ── bot (offline) ────────────────────────────────────────────────────
         function botTurn() {
             if (destroyed || gameOver) return;
-            var botMark = (myMark === RED ? YEL : RED);
-            var col = C.cfBotMove(board, botMark);
+            const botMark = (myMark === RED ? YEL : RED);
+            const col = C.cfBotMove(board, botMark);
             if (col < 0) { checkEnd(); return; }
             applyDrop(col, botMark);
             turn = myMark;
@@ -240,15 +240,15 @@
         // ── relay + polling (mirrors tic-tac-toe) ────────────────────────────
         function sendMove(col, attempt) {
             if (destroyed) return;
-            Api.move(code, col, 7, 1, session.tok, function (r) {
+            Api.move(code, col, 7, 1, session.tok, (r) => {
                 if (r.ok) {
                     appliedSeq++;                        // our own drop is now in the shared log
                     if (!gameOver) startPolling();
                     return;
                 }
                 rejectAndResync(r.reason);               // server refused (full col / not our turn / bad token)
-            }, function () {
-                $.Schedule(0.6, function () { sendMove(col, (attempt || 0) + 1); });
+            }, () => {
+                $.Schedule(0.6, () => { sendMove(col, (attempt || 0) + 1); });
             });
         }
 
@@ -268,16 +268,16 @@
                 else { status("Move rejected. Resyncing…"); startPolling(); }
                 return;
             }
-            Api.poll(code, seq, function (mv) {
+            Api.poll(code, seq, (mv) => {
                 if (destroyed) return;
                 if (mv) {
-                    var mk = (seq % 2 === 0) ? RED : YEL; // red placed the even-indexed drops
-                    var row = C.dropRow(board, mv.from);
+                    const mk = (seq % 2 === 0) ? RED : YEL; // red placed the even-indexed drops
+                    const row = C.dropRow(board, mv.from);
                     if (row >= 0) board[row * COLS + mv.from] = mk;
                     turn = (mk === RED ? YEL : RED);
                     replayAccepted(seq + 1);
                 } else { appliedSeq = seq; replayAccepted(seq); }
-            }, function () { $.Schedule(0.4, function () { replayAccepted(seq); }); },
+            }, () => { $.Schedule(0.4, () => { replayAccepted(seq); }); },
             function (from, to) { return from >= 0 && from <= 6 && to === 7; });
         }
 
@@ -285,11 +285,11 @@
         function pollOnce(myToken) {
             if (destroyed || myToken !== pollToken || gameOver) return;
             if (turn === myMark) return;                 // our move; nothing to poll
-            Api.poll(code, appliedSeq, function (mv) {
+            Api.poll(code, appliedSeq, (mv) => {
                 if (destroyed || myToken !== pollToken) return;
                 if (mv) {
                     pollMisses = 0;                       // real move → next wait starts fast again
-                    var oppMark = (myMark === RED ? YEL : RED);
+                    const oppMark = (myMark === RED ? YEL : RED);
                     applyDrop(mv.from, oppMark);          // from = the column the opponent dropped
                     appliedSeq++;
                     turn = myMark;
@@ -297,18 +297,18 @@
                     status("Your turn.");
                     refreshTimer();                       // my turn opened → arm the clock
                 } else {
-                    $.Schedule(MG.Net.pollDelay(pollMisses++), function () { pollOnce(myToken); });
+                    $.Schedule(MG.Net.pollDelay(pollMisses++), () => { pollOnce(myToken); });
                 }
-            }, function () {
-                $.Schedule(MG.Net.pollDelay(pollMisses++), function () { pollOnce(myToken); });
-            }, function (from, to) {
+            }, () => {
+                $.Schedule(MG.Net.pollDelay(pollMisses++), () => { pollOnce(myToken); });
+            }, (from, to) => {
                 return from >= 0 && from <= 6 && to === 7;
             });
         }
 
         // ── boot ─────────────────────────────────────────────────────────────
         if (myTurn()) {
-            status("Your turn. You are " + (myMark === RED ? "RED." : "YELLOW."));
+            status(`Your turn. You are ${myMark === RED ? "RED." : "YELLOW."}`);
         } else if (session.bot) {
             status("Bot is thinking…");
             $.Schedule(0.35, botTurn);

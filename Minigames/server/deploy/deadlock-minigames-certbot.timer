@@ -1,0 +1,11 @@
+[Unit]
+Description=Check the VPS IP certificate twice daily
+
+[Timer]
+OnCalendar=*-*-* 03,15:17:00 UTC
+RandomizedDelaySec=30m
+Persistent=true
+Unit=deadlock-minigames-certbot.service
+
+[Install]
+WantedBy=timers.target

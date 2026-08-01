@@ -14,26 +14,26 @@
 //
 // Run: node tools/gen_soundevents.js   (idempotent; overwrites the output file)
 
-var fs = require("fs");
-var path = require("path");
+const fs = require("fs");
+const path = require("path");
 
-var ROOT = path.resolve(__dirname, "..");
-var QOLLOCK_SRC = "D:/GitHub2/QOLLOCK/soundevents/world_ambient_emitters.vsndevts";
+const ROOT = path.resolve(__dirname, "..");
+const QOLLOCK_SRC = "D:/GitHub2/QOLLOCK/soundevents/world_ambient_emitters.vsndevts";
 // Output at MOD-ROOT soundevents/ (not panorama/soundevents/): build_mod.ps1 keeps the path
 // relative to the mod root, and the base game file lives at pak01 soundevents/, so this path
 // is what overrides it - same placement QOLLOCK uses.
-var OUT = path.join(ROOT, "soundevents", "world_ambient_emitters.vsndevts");
+const OUT = path.join(ROOT, "soundevents", "world_ambient_emitters.vsndevts");
 
-var HEADER = "<!-- kv3 encoding:text:version{e21c7f3c-8a33-41c5-9977-a76d3a32aa0d} format:generic:version{7412167c-06e9-4698-aff2-e63eb59037e7} -->";
+const HEADER = "<!-- kv3 encoding:text:version{e21c7f3c-8a33-41c5-9977-a76d3a32aa0d} format:generic:version{7412167c-06e9-4698-aff2-e63eb59037e7} -->";
 
-var STEPS = 20;        // _V0.._V20 - MUST match mg_sound.js
-var VOL_MAX = 8.0;     // volume at V20. The base WAVs are quiet, so 100% maps to ×8 gain
+const STEPS = 20;        // _V0.._V20 - MUST match mg_sound.js
+const VOL_MAX = 8.0;     // volume at V20. The base WAVs are quiet, so 100% maps to ×8 gain
                        // (the vsndevts `volume` is a linear gain multiplier, >1 is allowed)
                        // - maintainer 2026-07-15: "too quiet even at 100%, 2× them" → still quiet,
                        //   doubled again 2026-07-16 (1.0 → 2.0 → 4.0), and again 2026-07-20 (→ 8.0).
 
 // event-name suffix -> wav file (in panorama/sounds/mods/, compiled to .vsnd by build_mod.ps1)
-var SOUNDS = [
+const SOUNDS = [
     { name: "MoveSelf",   file: "move-self" },
     { name: "MoveOpp",    file: "move-opponent" },
     { name: "Check",      file: "move-check" },
@@ -48,7 +48,7 @@ var SOUNDS = [
 ];
 
 // vsnd path root - WAVs stay under panorama/sounds/mods/ (maintainer decision 2026-07-15).
-var VSND_DIR = "panorama/sounds/mods/";
+const VSND_DIR = "panorama/sounds/mods/";
 
 function f6(n) { return n.toFixed(6); }
 
@@ -56,31 +56,31 @@ function f6(n) { return n.toFixed(6); }
 // NOTE the "{" inside the KV3 header comment (version{...}) is NOT the root brace, so we
 // skip the header comment line first, then take from the first "{" to the last "}".
 function extractQollockBody(src) {
-    var text = fs.readFileSync(src, "utf8").replace(/\r\n/g, "\n");
+    const text = fs.readFileSync(src, "utf8").replace(/\r\n/g, "\n");
     // Drop a leading "<!-- ... -->" header comment so its inner "{" can't be mistaken for root.
-    var afterHeader = text.replace(/^\s*<!--[\s\S]*?-->\s*/, "");
-    var open = afterHeader.indexOf("{");
-    var close = afterHeader.lastIndexOf("}");
+    const afterHeader = text.replace(/^\s*<!--[\s\S]*?-->\s*/, "");
+    const open = afterHeader.indexOf("{");
+    const close = afterHeader.lastIndexOf("}");
     if (open < 0 || close < 0 || close <= open) {
-        throw new Error("Could not find root braces in QOLLOCK soundevents: " + src);
+        throw new Error(`Could not find root braces in QOLLOCK soundevents: ${src}`);
     }
     // body is the inner content (without the outer braces), trimmed of surrounding blank lines.
-    var body = afterHeader.slice(open + 1, close);
+    let body = afterHeader.slice(open + 1, close);
     body = body.replace(/^\n+/, "").replace(/\n+$/, "");
     return body;
 }
 
 // One soundevent block (KV3, tab-indented - matches QOLLOCK byte layout).
 function eventBlock(eventName, volume, wavFile) {
-    var vsnd = VSND_DIR + wavFile + ".vsnd";
+    const vsnd = VSND_DIR + wavFile + ".vsnd";
     return [
-        "\t" + eventName + " = ",
+        `\t${eventName} = `,
         "\t{",
         "\t\tbase = \"MG.SoundBase\"",
-        "\t\tvolume = " + f6(volume),
+        `\t\tvolume = ${f6(volume)}`,
         "\t\tvsnd_files = ",
         "\t\t[",
-        "\t\t\t\"" + vsnd + "\",",
+        `\t\t\t\"${vsnd}\",`,
         "\t\t]",
         "\t}"
     ].join("\n");
@@ -103,21 +103,21 @@ function mgBaseBlock() {
 }
 
 function buildMgEvents() {
-    var out = [];
+    const out = [];
     out.push(mgBaseBlock());
-    for (var s = 0; s < SOUNDS.length; s++) {
-        var snd = SOUNDS[s];
-        for (var step = 0; step <= STEPS; step++) {
-            var vol = VOL_MAX * (step / STEPS);
-            out.push(eventBlock("MG." + snd.name + "_V" + step, vol, snd.file));
+    for (let s = 0; s < SOUNDS.length; s++) {
+        const snd = SOUNDS[s];
+        for (let step = 0; step <= STEPS; step++) {
+            const vol = VOL_MAX * (step / STEPS);
+            out.push(eventBlock(`MG.${snd.name}_V${step}`, vol, snd.file));
         }
     }
     return out.join("\n");
 }
 
 function main() {
-    var qollockBody = "";
-    var haveQollock = fs.existsSync(QOLLOCK_SRC);
+    let qollockBody = "";
+    const haveQollock = fs.existsSync(QOLLOCK_SRC);
     if (haveQollock) {
         qollockBody = extractQollockBody(QOLLOCK_SRC);
     } else {
@@ -125,21 +125,21 @@ function main() {
             " - writing MG events only (QOLLOCK users would lose their sounds; check the path).");
     }
 
-    var mgEvents = buildMgEvents();
+    const mgEvents = buildMgEvents();
 
-    var parts = [HEADER, "{"];
+    const parts = [HEADER, "{"];
     if (qollockBody) parts.push(qollockBody);
     parts.push(mgEvents);
     parts.push("}");
     parts.push(""); // trailing newline
-    var text = parts.join("\n");
+    const text = parts.join("\n");
 
     fs.mkdirSync(path.dirname(OUT), { recursive: true });
     fs.writeFileSync(OUT, text, "utf8");
 
-    var mgCount = SOUNDS.length * (STEPS + 1) + 1; // +1 for MG.SoundBase
-    console.log("[gen_soundevents] wrote " + OUT);
-    console.log("  QOLLOCK events copied: " + (haveQollock ? "yes" : "NO (file missing)"));
+    const mgCount = SOUNDS.length * (STEPS + 1) + 1; // +1 for MG.SoundBase
+    console.log(`[gen_soundevents] wrote ${OUT}`);
+    console.log(`  QOLLOCK events copied: ${haveQollock ? "yes" : "NO (file missing)"}`);
     console.log("  MG events appended:    " + mgCount + " (" + SOUNDS.length +
         " sounds × " + (STEPS + 1) + " volume steps + base)");
 }

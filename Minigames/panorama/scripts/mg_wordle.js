@@ -8,12 +8,12 @@
  * hidden TextEntry. It self-registers game id 8 after mg_games.js has created the shared
  * registry.
  */
-(function () {
-    var MG = $.MG = $.MG || {};
+(() => {
+    const MG = $.MG = $.MG || {};
     if (MG.Wordle) return;
     MG.Wordle = {};
 
-    var ANSWERS = (
+    let ANSWERS = (
         "ABOUT ABOVE ABUSE ACTOR ACUTE ADMIT ADOPT ADULT AFTER AGAIN AGENT AGREE AHEAD ALARM " +
         "ALBUM ALERT ALIKE ALIVE ALLOW ALONE ALONG ALTER AMONG ANGER ANGLE ANGRY APART APPLE " +
         "APPLY ARGUE ARISE ARRAY ASIDE ASSET AUDIO AUDIT AVOID AWAKE AWARD AWARE BADLY BAKER " +
@@ -48,7 +48,7 @@
         "WHERE WHICH WHILE WHITE WHOLE WHOSE WOMAN WOMEN WORLD WORRY WORSE WORST WORTH WOULD " +
         "WRITE WRONG WROTE YOUNG YOUTH"
     ).split(" ");
-    var EXTRA_GUESSES = (
+    let EXTRA_GUESSES = (
         "ABBEY ABODE ABORT ACTED ADMIN ADOBE AISLE ALIEN AMBER AMEND AMPLE ANGEL ANKLE ARENA " +
         "ARMOR ARROW ATLAS ATTIC BACON BADGE BEARD BEAST BEGUN BELLY BERRY BLADE BLAST BLEED " +
         "BLEND BLESS BLOOM BLUES BLUNT BOOTH BOUND BOWEL BRAVE BRICK BRIDE BRUSH BUNCH CABIN " +
@@ -66,7 +66,7 @@
         ANSWERS = MG.WordleWords.answers;
         EXTRA_GUESSES = MG.WordleWords.guesses;
     }
-    var VALID = {};
+    const VALID = {};
     for (var wi = 0; wi < ANSWERS.length; wi++) VALID[ANSWERS[wi]] = true;
     for (wi = 0; wi < EXTRA_GUESSES.length; wi++) VALID[EXTRA_GUESSES[wi]] = true;
 
@@ -74,15 +74,15 @@
     // Returns 2=correct, 1=present elsewhere, 0=absent. Exact matches consume letters
     // before present matches, which is the important duplicate-letter rule.
     function scoreGuess(answer, guess) {
-        var score = [0, 0, 0, 0, 0];
-        var left = {};
-        var i;
+        const score = [0, 0, 0, 0, 0];
+        const left = {};
+        let i;
         for (i = 0; i < 5; i++) {
             if (guess.charAt(i) === answer.charAt(i)) score[i] = 2;
             else left[answer.charAt(i)] = (left[answer.charAt(i)] || 0) + 1;
         }
         for (i = 0; i < 5; i++) {
-            var ch = guess.charAt(i);
+            const ch = guess.charAt(i);
             if (!score[i] && left[ch] > 0) {
                 score[i] = 1;
                 left[ch]--;
@@ -94,41 +94,41 @@
 
     function createWordle(container, session) {
         session = session || {};
-        var destroyed = false, row = 0, current = "", over = false;
-        var keyState = {}, keyButtons = {};
+        let destroyed = false, row = 0, current = "", over = false;
+        const keyState = {}, keyButtons = {};
         // Fresh random answer per game. The old formula was (day + gamesStarted*37), which tied the
         // word to the UTC day and only stepped it by a fixed 37 indices per Play Again - so two
         // sessions on the same day always opened with the SAME word and the sequence after it was
         // fully predictable. This is an offline puzzle with nothing at stake, so plain Math.random
         // is the right tool (no CSPRNG needed).
-        var answer = ANSWERS[Math.floor(Math.random() * ANSWERS.length) % ANSWERS.length];
+        const answer = ANSWERS[Math.floor(Math.random() * ANSWERS.length) % ANSWERS.length];
 
         function status(text) { if (!destroyed && session.onStatus) session.onStatus(text); }
         function sfx(name) { if (MG.Sound) MG.Sound.play(name); }
         function addLabel(parent, className, text) {
-            var label = $.CreatePanel("Label", parent, "");
+            const label = $.CreatePanel("Label", parent, "");
             label.AddClass(className);
             label.text = text || "";
             return label;
         }
 
-        var root = $.CreatePanel("Panel", container, "MG_Wordle");
+        const root = $.CreatePanel("Panel", container, "MG_Wordle");
         root.AddClass("mg-wordle");
-        var layout = $.CreatePanel("Panel", root, "");
+        const layout = $.CreatePanel("Panel", root, "");
         layout.AddClass("mg-wordle-layout");
 
         // Left: board + hidden input
-        var boardWrap = $.CreatePanel("Panel", layout, "");
+        const boardWrap = $.CreatePanel("Panel", layout, "");
         boardWrap.AddClass("mg-wordle-boardwrap");
-        var board = $.CreatePanel("Panel", boardWrap, "");
+        const board = $.CreatePanel("Panel", boardWrap, "");
         board.AddClass("mg-wordle-board");
-        var tiles = [];
-        for (var r = 0; r < 6; r++) {
-            var rowPanel = $.CreatePanel("Panel", board, "");
+        const tiles = [];
+        for (let r = 0; r < 6; r++) {
+            const rowPanel = $.CreatePanel("Panel", board, "");
             rowPanel.AddClass("mg-wordle-row");
             tiles[r] = [];
-            for (var c = 0; c < 5; c++) {
-                var tile = $.CreatePanel("Panel", rowPanel, "");
+            for (let c = 0; c < 5; c++) {
+                const tile = $.CreatePanel("Panel", rowPanel, "");
                 tile.AddClass("mg-wordle-tile");
                 tiles[r][c] = { panel: tile, label: addLabel(tile, "mg-wordle-letter", "") };
             }
@@ -141,18 +141,18 @@
         // current guess: we read it back, upper-case it, drop anything that isn't A–Z, cap it at
         // 5, and mirror the result into the tiles. Backspace is handled for free (the text just
         // gets shorter). maxchars caps it so the field can't outrun the row.
-        var entry = $.CreatePanel("TextEntry", boardWrap, "MG_WordleInput");
+        const entry = $.CreatePanel("TextEntry", boardWrap, "MG_WordleInput");
         entry.AddClass("mg-wordle-input");
         entry.SetAttributeInt("maxchars", 5);
-        var syncing = false;                 // guard: rewriting entry.text must not re-enter onChange
+        let syncing = false;                 // guard: rewriting entry.text must not re-enter onChange
         try { entry.SetFocus(); } catch (e) {}
 
         function refocus() { if (!destroyed && !over) { try { entry.SetFocus(); } catch (e) {} } }
         boardWrap.SetPanelEvent("onactivate", refocus);
 
         function paintCurrent() {
-            for (var i = 0; i < 5; i++) {
-                var t = tiles[row] && tiles[row][i];
+            for (let i = 0; i < 5; i++) {
+                const t = tiles[row] && tiles[row][i];
                 if (!t) continue;
                 t.label.text = current.charAt(i);
                 if (i < current.length) t.panel.AddClass("mg-wordle-filled");
@@ -163,8 +163,8 @@
         function finish(won) {
             over = true;
             sfx("GameEnd");
-            status(won ? "Solved in " + row + (row === 1 ? " guess!" : " guesses!") :
-                "The word was " + answer + ".");
+            status(won ? `Solved in ${row}${row === 1 ? " guess!" : " guesses!"}` :
+                `The word was ${answer}.`);
             if (session.onGameOver) session.onGameOver(won ? "win" : "lose");
         }
 
@@ -178,9 +178,9 @@
                 sfx("Illegal");
                 return;
             }
-            var guess = current, result = scoreGuess(answer, guess);
-            for (var i = 0; i < 5; i++) {
-                var panel = tiles[row][i].panel;
+            const guess = current, result = scoreGuess(answer, guess);
+            for (let i = 0; i < 5; i++) {
+                const panel = tiles[row][i].panel;
                 panel.RemoveClass("mg-wordle-filled");
                 panel.AddClass(result[i] === 2 ? "mg-wordle-correct" :
                     result[i] === 1 ? "mg-wordle-present" : "mg-wordle-absent");
@@ -192,7 +192,7 @@
             sfx("MoveSelf");
             if (guess === answer) { finish(true); return; }
             if (row >= 6) { finish(false); return; }
-            status("Guess " + (row + 1) + " of 6.");
+            status(`Guess ${row + 1} of 6.`);
             paintCurrent();
         }
 
@@ -210,9 +210,9 @@
         // back so the field and the tiles never diverge.
         function onEntryChange() {
             if (destroyed || over || syncing) return;
-            var raw = "";
+            let raw = "";
             try { raw = entry.text || ""; } catch (e) { raw = ""; }
-            var clean = raw.toUpperCase().replace(/[^A-Z]/g, "").substring(0, 5);
+            const clean = raw.toUpperCase().replace(/[^A-Z]/g, "").substring(0, 5);
             if (clean !== raw) { syncing = true; try { entry.text = clean; } catch (e2) {} syncing = false; }
             current = clean;
             paintCurrent();
@@ -222,20 +222,20 @@
         entry.SetPanelEvent("oninputsubmit", submit);
 
         // Right: keyboard hint panel
-        var kbd = $.CreatePanel("Panel", layout, "");
+        const kbd = $.CreatePanel("Panel", layout, "");
         kbd.AddClass("mg-wordle-kbd");
-        var KBD_ROWS = ["QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM"];
-        for (var kr = 0; kr < KBD_ROWS.length; kr++) {
+        const KBD_ROWS = ["QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM"];
+        for (let kr = 0; kr < KBD_ROWS.length; kr++) {
             var krow = $.CreatePanel("Panel", kbd, "");
             krow.AddClass("mg-wordle-kbd-row");
-            krow.AddClass("mg-wordle-kbd-row" + (kr + 1));
-            for (var kc = 0; kc < KBD_ROWS[kr].length; kc++) {
-                (function (letter) {
+            krow.AddClass(`mg-wordle-kbd-row${kr + 1}`);
+            for (let kc = 0; kc < KBD_ROWS[kr].length; kc++) {
+                ((letter) => {
                     var btn = $.CreatePanel("Button", krow, "");
                     btn.AddClass("mg-wordle-kbd-key");
                     addLabel(btn, "mg-wordle-kbd-label", letter);
                     keyButtons[letter] = btn;
-                    btn.SetPanelEvent("onactivate", function () {
+                    btn.SetPanelEvent("onactivate", () => {
                         if (destroyed || over) return;
                         if (current.length < 5) {
                             current += letter;
@@ -250,13 +250,13 @@
             }
         }
         // BACK and ENTER buttons
-        var krowExtra = $.CreatePanel("Panel", kbd, "");
+        const krowExtra = $.CreatePanel("Panel", kbd, "");
         krowExtra.AddClass("mg-wordle-kbd-row");
-        var backBtn = $.CreatePanel("Button", krowExtra, "");
+        const backBtn = $.CreatePanel("Button", krowExtra, "");
         backBtn.AddClass("mg-wordle-kbd-key");
         backBtn.AddClass("mg-wordle-kbd-wide");
         addLabel(backBtn, "mg-wordle-kbd-label", "BACK");
-        backBtn.SetPanelEvent("onactivate", function () {
+        backBtn.SetPanelEvent("onactivate", () => {
             if (destroyed || over || !current.length) return;
             current = current.substring(0, current.length - 1);
             syncing = true;
@@ -265,11 +265,11 @@
             paintCurrent();
             refocus();
         });
-        var enterBtn = $.CreatePanel("Button", krowExtra, "");
+        const enterBtn = $.CreatePanel("Button", krowExtra, "");
         enterBtn.AddClass("mg-wordle-kbd-key");
         enterBtn.AddClass("mg-wordle-kbd-wide");
         addLabel(enterBtn, "mg-wordle-kbd-label", "ENTER");
-        enterBtn.SetPanelEvent("onactivate", function () { submit(); refocus(); });
+        enterBtn.SetPanelEvent("onactivate", () => { submit(); refocus(); });
 
         function setKeyState(letter, value) {
             // First assignment always applies (even absent=0); afterwards only UPGRADE
@@ -277,7 +277,7 @@
             // check, not `(keyState||0) >= value`, so the first absent (0 >= 0) isn't skipped.
             if (keyState[letter] !== undefined && keyState[letter] >= value) return;
             keyState[letter] = value;
-            var btn = keyButtons[letter];
+            const btn = keyButtons[letter];
             if (!btn) return;
             btn.RemoveClass("mg-wordle-kbd-absent");
             btn.RemoveClass("mg-wordle-kbd-present");

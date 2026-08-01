@@ -13,7 +13,7 @@ const M = globalThis.MGRules.chess;
 
 
 let failures = 0;
-function ok(cond, msg) { if (!cond) { failures++; console.log("  ✗ " + msg); } else { console.log("  ✓ " + msg); } }
+function ok(cond, msg) { if (!cond) { failures++; console.log(`  ✗ ${msg}`); } else { console.log(`  ✓ ${msg}`); } }
 const WHITE = 1, BLACK = -1;
 function empty() { const b = new Array(64); for (let i = 0; i < 64; i++) b[i] = 0; return b; }
 function hasMove(list, from, to) { return list.some(m => m.from === from && m.to === to); }
@@ -29,7 +29,7 @@ function perft(b, st, color, depth) {
     }
     return n;
 }
-(function () {
+(() => {
     const b = M.initialChessBoard(), st = M.initialChessState();
     ok(perft(b, st, WHITE, 1) === 20, "perft(1) == 20");
     ok(perft(b, st, WHITE, 2) === 400, "perft(2) == 400");
@@ -37,7 +37,7 @@ function perft(b, st, color, depth) {
 })();
 
 // ── castling: both sides available on a clear back rank ──
-(function () {
+(() => {
     const b = empty();
     b[M.cSq(7, 4)] = 6; b[M.cSq(7, 0)] = 4; b[M.cSq(7, 7)] = 4;   // white K + both rooks
     b[M.cSq(0, 4)] = -6;                                          // lone black king
@@ -48,7 +48,7 @@ function perft(b, st, color, depth) {
 })();
 
 // ── castling blocked THROUGH check (rook rakes the f-file) ──
-(function () {
+(() => {
     const b = empty();
     b[M.cSq(7, 4)] = 6; b[M.cSq(7, 0)] = 4; b[M.cSq(7, 7)] = 4;
     b[M.cSq(0, 4)] = -6;
@@ -60,7 +60,7 @@ function perft(b, st, color, depth) {
 })();
 
 // ── en passant: capture the just-double-pushed pawn ──
-(function () {
+(() => {
     const b = empty();
     b[M.cSq(3, 4)] = 1;    // white pawn poised on the 5th rank
     b[M.cSq(1, 3)] = -1;   // black pawn on its start square
@@ -77,7 +77,7 @@ function perft(b, st, color, depth) {
 })();
 
 // ── promotion: a pawn reaching the last rank becomes a queen ──
-(function () {
+(() => {
     const b = empty();
     b[M.cSq(1, 0)] = 1;                          // white pawn one step from promotion
     b[M.cSq(7, 4)] = 6; b[M.cSq(0, 7)] = -6;
@@ -86,7 +86,7 @@ function perft(b, st, color, depth) {
 })();
 
 // ── checkmate: fool's mate (1.f3 e5 2.g4 Qh4#) ──
-(function () {
+(() => {
     let b = M.initialChessBoard(), st = M.initialChessState();
     function mv(f, t) { const r = M.makeMove(b, st, f, t); b = r[0]; st = r[1]; }
     mv(M.cSq(6, 5), M.cSq(5, 5));   // 1. f3
@@ -98,7 +98,7 @@ function perft(b, st, color, depth) {
 })();
 
 // ── stalemate: Kf7 + Qg6 vs lone Kh8, black to move ──
-(function () {
+(() => {
     const b = empty();
     b[M.cSq(0, 7)] = -6;   // black king h8
     b[M.cSq(1, 5)] = 6;    // white king f7
@@ -109,12 +109,12 @@ function perft(b, st, color, depth) {
 })();
 
 // ── bot returns a legal move from the opening position ──
-(function () {
+(() => {
     const b = M.initialChessBoard(), st = M.initialChessState();
     const legal = M.legalMoves(b, st, WHITE);
     const pick = M.chessBotMove(b, st, WHITE);
     ok(pick && hasMove(legal, pick.from, pick.to), "chessBotMove returns a legal move");
 })();
 
-console.log(failures === 0 ? "\nAll chess tests passed." : "\n" + failures + " chess test(s) FAILED.");
+console.log(failures === 0 ? "\nAll chess tests passed." : `\n${failures} chess test(s) FAILED.`);
 process.exitCode = failures === 0 ? 0 : 1;

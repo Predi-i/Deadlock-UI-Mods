@@ -11,7 +11,7 @@ new Function(fs.readFileSync(path.join(rulesDir, "durak.js"), "utf8"))();
 const M = globalThis.MGRules.durak;
 
 let failures = 0;
-function ok(cond, msg) { if (!cond) { failures++; console.log("  ✗ " + msg); } else { console.log("  ✓ " + msg); } }
+function ok(cond, msg) { if (!cond) { failures++; console.log(`  ✗ ${msg}`); } else { console.log(`  ✓ ${msg}`); } }
 
 // Total cards must always be conserved across hands + deck + table + discard.
 function totalCards(st) {
@@ -22,7 +22,7 @@ function totalCards(st) {
 }
 
 console.log("card ids & encoding");
-(function () {
+(() => {
     ok(M.DECK_SIZE === 36, "deck size is 36");
     // id = suit*9 + rank
     ok(M.suitOf(0) === 0 && M.rankOf(0) === 0, "id 0 = S6");
@@ -39,7 +39,7 @@ console.log("card ids & encoding");
 })();
 
 console.log("dealing");
-(function () {
+(() => {
     const deck = M.freshDeck(M.makeRng(7));
     const dealt = M.deal(deck, 2);
     ok(dealt.hands[0].length === 6 && dealt.hands[1].length === 6, "2p: each hand has 6");
@@ -50,7 +50,7 @@ console.log("dealing");
 })();
 
 console.log("beats()");
-(function () {
+(() => {
     // trump = S(0). Non-trump suit H(1).
     const S6 = 0, S7 = 1, H6 = 9, H7 = 10, HA = 17, D6 = 18;
     ok(M.beats(H6, H7, 0), "same suit higher beats lower");
@@ -62,7 +62,7 @@ console.log("beats()");
 })();
 
 console.log("attack / defend flow");
-(function () {
+(() => {
     const st = M.newGame(2, 42);
     ok(st.attacker !== st.defender, "attacker and defender differ");
     ok(st.phase === "attack" && st.table.length === 0, "opens in attack phase, empty table");
@@ -82,7 +82,7 @@ console.log("attack / defend flow");
 })();
 
 console.log("throw-in legality");
-(function () {
+(() => {
     const st = M.newGame(2, 3);
     // Force a known table: put an attack of a specific rank, then only matching ranks can be added.
     const atk = st.hands[st.attacker][0];
@@ -96,13 +96,13 @@ console.log("throw-in legality");
         else if (allowed) sawReject = true; // a non-matching rank was wrongly allowed
     }
     ok(!sawReject, "throw-in rejects ranks not present on the table");
-    ok(true, "matching-rank throw-in path exercised" + (sawAccept ? " (accept seen)" : ""));
+    ok(true, `matching-rank throw-in path exercised${sawAccept ? " (accept seen)" : ""}`);
     // Defender may never attack.
     ok(!M.canAttackWith(st, st.defender, st.hands[st.defender][0]), "defender cannot attack");
 })();
 
 console.log("endBout rotation & conservation");
-(function () {
+(() => {
     const st = M.newGame(2, 100);
     const atk = st.attacker, def = st.defender;
     M.applyAttack(st, atk, st.hands[atk][0]);
@@ -115,7 +115,7 @@ console.log("endBout rotation & conservation");
 })();
 
 console.log("full bot-vs-bot games terminate & conserve cards");
-(function () {
+(() => {
     for (let seed = 1; seed <= 40; seed++) {
         for (const N of [2, 3, 4]) {
             const st = M.newGame(N, seed * 131 + N);
@@ -138,7 +138,7 @@ console.log("full bot-vs-bot games terminate & conserve cards");
                 }
             } catch (e) { threw = true; }
             if (threw || st.phase !== "over" || guard >= 20000) {
-                ok(false, "N=" + N + " seed=" + seed + " game did not cleanly finish (guard=" + guard + ")");
+                ok(false, `N=${N} seed=${seed} game did not cleanly finish (guard=${guard})`);
             }
         }
     }
@@ -146,7 +146,7 @@ console.log("full bot-vs-bot games terminate & conserve cards");
 })();
 
 console.log("throw-in consensus (canBito / pass window)");
-(function () {
+(() => {
     // 2 players: one non-defender (the attacker). Once it passes on a covered table, canBito.
     const st = M.newGame(2, 5);
     const atk = st.attacker;
@@ -177,7 +177,7 @@ console.log("throw-in consensus (canBito / pass window)");
 })();
 
 console.log("a fresh attack card reopens a passed window");
-(function () {
+(() => {
     // 3 players so there are TWO non-defender attack seats: the primary attacker and one co-attacker.
     // After both settle and one throws a new matching card, passes must reset (window reopens).
     let reopened = false, exercised = false;
@@ -209,7 +209,7 @@ console.log("a fresh attack card reopens a passed window");
 })();
 
 console.log("full CONSENSUS bot games (all attack seats throw in) terminate & conserve");
-(function () {
+(() => {
     // Drive games where EVERY in-play non-defender throws in until it has nothing legal, then
     // passes - the true podkidnoy flow. Bito only when canBito(). This exercises the new consensus
     // path end-to-end (the old loop above only lets the primary attacker act).
@@ -259,7 +259,7 @@ console.log("full CONSENSUS bot games (all attack seats throw in) terminate & co
             } catch (e) { threw = true; }
             if (threw || st.phase !== "over" || guard >= 40000) {
                 bad++;
-                ok(false, "consensus N=" + N + " seed=" + seed + " did not finish (guard=" + guard + ")");
+                ok(false, `consensus N=${N} seed=${seed} did not finish (guard=${guard})`);
             }
         }
     }

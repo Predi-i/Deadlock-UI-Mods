@@ -24,22 +24,22 @@
  * rank 0..12 = 2..9,T,J,Q,K,A. Face art = deck/<SUIT><RANK>.vtex (e.g. "SA", "H2", "DT").
  */
 
-(function () {
-    var MG = ($.MG = $.MG || {});
+(() => {
+    const MG = ($.MG = $.MG || {});
     if (MG._pokerLoaded) return;
     MG._pokerLoaded = true;
 
-    var P = MG.Rules && MG.Rules.poker;   // shared pure engine (rules/poker.js)
+    const P = MG.Rules && MG.Rules.poker;   // shared pure engine (rules/poker.js)
 
-    var SUIT_CHARS = P ? P.SUIT_CHARS : ["S", "H", "D", "C"];
-    var RANK_CHARS = P ? P.RANK_CHARS : ["2", "3", "4", "5", "6", "7", "8", "9", "T", "J", "Q", "K", "A"];
-    var DECK_DIR = "s2r://panorama/images/deck/";
+    const SUIT_CHARS = P ? P.SUIT_CHARS : ["S", "H", "D", "C"];
+    const RANK_CHARS = P ? P.RANK_CHARS : ["2", "3", "4", "5", "6", "7", "8", "9", "T", "J", "Q", "K", "A"];
+    const DECK_DIR = "s2r://panorama/images/deck/";
     function cardFaceUrl(id) { return DECK_DIR + SUIT_CHARS[P.suitOf(id)] + RANK_CHARS[P.rankOf(id)] + ".vtex"; }
-    var BACK_URL = DECK_DIR + "BACK.vtex";
+    const BACK_URL = DECK_DIR + "BACK.vtex";
 
     // Card faces/backs are drawn by a CHILD <Image>, not the container's background - see
     // MG.Widgets.setFace in mg_games.js for why (and for the copy durak/chess/the picker share).
-    var setFace = MG.Widgets.setFace;
+    const setFace = MG.Widgets.setFace;
     function setBack(container) { setFace(container, BACK_URL); }
 
     // Where each opponent sits on MY screen, given their relative seat offset. I always sit at
@@ -51,67 +51,67 @@
     }
 
     // Stage geometry (px). Bigger than Durak's 680×500 - the 4-seat felt needs the room.
-    var CARD_W = 76, CARD_H = 106;     // board card size
-    var HERO_W = 106, HERO_H = 148;    // MY hole cards: ~1.4x the board so my hand reads clearly bottom-centre
-    var OPP_CW = 42, OPP_CH = 59;      // opponents' small face-down backs (avoid the mushy overlap)
-    var STAGE_W = 760, STAGE_H = 520;
-    var START_STACK = 200, SB = 5, BB = 10;
+    const CARD_W = 76, CARD_H = 106;     // board card size
+    const HERO_W = 106, HERO_H = 148;    // MY hole cards: ~1.4x the board so my hand reads clearly bottom-centre
+    const OPP_CW = 42, OPP_CH = 59;      // opponents' small face-down backs (avoid the mushy overlap)
+    const STAGE_W = 760, STAGE_H = 520;
+    const START_STACK = 200, SB = 5, BB = 10;
 
     function createPoker(container, session) {
-        var numPlayers = (session.numPlayers && session.numPlayers >= 2) ? session.numPlayers : 4;
-        var mySeat = (session.seat != null) ? session.seat : 0;
-        var isBot = !!session.bot;
-        var online = !isBot && !!session.code && !!(MG.Api && MG.Api.plog);
-        var destroyed = false;
+        const numPlayers = (session.numPlayers && session.numPlayers >= 2) ? session.numPlayers : 4;
+        const mySeat = (session.seat != null) ? session.seat : 0;
+        const isBot = !!session.bot;
+        const online = !isBot && !!session.code && !!(MG.Api && MG.Api.plog);
+        let destroyed = false;
 
         // Tournament-style chip carryover across hands (offline). Button rotates each hand.
-        var stacks = [];
-        for (var i = 0; i < numPlayers; i++) stacks.push(START_STACK);
-        var button = (numPlayers - 1);        // so the first hand's button is seat 0 after rotate
-        var handSeed = (session.seed != null) ? session.seed : ((Math.random() * 0x7fffffff) | 0);
-        var st = null;
-        var pendingBet = 0;                   // current raise-to target in the bet stepper
-        var showdownReveal = false;           // reveal all live hands at showdown/over
+        let stacks = [];
+        for (let i = 0; i < numPlayers; i++) stacks.push(START_STACK);
+        let button = (numPlayers - 1);        // so the first hand's button is seat 0 after rotate
+        let handSeed = (session.seed != null) ? session.seed : ((Math.random() * 0x7fffffff) | 0);
+        let st = null;
+        let pendingBet = 0;                   // current raise-to target in the bet stepper
+        let showdownReveal = false;           // reveal all live hands at showdown/over
         // One evolving rng for all bot decisions this session, so a seat doesn't replay the same
         // choice every time it acts (a fresh per-call seed would). Offline only.
-        var botRng = P ? P.makeRng((handSeed ^ 0x9e3779b9) | 0) : null;
+        const botRng = P ? P.makeRng((handSeed ^ 0x9e3779b9) | 0) : null;
 
         // ── online sync state (worker-as-dealer) ──────────────────────────────────
         // logSeq = next public event index to fetch; pollGen guards against two concurrent
         // poll chains sharing logSeq (the exact bug that dropped Durak events - see mg_durak).
         // holeCursor = how many of MY 2 hole cards I've pulled via pdraw for the current hand;
         // pendingAct blocks input between send and the echoed event.
-        var logSeq = 0, pollGen = 0, holeCursor = 0, pendingAct = false, gameOver = false;
-        var pollMisses = 0;            // consecutive empty polls this turn (drives the adaptive cadence)
-        var wantHole = false;                 // a HAND event landed → pull my hole cards before rendering
-        var leftSeats = [];                   // online seats that abandoned the table (rendered as "left")
-        var pendingRaiseLo = [0, 0, 0, 0];    // per-seat low 6 bits of a split raise-to, awaiting its hi half
+        let logSeq = 0, pollGen = 0, holeCursor = 0, pendingAct = false, gameOver = false;
+        let pollMisses = 0;            // consecutive empty polls this turn (drives the adaptive cadence)
+        let wantHole = false;                 // a HAND event landed → pull my hole cards before rendering
+        const leftSeats = [];                   // online seats that abandoned the table (rendered as "left")
+        const pendingRaiseLo = [0, 0, 0, 0];    // per-seat low 6 bits of a split raise-to, awaiting its hi half
 
         function status(t) { if (session.onStatus) session.onStatus(t); }
         function nameOf(seat) {
             if (seat === mySeat) return "You";
-            var base = online ? ("Player " + (seat + 1)) : ("Bot " + (seat + 1));
+            const base = online ? (`Player ${seat + 1}`) : (`Bot ${seat + 1}`);
             return (leftSeats.indexOf(seat) >= 0) ? (base + " (left)") : base;
         }
         function myTurn() { return !destroyed && st && st.toAct === mySeat && st.street !== "over" && st.street !== "showdown"; }
 
-        var root = $.CreatePanel("Panel", container, "MG_PokerRoot");
+        const root = $.CreatePanel("Panel", container, "MG_PokerRoot");
         root.AddClass("mg-poker");
 
-        var stage = $.CreatePanel("Panel", root, "MG_PkStage"); stage.AddClass("mg-poker-stage");
-        var decorLayer = $.CreatePanel("Panel", stage, "MG_PkDecor"); decorLayer.AddClass("mg-pk-decor");
-        var cardLayer = $.CreatePanel("Panel", stage, "MG_PkCards"); cardLayer.AddClass("mg-pk-cards");
-        var controlsZone = $.CreatePanel("Panel", root, "MG_PkControls"); controlsZone.AddClass("mg-poker-controls");
+        const stage = $.CreatePanel("Panel", root, "MG_PkStage"); stage.AddClass("mg-poker-stage");
+        const decorLayer = $.CreatePanel("Panel", stage, "MG_PkDecor"); decorLayer.AddClass("mg-pk-decor");
+        const cardLayer = $.CreatePanel("Panel", stage, "MG_PkCards"); cardLayer.AddClass("mg-pk-cards");
+        const controlsZone = $.CreatePanel("Panel", root, "MG_PkControls"); controlsZone.AddClass("mg-poker-controls");
 
         // Per-turn countdown, pinned to the felt's LEFT EDGE (boardW = STAGE_W 760). Parented on
         // `container` (the flow:none game host). Poker's action is ALWAYS optional-in-spirit but the
         // clock is mandatory: if it empties, the seat is timed out with a fold (or a check when
         // checking is free - never forfeit chips you didn't have to). Absent build (old mg_games) →
         // null; every call guarded. See refreshTimer/onTimerExpire below.
-        var turnTimer = (MG.Widgets && MG.Widgets.createTurnTimer) ? MG.Widgets.createTurnTimer(container, { boardW: 760 }) : null;
+        const turnTimer = (MG.Widgets && MG.Widgets.createTurnTimer) ? MG.Widgets.createTurnTimer(container, { boardW: 760 }) : null;
 
         function xform(x, y, rot) {
-            var t = "translate3d(" + Math.round(x) + "px, " + Math.round(y) + "px, 0px)";
+            const t = `translate3d(${Math.round(x)}px, ${Math.round(y)}px, 0px)`;
             return rot ? (t + " rotateZ(" + rot + "deg)") : t;
         }
 
@@ -122,8 +122,8 @@
             // My tile lives in the bottom-LEFT corner (durak idiom) so it never stacks on my
             // centred hole cards or the pot; opponents ring the top/sides.
             if (seat === mySeat) return { x: 84, y: STAGE_H - 46 };
-            var rel = (seat - mySeat + numPlayers) % numPlayers;
-            var zone = seatZone(rel, numPlayers);
+            const rel = (seat - mySeat + numPlayers) % numPlayers;
+            const zone = seatZone(rel, numPlayers);
             if (zone === "left") return { x: 96, y: STAGE_H * 0.40 };
             if (zone === "right") return { x: STAGE_W - 96, y: STAGE_H * 0.40 };
             return { x: STAGE_W / 2, y: 56 };   // top
@@ -132,21 +132,21 @@
         // ABOVE my tile. Opponents get two SMALL backs, centred as a neat pair just below their
         // tile (a small gap, NOT the heavy 71% overlap that mushed the old full-size backs).
         function holeAnchor(seat) {
-            var c = seatCenter(seat);
+            const c = seatCenter(seat);
             if (seat === mySeat) {
                 // Big face-up pair along the bottom edge, centred. Below the pot label, clear of
                 // my corner tile - the felt's bottom-centre is otherwise empty. Uses HERO_* (larger
                 // than the board cards) so my own hand is the easiest thing on the felt to read.
                 return { x: STAGE_W / 2 - HERO_W - 4, y: STAGE_H - HERO_H - 14, spread: HERO_W + 8, w: HERO_W, h: HERO_H };
             }
-            var pairW = OPP_CW * 2 + 6;                 // two small backs + a 6px gap
+            const pairW = OPP_CW * 2 + 6;                 // two small backs + a 6px gap
             return { x: c.x - pairW / 2, y: c.y + 36, spread: OPP_CW + 6, w: OPP_CW, h: OPP_CH };
         }
         // Board (up to 5 community cards) centred horizontally, mid felt.
         function boardSlot(i, n) {
-            var step = CARD_W + 10;
-            var totalW = step * 5 - 10;                 // always reserve 5 slots so pot stays centred
-            var x0 = STAGE_W / 2 - totalW / 2;
+            const step = CARD_W + 10;
+            const totalW = step * 5 - 10;                 // always reserve 5 slots so pot stays centred
+            const x0 = STAGE_W / 2 - totalW / 2;
             return { x: x0 + i * step, y: STAGE_H / 2 - CARD_H / 2 - 20 };
         }
 
@@ -168,10 +168,10 @@
         // (there's no reason to forfeit equity when staying in costs nothing). pendingAct parks the
         // action send, so a slow round-trip can't fire a bogus timeout. render() calls refreshTimer
         // after every state change; a mode change (my turn ↔ not) (re)arms or stops the 20s.
-        var timerOn = false;
+        let timerOn = false;
         function refreshTimer() {
             if (!turnTimer) return;
-            var live = myTurn() && !pendingAct;
+            const live = myTurn() && !pendingAct;
             if (live === timerOn) return;              // no change → keep the running (or stopped) clock
             timerOn = live;
             if (!live) { turnTimer.stop(); return; }
@@ -182,14 +182,14 @@
             // stop() invalidates the widget callback, but an expiry tick that was already
             // dispatched must still be harmless while an authoritative action is in flight.
             if (destroyed || pendingAct || !st || !myTurn()) return;
-            var la = P.legalActions(st, mySeat);
-            var action = la.canCheck ? { type: "check" } : { type: "fold" };
+            const la = P.legalActions(st, mySeat);
+            const action = la.canCheck ? { type: "check" } : { type: "fold" };
             doAction(action);
         }
 
         function buildPot() {
-            var pot = P.totalPot(st);
-            var lbl = $.CreatePanel("Label", decorLayer, "");
+            const pot = P.totalPot(st);
+            const lbl = $.CreatePanel("Label", decorLayer, "");
             lbl.AddClass("mg-pk-pot");
             // X comes purely from .mg-pk-pot's horizontal-align:center - do NOT also translate X.
             // The old code did BOTH (align-centre + translateX of STAGE_W/2-100), and Panorama
@@ -197,20 +197,20 @@
             // right-hand seat's bet chip readout ("texts overlap", maintainer 2026-07-18). translateY
             // only for the vertical drop below the board; align keeps it horizontally centred.
             lbl.style.transform = xform(0, STAGE_H / 2 + CARD_H / 2 - 6, 0);
-            lbl.text = "Pot: " + pot;
+            lbl.text = `Pot: ${pot}`;
         }
 
         function buildBoard() {
-            var n = st.board.length;
-            for (var i = 0; i < 5; i++) {
-                var s = boardSlot(i, n);
+            const n = st.board.length;
+            for (let i = 0; i < 5; i++) {
+                let s = boardSlot(i, n);
                 if (i < n) {
-                    var c = $.CreatePanel("Panel", cardLayer, "");
+                    const c = $.CreatePanel("Panel", cardLayer, "");
                     c.AddClass("mg-pk-card");
                     setFace(c, cardFaceUrl(st.board[i]));
                     c.style.transform = xform(s.x, s.y, 0);
                 } else {
-                    var slot = $.CreatePanel("Panel", decorLayer, "");
+                    const slot = $.CreatePanel("Panel", decorLayer, "");
                     slot.AddClass("mg-pk-boardslot");
                     slot.style.transform = xform(s.x, s.y, 0);
                 }
@@ -218,29 +218,29 @@
         }
 
         function buildSeats() {
-            for (var seat = 0; seat < numPlayers; seat++) buildSeat(seat);
+            for (let seat = 0; seat < numPlayers; seat++) buildSeat(seat);
         }
 
         function buildSeat(seat) {
-            var c = seatCenter(seat);
-            var isMe = seat === mySeat;
-            var live = st.inHand[seat] && !st.folded[seat];
+            const c = seatCenter(seat);
+            const isMe = seat === mySeat;
+            const live = st.inHand[seat] && !st.folded[seat];
 
             // hole cards. Mine are big face-up cards; opponents get two small backs (the
             // per-seat w/h from holeAnchor, applied inline so one .mg-pk-card rule serves both).
             // Online, only MY two cards are known during the hand (pulled via pdraw); opponents'
             // hole arrays stay empty until SHOW events at showdown. So draw a face-DOWN pair for
             // any in-hand seat whose cards we don't hold yet, and face-UP once we have both.
-            var ha = holeAnchor(seat);
-            var known = st.hole[seat] && st.hole[seat].length === 2;
+            const ha = holeAnchor(seat);
+            const known = st.hole[seat] && st.hole[seat].length === 2;
             if (st.inHand[seat]) {
-                for (var k = 0; k < 2; k++) {
-                    var card = $.CreatePanel("Panel", cardLayer, "");
+                for (let k = 0; k < 2; k++) {
+                    const card = $.CreatePanel("Panel", cardLayer, "");
                     card.AddClass("mg-pk-card");
                     card.style.width = ha.w + "px";
                     card.style.height = ha.h + "px";
                     if (isMe) card.AddClass("mg-pk-hole-me");
-                    var reveal = known && (isMe || (showdownReveal && live));
+                    const reveal = known && (isMe || (showdownReveal && live));
                     if (reveal) setFace(card, cardFaceUrl(st.hole[seat][k]));
                     else setBack(card);
                     if (st.folded[seat]) card.AddClass("mg-pk-folded");
@@ -249,18 +249,18 @@
             }
 
             // avatar tile
-            var tile = $.CreatePanel("Panel", decorLayer, "");
+            const tile = $.CreatePanel("Panel", decorLayer, "");
             tile.AddClass("mg-pk-tile");
             if (isMe) tile.AddClass("mg-pk-me");
             if (seat === st.toAct && live) tile.AddClass("mg-pk-active");
             if (st.folded[seat]) tile.AddClass("mg-pk-out");
             tile.style.transform = xform(c.x - 60, c.y - 30, 0);
 
-            var name = $.CreatePanel("Label", tile, "");
+            const name = $.CreatePanel("Label", tile, "");
             name.AddClass("mg-pk-name");
             name.text = nameOf(seat);
 
-            var stackLbl = $.CreatePanel("Label", tile, "");
+            const stackLbl = $.CreatePanel("Label", tile, "");
             stackLbl.AddClass("mg-pk-stack");
             stackLbl.text = st.allIn[seat] ? "ALL-IN" : (st.stacks[seat] + " ch");
 
@@ -271,24 +271,24 @@
             // current street bet, floated toward the pot (a chip readout between the seat and
             // the board). Mine sits just above my tile; opponents' below their card pair.
             if (st.bet[seat] > 0) {
-                var betLbl = $.CreatePanel("Label", decorLayer, "");
+                const betLbl = $.CreatePanel("Label", decorLayer, "");
                 betLbl.AddClass("mg-pk-bet");
-                var bx = c.x - 30, by = (seat === mySeat) ? (c.y - 62) : (c.y + 36 + ha.h + 6);
+                const bx = c.x - 30, by = (seat === mySeat) ? (c.y - 62) : (c.y + 36 + ha.h + 6);
                 betLbl.style.transform = xform(bx, by, 0);
                 betLbl.text = String(st.bet[seat]) + " ch";
             }
 
             // folded / result tag
             if (st.folded[seat]) {
-                var tag = $.CreatePanel("Label", tile, "");
+                const tag = $.CreatePanel("Label", tile, "");
                 tag.AddClass("mg-pk-tag"); tag.text = "FOLD";
             }
         }
 
         function badge(tile, text, cls) {
-            var b = $.CreatePanel("Panel", tile, "");
+            const b = $.CreatePanel("Panel", tile, "");
             b.AddClass("mg-pk-chip"); b.AddClass(cls);
-            var l = $.CreatePanel("Label", b, ""); l.text = text;
+            const l = $.CreatePanel("Label", b, ""); l.text = text;
         }
 
         // ── controls (bet stepper + action buttons) ─────────────────────────────────
@@ -296,7 +296,7 @@
             controlsZone.RemoveAndDeleteChildren();
             if (st.street === "over") { buildNextHand(); return; }
             if (!myTurn()) return;
-            var la = P.legalActions(st, mySeat);
+            const la = P.legalActions(st, mySeat);
 
             // Stepper row (only when a raise is possible) sits ABOVE the action buttons - the
             // standard poker layout. The action buttons (incl. Raise) all live on ONE centred
@@ -304,42 +304,42 @@
             // clip half-off the left edge (the "half-visible button" bug).
             if (la.canRaise) {
                 if (pendingBet < la.minRaiseTo || pendingBet > la.maxRaiseTo) pendingBet = la.minRaiseTo;
-                var stepRow = $.CreatePanel("Panel", controlsZone, ""); stepRow.AddClass("mg-pk-steprow");
-                mkStep(stepRow, "-", function () { pendingBet = Math.max(la.minRaiseTo, pendingBet - BB); buildControls(); });
-                var amt = $.CreatePanel("Label", stepRow, ""); amt.AddClass("mg-pk-betamt"); amt.text = String(pendingBet);
-                mkStep(stepRow, "+", function () { pendingBet = Math.min(la.maxRaiseTo, pendingBet + BB); buildControls(); });
-                mkStep(stepRow, "Pot", function () {
-                    var pot = P.totalPot(st);
+                const stepRow = $.CreatePanel("Panel", controlsZone, ""); stepRow.AddClass("mg-pk-steprow");
+                mkStep(stepRow, "-", () => { pendingBet = Math.max(la.minRaiseTo, pendingBet - BB); buildControls(); });
+                const amt = $.CreatePanel("Label", stepRow, ""); amt.AddClass("mg-pk-betamt"); amt.text = String(pendingBet);
+                mkStep(stepRow, "+", () => { pendingBet = Math.min(la.maxRaiseTo, pendingBet + BB); buildControls(); });
+                mkStep(stepRow, "Pot", () => {
+                    const pot = P.totalPot(st);
                     pendingBet = Math.min(la.maxRaiseTo, Math.max(la.minRaiseTo, st.currentBet + pot));
                     buildControls();
                 });
-                mkStep(stepRow, "Max", function () { pendingBet = la.maxRaiseTo; buildControls(); });
+                mkStep(stepRow, "Max", () => { pendingBet = la.maxRaiseTo; buildControls(); });
             }
 
-            var row = $.CreatePanel("Panel", controlsZone, ""); row.AddClass("mg-pk-actionrow");
-            if (la.canFold) mkButton(row, "Fold", "mg-btn", function () { doAction({ type: "fold" }); });
-            if (la.canCheck) mkButton(row, "Check", "mg-btn-primary", function () { doAction({ type: "check" }); });
-            if (la.canCall) mkButton(row, "Call " + la.callAmount, "mg-btn-primary", function () { doAction({ type: "call" }); });
+            const row = $.CreatePanel("Panel", controlsZone, ""); row.AddClass("mg-pk-actionrow");
+            if (la.canFold) mkButton(row, "Fold", "mg-btn", () => { doAction({ type: "fold" }); });
+            if (la.canCheck) mkButton(row, "Check", "mg-btn-primary", () => { doAction({ type: "check" }); });
+            if (la.canCall) mkButton(row, `Call ${la.callAmount}`, "mg-btn-primary", () => { doAction({ type: "call" }); });
             if (la.canRaise) {
-                var raiseLabel = (st.currentBet === 0) ? "Bet " : "Raise to ";
-                mkButton(row, raiseLabel + pendingBet, "mg-btn-primary", function () {
+                const raiseLabel = (st.currentBet === 0) ? "Bet " : "Raise to ";
+                mkButton(row, raiseLabel + pendingBet, "mg-btn-primary", () => {
                     doAction({ type: "raise", to: pendingBet });
                 });
             }
         }
 
         function buildNextHand() {
-            var msg = $.CreatePanel("Label", controlsZone, ""); msg.AddClass("mg-pk-result");
+            const msg = $.CreatePanel("Label", controlsZone, ""); msg.AddClass("mg-pk-result");
             msg.text = resultText();
-            var alive = 0, last = -1;
-            for (var s = 0; s < numPlayers; s++) if (stacks[s] > 0) { alive++; last = s; }
+            let alive = 0, last = -1;
+            for (let s = 0; s < numPlayers; s++) if (stacks[s] > 0) { alive++; last = s; }
             if (alive < 2) {
-                var over = $.CreatePanel("Label", controlsZone, ""); over.AddClass("mg-pk-result");
+                const over = $.CreatePanel("Label", controlsZone, ""); over.AddClass("mg-pk-result");
                 over.text = (last === mySeat) ? "You win the table!" : nameOf(last) + " wins the table.";
                 if (session.onGameOver) session.onGameOver(last === mySeat ? "win" : "lose");
                 return;
             }
-            mkButton(controlsZone, "Next hand", "mg-btn-primary", function () {
+            mkButton(controlsZone, "Next hand", "mg-btn-primary", () => {
                 if (online) { requestNextHand(); return; }
                 startHand();
             });
@@ -347,31 +347,31 @@
 
         function resultText() {
             if (!st.result) return "";
-            var w = st.result.winners || [];
+            const w = st.result.winners || [];
             if (w.length === 0) return "Hand over.";
-            var names = [];
-            for (var i = 0; i < w.length; i++) names.push(nameOf(w[i]));
-            var who = names.join(" & ");
+            const names = [];
+            for (let i = 0; i < w.length; i++) names.push(nameOf(w[i]));
+            const who = names.join(" & ");
             // Verb agrees with the SUBJECT, not the count: "You win" / "They win" take the bare
             // verb, only a single third-person winner ("Bot 2 wins") takes the -s. The old
             // `w.length === 1 ? "s"` produced "You wins" for a solo human winner.
-            var verb = (w.length === 1 && w[0] !== mySeat) ? " wins" : " win";
+            const verb = (w.length === 1 && w[0] !== mySeat) ? " wins" : " win";
             if (st.result.uncontested) return who + verb + " (everyone folded).";
             return who + verb + " at showdown.";
         }
 
         function mkButton(parent, text, kind, onClick) {
-            var b = $.CreatePanel("Button", parent, "");
+            const b = $.CreatePanel("Button", parent, "");
             b.AddClass("mg-btn"); if (kind === "mg-btn-primary") b.AddClass("mg-btn-primary");
             b.AddClass("mg-pk-action");
-            var l = $.CreatePanel("Label", b, ""); l.text = text;
+            const l = $.CreatePanel("Label", b, ""); l.text = text;
             b.SetPanelEvent("onactivate", onClick);
             return b;
         }
         function mkStep(parent, text, onClick) {
-            var b = $.CreatePanel("Button", parent, "");
+            const b = $.CreatePanel("Button", parent, "");
             b.AddClass("mg-btn"); b.AddClass("mg-pk-step");
-            var l = $.CreatePanel("Label", b, ""); l.text = text;
+            const l = $.CreatePanel("Label", b, ""); l.text = text;
             b.SetPanelEvent("onactivate", onClick);
             return b;
         }
@@ -388,8 +388,8 @@
             afterAdvance();
         }
         function nextOccupiedButton() {
-            for (var k = 1; k <= numPlayers; k++) {
-                var s = (button + k) % numPlayers;
+            for (let k = 1; k <= numPlayers; k++) {
+                let s = (button + k) % numPlayers;
                 if (stacks[s] > 0) return s;
             }
             return button;
@@ -423,16 +423,16 @@
         // If it's a bot's turn, schedule it; otherwise prompt the human.
         function afterAdvance() {
             if (destroyed || !st || st.street === "over") return;
-            var seat = st.toAct;
+            let seat = st.toAct;
             if (seat < 0) return;
             if (seat === mySeat) { status(streetName() + ": your action."); return; }
             status(nameOf(seat) + " is thinking…");
-            $.Schedule(0.6, function () { botStep(seat); });
+            $.Schedule(0.6, () => { botStep(seat); });
         }
 
         function botStep(seat) {
             if (destroyed || !st || st.toAct !== seat || st.street === "over") return;
-            var act = P.botAction(st, seat, botRng);
+            const act = P.botAction(st, seat, botRng);
             if (!P.applyAction(st, seat, act)) P.applyAction(st, seat, { type: "fold" });
             postApply();
         }
@@ -502,12 +502,12 @@
             // stash is enough (no seq bookkeeping).
             if (ev.type === "raiselo") { pendingRaiseLo[ev.seat] = ev.lo; return; }
             if (ev.type === "raisehi") {
-                var to = ev.hi * 64 + (pendingRaiseLo[ev.seat] || 0);
+                const to = ev.hi * 64 + (pendingRaiseLo[ev.seat] || 0);
                 pendingRaiseLo[ev.seat] = 0;
                 if (st && st.toAct === ev.seat) P.applyAction(st, ev.seat, { type: "raise", to: to });
                 return;
             }
-            var action = ev.type === "fold" ? { type: "fold" }
+            const action = ev.type === "fold" ? { type: "fold" }
                 : ev.type === "check" ? { type: "check" }
                 : ev.type === "call" ? { type: "call" } : null;
             if (action && st && st.toAct === ev.seat) P.applyAction(st, ev.seat, action);
@@ -517,13 +517,13 @@
         function pullHole(done) {
             if (destroyed) return;
             if (holeCursor >= 2) { wantHole = false; done(); return; }
-            MG.Api.pdraw(session.code, session.tok, holeCursor, function (card) {
+            MG.Api.pdraw(session.code, session.tok, holeCursor, (card) => {
                 if (destroyed) return;
                 if (card == null) { done(); return; }      // not dealt at that index yet - retry via poll
                 if (st && st.hole[mySeat]) st.hole[mySeat][holeCursor] = card;
                 holeCursor++;
                 pullHole(done);
-            }, function () { if (!destroyed) $.Schedule(0.4, function () { pullHole(done); }); });
+            }, () => { if (!destroyed) $.Schedule(0.4, () => { pullHole(done); }); });
         }
 
         function onlineStatus() {
@@ -542,16 +542,16 @@
         function startPolling() { pollGen++; pollMisses = 0; pollLoop(pollGen); }
         function pollLoop(gen) {
             if (destroyed || gameOver || gen !== pollGen) return;
-            MG.Api.plog(session.code, logSeq, function (ev) {
+            MG.Api.plog(session.code, logSeq, (ev) => {
                 if (destroyed || gen !== pollGen) return;
                 // Nothing new: back off on the shared adaptive cadence (see MG.Net.pollDelay) so a
                 // long think doesn't burn ~2 req/s. A real event resets the miss counter below.
-                if (!ev) { $.Schedule(MG.Net.pollDelay(pollMisses++), function () { pollLoop(gen); }); return; }   // nothing new
+                if (!ev) { $.Schedule(MG.Net.pollDelay(pollMisses++), () => { pollLoop(gen); }); return; }   // nothing new
                 pollMisses = 0;
                 logSeq++;
                 applyOnlineEvent(ev);
                 if (wantHole) {
-                    pullHole(function () {
+                    pullHole(() => {
                         if (gen !== pollGen) return;
                         render(); onlineStatus(); pollLoop(gen);
                     });
@@ -561,14 +561,18 @@
                 onlineStatus();
                 if (gameOver) { finishOnline(); return; }
                 pollLoop(gen);                                 // drain any burst immediately
-            }, function () { if (!destroyed && gen === pollGen) $.Schedule(1.0, function () { pollLoop(gen); }); });
+            }, () => {
+                if (!destroyed && gen === pollGen) {
+                    $.Schedule(MG.Net.pollDelay(pollMisses++), () => { pollLoop(gen); });
+                }
+            });
         }
 
         function finishOnline() {
             render();
             // whoever still holds chips won the table
-            var last = -1;
-            for (var s = 0; s < numPlayers; s++) if (stacks[s] > 0) last = s;
+            let last = -1;
+            for (let s = 0; s < numPlayers; s++) if (stacks[s] > 0) last = s;
             status(last === mySeat ? "You win the table!" : nameOf(last) + " wins the table.");
             if (session.onGameOver) session.onGameOver(last === mySeat ? "win" : "lose");
         }
@@ -578,12 +582,12 @@
         // never lands. a: 0 fold · 1 check · 2 call · 3 raise (to).
         function sendAct(action) {
             if (destroyed || pendingAct) return;
-            var a = action.type === "fold" ? 0 : action.type === "check" ? 1 : action.type === "call" ? 2 : 3;
-            var to = (a === 3) ? (action.to | 0) : 0;
+            const a = action.type === "fold" ? 0 : action.type === "check" ? 1 : action.type === "call" ? 2 : 3;
+            const to = (a === 3) ? (action.to | 0) : 0;
             pendingAct = true;
             refreshTimer();                                             // park immediately, before the request starts
             status("Sending…");
-            MG.Api.pact(session.code, session.tok, a, to, function (r) {
+            MG.Api.pact(session.code, session.tok, a, to, (r) => {
                 pendingAct = false;
                 if (r && r.ok) { startPolling(); return; }        // pull the echo promptly (single chain)
                 if (r && r.reason === "turn") status("Not your turn.");
@@ -591,7 +595,7 @@
                 else if (r && r.reason === "gone") { if (MG.UI && MG.UI.kickToMenu) MG.UI.kickToMenu("Lobby closed."); }
                 else status("Move rejected.");
                 refreshTimer();                                      // rejected: re-arm the unchanged local turn
-            }, function () {
+            }, () => {
                 pendingAct = false;
                 status("Server unavailable.");
                 refreshTimer();                                      // transport failed: permit a retry with a fresh clock
@@ -601,11 +605,11 @@
         function requestNextHand() {
             if (destroyed) return;
             status("Dealing next hand…");
-            MG.Api.pnext(session.code, session.tok, function (r) {
+            MG.Api.pnext(session.code, session.tok, (r) => {
                 // Success OR "wait" (someone else already dealt) - the poll will pick up the HAND
                 // event either way. Only a token/gone failure is worth surfacing.
                 if (r && !r.ok && r.reason === "gone" && MG.UI && MG.UI.kickToMenu) MG.UI.kickToMenu("Lobby closed.");
-            }, function () { status("Server unavailable."); });
+            }, () => { status("Server unavailable."); });
         }
 
         // ── deal watchdog ─────────────────────────────────────────────────────────────
@@ -615,7 +619,7 @@
             if (destroyed || gameOver || !online) return;
             if (logSeq > 0) return;
             if (tries >= 6) { status("Still dealing… check your connection or try again."); return; }
-            $.Schedule(3.0, function () {
+            $.Schedule(3.0, () => {
                 if (destroyed || gameOver || logSeq > 0) return;
                 startPolling();
                 dealWatchdog(tries + 1);
