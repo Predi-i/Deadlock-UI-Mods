@@ -1082,7 +1082,7 @@ is built but **not yet in-game verified**.
 - Anti-abuse is deliberately tolerant of households/NATs: one IP can spend six fresh 100-pixel
   banks immediately, then refills 120 changed pixels/minute. This keeps rotating the
   client-reported Steam32 from resetting the economy without banning the address. Expensive
-  uncached 800x400 viewport renders allow a burst of twelve and one new frame/second; cache hits
+  uncached 768x384 viewport renders allow a burst of twelve and one new frame/second; cache hits
   are free and the client retries the busy-image sentinel.
 - Audit actions are append-only for 180 days. Cleanup removes expired action and per-user-index
   records in bounded 512-action batches; while catching up, every new action runs another batch,
@@ -1094,9 +1094,17 @@ is built but **not yet in-game verified**.
 - The immutable `panorama/images/pixelbattle/world_map.png` base is generated from the public-domain
   Natural Earth 1:110m land polygons directly at 512×256. One source texel is one placeable canvas
   pixel, so coastlines cannot contain filtered subpixels inside an editable cell.
-- The 32×16 input grid is reused at every zoom. Overview clicks drill into a region; at 16× each
-  input cell maps to exactly one canvas pixel. At every zoom the Worker composites the base and
-  shared paint into a compressed native 800×400 viewport using nearest-neighbour boundaries,
+- The **64×32** input grid is reused at every zoom. Overview clicks drill into a region; at **8×**
+  (the max) each input cell maps to exactly one canvas pixel. The grid doubled from 32×16 in
+  2026-08-01 precisely so that drawing is reachable at 8× — the old grid only reached one-cell-per-
+  pixel at 16×. ⚠ **The viewport must divide EXACTLY by the grid**: 768/64 = 384/32 = 12px per cell.
+  That is why the frame is 768×384 and not the old 800×400 — 800/64 is 12.5, and a fractional cell
+  reproduces the GeoGuesser off-by-one (§8.11), where the engine rounds the laid-out cell while the
+  click arithmetic does not and the selection drifts further the further right you click.
+  `VIEW_W/VIEW_H` (client), `PX_VIEW_W/H` (worker) and `.mg-px-grid` (CSS) are one number in three
+  places; `mg_release_ui_regression_test.js` fails if they disagree or stop dividing evenly.
+  At every zoom the Worker composites the base and
+  shared paint into a compressed native 768×384 viewport using nearest-neighbour boundaries,
   bypassing Panorama texture filtering in previews as well as the editor. Navigation stores an
   integer top-left pixel rather than a fractional centre, so server pixels and pending client
   pixels share the exact same boundaries. Arrow/reset/zoom controls provide navigation without
@@ -1112,13 +1120,24 @@ is built but **not yet in-game verified**.
   On the client, erasing a still-local paint cancels that queued change instead, immediately
   returning its reserved pixel. Navigation uses a fixed two-row zoom group plus keyboard-style
   arrow D-pad so adding controls cannot push a direction button onto a third row.
-- Uploads contain 10–128 unique pixels. The client checks and batches first; the Worker deduplicates,
+- **There is no upload queue any more.** A placed pixel uploads itself: `placePixel` schedules a
+  debounced flush (`AUTO_FLUSH_S`, 0.9s) and the batch goes up on its own, so `MIN_BATCH` /
+  `PX_MIN_BATCH` are **1** (they must stay equal, or the server rejects the client's smallest real
+  batch as malformed). The old 10-pixel floor existed to keep request count down on Cloudflare's
+  shared 100k/day bucket; the VPS is not metered per request, so it is gone. ⚠ The debounce is NOT
+  cosmetic: the upload limiter counts **requests**, not pixels, so one request per click would
+  throttle a fast drawer. `PX_UPLOAD_MAX_HITS` rose 30 → 120 for the same reason. Neither change
+  loosens the real spend ceiling, which counts PIXELS and is unchanged: the 100-pixel account bank
+  and the per-IP pixel budget. UPLOAD remains as a manual "flush now".
+- Uploads contain 1–128 unique pixels. The client checks and batches first; the Worker deduplicates,
   validates the bank again, rate-limits uploads, and persists modified 32×32 tiles. The shared
   per-IP budget described above prevents Steam32 rotation from resetting this protection. Player
   uploads and admin paint/undo commit tiles/version, audit, and ownership in one storage transaction
   (player uploads include the bank debit in that same transaction).
-- Clients poll only the 12-bit canvas version, backing off from 8 to 30 seconds while idle, and
-  download the 512×256 shared PNG only when that version changes.
+- Clients poll only the 12-bit canvas version, every **10 seconds** flat, and download the 512×256
+  shared PNG only when that version changes. The old 8→15→30s idle backoff ladder existed to protect
+  the Cloudflare request bucket; without that constraint a steady cadence is simpler and other
+  players' paint shows up sooner.
 - Every accepted player batch is also stored as an append-only retained audit action containing
   Steam32, timestamp, and exact per-pixel `before → after` deltas. The browser admin at `/admin` can search
   this log by Steam32, paint without using a player's bank, and undo an action. Safe undo skips
@@ -1141,7 +1160,7 @@ is built but **not yet in-game verified**.
   live logical pixel coordinates, and interpolated drag painting. The map lives in a bounded
   scroll workspace so high zoom does not push the audit log thousands of pixels down the page.
   It loads a protected native 512×256 composite from `/admin/api/canvas`; it must never reuse
-  Panorama's 800×400 `/pxview`, because that route has already rasterised 512 logical columns
+  Panorama's 768×384 `/pxview`, because that route has already rasterised 512 logical columns
   into a non-integer display width and cannot be losslessly downsampled back for editing.
 - Every current pixel is attributed through a compact `px:o:<tile>` ownership record: one
   deduplicated action-id dictionary plus a `Uint16Array(1024)` per touched 32×32 tile. An

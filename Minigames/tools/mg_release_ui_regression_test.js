@@ -430,6 +430,40 @@ assert(/if \(!crispReady\)[\s\S]{0,200}Map view is still loading/.test(pixel) &&
     /function scheduleCrispView[\s\S]{0,250}crispReady = false/.test(pixel),
     "Pixel Battle must block grid clicks while the matching viewport frame is loading");
 
+// ── Pixel Battle geometry: client, CSS and server must agree exactly ─────────────────────────
+// The hit grid must divide the viewport into WHOLE pixels. A fractional cell is the GeoGuesser
+// off-by-one (ARCHITECTURE §8.11): the engine rounds the laid-out cell, the click arithmetic does
+// not, and the selection drifts further the further you click. 768/64 = 384/32 = 12 exactly;
+// 800 would be 12.5 against a 64-wide grid.
+const pxGrid = /\b(?:var|let|const) GRID_COLS = (\d+), GRID_ROWS = (\d+);/.exec(pixel);
+const pxView = /\b(?:var|let|const) VIEW_W = (\d+), VIEW_H = (\d+);/.exec(pixel);
+const pxMaxZoom = /\b(?:var|let|const) MAX_ZOOM = (\d+);/.exec(pixel);
+assert(pxGrid && pxView && pxMaxZoom, "Pixel Battle must declare its grid, viewport and max zoom");
+const pxCols = Number(pxGrid[1]), pxRows = Number(pxGrid[2]);
+const pxViewW = Number(pxView[1]), pxViewH = Number(pxView[2]);
+assert(pxViewW % pxCols === 0 && pxViewH % pxRows === 0,
+    `Pixel Battle viewport ${pxViewW}x${pxViewH} must divide evenly by its ${pxCols}x${pxRows} hit ` +
+    "grid, or a laid-out cell and the click maths address different pixels");
+// One cell must be exactly one canvas pixel at max zoom, or the editor cannot place single pixels.
+assert(pxCols * Number(pxMaxZoom[1]) === 512 && pxRows * Number(pxMaxZoom[1]) === 256,
+    "at MAX_ZOOM one hit cell must cover exactly one 512x256 canvas pixel");
+const pxServerView = /const PX_VIEW_W = (\d+), PX_VIEW_H = (\d+);/.exec(worker);
+assert(pxServerView && Number(pxServerView[1]) === pxViewW && Number(pxServerView[2]) === pxViewH,
+    "PX_VIEW_W/H in worker.core.js must match VIEW_W/H in mg_pixelbattle.js");
+assert(new RegExp(`\\.mg-px-grid\\s*\\{[^}]*width:\\s*${pxViewW}px[^}]*height:\\s*${pxViewH}px`).test(css),
+    ".mg-px-grid CSS size must match the client's VIEW_W/VIEW_H");
+// A placed pixel uploads itself, so the server's floor must accept a batch of one. A mismatch here
+// makes the server reject the client's smallest real batch as malformed.
+const pxMinClient = /\b(?:var|let|const) MIN_BATCH = (\d+);/.exec(pixel);
+const pxMinServer = /const PX_MIN_BATCH = (\d+),/.exec(worker);
+assert(pxMinClient && pxMinServer && pxMinClient[1] === pxMinServer[1] && pxMinServer[1] === "1",
+    "MIN_BATCH and PX_MIN_BATCH must both be 1 now that pixels auto-flush");
+assert(/function scheduleAutoFlush\(\)/.test(pixel) && /scheduleAutoFlush\(\);/.test(pixel),
+    "placing a pixel must schedule an auto-flush instead of waiting for a manual upload");
+// The debounce is what keeps auto-flush off the request limiter; near-zero = one request per click.
+const pxFlush = Number(/\b(?:var|let|const) AUTO_FLUSH_S = ([\d.]+);/.exec(pixel)[1]);
+assert(pxFlush >= 0.3, `AUTO_FLUSH_S is ${pxFlush}s; too small a debounce sends one request per click`);
+
 for (const entry of [{ name: "Durak", text: durak }, { name: "Poker", text: poker }]) {
     assert(/pendingAct = true;\s*refreshTimer\(\);/.test(entry.text),
         entry.name + " must park its timer before starting the action request");

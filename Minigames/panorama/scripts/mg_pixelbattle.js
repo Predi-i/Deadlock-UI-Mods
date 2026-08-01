@@ -2,7 +2,7 @@
  * Pixel Battle - one persistent public canvas.
  *
  * Deadlock does not expose GameUI.GetCursorPosition, so the editor uses a fixed
- * 32x16 hit grid. At overview zoom a click drills into that region; at 16x every
+ * 64x32 hit grid. At overview zoom a click drills into that region; at 8x (the max) every
  * hit cell is exactly one 512x256 canvas pixel. This keeps the panel count bounded
  * while still allowing precise placement.
  */
@@ -14,13 +14,29 @@
     MG.PixelBattle = {};
 
     const MAP_W = 512, MAP_H = 256;
-    const GRID_COLS = 32, GRID_ROWS = 16;
-    const MAX_ZOOM = 16;
+    // ⚠ 64x32 hit cells over a 768x384 viewport = exactly 12x12 screen px per cell. Both numbers
+    // are load-bearing together: the grid divides the viewport EXACTLY, so a laid-out cell and the
+    // click arithmetic address the same pixels (the GeoGuesser 7.8125px drift, ARCHITECTURE §8.11).
+    // 800/64 would be 12.5 and reintroduce it. Doubling the grid from 32x16 is what lets 8x be
+    // one-cell-per-canvas-pixel, so MAX_ZOOM drops from 16 to 8 and the editor is reachable a zoom
+    // step earlier. 2048 panels, the same count GeoGuesser's map grid already ships.
+    const GRID_COLS = 64, GRID_ROWS = 32;
+    const VIEW_W = 768, VIEW_H = 384;
+    const MAX_ZOOM = 8;
     const BANK_CAP = 100;
     const REGEN_MS = 30000;
-    const MIN_BATCH = 10;
+    // No local queue any more: a placed pixel uploads on its own. MIN_BATCH 1 must match
+    // PX_MIN_BATCH in worker.core.js, or the server rejects a small batch as malformed.
+    const MIN_BATCH = 1;
     const MAX_BATCH = 128;
-    const POLL_ACTIVE_S = 8, POLL_WARM_S = 15, POLL_IDLE_S = 30;
+    // Auto-flush delay. NOT zero: one request per click would be ~1/s while drawing, and the
+    // server's per-(account,IP) upload limiter counts requests, not pixels. A short debounce
+    // coalesces a fast burst into one batch and still feels immediate.
+    const AUTO_FLUSH_S = 0.9;
+    // The canvas version poll. 10s flat - the Cloudflare 100k/day bucket that forced the old
+    // 8/15/30s backoff ladder is gone (the VPS is not metered per request), so a steady cadence
+    // is simpler and shows other players' paint sooner.
+    const POLL_ACTIVE_S = 10, POLL_WARM_S = 10, POLL_IDLE_S = 10;
     // (world_map.vtex is no longer referenced from the client: the map is baked into the
     // server-rendered /api/pxview frame. tools/build_pixelbattle_map.js still reads the source
     // image to generate the land mask.)
@@ -165,7 +181,7 @@
 
         let zoom = 1;
         // Integer logical-pixel origin of the visible rectangle. Keeping origin
-        // (instead of a half-pixel centre) is what makes 16x paint cells land exactly.
+        // (instead of a half-pixel centre) is what makes max-zoom paint cells land exactly.
         let viewX = 0, viewY = 0;
         let selectedColor = 1;
         const pending = {};
@@ -207,14 +223,14 @@
         // received a non-empty url, and baseImage still decoded world_map.vtex into memory for a
         // panel nobody could see. Removed with its CSS (.mg-px-stage/.mg-px-map-image).
 
-        // At 16x the Worker returns this viewport already expanded to 800x400.
+        // The Worker returns this viewport already expanded to VIEW_W x VIEW_H.
         // Keep a stable first-child layer so newly loaded image panels can be swapped
         // underneath the pending-pixel/grid overlays without changing their z-order.
         const crispLayer = $.CreatePanel("Panel", viewport, "");
         crispLayer.AddClass("mg-px-crisp-view");
         let crispImage = $.CreatePanel("Image", crispLayer, "", { scaling: "none" });
-        crispImage.style.width = "800px";
-        crispImage.style.height = "400px";
+        crispImage.style.width = VIEW_W + "px";
+        crispImage.style.height = VIEW_H + "px";
         try { crispImage.SetAttributeString("hittest", "false"); } catch (e2) {}
 
         // Pending pixels are initially hosted here, then re-parented into the exact
@@ -309,10 +325,17 @@
             const until = current >= BANK_CAP ? 0 : Math.max(1, Math.ceil((REGEN_MS - (elapsed % REGEN_MS)) / 1000));
             bankLabel.text = `PIXELS  ${available} / ${BANK_CAP}`;
             regenLabel.text = until ? (`NEXT +1  ${until}s`) : "PIXELS FULL";
-            queueLabel.text = `QUEUE  ${pendingOrder.length} / ${MIN_BATCH}`;
-            queueLabel.SetHasClass("mg-px-stat-ready", pendingOrder.length >= MIN_BATCH);
+            // "QUEUE n / 10" no longer describes anything: pixels upload themselves, so what is
+            // pending is just the handful still in flight or waiting out the debounce. Show that
+            // as a transient state rather than a target the player has to fill.
+            queueLabel.text = pendingOrder.length === 0
+                ? (sending ? "SAVING…" : "SAVED")
+                : `SAVING  ${pendingOrder.length}`;
+            queueLabel.SetHasClass("mg-px-stat-ready", pendingOrder.length === 0 && !sending);
+            // UPLOAD stays as a manual "flush now" for anyone who does not want to wait out the
+            // debounce, and simply greys out when there is nothing pending.
             sendButton.SetHasClass("mg-px-action-disabled",
-                pendingOrder.length < MIN_BATCH || !accountId || sending);
+                pendingOrder.length === 0 || !accountId || sending);
             clearButton.SetHasClass("mg-px-action-disabled", pendingOrder.length === 0 || sending);
         }
 
@@ -333,14 +356,14 @@
         function updateView() {
             if (!accessReady || banned) return;
             clampOrigin();
-            // Every zoom uses a server-rasterised 800x400 frame. This avoids
+            // Every zoom uses a server-rasterised VIEW_W x VIEW_H frame. This avoids
             // Panorama's bilinear filtering in previews as well as in the editor.
             crispImage.style.visibility = "visible";
             grid.SetHasClass("mg-px-grid-edit", zoom === MAX_ZOOM);
             zoomLabel.text = zoom + "×";
             helpLabel.text = zoom === MAX_ZOOM
                 ? "Pick a colour, then paint. Changes stay local until at least 10 unique pixels are queued."
-                : "Click a region to zoom in. At 16× each square is one canvas pixel.";
+                : "Click a region to zoom in. At 8× each square is one canvas pixel.";
             refreshPendingGeometry();
             scheduleCrispView();      // coalesced: a burst of pan/zoom presses costs ONE fetch
         }
@@ -417,10 +440,27 @@
                 selectedColor === 0 ? "#00000000" : (PALETTE[selectedColor - 1] || "#ffffff");
             positionPending(existing, pendingPanels[key]);
             updateStats();
+            scheduleAutoFlush();
+        }
+
+        // No manual UPLOAD step any more: a placed pixel goes up on its own. The debounce is what
+        // keeps that cheap - the server's upload limiter counts REQUESTS per (account, IP), not
+        // pixels, so firing one request per click would throttle a fast drawer. A burst of clicks
+        // collapses into a single batch AUTO_FLUSH_S after the last one.
+        // Own generation counter so a stale timer cannot flush a queue that was cleared or is
+        // already in flight (same idiom as the version poll below).
+        let autoFlushGen = 0;
+        function scheduleAutoFlush() {
+            const myGen = ++autoFlushGen;
+            $.Schedule(AUTO_FLUSH_S, () => {
+                if (destroyed || banned || myGen !== autoFlushGen) return;
+                if (sending || pendingOrder.length === 0) return;
+                uploadPending();
+            });
         }
 
         function positionPending(pixel, panel) {
-            // At 16x one logical canvas pixel is exactly one hit-grid cell. Do
+            // At max zoom one logical canvas pixel is exactly one hit-grid cell. Do
             // not compute a separate px transform: ui-scale can round that
             // transform differently from the flowed grid (especially at 125%
             // and 150%). Parenting the fill to the cell makes divergence
@@ -429,16 +469,16 @@
                 // Keep queued work visible in the overview. Precise editing is
                 // disabled there, so this lightweight preview may use viewport
                 // coordinates; the exact cell-parenting path below is reserved
-                // for the 16x editor where alignment matters.
+                // for the max-zoom editor where alignment matters.
                 try {
                     if (panel.GetParent && panel.GetParent() !== pendingLayer) panel.SetParent(pendingLayer);
                 } catch (e0) {}
                 const visibleW = MAP_W / zoom;
                 const visibleH = MAP_H / zoom;
-                const left = Math.floor((pixel.x - viewX) * 800 / visibleW);
-                const right = Math.floor((pixel.x + 1 - viewX) * 800 / visibleW);
-                const top = Math.floor((pixel.y - viewY) * 400 / visibleH);
-                const bottom = Math.floor((pixel.y + 1 - viewY) * 400 / visibleH);
+                const left = Math.floor((pixel.x - viewX) * VIEW_W / visibleW);
+                const right = Math.floor((pixel.x + 1 - viewX) * VIEW_W / visibleW);
+                const top = Math.floor((pixel.y - viewY) * VIEW_H / visibleH);
+                const bottom = Math.floor((pixel.y + 1 - viewY) * VIEW_H / visibleH);
                 panel.style.visibility = "visible";
                 panel.style.width = Math.max(1, right - left) + "px";
                 panel.style.height = Math.max(1, bottom - top) + "px";
@@ -457,8 +497,11 @@
                 if (panel.GetParent && panel.GetParent() !== cell) panel.SetParent(cell);
             } catch (e) {}
             panel.style.visibility = "visible";
-            panel.style.width = "23px";
-            panel.style.height = "23px";
+            // Fills the cell minus its 1px margin on each side (see .mg-px-pending-pixel). Derived
+            // from the geometry rather than hard-coded, so resizing the viewport or the grid cannot
+            // leave this stale - it was a literal 23px against the old 25px cell.
+            panel.style.width = (VIEW_W / GRID_COLS - 2) + "px";
+            panel.style.height = (VIEW_H / GRID_ROWS - 2) + "px";
             panel.style.transform = "translate3d(0px, 0px, 0px)";
         }
 
@@ -524,18 +567,14 @@
                 if (knownVersion < 0) pollVersion();
                 else refreshRemote();
                 updateStats();
-                outerStatus("Pixel batch uploaded.");
+                outerStatus("Pixels placed.");
                 return;
             }
-            if (remaining < MIN_BATCH) {
-                sending = false;
-                updateStats();
-                outerStatus(`Uploaded full batches; ${remaining} pixels remain queued.`);
-                return;
-            }
-
-            let count = Math.min(MAX_BATCH, remaining);
-            if (remaining - count > 0 && remaining - count < MIN_BATCH) count = remaining - MIN_BATCH;
+            // With MIN_BATCH at 1 there is no "leftover too small to send" case any more, and no
+            // need to hold back a remainder so the NEXT batch can reach the old minimum of 10 -
+            // that arithmetic (`count = remaining - MIN_BATCH`) existed only to satisfy the server's
+            // 10-pixel floor. Every pixel goes now, MAX_BATCH at a time.
+            const count = Math.min(MAX_BATCH, remaining);
             const keys = pendingOrder.slice(0, count);
             const encoded = [];
             for (let i = 0; i < keys.length; i++) {
@@ -589,8 +628,8 @@
         }
 
         // Coalesce viewport fetches. Every D-pad press, zoom step and RESET calls updateView, and
-        // each one used to fire its own /api/pxview.png - a full 800x400 render, straight through
-        // SetImage so it bypasses mg_net's request queue entirely. At 16x a pan step is 8 canvas
+        // each one used to fire its own /api/pxview.png - a full-viewport render, straight through
+        // SetImage so it bypasses mg_net's request queue entirely. At max zoom a pan step is 16 canvas
         // pixels, so crossing the map is dozens of presses and dozens of full frames. Waiting a
         // frame-and-a-bit collapses a burst of presses into ONE fetch of the final position; a
         // single press still lands well inside the eye's tolerance.
@@ -627,9 +666,9 @@
                     try { loaded.DeleteAsync(0); } catch (e1) {}
                     return;
                 }
-                // A real viewport is 800x400 multiplied by one uniform UI scale (and some setups
+                // A real viewport is VIEW_W x VIEW_H multiplied by one uniform UI scale (and some setups
                 // swap the axes), so its orientation-independent aspect stays near 2:1. Allow a
-                // broad band because the invisible 640px net host may clamp the 800px source width.
+                // broad band because the invisible 640px net host may clamp the source width.
                 // The Worker uses a deliberately distant image sentinel when one IP is churning uncached
                 // viewports. Reject it before crispReady becomes true: stretching that sentinel and
                 // accepting clicks would map the visible image to the wrong logical coordinates.
@@ -653,8 +692,8 @@
                     // hiding the panel during the load: a zero-opacity <Image> is never loaded at
                     // all - see imageRequestNow in mg_net.js.
                     loaded.style.position = "0px 0px 0px";
-                    loaded.style.width = "800px";
-                    loaded.style.height = "400px";
+                    loaded.style.width = VIEW_W + "px";
+                    loaded.style.height = VIEW_H + "px";
                     loaded.style.visibility = "visible";
                     try { loaded.SetAttributeString("hittest", "false"); } catch (e4) {}
                     loaded.SetParent(crispLayer);

@@ -1932,9 +1932,16 @@
     font-size: 14px;
     color: #72879a;
 }
+/* ⚠ 768x384, and it MUST stay an exact multiple of the 64x32 hit grid (VIEW_W/VIEW_H and
+   GRID_COLS/GRID_ROWS in mg_pixelbattle.js, PX_VIEW_W/H in worker.core.js - all four move
+   together). 768/64 = 384/32 = 12px per cell exactly. The old 800x400 over a 32x16 grid was also
+   exact (25px), but 800/64 is 12.5 - and a fractional cell is precisely the GeoGuesser bug
+   (ARCHITECTURE §8.11): the engine rounds the laid-out cell while the click arithmetic does not,
+   and the selection drifts further off the further you click. The grid doubled so that 8x is one
+   cell per canvas pixel. */
 .mg-px-viewport {
-    width: 804px;
-    height: 404px;
+    width: 772px;                        /* view + 2px padding each side */
+    height: 388px;
     horizontal-align: center;
     flow-children: none;
     padding: 2px;
@@ -1945,17 +1952,17 @@
 }
 .mg-px-crisp-view,
 .mg-px-pending-layer {
-    width: 800px;
-    height: 400px;
+    width: 768px;
+    height: 384px;
     flow-children: none;
 }
 .mg-px-grid {
-    width: 800px;
-    height: 400px;
+    width: 768px;
+    height: 384px;
     flow-children: down;
 }
 .mg-px-grid-row {
-    width: 800px;
+    width: 768px;
     height: fill-parent-flow(1);
     flow-children: right;
 }
@@ -1968,9 +1975,11 @@
     transition-property: background-color, border-color;
     transition-duration: 0.06s;
 }
+/* Fills the 12px cell minus its 1px margin per side. positionPending derives the same number from
+   VIEW_W / GRID_COLS - 2, so the two cannot drift. */
 .mg-px-pending-pixel {
-    width: 23px;
-    height: 23px;
+    width: 10px;
+    height: 10px;
     margin: 1px;
 }
 .mg-px-grid-cell:hover {
@@ -1985,7 +1994,7 @@
     border-color: #ffffffbb;
 }
 .mg-px-controls {
-    width: 800px;
+    width: 768px;
     height: 62px;
     horizontal-align: center;
     flow-children: right;
@@ -2115,7 +2124,7 @@
     opacity: 0.35;
 }
 .mg-px-help {
-    width: 800px;
+    width: 768px;
     height: 22px;
     horizontal-align: center;
     text-align: center;

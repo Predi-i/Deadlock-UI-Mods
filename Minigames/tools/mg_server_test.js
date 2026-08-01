@@ -201,11 +201,7 @@ async function main() {
     d = await req(hub, "/api/pxbank.png?id=77777777");
     ok(d.h * 64 + d.w === 82, "pixel bank regenerates one pixel per 30 seconds");
 
-    const tooSmall = [];
-    for (var pi = 0; pi < 9; pi++) tooSmall.push(pi + ",0,5");
-    d = await req(hub, `/api/pxput.png?id=123456789&b=${tooSmall.join(";")}`);
-    ok(d.w === 2 && d.h === 63, "pixel upload rejects batches below 10 unique pixels");
-
+    var pi;
     let batch = [];
     for (pi = 0; pi < 10; pi++) batch.push(pi + ",0,5");
     d = await req(hub, `/api/pxput.png?id=123456789&b=${batch.join(";")}`);
@@ -254,12 +250,13 @@ async function main() {
     ok(pxIndex(0, 0) === 5 && pxIndex(9, 0) === 5 && pxIndex(10, 0) === 0,
         "accepted pixels appear in the shared transparent PNG");
 
-    // The max-zoom editor receives a native 800x400 composite: each logical
-    // canvas pixel occupies one exact 25x25 block with no filtered boundary.
+    // The editor receives a native 768x384 composite (PX_VIEW_W/H). 768 and 384 divide exactly
+    // by every zoom's logical grid, so each canvas pixel occupies a whole block with no filtered
+    // boundary. At z=16 that block is 768/32 = 24px.
     let viewRes = await hub.fetch(new Request("https://mg.test/api/pxview.png?x=0&y=0&v=1"));
     let viewBytes = new Uint8Array(await viewRes.arrayBuffer());
-    ok(readU32(viewBytes, 16) === 800 && readU32(viewBytes, 20) === 400,
-        "pixel edit viewport PNG = native 800x400");
+    ok(readU32(viewBytes, 16) === 768 && readU32(viewBytes, 20) === 384,
+        "pixel edit viewport PNG = native 768x384");
     ok(viewBytes.length < 50000,
         "pixel viewport is compressed instead of sending a 320KB raw frame");
     let viewIdatParts = [];
@@ -270,18 +267,18 @@ async function main() {
         po += 12 + plen;
     }
     let viewRaw = zlib.inflateSync(Buffer.concat(viewIdatParts));
-    function viewIndex(x, y) { return viewRaw[y * 801 + 1 + x]; }
-    ok(viewRaw.length === 400 * 801,
+    function viewIndex(x, y) { return viewRaw[y * 769 + 1 + x]; }
+    ok(viewRaw.length === 384 * 769,
         "pixel edit viewport scanlines inflate cleanly");
-    ok(viewIndex(0, 0) === 6 && viewIndex(24, 24) === 6 &&
-        viewIndex(25, 0) === 6 && viewIndex(249, 24) === 6,
-        "each painted logical pixel fills its exact 25x25 edit cell");
-    ok(viewIndex(250, 0) !== 6 && viewIndex(250, 0) <= 1,
+    ok(viewIndex(0, 0) === 6 && viewIndex(23, 23) === 6 &&
+        viewIndex(24, 0) === 6 && viewIndex(239, 23) === 6,
+        "each painted logical pixel fills its exact 24x24 edit cell");
+    ok(viewIndex(240, 0) !== 6 && viewIndex(240, 0) <= 1,
         "paint stops exactly at the next logical-pixel boundary");
 
-    // Preview zooms use the same server-side nearest-neighbour rasterisation.
-    // At 8x the 64 logical columns divide into alternating 12/13px blocks;
-    // the boundary after ten painted pixels must still be exact and unblended.
+    // Preview zooms use the same server-side nearest-neighbour rasterisation. At 8x - the client's
+    // MAX_ZOOM, one cell per canvas pixel - the 64 logical columns divide into exact 12px blocks,
+    // so the boundary after ten painted pixels lands on 120 with no blending.
     viewRes = await hub.fetch(new Request("https://mg.test/api/pxview.png?x=0&y=0&z=8&v=1"));
     viewBytes = new Uint8Array(await viewRes.arrayBuffer());
     viewIdatParts = [];
@@ -292,7 +289,7 @@ async function main() {
         po += 12 + plen;
     }
     viewRaw = zlib.inflateSync(Buffer.concat(viewIdatParts));
-    ok(viewIndex(124, 0) === 6 && viewIndex(125, 0) <= 1,
+    ok(viewIndex(119, 0) === 6 && viewIndex(120, 0) <= 1,
         "8x preview has an exact nearest-neighbour paint boundary");
     let previewScalesOk = true;
     for (const previewZoom of [1, 2, 4]) {
@@ -300,7 +297,7 @@ async function main() {
             `https://mg.test/api/pxview.png?x=0&y=0&z=${previewZoom}&v=1`));
         const previewBytes = new Uint8Array(await previewRes.arrayBuffer());
         previewScalesOk = previewScalesOk &&
-            readU32(previewBytes, 16) === 800 && readU32(previewBytes, 20) === 400 &&
+            readU32(previewBytes, 16) === 768 && readU32(previewBytes, 20) === 384 &&
             previewBytes.length < 50000;
     }
     ok(previewScalesOk, "1x/2x/4x previews are native-size and compressed");
@@ -311,6 +308,23 @@ async function main() {
     ok(d.h * 64 + d.w === 80, "eraser spends pixels and restores the base map");
     ok((await hub.storage.get("px:t:0")) === undefined,
         "fully erased sparse tile is removed from storage");
+
+    // PX_MIN_BATCH is 1: the client auto-flushes single pixels now instead of queueing ten behind
+    // an UPLOAD button, so one pixel is a legitimate batch. Own hub + account so these spends do
+    // not shift the bank/version arithmetic the assertions above depend on.
+    await (async function () {
+        const oneHub = new Hub({ storage: new FakeStorage() });
+        let r = await req(oneHub, "/api/pxput.png?id=555555555&b=7,7,5");
+        ok(r.h * 64 + r.w === 99, "a single-pixel upload is accepted and spends exactly one pixel");
+        r = await req(oneHub, "/api/pxversion.png");
+        ok(r.w === 1 && r.h === 0, "a single-pixel upload advances the canvas version");
+        r = await req(oneHub, "/api/pxput.png?id=555555555&b=");
+        ok(r.w === 2 && r.h === 63, "pixel upload still rejects an empty batch");
+        r = await req(oneHub, "/api/pxput.png?id=555555555&b=garbage");
+        ok(r.w === 2 && r.h === 63, "pixel upload still rejects a malformed batch");
+        r = await req(oneHub, "/api/pxput.png?id=555555555&b=1,1,5;1,1,5");
+        ok(r.h * 64 + r.w === 98, "a duplicated coordinate still counts once");
+    })();
 
     // A forged Steam32 cannot reset the shared IP pixel budget. Six people behind one NAT may
     // still spend a full fresh 100px bank at once; only the seventh immediate full-bank burst
@@ -337,7 +351,7 @@ async function main() {
         ok(result.h !== 63, "pixel throttle neither bans nor affects a different IP");
     })();
 
-    // Expensive uncached 800x400 viewport renders get a human-sized burst. Cached navigation
+    // Expensive uncached 768x384 viewport renders get a human-sized burst. Cached navigation
     // remains free even after the burst, and another IP gets its own budget.
     await (async function () {
         const viewHub = new Hub({ storage: new FakeStorage() });
@@ -348,7 +362,7 @@ async function main() {
                 `https://mg.test/api/pxview.png?x=${vx}&y=0&z=16`, {
                     headers: { "CF-Connecting-IP": viewIp }
                 })).then(rawDims);
-            ok(dims.w === 800 && dims.h === 400, `viewport burst frame ${vx + 1} renders`);
+            ok(dims.w === 768 && dims.h === 384, `viewport burst frame ${vx + 1} renders`);
         }
         dims = await viewHub.fetch(new Request(
             "https://mg.test/api/pxview.png?x=12&y=0&z=16", {
@@ -359,12 +373,12 @@ async function main() {
             "https://mg.test/api/pxview.png?x=0&y=0&z=16", {
                 headers: { "CF-Connecting-IP": viewIp }
             })).then(rawDims);
-        ok(dims.w === 800 && dims.h === 400, "cached viewport remains available while throttled");
+        ok(dims.w === 768 && dims.h === 384, "cached viewport remains available while throttled");
         dims = await viewHub.fetch(new Request(
             "https://mg.test/api/pxview.png?x=13&y=0&z=16", {
                 headers: { "CF-Connecting-IP": "198.51.100.41" }
             })).then(rawDims);
-        ok(dims.w === 800 && dims.h === 400, "viewport throttle does not affect another IP");
+        ok(dims.w === 768 && dims.h === 384, "viewport throttle does not affect another IP");
     })();
 
     // ── token & game-id validation on create ──

@@ -2410,7 +2410,7 @@ function adminAssetResponse(path) {
  *   /api/pxview?x=X&y=Y&z=Z                       -> 800x400 opaque PNG           sharp 1/2/4/8/16x view
  *   /api/pxversion                                -> (version&63, version>>6)     reload only after a change
  *   /api/pxbank?id=STEAM32                        -> (balance&63, balance>>6)     100 cap, +1 / 30 seconds
- *   /api/pxput?id=STEAM32&b=x,y,c;...             -> remaining balance           10..128 unique pixels
+ *   /api/pxput?id=STEAM32&b=x,y,c;...             -> remaining balance           1..128 unique pixels
  *   /api/create?game=G&tok=T[&solo=1]             -> dCode(code, host=false)     new PRIVATE lobby, host = seat 0
  *   /api/quick?game=G&tok=T&tc=..&cv=..            -> dCode(code, JOINER|HOST)   role is the code BAND, not +100
  *   /api/mquick?games=..&tok=T&tc=..&cv=..         -> dCode(code, JOINER|HOST)   multi-select; game fixed on join
@@ -5046,10 +5046,18 @@ function d(w, h) { return png(w * STEP + BASE, h * STEP + BASE); }
  * while /pxview composites a sharp native-size frame for every interactive zoom.
  */
 const PX_W = 512, PX_H = 256, PX_TILE = 32, PX_TILE_COLS = PX_W / PX_TILE;
-const PX_VIEW_W = 800, PX_VIEW_H = 400;
+const PX_VIEW_W = 768, PX_VIEW_H = 384;
 const PX_BANK_CAP = 100, PX_REGEN_MS = 30000;
-const PX_MIN_BATCH = 10, PX_MAX_BATCH = 128;
-const PX_UPLOAD_WINDOW_MS = 60000, PX_UPLOAD_MAX_HITS = 30, PX_UPLOAD_MAX_KEYS = 5000;
+// PX_MIN_BATCH is 1: the client no longer queues pixels behind an UPLOAD button, it debounces and
+// flushes, so a single placed pixel is a legitimate batch. MUST stay equal to MIN_BATCH in
+// mg_pixelbattle.js - a mismatch makes the server reject the client's smallest batch as malformed.
+const PX_MIN_BATCH = 1, PX_MAX_BATCH = 128;
+// Raised from 30 now that the batch floor is gone. This limiter counts REQUESTS, not pixels, and a
+// player drawing steadily sends roughly one per AUTO_FLUSH_S (~0.9s) instead of one per ten pixels,
+// which 30/min throttled within seconds. The real spend ceilings are unchanged and count PIXELS:
+// the 100-pixel account bank (PX_BANK_CAP, +1/30s) and the per-IP budget below. So a higher request
+// cap cannot inflate how much canvas anyone can actually paint.
+const PX_UPLOAD_WINDOW_MS = 60000, PX_UPLOAD_MAX_HITS = 120, PX_UPLOAD_MAX_KEYS = 5000;
 const PX_IP_PIXEL_BURST = 600;
 const PX_IP_PIXEL_REFILL_PER_MS = 120 / 60000; // 120 changed pixels/min after the six-player burst
 const PX_VIEW_BURST = 12;
