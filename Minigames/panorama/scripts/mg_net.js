@@ -503,17 +503,33 @@
         GEO_GRID_H: 256,
         clearQueue: function () {
             // Drop pending UI traffic (stale status/poll ticks from a view we just
-            // left) - their callers are token-guarded, so silence is fine. Two things
-            // are deliberately NOT touched:
+            // left). Two things are deliberately NOT touched:
             //  - the calibration probe: dropping it would strand `calibrating` at
             //    true and deadlock every future request;
             //  - the active in-flight request: it finishes naturally (see
             //    rawRequestNow), keeping loads strictly one-at-a-time.
+            // ⚠ A dropped job MUST still get its onError. This used to discard jobs silently on the
+            // reasoning that "their callers are token-guarded, so silence is fine" - true for the
+            // poll loops, which re-arm from their own $.Schedule chain, but NOT for a caller whose
+            // next step lives inside the dropped callback. Two of those exist: MG.Api.clocks issues
+            // seat 1 only from inside seat 0's callback, and mg_geoguesser chains its second cached
+            // panorama copy from the first. Silence there is terminal - createClock's resyncTick is
+            // only re-armed by its error path, so the clock panel never appears (or freezes at its
+            // last value while the server keeps counting down, and you lose on time with minutes
+            // apparently left); GeoGuesser sits on "Loading panorama…" with no retry.
+            // Every existing onError treats an unknown reason as a retryable transport failure, so
+            // this restores those loops without touching a single caller.
             const kept = [];
+            const dropped = [];
             for (let i = 0; i < reqQueue.length; i++) {
                 if (reqQueue[i].path === "/api/probe") kept.push(reqQueue[i]);
+                else dropped.push(reqQueue[i]);
             }
             reqQueue = kept;
+            for (let i = 0; i < dropped.length; i++) {
+                // Never let one caller's throw strand the rest of the list.
+                try { if (dropped[i].onError) dropped[i].onError("cancelled"); } catch (e) {}
+            }
         },
         recalibrate: function (cb) { calibrated = false; calibrate(cb); },
         pollDelay: pollDelay,
@@ -747,16 +763,28 @@
         // board and returns (1,1) on accept or (9,x) on reject - the client maps x to a
         // reason so the controller can roll back its prediction and resync:
         //   (9,1) turn · (9,2) illegal · (9,3) token · (9,9) gone.
+        // ⚠ ACCEPT ONLY EXACTLY (1,1). This used to be `else cb({ok:true})`, which read every
+        // non-9 width as success - so on a stale UI scale a mis-decoded (1,1) drifting to (0,0) or
+        // (2,2) still counted as accepted, AND a real (9,2) rejection whose width mis-read as 8 or
+        // 10 was reported as accepted too. Because nothing tripped suspectDecode, the bad scale was
+        // never repaired: the client kept a prediction the server had refused, and the next poll
+        // replayed the opponent's move onto a board one ply out of sync - the "corrupted moves that
+        // eat pieces" failure §5's calibration notes warn about, through the one unguarded door.
+        // Every sibling write (pact/dact/start/pstart) already asserts (1,1); this is the same shape.
+        // All four callers ignore `reason` and rebuild from the accepted log, so "decode" is safe.
         move: function (code, from, to, end, tok, cb, err) {
             request("/api/move", { code: code, from: from, to: to, end: end ? 1 : 0, tok: tok },
-                function (w, h) {
+                function (w, h) {       // NOT an arrow: `(w, h) =>` would start this line with `(`,
+                                        // the Valve-minifier ASI trigger the invariants test guards.
                     if (!cb) return;
+                    if (w === 1 && h === 1) { cb({ ok: true }); return; }
                     if (w === 9) {
                         const reason = h === 1 ? "turn" : h === 2 ? "illegal" : h === 3 ? "token" : "gone";
                         cb({ ok: false, reason: reason });
-                    } else {
-                        cb({ ok: true });
+                        return;
                     }
+                    suspectDecode(`move w=${w} h=${h}`);
+                    cb({ ok: false, reason: "decode" });
                 }, err);
         },
 
@@ -775,6 +803,16 @@
                 if (w === 9 && h === 9) {
                     log("opponent left (9x9 received)");
                     if (MG.UI && MG.UI.kickToMenu) MG.UI.kickToMenu("Opponent left.");
+                    // ⚠ Still call the error handler. kickToMenu is conditional (view must be
+                    // "game"/"waiting"/"room"), so when it refuses the kick this return used to leave
+                    // the poll chain with no reschedule and no way to re-arm. The reachable window:
+                    // a (9,9) arrives mid-flight while the player navigates away - renderJoin sets
+                    // view="join", the kick returns early, and the controller's poll stops dead
+                    // (normally its destroyed/pollToken guard would make that harmless, but
+                    // cleanupCurrentView already destroyed it). For dlog/plog this is the ONLY event
+                    // stream, so a refused kick is terminal: the table stays frozen with no cards, no
+                    // turn, no error. Call err so the retry logic stays armed.
+                    if (err) err("gone");
                     return;
                 }
                 const from = w, to = h;   // RAW squares 0..63 now (worker dropped the +1 / +100)
@@ -794,8 +832,13 @@
         geoState: function (code, tok, cb, err) {
             request("/api/geostate", { code: code, tok: tok }, (w, h) => {
                 if (w === 9) {
+                    // The kick is conditional (view must be game/waiting/room) and can decline, so
+                    // `err` must fire on EVERY branch - pollState re-arms only from cb or err, and
+                    // this route is GeoGuesser's whole round state machine. The old `else if (err)`
+                    // meant a (9,9) that failed to kick left the game frozen mid-round: no reveal,
+                    // no Next, no error. Same trap as poll/dlog/plog.
                     if (h === 9 && MG.UI && MG.UI.kickToMenu) MG.UI.kickToMenu("Opponent left.");
-                    else if (err) err(h === 3 ? "token" : "state");
+                    if (err) err(h === 9 ? "gone" : (h === 3 ? "token" : "state"));
                     return;
                 }
                 if (w === 6 && h === 40) {
@@ -970,9 +1013,32 @@
         //   cb({ state, gen }): state 1 = armed, waiting · 2 = consensus reached (reset done)
         //                       9 = lobby gone / bad token (gen carries 3=bad-token, 9=gone)
         //   gen = the lobby's current generation (grows by 1 each rematch).
+        // ⚠ RANGE-CHECK BOTH DIMS. This used to pass `w` and `h-1` straight through with no guard,
+        // and the consumer acts on `state === 2 || gen > baseGen` by restarting the board. So on a
+        // stale scale a "still waiting" (1, gen+1) whose width mis-read as 2 - or ANY height
+        // inflation, since gen was unbounded - restarted one client while the server lobby was
+        // untouched and the opponent still sat on the game-over screen. Worse, the garbage gen was
+        // then latched into rematchGen, and the server only arms a seat when callerGen === lobby.gen
+        // (worker.core.js:1070), so that seat could never arm a rematch again. Presented as
+        // "opponent rage-quit and Play Again is dead".
+        // Server vocabulary: w is 1 (waiting), 2 (consensus) or 9 (gone/bad-token); h is always
+        // gen+1 with gen wrapped into 6 bits (`lobby.gen = (lobby.gen + 1) % 63`), so h is 1..63.
         rematch: function (code, tok, gen, cb, err) {
             request("/api/rematch", { code: code, tok: tok, gen: gen || 0 },
-                function (w, h) { if (cb) cb({ state: w, gen: h - 1 }); }, err);
+                function (w, h) {       // NOT an arrow - see move() above (ASI trigger `(`).
+                    if (!cb) return;
+                    const known = w === 1 || w === 2 || w === 9;
+                    if (!known || h < 1 || h > 63) {
+                        suspectDecode(`rematch w=${w} h=${h}`);
+                        // Route to the ERROR path, never a bare return: startRematch re-arms its
+                        // poll only from cb or err (mg_ui.js), so swallowing this would strand the
+                        // player on the game-over screen with a dead Play Again - the same
+                        // no-callback trap fixed in poll/dlog/plog below.
+                        if (err) err("decode");
+                        return;
+                    }
+                    cb({ state: w, gen: h - 1 });
+                }, err);
         },
 
         // ── Durak online (authoritative dealer, 2–4 seats) ──────────────────
@@ -1031,6 +1097,7 @@
                 if (w === 1 && h === 1) { cb(null); return; }
                 if (w === 9 && h === 9) {
                     if (MG.UI && MG.UI.kickToMenu) MG.UI.kickToMenu("Opponent left.");
+                    if (err) err("gone");   // see MG.Api.poll: a refused kick must not kill the loop
                     return;
                 }
                 // Seat ranges span 0..3 (2–4 players). ROLES(4, a*4+d+1) is the server-owned
@@ -1214,7 +1281,11 @@
             request("/api/plog", { code: code, since: since }, (w, h) => {
                 if (w === 1 && h === 1) { cb(null); return; }        // nothing new
                 if (w === 9 && h === 9) {
+                    // kickToMenu is a no-op unless view is game/waiting/room, so it can decline.
+                    // Report "gone" either way - a declined kick used to leave the poll chain with
+                    // no callback at all, freezing the table's only event stream. See dlog.
                     if (MG.UI && MG.UI.kickToMenu) MG.UI.kickToMenu("Opponent left.");
+                    if (err) err("gone");
                     return;
                 }
                 let ev = null;

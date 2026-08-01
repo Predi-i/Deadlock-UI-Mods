@@ -263,6 +263,30 @@ dim. Only `/api/probe` stays **literal pixels** — it's the calibration referen
 
 ### 5.1 Server authority (seats, tokens, validation)
 
+> **Two client-side contracts every `MG.Api` wrapper must honour** (both were violated in shipped
+> code and fixed 2026-08-01; `mg_release_ui_regression_test.js` mutation-checks all six guards).
+>
+> 1. **Accept only the exact success reply; everything else trips `suspectDecode`.** `move` was the
+>    lone exception — `else cb({ok:true})` read *any* non-9 width as accepted. On a stale UI scale
+>    that meant a mis-decoded `(1,1)` still counted as success **and** a genuine `(9,2)` rejection
+>    whose width mis-read as 8 or 10 was reported as accepted; since nothing tripped `suspectDecode`,
+>    the bad scale was never repaired, so the client kept a prediction the server had refused and the
+>    board desynced progressively — the "corrupted moves that eat pieces" failure this section warns
+>    about, arriving through the one unguarded door. `rematch` had no guard at all and passed a raw
+>    `h-1` to a consumer that restarts the board on `state === 2 || gen > baseGen`, so a corrupt
+>    reply restarted one client unilaterally and latched a `gen` the server could never match again
+>    (dead Play Again, presenting as "opponent rage-quit").
+> 2. **Every terminal path must call `cb` *or* `err` — a bare `return` is a wedge.** Poll loops
+>    re-arm only from their own callbacks. Three places broke this: `MG.Net.clearQueue` dropped
+>    queued jobs silently (fatal for `MG.Api.clocks`, which issues seat 1 only from inside seat 0's
+>    callback, and for GeoGuesser's chained panorama copies — `createClock`'s `resyncTick` is
+>    re-armed *only* by its error path, so the clock froze while the server kept counting down and
+>    you lost on time with minutes apparently left); and the `(9,9)` handlers in `poll`/`dlog`/`plog`
+>    returned without a callback when `kickToMenu` **declined** the kick (it is conditional on
+>    `view`), which for Durak/Poker is the table's only event stream — a permanently frozen game.
+>    `geoState` had the same bug in `else if (err)` form, where kicking and reporting were mutually
+>    exclusive. All now call `err("gone")` unconditionally after attempting the kick.
+
 - **Seat token.** Each client mints one random `tok` per online game (`MG.Session.newToken`)
   and sends it up on create/quick/join/move/reset — **never downward**, so it can't leak
   through the 2-int response or be guessed. The server binds the first token it sees on a
@@ -1120,24 +1144,53 @@ is built but **not yet in-game verified**.
   On the client, erasing a still-local paint cancels that queued change instead, immediately
   returning its reserved pixel. Navigation uses a fixed two-row zoom group plus keyboard-style
   arrow D-pad so adding controls cannot push a direction button onto a third row.
-- **There is no upload queue any more.** A placed pixel uploads itself: `placePixel` schedules a
-  debounced flush (`AUTO_FLUSH_S`, 0.9s) and the batch goes up on its own, so `MIN_BATCH` /
-  `PX_MIN_BATCH` are **1** (they must stay equal, or the server rejects the client's smallest real
-  batch as malformed). The old 10-pixel floor existed to keep request count down on Cloudflare's
-  shared 100k/day bucket; the VPS is not metered per request, so it is gone. ⚠ The debounce is NOT
-  cosmetic: the upload limiter counts **requests**, not pixels, so one request per click would
-  throttle a fast drawer. `PX_UPLOAD_MAX_HITS` rose 30 → 120 for the same reason. Neither change
-  loosens the real spend ceiling, which counts PIXELS and is unchanged: the 100-pixel account bank
-  and the per-IP pixel budget. UPLOAD remains as a manual "flush now".
+- **UPLOAD is the only thing that commits paint.** A placed pixel stays local until the player
+  presses it. `MIN_BATCH` / `PX_MIN_BATCH` are **1** (they must stay equal, or the server rejects
+  the client's smallest real batch as malformed) so a single-pixel UPLOAD is legal; the old
+  10-pixel floor existed to keep request count down on Cloudflare's shared 100k/day bucket, and
+  the VPS is not metered per request. ⚠ **Do not reintroduce the auto-flush.** A debounced
+  self-upload shipped on 2026-08-01 and was reverted the same day: it took away the player's last
+  chance to change their mind, and in-game it read as *pixels placing themselves without UPLOAD
+  ever being pressed*. `mg_release_ui_regression_test.js` now fails if `AUTO_FLUSH_S` /
+  `scheduleAutoFlush` come back, or if `placePixel` calls `uploadPending`.
 - Uploads contain 1–128 unique pixels. The client checks and batches first; the Worker deduplicates,
   validates the bank again, rate-limits uploads, and persists modified 32×32 tiles. The shared
   per-IP budget described above prevents Steam32 rotation from resetting this protection. Player
   uploads and admin paint/undo commit tiles/version, audit, and ownership in one storage transaction
   (player uploads include the bank debit in that same transaction).
-- Clients poll only the 12-bit canvas version, every **10 seconds** flat, and download the 512×256
+- Clients poll only the 12-bit canvas version, every **20 seconds** flat, and download the 512×256
   shared PNG only when that version changes. The old 8→15→30s idle backoff ladder existed to protect
-  the Cloudflare request bucket; without that constraint a steady cadence is simpler and other
-  players' paint shows up sooner.
+  the Cloudflare request bucket; without that constraint a steady cadence is simpler.
+- ⚠ **Never blank the viewport while its replacement loads.** `scheduleCrispView` /
+  `refreshCrispView` used to set `crispImage.style.visibility = "collapse"` the moment a refresh was
+  scheduled, but the new frame is a 0.12s debounce **plus** a full FIFO round-trip away — so the map
+  went black for roughly half a second on every pan, zoom and version poll (the maintainer's
+  "картинка пропадает во время обновления" report, 2026-08-01). The swap at the end of
+  `refreshCrispView` is already atomic (size → parent the new panel → delete the old), so leaving
+  the loaded frame up costs nothing. **This is not the hiding trap 23 forbids**: that one is about
+  the *incoming* panel being loaded — a zero-opacity `<Image>` is never loaded at all — whereas this
+  is the *outgoing*, already-loaded one, which the engine's loader never looks at again. `crispReady`
+  still drops to false, so grid clicks stay blocked until the visible frame actually matches the
+  requested rectangle.
+- ⚠ **Because the stale frame now stays up, a failed viewport load is INVISIBLE** — the map looks
+  perfectly normal while `crispReady` is false and every click is refused with "Map view is still
+  loading." Before the blanking was removed the player at least saw a black viewport and knew
+  something had gone wrong. Both failure paths (the display exception and `loadImage`'s error
+  callback) therefore arm `scheduleCrispRetry`; only the busy-sentinel path ever retried on its own.
+- ⚠ **`v` on `/api/pxview` is a CLIENT cache key, not a server parameter.** The Worker routes on
+  `x/y/z` and always renders the canvas's current version — it never reads `v`. It exists only to
+  stop Panorama serving a cached bitmap for an unchanged URL, so it must track the **server's**
+  version and nothing else. An optimistic `+1` after an accepted upload lied twice: the server skips
+  the version bump entirely when a batch changes nothing (`changed.length === 0` — e.g. erasing an
+  already-blank pixel), and the client wrapped at 4096 against the server's `PX_VERSION_MOD` of
+  `63*64 = 4032`, so after a server wrap the two sat permanently 64 apart. Once ahead, the poll saw
+  a real difference and fired a refresh, but that refresh requested the client's inflated `v` —
+  possibly already cached from the bogus bump — and Panorama served the stale bitmap, so another
+  player's paint silently never appeared until you panned. The upload path now leaves
+  `knownVersion` alone and, when the queue drains, re-reads the authoritative version instead of
+  refreshing blind (refreshing with the pre-upload number would re-serve the pre-upload frame and
+  hide the player's *own* paint).
+
 - Every accepted player batch is also stored as an append-only retained audit action containing
   Steam32, timestamp, and exact per-pixel `before → after` deltas. The browser admin at `/admin` can search
   this log by Steam32, paint without using a player's bank, and undo an action. Safe undo skips

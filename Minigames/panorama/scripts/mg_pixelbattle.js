@@ -25,18 +25,18 @@
     const MAX_ZOOM = 8;
     const BANK_CAP = 100;
     const REGEN_MS = 30000;
-    // No local queue any more: a placed pixel uploads on its own. MIN_BATCH 1 must match
-    // PX_MIN_BATCH in worker.core.js, or the server rejects a small batch as malformed.
+    // UPLOAD is the ONLY thing that sends pixels. There was a debounced auto-flush here
+    // (2026-08-01): placing a pixel scheduled its own upload, so paint committed itself ~1s after
+    // the last click and the button was decorative. That removed the player's last chance to
+    // change their mind and read in-game as "I never pressed UPLOAD and they placed themselves".
+    // MIN_BATCH 1 stays - it must match PX_MIN_BATCH in worker.core.js, and a manual UPLOAD of a
+    // single pixel is a legitimate batch.
     const MIN_BATCH = 1;
     const MAX_BATCH = 128;
-    // Auto-flush delay. NOT zero: one request per click would be ~1/s while drawing, and the
-    // server's per-(account,IP) upload limiter counts requests, not pixels. A short debounce
-    // coalesces a fast burst into one batch and still feels immediate.
-    const AUTO_FLUSH_S = 0.9;
-    // The canvas version poll. 10s flat - the Cloudflare 100k/day bucket that forced the old
-    // 8/15/30s backoff ladder is gone (the VPS is not metered per request), so a steady cadence
-    // is simpler and shows other players' paint sooner.
-    const POLL_ACTIVE_S = 10, POLL_WARM_S = 10, POLL_IDLE_S = 10;
+    // The canvas version poll. 20s: the Cloudflare 100k/day bucket that forced the old 8/15/30s
+    // backoff ladder is gone (the VPS is not metered per request), so a steady cadence is simpler,
+    // and 20s is the maintainer's chosen trade between seeing other players' paint and traffic.
+    const POLL_ACTIVE_S = 20, POLL_WARM_S = 20, POLL_IDLE_S = 20;
     // (world_map.vtex is no longer referenced from the client: the map is baked into the
     // server-rendered /api/pxview frame. tools/build_pixelbattle_map.js still reads the source
     // image to generate the land mask.)
@@ -325,15 +325,14 @@
             const until = current >= BANK_CAP ? 0 : Math.max(1, Math.ceil((REGEN_MS - (elapsed % REGEN_MS)) / 1000));
             bankLabel.text = `PIXELS  ${available} / ${BANK_CAP}`;
             regenLabel.text = until ? (`NEXT +1  ${until}s`) : "PIXELS FULL";
-            // "QUEUE n / 10" no longer describes anything: pixels upload themselves, so what is
-            // pending is just the handful still in flight or waiting out the debounce. Show that
-            // as a transient state rather than a target the player has to fill.
+            // Pending pixels now wait for UPLOAD, so the label must say that the player still has
+            // to act. "SAVING n" claimed an upload was already happening and made the button look
+            // decorative, which is the confusion the auto-flush caused in the first place.
             queueLabel.text = pendingOrder.length === 0
                 ? (sending ? "SAVING…" : "SAVED")
-                : `SAVING  ${pendingOrder.length}`;
+                : `READY  ${pendingOrder.length}  ·  PRESS UPLOAD`;
             queueLabel.SetHasClass("mg-px-stat-ready", pendingOrder.length === 0 && !sending);
-            // UPLOAD stays as a manual "flush now" for anyone who does not want to wait out the
-            // debounce, and simply greys out when there is nothing pending.
+            // UPLOAD is the only path that commits paint, and greys out when there is nothing to send.
             sendButton.SetHasClass("mg-px-action-disabled",
                 pendingOrder.length === 0 || !accountId || sending);
             clearButton.SetHasClass("mg-px-action-disabled", pendingOrder.length === 0 || sending);
@@ -362,7 +361,7 @@
             grid.SetHasClass("mg-px-grid-edit", zoom === MAX_ZOOM);
             zoomLabel.text = zoom + "×";
             helpLabel.text = zoom === MAX_ZOOM
-                ? "Pick a colour, then paint. Changes stay local until at least 10 unique pixels are queued."
+                ? "Pick a colour, then paint. Changes stay local until you press UPLOAD."
                 : "Click a region to zoom in. At 8× each square is one canvas pixel.";
             refreshPendingGeometry();
             scheduleCrispView();      // coalesced: a burst of pan/zoom presses costs ONE fetch
@@ -440,23 +439,6 @@
                 selectedColor === 0 ? "#00000000" : (PALETTE[selectedColor - 1] || "#ffffff");
             positionPending(existing, pendingPanels[key]);
             updateStats();
-            scheduleAutoFlush();
-        }
-
-        // No manual UPLOAD step any more: a placed pixel goes up on its own. The debounce is what
-        // keeps that cheap - the server's upload limiter counts REQUESTS per (account, IP), not
-        // pixels, so firing one request per click would throttle a fast drawer. A burst of clicks
-        // collapses into a single batch AUTO_FLUSH_S after the last one.
-        // Own generation counter so a stale timer cannot flush a queue that was cleared or is
-        // already in flight (same idiom as the version poll below).
-        let autoFlushGen = 0;
-        function scheduleAutoFlush() {
-            const myGen = ++autoFlushGen;
-            $.Schedule(AUTO_FLUSH_S, () => {
-                if (destroyed || banned || myGen !== autoFlushGen) return;
-                if (sending || pendingOrder.length === 0) return;
-                uploadPending();
-            });
         }
 
         function positionPending(pixel, panel) {
@@ -564,8 +546,17 @@
             const remaining = pendingOrder.length;
             if (remaining === 0) {
                 sending = false;
-                if (knownVersion < 0) pollVersion();
-                else refreshRemote();
+                // Re-read the AUTHORITATIVE version instead of refreshing straight away. `v` is the
+                // Panorama cache key, so refreshing with the pre-upload number would just re-serve
+                // the cached pre-upload bitmap and your own paint would stay invisible until the
+                // next poll. (The old code got away with `refreshRemote()` here only because it had
+                // just faked a +1 bump - which is the lie removed above.) pollVersion fetches the
+                // real number and schedules the refresh itself when it actually differs, so a
+                // zero-change batch correctly redraws nothing.
+                // Bump the generation first: scheduleVersionPoll's pending timer is keyed on it, so
+                // this both kills the in-flight tick and prevents a second parallel poll chain.
+                pollGeneration++;
+                pollVersion();
                 updateStats();
                 outerStatus("Pixels placed.");
                 return;
@@ -605,7 +596,6 @@
                 }
                 removePendingKeys(keys);
                 setServerBalance(result.balance);
-                if (knownVersion >= 0) knownVersion = (knownVersion + 1) & 4095;
                 sendNextBatch();
             }, () => {
                 if (destroyed) return;
@@ -633,12 +623,21 @@
         // pixels, so crossing the map is dozens of presses and dozens of full frames. Waiting a
         // frame-and-a-bit collapses a burst of presses into ONE fetch of the final position; a
         // single press still lands well inside the eye's tolerance.
+        // ⚠ Do NOT collapse crispImage here. It used to be hidden the moment a refresh was
+        // scheduled, but the replacement frame only arrives 0.12s later plus a full FIFO
+        // round-trip to the VPS - so the viewport went black for roughly half a second on every
+        // pan, zoom and version poll (the "map disappears during the update" report, 2026-08-01).
+        // The swap in refreshCrispView is already atomic: the new panel is sized and parented
+        // before the old one is deleted, so leaving the old frame up costs nothing and the
+        // transition is seamless. This is NOT the hiding that trap 23 forbids - that one is about
+        // the INCOMING panel being loaded (a zero-opacity <Image> is never loaded at all); this is
+        // the OUTGOING one, already loaded, and the loader never looks at it again.
+        // crispReady still goes false, so clicks stay blocked until the frame actually matches.
         let crispGen = 0;
         let crispReady = false;
         function scheduleCrispView() {
             if (destroyed) return;
             crispReady = false;
-            crispImage.style.visibility = "collapse";
             crispGen++;
             const myGen = crispGen;
             $.Schedule(0.12, () => { if (!destroyed && myGen === crispGen) refreshCrispView(); });
@@ -651,12 +650,25 @@
 
         function refreshCrispView() {
             if (destroyed || banned || !accountId) return;
-            crispReady = false;
-            crispImage.style.visibility = "collapse";
+            crispReady = false;         // the visible frame stays up, but it may no longer match
             const myGen = ++crispGen;     // a direct call supersedes pending/superseded frames
+            // `v` is a CLIENT-side cache key only: /api/pxview never reads it (worker.core.js
+            // routes on x/y/z and renders whatever version the canvas is at), so it exists purely
+            // to stop Panorama serving a stale bitmap for an unchanged URL. It must therefore
+            // track the SERVER's version and nothing else.
+            // ⚠ There used to be an optimistic +1 bump of knownVersion after an accepted upload.
+            // Two ways that lied. (a) The server skips the version bump entirely
+            // when a batch changes nothing (`changed.length === 0`, worker.core.js:2867) - e.g.
+            // erasing an already-blank pixel - so the client moved ahead of a canvas that never
+            // changed. (b) The client wrapped at 4096 while the server wraps at PX_VERSION_MOD =
+            // 63*64 = 4032, so after a server wrap the two were permanently 64 apart. Once ahead,
+            // `version !== knownVersion` in pollVersion is satisfied by the SERVER's real value, so
+            // the poll fires a refresh - but the refresh below then requests the client's inflated
+            // `v`, which it may already have cached from the bogus bump, and Panorama serves that
+            // stale bitmap. Result: another player's paint silently never appeared until you panned.
+            // The upload path now leaves knownVersion alone; the 20s poll owns it, and the refresh
+            // it triggers carries the server's number.
             const version = knownVersion < 0 ? 0 : knownVersion;
-            // No cache-buster: `v` IS the cache key (the server bumps the canvas version on
-            // every accepted batch), so a random suffix only guaranteed a miss on every request.
             const url = MG.Net.getBaseUrl() + "/api/pxview.png?x=" + viewX +
                 "&y=" + viewY + "&z=" + zoom + "&id=" + accountId +
                 "&v=" + version;
@@ -711,11 +723,28 @@
                     try { loaded.SetImage(""); } catch (e8) {}
                     try { loaded.DeleteAsync(0); } catch (e9) {}
                     outerStatus("Couldn't display the pixel-perfect map viewport.");
+                    scheduleCrispRetry(myGen);
                 }
             }, () => {
-                if (!destroyed && !banned && myGen === crispGen)
+                if (!destroyed && !banned && myGen === crispGen) {
                     outerStatus("Couldn't load the pixel-perfect map viewport.");
+                    scheduleCrispRetry(myGen);
+                }
             }, { scaling: "none" });
+        }
+
+        // Both failure paths above leave the PREVIOUS frame on screen (it is no longer blanked)
+        // while crispReady stays false, so the map looks perfectly normal but every grid click is
+        // refused with "Map view is still loading." forever. Before the blanking was removed the
+        // player at least saw a black viewport and knew something was wrong; now the wedge is
+        // invisible, so it has to self-heal. The busy-sentinel path already retried on its own
+        // 1.2s timer - these two just never did. Same generation guard, slightly longer delay
+        // because these follow a real transport failure (loadImage has already burned its own
+        // retry plus an 8s timeout) rather than a deliberate server "come back later".
+        function scheduleCrispRetry(gen) {
+            $.Schedule(2.5, () => {
+                if (!destroyed && !banned && gen === crispGen) refreshCrispView();
+            });
         }
 
         function pollVersion() {
