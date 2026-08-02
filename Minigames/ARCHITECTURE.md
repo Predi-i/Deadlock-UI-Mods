@@ -1132,6 +1132,22 @@ played only 40 hands per table, which is why a hand that froze whenever a blind 
 seat all-in survived it (fixed 2026-07-29; the suite now stresses 400 hands × 1200 tables). Online
 is built but **not yet in-game verified**.
 
+> ⚠ **TRAP — a terminal street has NO successor, and walking off the end of `STREETS` is an
+> infinite loop that wedges the ENTIRE relay.** `finish()`/`showdown()` set `street = "over"`, but
+> `STREETS` maps only `preflop→flop→turn→river→showdown`. `runout()`'s old
+> `while (street !== "showdown")` therefore read `STREETS["over"] === undefined`, assigned it, and
+> spun forever. The door in was `leaveSeat`'s `canActCount <= 1 && roundOver` branch, which a
+> resolved all-in hand satisfies — so ONE player pressing Leave on a finished hand pinned a core at
+> 100% and stopped every game for five hours (2026-08-02). It cost that long because nothing
+> detected it: the process never died, so `Restart=always` never fired and systemd still called it
+> `active`. `durak.js` had guarded this since day one (`if (st.out[seat] || st.phase === "over")
+> return;`) — poker was the outlier. Both `runout` and `leaveSeat` now return on a terminal street,
+> `server/README.md` documents the health watchdog that bounds any future wedge to ~1 minute, and
+> `mg_poker_test.js` asserts termination in a **child process with a timeout** (a plain call would
+> hang the suite instead of failing it). Diagnosed on the live process with `kill -USR1 <pid>` plus
+> the V8 inspector — that stack (`runout ← leaveSeat ← pokerLeave`) is the whole diagnosis, so
+> reach for it first when the relay is up but silent.
+
 - **Two-section file** like chess/durak: `// ── poker: pure rules ──` … `// ── poker controller
   ──`. The pure section (`rules/poker.js`, shared byte-for-byte with the worker) is self-contained
   so `tools/mg_poker_test.js` loads it and runs it under Node.

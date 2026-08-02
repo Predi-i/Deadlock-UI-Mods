@@ -82,6 +82,18 @@ scp server/{worker.js,node_server.js,node_storage.js,package.json} \
 ssh root@178.236.246.13 'systemctl restart deadlock-minigames'
 ```
 
+Installing the health watchdog (once per host):
+
+```bash
+scp server/deploy/healthcheck.sh \
+  root@178.236.246.13:/usr/local/sbin/deadlock-minigames-healthcheck
+scp server/deploy/deadlock-minigames-healthcheck.{service,timer} \
+  root@178.236.246.13:/etc/systemd/system/
+ssh root@178.236.246.13 'chmod 0755 /usr/local/sbin/deadlock-minigames-healthcheck &&
+  systemctl daemon-reload &&
+  systemctl enable --now deadlock-minigames-healthcheck.timer'
+```
+
 The generated `worker.js` must always be rebuilt when a rule module, Pixel Battle map/admin asset
 or `worker.core.js` changes.
 
@@ -102,6 +114,38 @@ systemctl start deadlock-minigames-certbot.service
 
 The ACME challenge remains available over port 80 at
 `/.well-known/acme-challenge/`; every other HTTP path redirects to HTTPS.
+
+## Health watchdog
+
+`Restart=always` only covers a process that DIES. It does nothing for a process that is wedged —
+and on 2026-08-02 an infinite loop in the poker rules pinned a core at 100% and stopped the relay
+answering for five hours while systemd still reported it `active`. Because the Hub is a single
+serialized consistency domain on a single-core VPS, one such loop takes down every game.
+
+A timer therefore probes the symptom players actually feel:
+
+```bash
+systemctl status deadlock-minigames-healthcheck.timer
+journalctl -u deadlock-minigames-healthcheck -f
+```
+
+`deploy/healthcheck.sh` (installed as `/usr/local/sbin/deadlock-minigames-healthcheck`) runs every
+30s and restarts the relay after **three consecutive** failed `/api/ping` probes, ~10s apart. One
+miss is not evidence — a deploy or a burst of GeoGuesser proxying can lose a single probe — but a
+run of them across ~30s is. Measured end to end on the VPS by wedging the live process:
+**53 seconds** from wedge to serving traffic again.
+
+Two deliberate properties:
+
+- It **skips when `ActiveState != active`**, so it never fights systemd's own restart backoff and
+  cannot mask a genuine crash loop.
+- It sends `SIGQUIT` before restarting, so Node dumps a JS stack into the journal. That stack is
+  how the poker loop was identified; without it the next occurrence starts from zero.
+
+`sd_notify`/`WatchdogSec` was tried first and rejected: `node:dgram` supports only `udp4`/`udp6`,
+so a pure-Node `AF_UNIX` datagram notifier is not possible without a native dependency. An HTTP
+probe is also strictly better here — it verifies the relay can actually answer, not merely that a
+timer callback still runs.
 
 ## Database and backups
 
