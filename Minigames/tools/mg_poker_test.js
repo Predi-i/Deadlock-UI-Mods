@@ -180,6 +180,60 @@ console.log("full bot games (chip conservation + termination)");
     ok(allTerminated, "every hand terminated with only legal bot actions");
 })();
 
+console.log("leaving a decided hand terminates (relay hang 2026-08-02)");
+(() => {
+    // Regression: one Leave on an already-resolved hand pinned a CPU core at 100% forever and
+    // wedged the whole VPS relay (the Hub runs one request at a time), with no log line and no
+    // crash. Cause: finish()/showdown() set street="over", but STREETS has no "over" key, so
+    // runout()'s `while (street !== "showdown")` walked to undefined and never exited.
+    //
+    // The door into runout() is `canActCount(st) <= 1 && roundOver(st)` - i.e. the hand is
+    // resolved AND nobody can voluntarily act (everyone all-in). Reaching that through bot play
+    // alone is rare, so the state is set up explicitly, which is also what the server holds when
+    // an all-in showdown has been paid out and a player then presses Leave.
+    // Guarded with a child process: a plain call would HANG this suite instead of failing it.
+    const { spawnSync } = require("child_process");
+    const rulesPath = JSON.stringify(path.join(rulesDir, "poker.js"));
+    const setup = `
+        const fs = require("fs");
+        new Function(fs.readFileSync(${rulesPath}, "utf8"))();
+        const M = globalThis.MGRules.poker;
+        const st = M.newHand(3, 0, [100, 100, 100], 5, 10, 1);
+        const rng = M.makeRng(1);
+        let g = 0;
+        while (st.street !== "over" && g++ < 500) {
+            const s = st.toAct; if (s < 0) break;
+            M.applyAction(st, s, M.botAction(st, s, rng));
+        }
+        if (st.street !== "over") { console.log("SETUP_FAILED:" + st.street); process.exit(2); }
+        for (let i = 0; i < 3; i++) { st.allIn[i] = true; st.acted[i] = true; st.bet[i] = 0; }
+        st.currentBet = 0;
+    `;
+    const run = spawnSync(process.execPath, ["-e", `${setup}
+        M.leaveSeat(st, 0);
+        console.log("RETURNED:" + st.street);
+    `], { timeout: 5000, encoding: "utf8" });
+    const out = String(run.stdout || "").trim();
+    ok(run.signal !== "SIGTERM", "leaveSeat on a resolved all-in hand returns instead of spinning");
+    ok(out === "RETURNED:over", `hand stays resolved after the leave (${out || "timed out"})`);
+
+    // runout() itself must terminate from any terminal street, independently of leaveSeat's guard.
+    const direct = spawnSync(process.execPath, ["-e", `${setup}
+        M.applyAction(st, 0, { type: "fold" });   // no-op on a finished hand; must not spin either
+        console.log("RETURNED:" + st.street);
+    `], { timeout: 5000, encoding: "utf8" });
+    ok(direct.signal !== "SIGTERM", "acting on a resolved hand does not spin either");
+
+    // The forfeit behaviour that leaveSeat exists for must survive the new early return.
+    const live = M.newHand(3, 0, [100, 100, 100], 5, 10, 1);
+    M.leaveSeat(live, live.toAct);
+    ok(live.stacks.filter((x) => x === 0).length >= 1, "a mid-hand leaver still forfeits their chips");
+})();
+
+console.log("");
+if (failures) { console.log(failures + " FAILURE(S)"); process.exit(1); }
+else console.log("all poker rules tests passed");
+
 console.log("");
 if (failures) { console.log(failures + " FAILURE(S)"); process.exit(1); }
 else console.log("all poker rules tests passed");

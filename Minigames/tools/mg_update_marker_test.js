@@ -48,8 +48,29 @@ function verify(name, expected) {
 }
 
 verify("relevant-template.png", "current");
-verify("is-1-0-relevant.png", "current");
 verify("outdated-template.png", "outdated");
+// 1.1 is the shipped release; 1.2 is staged so the next bump only has to retire this one.
+verify("is-1-1-relevant.png", "current");
+verify("is-1-2-relevant.png", "current");
+// 1.0 shipped the poker leaveSeat infinite loop (rules/poker.js runout) and is retired, so its
+// players get the update popup.
+verify("is-1-0-relevant.png", "outdated");
+
+// The shipped MG_VERSION must have a marker on disk, or every client's update check silently
+// fails ("Couldn't verify the update marker") instead of reporting up to date. Nothing tied the
+// constant to the files before, so a version bump could ship without its marker.
+(() => {
+    const versionMatch = uiSource.match(/MG_VERSION = "([^"]+)"/);
+    if (!versionMatch) throw new Error("could not read MG_VERSION from mg_ui.js");
+    const shipped = versionMatch[1];
+    const markerName = "is-" + shipped.replace(/\./g, "-") + "-relevant.png";
+    if (!fs.existsSync(path.join(ROOT, "update-markers", markerName)))
+        throw new Error("MG_VERSION is " + shipped + " but " + markerName + " does not exist");
+    const raw = pngSize(markerName);
+    if (classify(raw.w, raw.h) !== "current")
+        throw new Error(markerName + " must classify as current for the shipped version");
+    console.log("  ✓ MG_VERSION " + shipped + " has a current marker (" + markerName + ")");
+})();
 
 // A malformed or unexpected image must never produce a false update notification.
 if (classify(64, 32) !== "invalid" || classify(32, 64) !== "invalid")

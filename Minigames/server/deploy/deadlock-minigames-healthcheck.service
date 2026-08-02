@@ -1,0 +1,12 @@
+[Unit]
+Description=Restart the Deadlock Minigames relay if it stops answering
+# Do not probe while the relay is deliberately stopped or being deployed.
+After=deadlock-minigames.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/deadlock-minigames-healthcheck
+# The probe itself must never be the thing that wedges: three 10s attempts plus two 5s gaps is
+# 40s worst case, so a hung curl cannot outlive the next timer tick.
+TimeoutStartSec=60
+Nice=5

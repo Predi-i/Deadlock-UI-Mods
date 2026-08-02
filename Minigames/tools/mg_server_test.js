@@ -24,10 +24,16 @@ function cloneStored(value) {
 
 let src = fs.readFileSync(path.join(__dirname, "..", "server", "worker.js"), "utf8");
 src = src.replace("export default", "const __workerDefault =").replace("export class Hub", "class Hub");
+// Named helper exports (statsRouteKey, statsSentinelKey, …) are stripped generically rather
+// than one string at a time, so adding another one cannot break this harness with a bare
+// "Unexpected token 'export'" the way the first two did.
+src = src.replace(/^export function /gm, "function ");
 // The reveal tables come out of the SAME bundle the Hub is using. Re-reading the generated file
 // separately would let the two drift and still pass, which is the failure this guards against.
-src += "\n;return { Hub, Worker: __workerDefault, GEO_COUNTRY_NAMES, GEO_CREDIT_KEYS };";
-const { Hub, Worker, GEO_COUNTRY_NAMES, GEO_CREDIT_KEYS } = new Function(src)();
+src += "\n;return { Hub, Worker: __workerDefault, GEO_COUNTRY_NAMES, GEO_CREDIT_KEYS," +
+    " STATS_JS, STATS_HTML, ADMIN_JS, ADMIN_HTML, adminAssetResponse };";
+const { Hub, Worker, GEO_COUNTRY_NAMES, GEO_CREDIT_KEYS,
+    STATS_JS, STATS_HTML, ADMIN_JS, ADMIN_HTML, adminAssetResponse } = new Function(src)();
 
 // Minimal Durable-Object storage stand-in.
 class FakeStorage {
@@ -2285,6 +2291,41 @@ async function main() {
                     `pass-spam: 41 re-passes from a settled seat add 0 events (added ${afterSpam - afterFirst})`);
             }
         }
+    })();
+
+    // ── admin browser assets ──────────────────────────────────────────────────────
+    // The admin pages are template literals inside the bundle, so a syntax error in one
+    // ships silently: ESLint can't see inside the string and nothing else evaluates them.
+    // (A missing element id fails the same way - at runtime, in the browser, on a page
+    // that is only opened occasionally.) Parsing them here is the only guard.
+    (function adminAssets() {
+        const vm = require("vm");
+        for (const [name, source] of [["stats.js", STATS_JS], ["app.js", ADMIN_JS]]) {
+            let parsed = true;
+            try { new vm.Script(source, { filename: name }); } catch (e) {
+                parsed = false;
+                console.error(`     ${e.message}`);
+            }
+            ok(parsed, `admin ${name} parses as valid JavaScript`);
+        }
+        for (const [label, script, html] of [
+            ["stats", STATS_JS, STATS_HTML], ["pixel battle", ADMIN_JS, ADMIN_HTML]
+        ]) {
+            const ids = new Set([...script.matchAll(/getElementById\("([^"]+)"\)/g)].map(m => m[1]));
+            const missing = [...ids].filter((id) => html.indexOf(`id="${id}"`) < 0);
+            ok(missing.length === 0,
+                `every ${label} getElementById target exists in its markup (${ids.size} checked)`);
+        }
+        for (const path of ["/admin", "/admin/stats", "/admin/stats.js", "/admin/style.css"]) {
+            const res = adminAssetResponse(path);
+            ok(res && res.status === 200, `${path} is served as an admin asset`);
+        }
+        ok(!adminAssetResponse("/admin/not-a-real-page"),
+            "an unknown /admin path is not served as an asset");
+        // The stats page reuses the base stylesheet, so both rule sets must be in it.
+        const css = adminAssetResponse("/admin/style.css");
+        ok(css.headers.get("Content-Security-Policy").indexOf("script-src 'self'") >= 0,
+            "admin assets keep their strict CSP");
     })();
 
     console.log(`\nALL SERVER TESTS PASSED (${passed} checks)`);

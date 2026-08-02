@@ -1769,9 +1769,16 @@
 
     // All betting is done but the board isn't complete (players all-in) → deal remaining
     // community cards and go to showdown.
+    // A finished hand ("over", set by finish/showdown) has no successor street: STREETS has no
+    // "over" key, so walking from it yielded undefined and the old `street !== "showdown"` test
+    // could never end - one Leave on an already-decided hand spun a core at 100% forever and
+    // wedged the whole relay, because the Hub processes requests one at a time. The loop now
+    // advances only through the streets that HAVE a successor, so it terminates by construction.
     function runout(st) {
+        if (st.street === "over") return;           // already resolved; nothing to run out
         while (st.street !== "showdown") {
             const nx = STREETS[st.street];
+            if (!nx) break;                         // unknown/terminal street: never spin
             if (nx === "flop") dealBoard(st, 3);
             else if (nx === "turn" || nx === "river") dealBoard(st, 1);
             st.street = nx;
@@ -1789,6 +1796,10 @@
     function leaveSeat(st, seat) {
         const wasLive = st.inHand[seat] && !st.folded[seat];
         st.stacks[seat] = 0;                       // forfeit remaining chips → out of all future hands
+        // A decided hand ("over"/"showdown") must not re-run the terminal checks below: the pot is
+        // already awarded, and a winner still has folded=false so `wasLive` does NOT filter them
+        // out. Leaving at that moment took the runout path on a hand with no street left to deal.
+        if (st.street === "over" || st.street === "showdown") return;
         if (!wasLive) return;
         st.folded[seat] = true;
         st.acted[seat] = true;                     // don't let roundOver wait on a seat that's gone
@@ -2000,7 +2011,7 @@ const ADMIN_HTML = `<!doctype html>
       <p class="eyebrow">DEADLOCK MINIGAMES</p>
       <h1>Pixel Battle Admin</h1>
     </div>
-    <div class="identity"><span id="adminLogin">Authenticating…</span><a href="/admin/logout">Sign out</a></div>
+    <div class="identity"><span id="adminLogin">Authenticating…</span><a href="/admin/stats">Server stats</a><a href="/admin/logout">Sign out</a></div>
   </header>
   <main>
     <section class="panel canvas-panel">
@@ -2344,13 +2355,299 @@ const ADMIN_JS = `"use strict";
   Promise.all([loadState(),loadActions(true)]).catch(function(e){notify(e.message,true);});
 })();`;
 
+/*
+ * Server statistics page. Same fail-closed GitHub session gate as the Pixel Battle admin
+ * (worker.core.js authorizes before any /admin route reaches these assets), and the same
+ * strict CSP: no inline script, no third-party origin, so the chart is hand-drawn on a
+ * <canvas> rather than pulled from a CDN.
+ */
+const STATS_HTML = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Server Stats</title>
+  <link rel="stylesheet" href="/admin/style.css">
+</head>
+<body>
+  <header>
+    <div>
+      <p class="eyebrow">DEADLOCK MINIGAMES</p>
+      <h1>Server Stats</h1>
+    </div>
+    <div class="identity"><span id="statsRange">Loading…</span><a href="/admin">Pixel Battle</a><a href="/admin/logout">Sign out</a></div>
+  </header>
+  <main>
+    <section class="panel">
+      <div class="section-head">
+        <div><h2>Overview</h2><p id="statsMeta">Reading counters…</p></div>
+        <div class="toolbar">
+          <label class="auto-label"><input id="autoRefresh" type="checkbox" checked> Auto</label>
+          <button id="reloadStats" class="secondary" type="button">Reload</button>
+        </div>
+      </div>
+      <div id="cards" class="cards"></div>
+    </section>
+
+    <section class="panel">
+      <div class="section-head">
+        <div><h2>Requests per hour</h2><p>Last 48 hours. Hover a bar for the exact hour.</p></div>
+        <div id="chartLegend" class="chart-legend"></div>
+      </div>
+      <div class="chart-wrap"><canvas id="chart" width="1320" height="260"></canvas></div>
+      <p id="chartHover" class="hint">&nbsp;</p>
+    </section>
+
+    <section class="panel">
+      <div class="section-head">
+        <div><h2>Routes</h2><p>Busiest first, over the retained window.</p></div>
+        <div class="toolbar">
+          <button id="scopeDay" class="secondary active" type="button">Last 24h</button>
+          <button id="scopeAll" class="secondary" type="button">Full window</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Route</th><th>Requests</th><th>Share</th></tr></thead>
+          <tbody id="routeRows"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="section-head">
+        <div><h2>Protocol replies</h2><p>Dimension sentinels, classified per route so real game data is never counted as an error. Rising error rows are the useful signal.</p></div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Reply</th><th>Meaning</th><th>Count</th></tr></thead>
+          <tbody id="sentinelRows"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="section-head">
+        <div><h2>Daily</h2><p>Newest first. Peak unique is the highest single hour that day.</p></div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Day</th><th>Requests</th><th>Avg ms</th><th>Traffic</th><th>Peak unique/h</th></tr></thead>
+          <tbody id="dayRows"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script src="/admin/stats.js" defer></script>
+</body>
+</html>`;
+
+const STATS_CSS = `.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(178px,1fr));gap:1px;background:#232c38}
+.card{padding:17px 19px;background:#111720}.card-label{color:#8290a1;font-size:10px;font-weight:800;letter-spacing:.11em;text-transform:uppercase}
+.card-value{margin-top:7px;font:700 25px/1.1 ui-monospace,SFMono-Regular,Consolas,monospace;color:#f2f6fa}
+.card-note{margin-top:5px;color:#7f8c9c;font-size:11px}.card.warn .card-value{color:#ffb27a}.card.bad .card-value{color:#ff8f98}
+.chart-wrap{padding:18px 22px 6px;overflow-x:auto}#chart{display:block;width:100%;min-width:760px;height:260px}
+.chart-legend{display:flex;flex-wrap:wrap;gap:13px;color:#8996a6;font-size:11px}
+.chart-legend span{display:flex;align-items:center;gap:6px}.chart-legend i{width:10px;height:10px;border-radius:3px;display:inline-block}
+.auto-label{display:flex;align-items:center;gap:7px;color:#8996a6;font-size:12px}.auto-label input{height:auto;width:auto;padding:0}
+button.active{background:#244b43;border-color:#5cc6aa;color:#b8ffeb}
+td.num,th.num{text-align:right;font-family:ui-monospace,SFMono-Regular,Consolas,monospace}
+.bar-cell{min-width:150px}.bar{height:7px;border-radius:4px;background:#2f8f78}
+tr.err td:first-child{color:#ff9aa2}`;
+
+const STATS_JS = `"use strict";
+(function(){
+  var data=null,scope="day",timer=null,hoverIndex=-1;
+  var canvas=document.getElementById("chart"),ctx=canvas.getContext("2d");
+  var toast=document.getElementById("toast");
+  // Protocol sentinels, decoded. Kept in step with worker.core.js statsSentinelKey().
+  var MEANING={
+    "1,1":"OK / nothing new","9,1":"Not your turn / gone","9,2":"Illegal move","9,3":"Bad or foreign token",
+    "9,4":"Throttled, retry","9,5":"No free lobby code","9,6":"Unsupported game","9,7":"Server error",
+    "9,8":"Unknown route / untimed","9,9":"Lobby gone","20,1":"Lobby missing","21,1":"Lobby full",
+    "22,1":"Already started","1,63":"Bad account id","2,63":"Bad pixel batch","3,63":"No credit index",
+    "4,63":"Upload rate limited","5,63":"Banned","6,63":"No panorama yet"
+  };
+  var ERRORS={"9,2":1,"9,3":1,"9,4":1,"9,5":1,"9,6":1,"9,7":1,"4,63":1,"5,63":1};
+  function notify(message,bad){toast.textContent=message;toast.style.borderColor=bad?"#8d4249":"#3a4a5d";toast.classList.add("show");setTimeout(function(){toast.classList.remove("show");},2600);}
+  function num(value){return (value||0).toLocaleString("en-US");}
+  function bytes(value){
+    var units=["B","KiB","MiB","GiB","TiB"],i=0,n=value||0;
+    while(n>=1024&&i<units.length-1){n/=1024;i++;}
+    return (i?n.toFixed(1):String(Math.round(n)))+" "+units[i];
+  }
+  function sumMaps(buckets,field){
+    var out={};
+    buckets.forEach(function(b){var m=b[field]||{};Object.keys(m).forEach(function(k){out[k]=(out[k]||0)+m[k];});});
+    return out;
+  }
+  function totals(buckets){
+    var t={total:0,msSum:0,bytes:0,msMax:0,ipPeak:0};
+    buckets.forEach(function(b){
+      t.total+=b.total||0;t.msSum+=b.msSum||0;t.bytes+=b.bytes||0;
+      t.msMax=Math.max(t.msMax,b.msMax||0);t.ipPeak=Math.max(t.ipPeak,b.ipPeak||0);
+    });
+    return t;
+  }
+  function scoped(){return scope==="day"?data.hours.slice(-24):data.hours;}
+  function card(label,value,note,cls){
+    return "<div class=\\"card"+(cls?" "+cls:"")+"\\"><div class=\\"card-label\\">"+label+
+      "</div><div class=\\"card-value\\">"+value+"</div><div class=\\"card-note\\">"+(note||"&nbsp;")+"</div></div>";
+  }
+  function renderCards(){
+    var day=totals(data.hours.slice(-24)),all=totals(data.hours),last=data.hours[data.hours.length-1];
+    var statuses=sumMaps(data.hours.slice(-24),"statuses"),bad=0,ok=0;
+    Object.keys(statuses).forEach(function(code){if(Number(code)>=400)bad+=statuses[code];else ok+=statuses[code];});
+    var sent=sumMaps(data.hours.slice(-24),"sentinels"),protoErr=0;
+    Object.keys(sent).forEach(function(k){if(ERRORS[k])protoErr+=sent[k];});
+    var avg=day.total?Math.round(day.msSum/day.total):0;
+    var errPct=(ok+bad)?(bad/(ok+bad)*100):0;
+    document.getElementById("cards").innerHTML=
+      card("Requests / 24h",num(day.total),num(all.total)+" in window")+
+      card("This hour",num(last?last.total:0),"resets hourly")+
+      card("Peak unique IPs / h",num(day.ipPeak),"highest hour today")+
+      card("Avg latency",avg+" ms","peak "+num(day.msMax)+" ms",avg>250?"warn":"")+
+      card("Traffic / 24h",bytes(day.bytes),bytes(all.bytes)+" in window")+
+      card("HTTP errors",num(bad),errPct.toFixed(2)+"% of 24h",bad?(errPct>2?"bad":"warn"):"")+
+      card("Protocol errors",num(protoErr),"sentinel replies, 24h",protoErr?"warn":"")+
+      card("Live lobbies",num(data.live.lobbies),num(data.live.seated)+" seated players");
+    document.getElementById("statsMeta").textContent=
+      "Hourly buckets retained: "+data.hoursKept+" \\u00b7 generated "+new Date(data.now).toLocaleString();
+    document.getElementById("statsRange").textContent=num(day.total)+" req / 24h";
+  }
+  function drawChart(){
+    var buckets=data.hours,w=canvas.width,h=canvas.height,padL=54,padR=12,padT=14,padB=30;
+    var plotW=w-padL-padR,plotH=h-padT-padB;
+    ctx.clearRect(0,0,w,h);
+    var peak=1;buckets.forEach(function(b){peak=Math.max(peak,b.total||0);});
+    var ticks=4;
+    ctx.font="11px ui-monospace,Consolas,monospace";ctx.textBaseline="middle";
+    for(var t=0;t<=ticks;t++){
+      var y=padT+plotH-plotH*t/ticks,label=Math.round(peak*t/ticks);
+      ctx.strokeStyle="#1e2733";ctx.beginPath();ctx.moveTo(padL,y+0.5);ctx.lineTo(w-padR,y+0.5);ctx.stroke();
+      ctx.fillStyle="#6f7d8d";ctx.textAlign="right";ctx.fillText(String(label),padL-9,y);
+    }
+    var slot=plotW/buckets.length,barW=Math.max(2,slot-3);
+    buckets.forEach(function(b,i){
+      var x=padL+slot*i+(slot-barW)/2,total=b.total||0;
+      var errs=0,sent=b.sentinels||{};
+      Object.keys(sent).forEach(function(k){if(ERRORS[k])errs+=sent[k];});
+      var httpErr=0,st=b.statuses||{};
+      Object.keys(st).forEach(function(code){if(Number(code)>=400)httpErr+=st[code];});
+      var barH=plotH*total/peak,okH=plotH*Math.max(0,total-errs-httpErr)/peak;
+      if(total){
+        ctx.fillStyle=i===hoverIndex?"#8ce0c6":"#2f8f78";
+        ctx.fillRect(x,padT+plotH-okH,barW,okH);
+        if(errs){ctx.fillStyle="#d9a13c";ctx.fillRect(x,padT+plotH-barH+plotH*httpErr/peak,barW,plotH*errs/peak);}
+        if(httpErr){ctx.fillStyle="#d1555f";ctx.fillRect(x,padT+plotH-barH,barW,plotH*httpErr/peak);}
+      }
+      if(i%6===0){
+        ctx.fillStyle="#6f7d8d";ctx.textAlign="center";
+        ctx.fillText(b.key.substring(11)+"h",x+barW/2,h-padB/2);
+      }
+    });
+    document.getElementById("chartLegend").innerHTML=
+      "<span><i style=\\"background:#2f8f78\\"></i>OK</span>"+
+      "<span><i style=\\"background:#d9a13c\\"></i>Protocol error</span>"+
+      "<span><i style=\\"background:#d1555f\\"></i>HTTP 4xx/5xx</span>";
+  }
+  canvas.addEventListener("mousemove",function(e){
+    if(!data)return;
+    var r=canvas.getBoundingClientRect(),padL=54,padR=12;
+    var scaleX=canvas.width/r.width,x=(e.clientX-r.left)*scaleX;
+    var plotW=canvas.width-padL-padR,slot=plotW/data.hours.length;
+    var index=Math.floor((x-padL)/slot);
+    if(index<0||index>=data.hours.length){hoverIndex=-1;document.getElementById("chartHover").innerHTML="&nbsp;";drawChart();return;}
+    hoverIndex=index;
+    var b=data.hours[index],avg=b.total?Math.round(b.msSum/b.total):0;
+    document.getElementById("chartHover").textContent=
+      b.key.replace("T"," ")+":00 \\u2014 "+num(b.total)+" requests \\u00b7 "+avg+" ms avg \\u00b7 "+
+      bytes(b.bytes)+" \\u00b7 "+num(b.ipPeak)+" unique IPs";
+    drawChart();
+  });
+  canvas.addEventListener("mouseleave",function(){hoverIndex=-1;document.getElementById("chartHover").innerHTML="&nbsp;";drawChart();});
+  function renderRoutes(){
+    var buckets=scoped(),routes=sumMaps(buckets,"routes"),rows=Object.keys(routes).map(function(k){return{route:k,count:routes[k]};});
+    rows.sort(function(a,b){return b.count-a.count;});
+    var total=rows.reduce(function(sum,r){return sum+r.count;},0),host=document.getElementById("routeRows");
+    host.textContent="";
+    if(!rows.length){host.innerHTML="<tr><td colspan=\\"3\\">No requests recorded yet.</td></tr>";return;}
+    rows.forEach(function(r){
+      var pct=total?r.count/total*100:0,tr=document.createElement("tr");
+      tr.innerHTML="<td>"+r.route+"</td><td class=\\"num\\">"+num(r.count)+
+        "</td><td class=\\"bar-cell\\"><div class=\\"bar\\" style=\\"width:"+Math.max(1,pct)+"%\\"></div>"+
+        pct.toFixed(1)+"%</td>";
+      host.appendChild(tr);
+    });
+  }
+  function renderSentinels(){
+    var sent=sumMaps(scoped(),"sentinels"),rows=Object.keys(sent).map(function(k){return{key:k,count:sent[k]};});
+    rows.sort(function(a,b){return b.count-a.count;});
+    var host=document.getElementById("sentinelRows");host.textContent="";
+    if(!rows.length){host.innerHTML="<tr><td colspan=\\"3\\">No dimension replies recorded yet.</td></tr>";return;}
+    rows.forEach(function(r){
+      var tr=document.createElement("tr");
+      if(ERRORS[r.key])tr.className="err";
+      tr.innerHTML="<td>("+r.key+")</td><td>"+(MEANING[r.key]||"unknown")+"</td><td class=\\"num\\">"+num(r.count)+"</td>";
+      host.appendChild(tr);
+    });
+  }
+  function renderDays(){
+    var host=document.getElementById("dayRows");host.textContent="";
+    var days=data.days.slice().reverse();
+    if(!days.length){host.innerHTML="<tr><td colspan=\\"5\\">No daily rollups yet.</td></tr>";return;}
+    days.forEach(function(d){
+      var avg=d.total?Math.round(d.msSum/d.total):0,tr=document.createElement("tr");
+      tr.innerHTML="<td>"+d.key+"</td><td class=\\"num\\">"+num(d.total)+"</td><td class=\\"num\\">"+avg+
+        "</td><td class=\\"num\\">"+bytes(d.bytes)+"</td><td class=\\"num\\">"+num(d.ipPeak)+"</td>";
+      host.appendChild(tr);
+    });
+  }
+  function renderAll(){renderCards();drawChart();renderRoutes();renderSentinels();renderDays();}
+  async function load(){
+    try{
+      var response=await fetch("/admin/api/stats",{headers:{"X-MG-Admin":"1"}});
+      if(!response.ok){
+        var detail=null;try{detail=await response.json();}catch(e){}
+        throw new Error(detail&&detail.error?detail.error:"Request failed ("+response.status+")");
+      }
+      data=await response.json();renderAll();
+    }catch(e){notify(e.message,true);}
+  }
+  function setScope(next){
+    scope=next;
+    document.getElementById("scopeDay").classList.toggle("active",next==="day");
+    document.getElementById("scopeAll").classList.toggle("active",next==="all");
+    if(data){renderRoutes();renderSentinels();}
+  }
+  function setAuto(on){
+    if(timer){clearInterval(timer);timer=null;}
+    if(on)timer=setInterval(load,30000);
+  }
+  document.getElementById("reloadStats").addEventListener("click",load);
+  document.getElementById("scopeDay").addEventListener("click",function(){setScope("day");});
+  document.getElementById("scopeAll").addEventListener("click",function(){setScope("all");});
+  document.getElementById("autoRefresh").addEventListener("change",function(e){setAuto(e.target.checked);});
+  setAuto(true);
+  load();
+})();`;
+
 function adminAssetResponse(path) {
   let body = "", type = "";
   if (path === "/admin" || path === "/admin/") {
     body = ADMIN_HTML;
     type = "text/html; charset=utf-8";
+  } else if (path === "/admin/stats" || path === "/admin/stats/") {
+    body = STATS_HTML;
+    type = "text/html; charset=utf-8";
+  } else if (path === "/admin/stats.js") {
+    body = STATS_JS;
+    type = "text/javascript; charset=utf-8";
   } else if (path === "/admin/style.css") {
-    body = ADMIN_CSS;
+    // One stylesheet for both pages: the stats page reuses the header, panel, table and
+    // toast rules verbatim and only adds cards/chart on top.
+    body = ADMIN_CSS + "\n" + STATS_CSS;
     type = "text/css; charset=utf-8";
   } else if (path === "/admin/app.js") {
     body = ADMIN_JS;
@@ -3725,6 +4022,44 @@ export class Hub {
     } catch (e) {
       return d(9, 7); // server error marker
     }
+  }
+
+  // Fold one flushed batch of in-memory counters into the persistent hourly bucket, then
+  // roll it into the day. Called only from the internal stats route, which the Node adapter
+  // drives on a timer - never from a game route. Prunes at most once an hour.
+  async recordStats(batch) {
+    if (!batch || typeof batch !== "object") return;
+    const hourKey = String(batch.hour || "");
+    if (!/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}$/.test(hourKey)) return;
+    const dayKey = hourKey.substring(0, 10);
+
+    const hourStorageKey = `st:h:${hourKey}`;
+    const hour = (await this.storage.get(hourStorageKey)) || newStatBucket(hourKey);
+    mergeStatBucket(hour, batch);
+    await this.storage.put(hourStorageKey, hour);
+
+    const dayStorageKey = `st:d:${dayKey}`;
+    const day = (await this.storage.get(dayStorageKey)) || newStatBucket(dayKey);
+    mergeStatBucket(day, batch);
+    // A day's peak is the highest hour's peak, not the sum, so it stays a real concurrency
+    // figure rather than drifting upward with every flush.
+    day.ipPeak = Math.max(day.ipPeak || 0, hour.ipPeak || 0);
+    await this.storage.put(dayStorageKey, day);
+
+    await this.maybePruneStats(Date.now());
+  }
+
+  // Retention is a fixed window, so the `st:` key space is bounded no matter the traffic.
+  async maybePruneStats(now) {
+    const last = (await this.storage.get("st:pruned")) || 0;
+    if (now - last < STAT_PRUNE_INTERVAL_MS) return;
+    await this.storage.put("st:pruned", now);
+    const hourCutoff = statHourKey(now - STAT_HOURS_KEPT * 3600000);
+    const dayCutoff = new Date(now - STAT_DAYS_KEPT * 86400000).toISOString().substring(0, 10);
+    const staleHours = await this.storage.list({ prefix: "st:h:", end: `st:h:${hourCutoff}` });
+    for (const key of staleHours.keys()) await this.storage.delete(key);
+    const staleDays = await this.storage.list({ prefix: "st:d:", end: `st:d:${dayCutoff}` });
+    for (const key of staleDays.keys()) await this.storage.delete(key);
   }
 
   async freshCode() {
@@ -5477,6 +5812,153 @@ async function persistPixelOwnership(hub, changed, defaultActionId, loadedRecord
   }
 }
 
+/* ───────────────────────────── request statistics ─────────────────────────────
+ * WHERE THIS RUNS MATTERS. Counting inside the Hub would put one SQLite write on
+ * every /api/poll - the hottest route in the mod, one per player per second. So the
+ * Node adapter accumulates counters IN MEMORY and flushes batched deltas through the
+ * same serialized Hub tail that lobby writes use (see node_server.js). Persistence
+ * therefore keeps its ordering guarantee while the hot path stays read-only.
+ *
+ * BOUNDED BY CONSTRUCTION. Every dimension of the schema is a fixed allowlist:
+ * statsRouteKey folds any unknown path into "/api/*", "/admin/*" or "other", and
+ * statsSentinelKey classifies per route against a fixed mode table. A scanner hitting
+ * random paths cannot mint storage keys. Retention is 48 hourly buckets + 90 daily.
+ *
+ * NO IP ADDRESSES ARE STORED. The adapter keeps a per-hour Set of client IPs purely
+ * to size it, and sends only the COUNT. That distinguishes "ten players" from "one
+ * script in a loop" without putting personal data in SQLite or the daily backups.
+ */
+const STAT_HOURS_KEPT = 48;
+const STAT_DAYS_KEPT = 90;
+const STAT_PRUNE_INTERVAL_MS = 60 * 60000;
+// Every route the relay answers. Anything not listed folds into a catch-all bucket, so
+// this list is the complete storage key space for the `routes` map.
+const STAT_ROUTE_LIST = [
+  "/api/probe", "/api/ping",
+  "/api/pxcanvas", "/api/pxview", "/api/pxversion", "/api/pxbank", "/api/pxput",
+  "/api/geostate", "/api/geoview", "/api/geoguess", "/api/geonext", "/api/geotarget",
+  "/api/geopick", "/api/geoscore", "/api/geoinfo", "/api/geocredit",
+  "/api/create", "/api/quick", "/api/mquick", "/api/cancel", "/api/leave", "/api/join",
+  "/api/status", "/api/match", "/api/move", "/api/poll", "/api/clocks", "/api/reset",
+  "/api/rematch", "/api/room", "/api/start", "/api/dact", "/api/dlog", "/api/ddraw",
+  "/api/dcreate", "/api/djoin", "/api/droom",
+  "/api/pcreate", "/api/pjoin", "/api/proom", "/api/pstart", "/api/pact", "/api/pnext",
+  "/api/plog", "/api/pdraw"
+];
+const STAT_ROUTES = {};
+for (let i = 0; i < STAT_ROUTE_LIST.length; i++) STAT_ROUTES[STAT_ROUTE_LIST[i]] = 1;
+
+// Normalise a request path to one of the bounded bucket keys above. The client appends
+// ".png" to every protocol route (Panorama's loader only fetches image-looking URLs), so
+// strip it exactly as Hub.fetch does before matching.
+export function statsRouteKey(pathname) {
+  const path = String(pathname || "").replace(/\.png$/, "");
+  if (STAT_ROUTES[path]) return path;
+  if (path === "/admin" || path.startsWith("/admin/")) return "/admin/*";
+  if (path.startsWith("/api/")) return "/api/*";
+  return "other";
+}
+
+/* Name the sentinel in a dimension-encoded reply, or "" for real data.
+ *
+ * ⚠ (w,h) ALONE CANNOT IDENTIFY A SENTINEL. The downlink is only 12 bits, so the protocol
+ * reuses the whole small-integer space for real data, and three collisions are reachable in
+ * ordinary play:
+ *   /api/join   d(game, tcIndex+1)  → GeoGuesser is game 9, so a SUCCESSFUL join is (9,1)
+ *   /api/poll   d(from, to) raw     → a legal move 9→1 is also (9,1)
+ *   /api/pdraw  d(card+2, 1)        → hole card 18 is (20,1) = "lobby missing"
+ * Classifying on the pair alone therefore manufactures errors out of normal play, which is
+ * worse than not counting at all: the operator learns to ignore the table.
+ *
+ * So classification is per ROUTE, in one of four modes. The invariant that makes the numbers
+ * trustworthy - and that mg_vps_server_test.js asserts directly - is that NO real data reply
+ * can ever be counted as an ERROR sentinel. Each mode is chosen against the actual encoder:
+ *   FULL  width 9 is unreachable as data (players/cap/clock-band/code-band replies), so every
+ *         recognised pair is genuinely a sentinel.
+ *   GAME  width IS a game id 1..9 (join/match). Only h>=6 is unambiguous, because a game-9
+ *         lobby is untimed and so never sends h above 2, plus the 20/21/22 formation widths,
+ *         which no game id can reach.
+ *   H63   data occupies low h and only h=63 is reserved (Pixel Battle banks/versions, the geo
+ *         reveal indices). Verified: every encoder in this group tops out well below 63.
+ *   RAW   arbitrary small ints (poll/log/draw streams). Only (1,1) and (9,9) are safe, both
+ *         because a real move always has from != to.
+ */
+const STAT_SENT_FULL = 1, STAT_SENT_GAME = 2, STAT_SENT_H63 = 3, STAT_SENT_RAW = 4;
+const STAT_SENTINEL_MODE = {
+  "/api/ping": STAT_SENT_FULL, "/api/move": STAT_SENT_FULL, "/api/reset": STAT_SENT_FULL,
+  "/api/rematch": STAT_SENT_FULL, "/api/cancel": STAT_SENT_FULL, "/api/leave": STAT_SENT_FULL,
+  "/api/start": STAT_SENT_FULL, "/api/pstart": STAT_SENT_FULL, "/api/pnext": STAT_SENT_FULL,
+  "/api/dact": STAT_SENT_FULL, "/api/pact": STAT_SENT_FULL, "/api/geoguess": STAT_SENT_FULL,
+  "/api/geonext": STAT_SENT_FULL, "/api/create": STAT_SENT_FULL, "/api/quick": STAT_SENT_FULL,
+  "/api/mquick": STAT_SENT_FULL, "/api/status": STAT_SENT_FULL, "/api/clocks": STAT_SENT_FULL,
+  "/api/room": STAT_SENT_FULL, "/api/droom": STAT_SENT_FULL, "/api/proom": STAT_SENT_FULL,
+  "/api/dcreate": STAT_SENT_FULL, "/api/pcreate": STAT_SENT_FULL,
+  "/api/djoin": STAT_SENT_FULL, "/api/pjoin": STAT_SENT_FULL, "/api/geoview": STAT_SENT_FULL,
+  "/api/join": STAT_SENT_GAME, "/api/match": STAT_SENT_GAME,
+  "/api/pxput": STAT_SENT_H63, "/api/pxbank": STAT_SENT_H63, "/api/pxversion": STAT_SENT_H63,
+  "/api/pxview": STAT_SENT_H63, "/api/geoscore": STAT_SENT_H63, "/api/geoinfo": STAT_SENT_H63,
+  "/api/geocredit": STAT_SENT_H63, "/api/geotarget": STAT_SENT_H63, "/api/geopick": STAT_SENT_H63,
+  "/api/poll": STAT_SENT_RAW, "/api/dlog": STAT_SENT_RAW, "/api/plog": STAT_SENT_RAW,
+  "/api/ddraw": STAT_SENT_RAW, "/api/pdraw": STAT_SENT_RAW, "/api/geostate": STAT_SENT_RAW
+};
+
+export function statsSentinelKey(route, rawW, rawH) {
+  const mode = STAT_SENTINEL_MODE[route];
+  if (!mode) return "";
+  const w = (rawW - BASE) / STEP, h = (rawH - BASE) / STEP;
+  if (!Number.isInteger(w) || !Number.isInteger(h)) return "";
+  if (w < 0 || h < 0 || w > 63 || h > 63) return "";
+  if (mode === STAT_SENT_H63) return h === 63 && w >= 1 && w <= 6 ? `${w},63` : "";
+  if (mode === STAT_SENT_RAW) {
+    if (w === 1 && h === 1) return "1,1";
+    return w === 9 && h === 9 ? "9,9" : "";
+  }
+  if (mode === STAT_SENT_GAME) {
+    if ((w === 20 || w === 21 || w === 22) && h === 1) return `${w},1`;
+    return w === 9 && h >= 6 && h <= 9 ? `9,${h}` : "";
+  }
+  if (w === 1 && h === 1) return "1,1";
+  if (w === 9 && h >= 1 && h <= 9) return `9,${h}`;
+  if ((w === 20 || w === 21 || w === 22) && h === 1) return `${w},1`;
+  if (h === 63 && w >= 1 && w <= 6) return `${w},63`;
+  return "";
+}
+
+function statHourKey(ts) {
+  return new Date(ts).toISOString().substring(0, 13);   // "2026-08-02T14"
+}
+
+function newStatBucket(key) {
+  return {
+    key: key, total: 0, routes: {}, statuses: {}, sentinels: {},
+    msSum: 0, msMax: 0, bytes: 0, ipPeak: 0
+  };
+}
+
+function mergeStatCounts(target, source) {
+  if (!source) return;
+  const keys = Object.keys(source);
+  for (let i = 0; i < keys.length; i++) {
+    const add = Number(source[keys[i]]);
+    if (!Number.isFinite(add) || add <= 0) continue;
+    target[keys[i]] = (target[keys[i]] || 0) + add;
+  }
+}
+
+// Counters are DELTAS and add up. `msMax` and `ipPeak` are ABSOLUTE observations from the
+// one process that owns the accumulator, so they take a max instead: re-adding a unique-IP
+// count on every flush would multiply it by the number of flushes in the hour.
+function mergeStatBucket(target, batch) {
+  target.total += Math.max(0, Number(batch.total) || 0);
+  target.msSum += Math.max(0, Number(batch.msSum) || 0);
+  target.bytes += Math.max(0, Number(batch.bytes) || 0);
+  target.msMax = Math.max(target.msMax || 0, Number(batch.msMax) || 0);
+  target.ipPeak = Math.max(target.ipPeak || 0, Number(batch.ipCount) || 0);
+  mergeStatCounts(target.routes, batch.routes);
+  mergeStatCounts(target.statuses, batch.statuses);
+  mergeStatCounts(target.sentinels, batch.sentinels);
+}
+
 function adminJson(value, status) {
   return new Response(JSON.stringify(value), {
     status: status || 200,
@@ -5772,6 +6254,39 @@ async function adminPixelBan(hub, request, login, banned) {
   return adminJson({ steamid: target.steamid, banned: false, actionId: action.id });
 }
 
+// Read the retained window back for the stats page. Hourly buckets drive the 48h chart and
+// the route/sentinel tables; daily rollups drive the long view. `live` counts lobbies that
+// currently exist, which is the one number the counters cannot reconstruct.
+async function adminStats(hub) {
+  const now = Date.now();
+  const hours = [];
+  for (let i = STAT_HOURS_KEPT - 1; i >= 0; i--) {
+    const key = statHourKey(now - i * 3600000);
+    const bucket = await hub.storage.get(`st:h:${key}`);
+    hours.push(bucket || newStatBucket(key));
+  }
+  const days = [];
+  for (let i = 29; i >= 0; i--) {
+    const key = new Date(now - i * 86400000).toISOString().substring(0, 10);
+    const bucket = await hub.storage.get(`st:d:${key}`);
+    if (bucket) days.push(bucket);
+  }
+  const lobbies = await hub.storage.list({ prefix: "l:" });
+  let live = 0, seated = 0;
+  for (const lobby of lobbies.values()) {
+    if (!lobby) continue;
+    live++;
+    seated += Math.max(0, Number(lobby.players) || 0);
+  }
+  return adminJson({
+    now: now,
+    hoursKept: STAT_HOURS_KEPT,
+    hours: hours,
+    days: days,
+    live: { lobbies: live, seated: seated }
+  });
+}
+
 async function handlePixelAdmin(hub, request, url) {
   const login = adminIdentity(request);
   if (!login) return adminError("Verified admin identity required.", 403);
@@ -5790,6 +6305,9 @@ async function handlePixelAdmin(hub, request, url) {
   }
   if (request.method === "GET" && path === "/admin/api/ban-status") {
     return adminPixelBanStatus(hub, url);
+  }
+  if (request.method === "GET" && path === "/admin/api/stats") {
+    return adminStats(hub);
   }
   if (request.method === "GET" && path === "/admin/api/canvas") {
     return pixelAdminCanvasPng(hub);

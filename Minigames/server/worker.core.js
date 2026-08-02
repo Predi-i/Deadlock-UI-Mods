@@ -1352,6 +1352,44 @@ export class Hub {
     }
   }
 
+  // Fold one flushed batch of in-memory counters into the persistent hourly bucket, then
+  // roll it into the day. Called only from the internal stats route, which the Node adapter
+  // drives on a timer - never from a game route. Prunes at most once an hour.
+  async recordStats(batch) {
+    if (!batch || typeof batch !== "object") return;
+    const hourKey = String(batch.hour || "");
+    if (!/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}$/.test(hourKey)) return;
+    const dayKey = hourKey.substring(0, 10);
+
+    const hourStorageKey = `st:h:${hourKey}`;
+    const hour = (await this.storage.get(hourStorageKey)) || newStatBucket(hourKey);
+    mergeStatBucket(hour, batch);
+    await this.storage.put(hourStorageKey, hour);
+
+    const dayStorageKey = `st:d:${dayKey}`;
+    const day = (await this.storage.get(dayStorageKey)) || newStatBucket(dayKey);
+    mergeStatBucket(day, batch);
+    // A day's peak is the highest hour's peak, not the sum, so it stays a real concurrency
+    // figure rather than drifting upward with every flush.
+    day.ipPeak = Math.max(day.ipPeak || 0, hour.ipPeak || 0);
+    await this.storage.put(dayStorageKey, day);
+
+    await this.maybePruneStats(Date.now());
+  }
+
+  // Retention is a fixed window, so the `st:` key space is bounded no matter the traffic.
+  async maybePruneStats(now) {
+    const last = (await this.storage.get("st:pruned")) || 0;
+    if (now - last < STAT_PRUNE_INTERVAL_MS) return;
+    await this.storage.put("st:pruned", now);
+    const hourCutoff = statHourKey(now - STAT_HOURS_KEPT * 3600000);
+    const dayCutoff = new Date(now - STAT_DAYS_KEPT * 86400000).toISOString().substring(0, 10);
+    const staleHours = await this.storage.list({ prefix: "st:h:", end: `st:h:${hourCutoff}` });
+    for (const key of staleHours.keys()) await this.storage.delete(key);
+    const staleDays = await this.storage.list({ prefix: "st:d:", end: `st:d:${dayCutoff}` });
+    for (const key of staleDays.keys()) await this.storage.delete(key);
+  }
+
   async freshCode() {
     // Lobby code, rebased to 0..CODE_MAX (was 1000..9999). The whole code must ride DOWN in
     // one image on create/quick, and the level-quantised downlink caps a code at CODE_MAX
@@ -3102,6 +3140,153 @@ async function persistPixelOwnership(hub, changed, defaultActionId, loadedRecord
   }
 }
 
+/* ───────────────────────────── request statistics ─────────────────────────────
+ * WHERE THIS RUNS MATTERS. Counting inside the Hub would put one SQLite write on
+ * every /api/poll - the hottest route in the mod, one per player per second. So the
+ * Node adapter accumulates counters IN MEMORY and flushes batched deltas through the
+ * same serialized Hub tail that lobby writes use (see node_server.js). Persistence
+ * therefore keeps its ordering guarantee while the hot path stays read-only.
+ *
+ * BOUNDED BY CONSTRUCTION. Every dimension of the schema is a fixed allowlist:
+ * statsRouteKey folds any unknown path into "/api/*", "/admin/*" or "other", and
+ * statsSentinelKey classifies per route against a fixed mode table. A scanner hitting
+ * random paths cannot mint storage keys. Retention is 48 hourly buckets + 90 daily.
+ *
+ * NO IP ADDRESSES ARE STORED. The adapter keeps a per-hour Set of client IPs purely
+ * to size it, and sends only the COUNT. That distinguishes "ten players" from "one
+ * script in a loop" without putting personal data in SQLite or the daily backups.
+ */
+const STAT_HOURS_KEPT = 48;
+const STAT_DAYS_KEPT = 90;
+const STAT_PRUNE_INTERVAL_MS = 60 * 60000;
+// Every route the relay answers. Anything not listed folds into a catch-all bucket, so
+// this list is the complete storage key space for the `routes` map.
+const STAT_ROUTE_LIST = [
+  "/api/probe", "/api/ping",
+  "/api/pxcanvas", "/api/pxview", "/api/pxversion", "/api/pxbank", "/api/pxput",
+  "/api/geostate", "/api/geoview", "/api/geoguess", "/api/geonext", "/api/geotarget",
+  "/api/geopick", "/api/geoscore", "/api/geoinfo", "/api/geocredit",
+  "/api/create", "/api/quick", "/api/mquick", "/api/cancel", "/api/leave", "/api/join",
+  "/api/status", "/api/match", "/api/move", "/api/poll", "/api/clocks", "/api/reset",
+  "/api/rematch", "/api/room", "/api/start", "/api/dact", "/api/dlog", "/api/ddraw",
+  "/api/dcreate", "/api/djoin", "/api/droom",
+  "/api/pcreate", "/api/pjoin", "/api/proom", "/api/pstart", "/api/pact", "/api/pnext",
+  "/api/plog", "/api/pdraw"
+];
+const STAT_ROUTES = {};
+for (let i = 0; i < STAT_ROUTE_LIST.length; i++) STAT_ROUTES[STAT_ROUTE_LIST[i]] = 1;
+
+// Normalise a request path to one of the bounded bucket keys above. The client appends
+// ".png" to every protocol route (Panorama's loader only fetches image-looking URLs), so
+// strip it exactly as Hub.fetch does before matching.
+export function statsRouteKey(pathname) {
+  const path = String(pathname || "").replace(/\.png$/, "");
+  if (STAT_ROUTES[path]) return path;
+  if (path === "/admin" || path.startsWith("/admin/")) return "/admin/*";
+  if (path.startsWith("/api/")) return "/api/*";
+  return "other";
+}
+
+/* Name the sentinel in a dimension-encoded reply, or "" for real data.
+ *
+ * ⚠ (w,h) ALONE CANNOT IDENTIFY A SENTINEL. The downlink is only 12 bits, so the protocol
+ * reuses the whole small-integer space for real data, and three collisions are reachable in
+ * ordinary play:
+ *   /api/join   d(game, tcIndex+1)  → GeoGuesser is game 9, so a SUCCESSFUL join is (9,1)
+ *   /api/poll   d(from, to) raw     → a legal move 9→1 is also (9,1)
+ *   /api/pdraw  d(card+2, 1)        → hole card 18 is (20,1) = "lobby missing"
+ * Classifying on the pair alone therefore manufactures errors out of normal play, which is
+ * worse than not counting at all: the operator learns to ignore the table.
+ *
+ * So classification is per ROUTE, in one of four modes. The invariant that makes the numbers
+ * trustworthy - and that mg_vps_server_test.js asserts directly - is that NO real data reply
+ * can ever be counted as an ERROR sentinel. Each mode is chosen against the actual encoder:
+ *   FULL  width 9 is unreachable as data (players/cap/clock-band/code-band replies), so every
+ *         recognised pair is genuinely a sentinel.
+ *   GAME  width IS a game id 1..9 (join/match). Only h>=6 is unambiguous, because a game-9
+ *         lobby is untimed and so never sends h above 2, plus the 20/21/22 formation widths,
+ *         which no game id can reach.
+ *   H63   data occupies low h and only h=63 is reserved (Pixel Battle banks/versions, the geo
+ *         reveal indices). Verified: every encoder in this group tops out well below 63.
+ *   RAW   arbitrary small ints (poll/log/draw streams). Only (1,1) and (9,9) are safe, both
+ *         because a real move always has from != to.
+ */
+const STAT_SENT_FULL = 1, STAT_SENT_GAME = 2, STAT_SENT_H63 = 3, STAT_SENT_RAW = 4;
+const STAT_SENTINEL_MODE = {
+  "/api/ping": STAT_SENT_FULL, "/api/move": STAT_SENT_FULL, "/api/reset": STAT_SENT_FULL,
+  "/api/rematch": STAT_SENT_FULL, "/api/cancel": STAT_SENT_FULL, "/api/leave": STAT_SENT_FULL,
+  "/api/start": STAT_SENT_FULL, "/api/pstart": STAT_SENT_FULL, "/api/pnext": STAT_SENT_FULL,
+  "/api/dact": STAT_SENT_FULL, "/api/pact": STAT_SENT_FULL, "/api/geoguess": STAT_SENT_FULL,
+  "/api/geonext": STAT_SENT_FULL, "/api/create": STAT_SENT_FULL, "/api/quick": STAT_SENT_FULL,
+  "/api/mquick": STAT_SENT_FULL, "/api/status": STAT_SENT_FULL, "/api/clocks": STAT_SENT_FULL,
+  "/api/room": STAT_SENT_FULL, "/api/droom": STAT_SENT_FULL, "/api/proom": STAT_SENT_FULL,
+  "/api/dcreate": STAT_SENT_FULL, "/api/pcreate": STAT_SENT_FULL,
+  "/api/djoin": STAT_SENT_FULL, "/api/pjoin": STAT_SENT_FULL, "/api/geoview": STAT_SENT_FULL,
+  "/api/join": STAT_SENT_GAME, "/api/match": STAT_SENT_GAME,
+  "/api/pxput": STAT_SENT_H63, "/api/pxbank": STAT_SENT_H63, "/api/pxversion": STAT_SENT_H63,
+  "/api/pxview": STAT_SENT_H63, "/api/geoscore": STAT_SENT_H63, "/api/geoinfo": STAT_SENT_H63,
+  "/api/geocredit": STAT_SENT_H63, "/api/geotarget": STAT_SENT_H63, "/api/geopick": STAT_SENT_H63,
+  "/api/poll": STAT_SENT_RAW, "/api/dlog": STAT_SENT_RAW, "/api/plog": STAT_SENT_RAW,
+  "/api/ddraw": STAT_SENT_RAW, "/api/pdraw": STAT_SENT_RAW, "/api/geostate": STAT_SENT_RAW
+};
+
+export function statsSentinelKey(route, rawW, rawH) {
+  const mode = STAT_SENTINEL_MODE[route];
+  if (!mode) return "";
+  const w = (rawW - BASE) / STEP, h = (rawH - BASE) / STEP;
+  if (!Number.isInteger(w) || !Number.isInteger(h)) return "";
+  if (w < 0 || h < 0 || w > 63 || h > 63) return "";
+  if (mode === STAT_SENT_H63) return h === 63 && w >= 1 && w <= 6 ? `${w},63` : "";
+  if (mode === STAT_SENT_RAW) {
+    if (w === 1 && h === 1) return "1,1";
+    return w === 9 && h === 9 ? "9,9" : "";
+  }
+  if (mode === STAT_SENT_GAME) {
+    if ((w === 20 || w === 21 || w === 22) && h === 1) return `${w},1`;
+    return w === 9 && h >= 6 && h <= 9 ? `9,${h}` : "";
+  }
+  if (w === 1 && h === 1) return "1,1";
+  if (w === 9 && h >= 1 && h <= 9) return `9,${h}`;
+  if ((w === 20 || w === 21 || w === 22) && h === 1) return `${w},1`;
+  if (h === 63 && w >= 1 && w <= 6) return `${w},63`;
+  return "";
+}
+
+function statHourKey(ts) {
+  return new Date(ts).toISOString().substring(0, 13);   // "2026-08-02T14"
+}
+
+function newStatBucket(key) {
+  return {
+    key: key, total: 0, routes: {}, statuses: {}, sentinels: {},
+    msSum: 0, msMax: 0, bytes: 0, ipPeak: 0
+  };
+}
+
+function mergeStatCounts(target, source) {
+  if (!source) return;
+  const keys = Object.keys(source);
+  for (let i = 0; i < keys.length; i++) {
+    const add = Number(source[keys[i]]);
+    if (!Number.isFinite(add) || add <= 0) continue;
+    target[keys[i]] = (target[keys[i]] || 0) + add;
+  }
+}
+
+// Counters are DELTAS and add up. `msMax` and `ipPeak` are ABSOLUTE observations from the
+// one process that owns the accumulator, so they take a max instead: re-adding a unique-IP
+// count on every flush would multiply it by the number of flushes in the hour.
+function mergeStatBucket(target, batch) {
+  target.total += Math.max(0, Number(batch.total) || 0);
+  target.msSum += Math.max(0, Number(batch.msSum) || 0);
+  target.bytes += Math.max(0, Number(batch.bytes) || 0);
+  target.msMax = Math.max(target.msMax || 0, Number(batch.msMax) || 0);
+  target.ipPeak = Math.max(target.ipPeak || 0, Number(batch.ipCount) || 0);
+  mergeStatCounts(target.routes, batch.routes);
+  mergeStatCounts(target.statuses, batch.statuses);
+  mergeStatCounts(target.sentinels, batch.sentinels);
+}
+
 function adminJson(value, status) {
   return new Response(JSON.stringify(value), {
     status: status || 200,
@@ -3397,6 +3582,39 @@ async function adminPixelBan(hub, request, login, banned) {
   return adminJson({ steamid: target.steamid, banned: false, actionId: action.id });
 }
 
+// Read the retained window back for the stats page. Hourly buckets drive the 48h chart and
+// the route/sentinel tables; daily rollups drive the long view. `live` counts lobbies that
+// currently exist, which is the one number the counters cannot reconstruct.
+async function adminStats(hub) {
+  const now = Date.now();
+  const hours = [];
+  for (let i = STAT_HOURS_KEPT - 1; i >= 0; i--) {
+    const key = statHourKey(now - i * 3600000);
+    const bucket = await hub.storage.get(`st:h:${key}`);
+    hours.push(bucket || newStatBucket(key));
+  }
+  const days = [];
+  for (let i = 29; i >= 0; i--) {
+    const key = new Date(now - i * 86400000).toISOString().substring(0, 10);
+    const bucket = await hub.storage.get(`st:d:${key}`);
+    if (bucket) days.push(bucket);
+  }
+  const lobbies = await hub.storage.list({ prefix: "l:" });
+  let live = 0, seated = 0;
+  for (const lobby of lobbies.values()) {
+    if (!lobby) continue;
+    live++;
+    seated += Math.max(0, Number(lobby.players) || 0);
+  }
+  return adminJson({
+    now: now,
+    hoursKept: STAT_HOURS_KEPT,
+    hours: hours,
+    days: days,
+    live: { lobbies: live, seated: seated }
+  });
+}
+
 async function handlePixelAdmin(hub, request, url) {
   const login = adminIdentity(request);
   if (!login) return adminError("Verified admin identity required.", 403);
@@ -3415,6 +3633,9 @@ async function handlePixelAdmin(hub, request, url) {
   }
   if (request.method === "GET" && path === "/admin/api/ban-status") {
     return adminPixelBanStatus(hub, url);
+  }
+  if (request.method === "GET" && path === "/admin/api/stats") {
+    return adminStats(hub);
   }
   if (request.method === "GET" && path === "/admin/api/canvas") {
     return pixelAdminCanvasPng(hub);

@@ -1,0 +1,15 @@
+[Unit]
+Description=Probe the Deadlock Minigames relay every 30 seconds
+
+[Timer]
+# Start probing shortly after boot, then every 30s. Worst case detection is one interval plus the
+# probe's own 3 attempts (~30s), so a wedge is caught in about a minute instead of five hours.
+OnBootSec=60
+OnUnitActiveSec=30
+# A missed probe window is not worth catching up on - only the current state matters.
+Persistent=false
+AccuracySec=5s
+Unit=deadlock-minigames-healthcheck.service
+
+[Install]
+WantedBy=timers.target

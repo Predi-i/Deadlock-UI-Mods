@@ -82,6 +82,18 @@ scp server/{worker.js,node_server.js,node_storage.js,package.json} \
 ssh root@178.236.246.13 'systemctl restart deadlock-minigames'
 ```
 
+Installing the health watchdog (once per host):
+
+```bash
+scp server/deploy/healthcheck.sh \
+  root@178.236.246.13:/usr/local/sbin/deadlock-minigames-healthcheck
+scp server/deploy/deadlock-minigames-healthcheck.{service,timer} \
+  root@178.236.246.13:/etc/systemd/system/
+ssh root@178.236.246.13 'chmod 0755 /usr/local/sbin/deadlock-minigames-healthcheck &&
+  systemctl daemon-reload &&
+  systemctl enable --now deadlock-minigames-healthcheck.timer'
+```
+
 The generated `worker.js` must always be rebuilt when a rule module, Pixel Battle map/admin asset
 or `worker.core.js` changes.
 
@@ -102,6 +114,38 @@ systemctl start deadlock-minigames-certbot.service
 
 The ACME challenge remains available over port 80 at
 `/.well-known/acme-challenge/`; every other HTTP path redirects to HTTPS.
+
+## Health watchdog
+
+`Restart=always` only covers a process that DIES. It does nothing for a process that is wedged —
+and on 2026-08-02 an infinite loop in the poker rules pinned a core at 100% and stopped the relay
+answering for five hours while systemd still reported it `active`. Because the Hub is a single
+serialized consistency domain on a single-core VPS, one such loop takes down every game.
+
+A timer therefore probes the symptom players actually feel:
+
+```bash
+systemctl status deadlock-minigames-healthcheck.timer
+journalctl -u deadlock-minigames-healthcheck -f
+```
+
+`deploy/healthcheck.sh` (installed as `/usr/local/sbin/deadlock-minigames-healthcheck`) runs every
+30s and restarts the relay after **three consecutive** failed `/api/ping` probes, ~10s apart. One
+miss is not evidence — a deploy or a burst of GeoGuesser proxying can lose a single probe — but a
+run of them across ~30s is. Measured end to end on the VPS by wedging the live process:
+**53 seconds** from wedge to serving traffic again.
+
+Two deliberate properties:
+
+- It **skips when `ActiveState != active`**, so it never fights systemd's own restart backoff and
+  cannot mask a genuine crash loop.
+- It sends `SIGQUIT` before restarting, so Node dumps a JS stack into the journal. That stack is
+  how the poker loop was identified; without it the next occurrence starts from zero.
+
+`sd_notify`/`WatchdogSec` was tried first and rejected: `node:dgram` supports only `udp4`/`udp6`,
+so a pure-Node `AF_UNIX` datagram notifier is not possible without a native dependency. An HTTP
+probe is also strictly better here — it verifies the relay can actually answer, not merely that a
+timer callback still runs.
 
 ## Database and backups
 
@@ -166,6 +210,36 @@ curl -s -o /dev/null -w '%{http_code}\n' -k https://127.0.0.1/admin   # 302 = co
 ```
 
 Never commit or paste these secrets into source files.
+
+## Request statistics
+
+The relay counts its own traffic and exposes it at `https://178.236.246.13/admin/stats`, behind the
+same GitHub session gate as the Pixel Battle admin. The two pages link to each other in the header.
+
+Where the counting happens is deliberate. Doing it inside `Hub` would add a SQLite write to every
+`/api/poll` — the hottest route in the mod, roughly one per player per second. Instead
+`node_server.js` accumulates counters in memory and flushes batched deltas every 30 seconds through
+the same serialized Hub tail that lobby writes use, so persistence keeps its ordering guarantee
+while the hot path stays read-only. `close()` flushes the final partial window, so a deploy restart
+does not drop up to 30 seconds of counters.
+
+Recorded per hour: total requests, per-route counts, HTTP status counts, protocol sentinel counts,
+summed and peak latency, response bytes, and the peak number of unique client IPs. Hourly buckets
+are kept for 48 hours and rolled into daily totals kept for 90 days.
+
+- **No IP address is ever persisted.** The adapter keeps a bounded per-hour `Set` of addresses only
+  to size it and stores the count alone, which separates "ten players" from "one script in a loop"
+  without putting personal data in SQLite or the daily backups.
+- **The key space is bounded by construction.** `statsRouteKey` folds any unrecognised path into
+  `/api/*`, `/admin/*` or `other`, and `statsSentinelKey` names only the known protocol sentinels,
+  so a scanner hitting random paths cannot grow storage.
+- **Collection can never fail a request.** `stats.record` runs in a `finally` block on every
+  response and swallows everything; an exception there would turn a working route into an error for
+  the client.
+
+The sentinel table is the diagnostic worth watching, because it makes the failure modes in
+`ARCHITECTURE.md` §5.1 visible per hour instead of weeks later: rising `(9,7)` means storage errors,
+`(9,4)` means the rate limiter is biting real players, `(9,3)` means seat-token mismatches.
 
 ## Security and capacity notes
 
