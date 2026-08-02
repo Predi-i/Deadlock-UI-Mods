@@ -4,7 +4,17 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=simple
+# notify (not simple) so the app can send READY=1 and WATCHDOG=1 heartbeats. systemd ignores
+# WatchdogSec entirely under Type=simple.
+Type=notify
+NotifyAccess=main
+# An infinite loop in the poker rules once wedged the relay for five hours (2026-08-02): the
+# process never died, so Restart=always never fired and systemd still reported it active. The
+# heartbeat runs through the Hub's serialized queue, so a blocked event loop OR a stuck queue
+# both stop it and systemd restarts the service.
+# 90s = three missed 30s beats. Deliberately above headersTimeout (70s) so a genuinely slow
+# upstream - GeoGuesser proxies panoramas from external CDNs - cannot trigger a false restart.
+WatchdogSec=90
 User=minigames
 Group=minigames
 WorkingDirectory=/opt/deadlock-minigames

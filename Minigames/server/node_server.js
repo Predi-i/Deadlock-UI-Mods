@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { createSocket } from "node:dgram";
 import { setDefaultResultOrder } from "node:dns";
 import { isIP } from "node:net";
 import { resolve } from "node:path";
@@ -112,6 +113,74 @@ function sentinelFromBody(route, contentType, body) {
   if (String(contentType || "").indexOf("image/png") < 0) return "";
   const width = body.readUInt32BE(16), height = body.readUInt32BE(20);
   return statsSentinelKey(route, width, height);
+}
+
+/**
+ * systemd watchdog notifier (sd_notify over AF_UNIX, no dependency needed).
+ *
+ * Why this exists: on 2026-08-02 an infinite loop in the poker rules pinned a core at 100% and
+ * the relay stopped answering for five hours. `Restart=always` never fired, because the process
+ * had not died - systemd still saw it as active. Only a liveness signal can distinguish "running"
+ * from "wedged".
+ *
+ * The heartbeat is deliberately routed through the Hub's serialized queue rather than sent
+ * straight from the timer. A blocked event loop stops both, but a Hub tail that is stuck (the
+ * actual failure mode here, since every request funnels through it) would otherwise keep looking
+ * healthy while no player can be served.
+ *
+ * Silently inert when NOTIFY_SOCKET is unset, so local runs and tests are unaffected.
+ */
+function createWatchdog(onBeat) {
+  const address = process.env.NOTIFY_SOCKET || "";
+  if (!address) return { start: function () {}, stop: function () {} };
+  // A leading '@' denotes a Linux abstract namespace socket, encoded as a leading NUL byte.
+  const target = address.startsWith("@") ? `\0${address.substring(1)}` : address;
+  // WATCHDOG_USEC is what systemd derived from WatchdogSec. Ping at a third of it so two
+  // consecutive lost beats are still not fatal; a wedge misses every beat and trips it anyway.
+  const microseconds = Number(process.env.WATCHDOG_USEC);
+  const period = Number.isFinite(microseconds) && microseconds > 0 ?
+    Math.max(1000, Math.floor(microseconds / 3000)) : STATS_FLUSH_MS;
+  let socket = null, timer = null, inFlight = false;
+
+  function send(payload) {
+    if (!socket) return;
+    socket.send(Buffer.from(payload), 0, Buffer.byteLength(payload), target, function (error) {
+      // A failed notification must never take the relay down with it.
+      if (error) console.error("watchdog notify failed:", error.message);
+    });
+  }
+
+  function beat() {
+    // Skip rather than queue if the previous probe has not come back: piling probes onto a
+    // stalled tail would only add work, and missing the beats is exactly the signal we want.
+    if (inFlight) return;
+    inFlight = true;
+    Promise.resolve().then(onBeat).then(function () {
+      send("WATCHDOG=1");
+    }, function (error) {
+      // Deliberately no WATCHDOG=1: a failing probe should trip the watchdog.
+      console.error("watchdog probe failed:", error);
+    }).then(function () { inFlight = false; });
+  }
+
+  return {
+    start: function () {
+      socket = createSocket("unix_dgram");
+      socket.on("error", function (error) {
+        console.error("watchdog socket error:", error.message);
+      });
+      socket.unref();
+      send("READY=1");
+      timer = setInterval(beat, period);
+      if (typeof timer.unref === "function") timer.unref();
+    },
+    stop: function () {
+      if (timer) clearInterval(timer);
+      timer = null;
+      if (socket) { send("STOPPING=1"); try { socket.close(); } catch (error) {} }
+      socket = null;
+    }
+  };
 }
 
 // The production VPS has working IPv4 egress but no routed IPv6. Node's fetch can otherwise
@@ -312,13 +381,21 @@ export function createMinigamesServer(options) {
   const flushTimer = setInterval(function () { flushStats(); }, STATS_FLUSH_MS);
   if (typeof flushTimer.unref === "function") flushTimer.unref();
 
+  // Liveness probe: an empty task through the same tail every request uses. It resolves only if
+  // the event loop runs AND the Hub queue is draining, which is precisely "can serve a player".
+  const watchdog = createWatchdog(function () {
+    return serialHubTask(function () { return null; });
+  });
+
   return {
     server: server,
     storage: storage,
     stats: stats,
     flushStats: flushStats,
+    watchdog: watchdog,
     close: function () {
       clearInterval(flushTimer);
+      watchdog.stop();
       return new Promise(function (resolveClose, rejectClose) {
         server.close(async (error) => {
           if (error) { rejectClose(error); return; }
@@ -347,6 +424,8 @@ if (isMainModule()) {
   runtime.server.listen(port, host, () => {
     const address = runtime.server.address();
     console.log(`deadlock-minigames listening on ${address.address}:${address.port}`);
+    // Only announce readiness once the socket is actually accepting connections.
+    runtime.watchdog.start();
   });
 
   let stopping = false;

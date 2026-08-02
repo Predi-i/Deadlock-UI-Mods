@@ -1769,9 +1769,16 @@
 
     // All betting is done but the board isn't complete (players all-in) → deal remaining
     // community cards and go to showdown.
+    // A finished hand ("over", set by finish/showdown) has no successor street: STREETS has no
+    // "over" key, so walking from it yielded undefined and the old `street !== "showdown"` test
+    // could never end - one Leave on an already-decided hand spun a core at 100% forever and
+    // wedged the whole relay, because the Hub processes requests one at a time. The loop now
+    // advances only through the streets that HAVE a successor, so it terminates by construction.
     function runout(st) {
+        if (st.street === "over") return;           // already resolved; nothing to run out
         while (st.street !== "showdown") {
             const nx = STREETS[st.street];
+            if (!nx) break;                         // unknown/terminal street: never spin
             if (nx === "flop") dealBoard(st, 3);
             else if (nx === "turn" || nx === "river") dealBoard(st, 1);
             st.street = nx;
@@ -1789,6 +1796,10 @@
     function leaveSeat(st, seat) {
         const wasLive = st.inHand[seat] && !st.folded[seat];
         st.stacks[seat] = 0;                       // forfeit remaining chips → out of all future hands
+        // A decided hand ("over"/"showdown") must not re-run the terminal checks below: the pot is
+        // already awarded, and a winner still has folded=false so `wasLive` does NOT filter them
+        // out. Leaving at that moment took the runout path on a hand with no street left to deal.
+        if (st.street === "over" || st.street === "showdown") return;
         if (!wasLive) return;
         st.folded[seat] = true;
         st.acted[seat] = true;                     // don't let roundOver wait on a seat that's gone
