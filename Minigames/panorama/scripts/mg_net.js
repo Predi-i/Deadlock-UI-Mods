@@ -185,6 +185,59 @@
     let reqQueue = [];
     let reqActive = false;
 
+    // ── transport health (for HONEST error messages) ─────────────────────────
+    // Every failure used to surface to the player as "Check the server", which is a guess - and on
+    // 2026-08-03 it was the WRONG guess: a player reported the relay as down (ping, create, quick
+    // match, GeoGuesser, Pixel Battle and the update check all timing out) while the VPS was
+    // serving /api/ping.png normally. His log showed `dims stayed 0 for 8000ms` on all 6 probe
+    // attempts, i.e. the engine never loaded the image AT ALL - nothing to decode, nothing to do
+    // with the server.
+    //
+    // The discriminator is free, because we already talk to two unrelated hosts:
+    //   · the relay        - a raw IP (no DNS needed), Let's Encrypt short-lived IP cert
+    //   · the update check - raw.githubusercontent.com (needs DNS), completely different chain
+    // A dead relay cannot stop a GitHub PNG from loading. So "not one image has loaded from EITHER
+    // host" means the game's own outbound image loading is blocked locally (a firewall, a proxy, an
+    // AV, or another mod), and we must say so instead of blaming the relay.
+    //
+    // ⚠ The claim is gated on having actually SEEN two different hosts fail, not on a failure count.
+    // Counting alone is too eager and would make the message a lie in two ordinary cases: one
+    // update check against a hiccuping GitHub records TWO failed loads (drainQueue silently retries
+    // a non-probe job once), and one calibration burst records THREE (PROBE_ATTEMPTS) - so any
+    // count-based threshold low enough to be useful fires when only ONE host was ever contacted,
+    // which is exactly the evidence that cannot distinguish "the relay is down" from "nothing
+    // loads here". Requiring two distinct hosts is the whole basis of the claim, so it is the
+    // condition, and `loadsOk` cancels it outright: if anything has ever loaded, the channel works
+    // and the relay is a fair suspect again.
+    let loadsOk = 0;
+    const failedHosts = {};
+    let failedHostCount = 0;
+    // Host part of a URL, or "" when it can't be determined (a relative/odd src). Panorama has no
+    // URL parser, so this is a deliberate small string walk.
+    function hostOf(url) {
+        const s = String(url || "");
+        const p = s.indexOf("://");
+        if (p < 0) return "";
+        const rest = s.slice(p + 3);
+        const cut = rest.search(/[/?#]/);
+        return (cut < 0 ? rest : rest.slice(0, cut)).toLowerCase();
+    }
+    function noteLoad(good, url) {
+        if (good) { loadsOk++; return; }
+        const h = hostOf(url);
+        if (!h || failedHosts[h]) return;
+        failedHosts[h] = true;
+        failedHostCount++;
+    }
+    // A short, honest sentence for the player, or null when we cannot justify the claim.
+    function transportDiagnosis() {
+        if (loadsOk > 0) return null;          // the channel works; a real server problem is possible
+        if (failedHostCount < 2) return null;  // only one host tried: cannot tell local from remote
+        return "Deadlock isn't loading any web images on this PC (the update check fails too, " +
+            "and that's a different site). Usually a firewall, proxy, AV or another mod. " +
+            "The server itself is up.";
+    }
+
     function rawRequest(path, params, onDone, onError) {
         reqQueue.push({
             kind: "protocol", path: path, params: params, onDone: onDone, onError: onError,
@@ -298,6 +351,7 @@
             let hh = Number(img.actuallayoutheight);
             if (w > 0 && hh > 0) {
                 finished = true;
+                noteLoad(true, url);
                 log(`← IMG = ${w}x${hh} (${Math.round(elapsed)}ms)`);
                 onDone(img, w, hh);
                 return;
@@ -305,6 +359,7 @@
             elapsed += POLL_STEP * 1000;
             if (elapsed >= REQ_TIMEOUT_MS) {
                 finished = true;
+                noteLoad(false, url);
                 discard();
                 log(`✗ IMAGE TIMEOUT (dims stayed 0 for ${REQ_TIMEOUT_MS}ms)`);
                 if (onError) onError("timeout");
@@ -365,6 +420,7 @@
             let hh = img.actuallayoutheight;
             if (w > 0 && hh > 0) {
                 finished = true;
+                noteLoad(true, BASE_URL);
                 cleanup();
                 log(`← ${path} = ${w}x${hh} (${Math.round(elapsed)}ms)`);
                 onDone(w, hh);
@@ -373,6 +429,7 @@
             elapsed += POLL_STEP * 1000;
             if (elapsed >= REQ_TIMEOUT_MS) {
                 finished = true;
+                noteLoad(false, BASE_URL);
                 cleanup();
                 log(`✗ TIMEOUT ${path} (dims stayed 0 for ${REQ_TIMEOUT_MS}ms)`);
                 if (onError) onError("timeout");
@@ -557,6 +614,9 @@
             }
         },
         recalibrate: function (cb) { calibrated = false; calibrate(cb); },
+        // null when the transport looks healthy (so the caller keeps its own message), else a
+        // player-facing sentence explaining that NOTHING is loading locally. See transportDiagnosis.
+        diagnosis: transportDiagnosis,
         pollDelay: pollDelay,
         waitDelay: waitDelay,
         setDebug: setDebug,

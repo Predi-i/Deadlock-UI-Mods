@@ -1736,6 +1736,33 @@ declares the Panorama globals (`$`, `Game`, `GameUI`, …) as read-only so real 
 false-positive; the `server/` block is `sourceType: module` (Worker-compatible core plus the Node
 VPS adapter), tools are CommonJS.
 
+#### 10.1.2 Never blame the relay by guess (`MG.Net.diagnosis`)
+
+Every network failure used to reach the player as **"Check the server"**. On 2026-08-03 that was the
+wrong guess: a player reported the relay as down (ping, create, quick match, GeoGuesser and Pixel
+Battle all timing out) while the VPS was serving `/api/ping.png` normally — verified HTTP 200 with a
+valid cert. His console showed `dims stayed 0 for 8000ms` on all six probe attempts: **the engine
+never loaded the image at all**, so there was nothing to decode and nothing the server could have
+done. Because our message pointed at the server, the report pointed at the server too.
+
+The discriminator costs nothing, because the mod already talks to **two unrelated hosts**: the relay
+(a raw IP — no DNS, Let's Encrypt short-lived IP cert) and `raw.githubusercontent.com` for the
+update check (needs DNS, completely different chain). A dead relay cannot stop a GitHub PNG from
+loading. So *nothing loaded from either host* ⇒ outbound image loading is blocked locally (firewall,
+proxy, AV, another mod) and we say so; the update check already runs automatically on the first
+DL Arcade open, so the evidence exists by the time the player presses Create.
+
+⚠ **The claim is gated on two DISTINCT hosts having failed, not on a failure count.** A count is too
+eager and would make the message a lie: one update check against a hiccuping GitHub records **two**
+failed loads (`drainQueue` silently re-queues a non-probe job once) and one calibration burst records
+**three** (`PROBE_ATTEMPTS`), so any usefully-low count fires when only ONE host was ever
+contacted — exactly the evidence that *cannot* separate "the relay is down" from "nothing loads
+here". `loadsOk > 0` cancels the claim outright: if anything has ever loaded, the channel works and
+the relay is a fair suspect again. GeoGuesser panoramas and Pixel Battle tiles are **proxied through
+our own VPS**, so GitHub really is the only second host. `tools/mg_net_diagnosis_test.js` pins all of
+it, including that no network error path calls `setStatus` with a hard-coded "Check the server"
+(which could not be corrected at runtime — that is how the wrong blame shipped).
+
 **It still can't render.** Lint proves every referenced name exists and a few structural invariants
 hold; it says NOTHING about layout, animation, drag/drop, timing, or whether a move looks right.
 Those remain "in-game verified by the maintainer or unverified". `node_modules/` + `package-lock.json`
