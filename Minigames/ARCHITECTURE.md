@@ -1721,7 +1721,9 @@ crash only when their branch runs in-game, both invisible to every check we had.
 
 The one exception: state-free helpers hoisted onto `MG.Widgets` (mg_games.js) CAN be tested, and
 `tools/mg_widgets_test.js` does that for `winPos` / `parsePx` / `squareFromPanel` / `makeNavBtn` /
-`setNavState`. Anything that reads a controller's closure (board, cells, history) still can't be.
+`setNavState`. Anything that reads a controller's closure (board, cells, history) still can't be
+read directly — but it CAN be driven and observed through the panels, which is what
+`mg_checkers_play_test.js` does for checkers (§10.1.1). Every other controller remains uncovered.
 It is also possible to drive a whole view under a fake `$` — the lobby-room refactor was verified
 that way — but that is a per-change harness, not standing coverage.
 
@@ -1734,6 +1736,49 @@ declares the Panorama globals (`$`, `Game`, `GameUI`, …) as read-only so real 
 false-positive; the `server/` block is `sourceType: module` (Worker-compatible core plus the Node
 VPS adapter), tools are CommonJS.
 
+#### 10.1.2 Never blame the relay by guess (`MG.Net.diagnosis`)
+
+Every network failure used to reach the player as **"Check the server"**. On 2026-08-03 that was the
+wrong guess: a player reported the relay as down (ping, create, quick match, GeoGuesser and Pixel
+Battle all timing out) while the VPS was serving `/api/ping.png` normally — verified HTTP 200 with a
+valid cert. His console showed `dims stayed 0 for 8000ms` on all six probe attempts: **the engine
+never loaded the image at all**, so there was nothing to decode and nothing the server could have
+done. Because our message pointed at the server, the report pointed at the server too.
+
+The discriminator costs nothing, because the mod already talks to **two unrelated hosts**: the relay
+(a raw IP — no DNS, Let's Encrypt short-lived IP cert) and `raw.githubusercontent.com` for the
+update check (needs DNS, completely different chain). A dead relay cannot stop a GitHub PNG from
+loading. So *nothing loaded from either host* ⇒ outbound image loading is blocked locally (firewall,
+proxy, AV, another mod) and we say so; the update check already runs automatically on the first
+DL Arcade open, so the evidence exists by the time the player presses Create.
+
+⚠ **The claim is gated on two DISTINCT hosts having failed, not on a failure count.** A count is too
+eager and would make the message a lie: one update check against a hiccuping GitHub records **two**
+failed loads (`drainQueue` silently re-queues a non-probe job once) and one calibration burst records
+**three** (`PROBE_ATTEMPTS`), so any usefully-low count fires when only ONE host was ever
+contacted — exactly the evidence that *cannot* separate "the relay is down" from "nothing loads
+here". `loadsOk > 0` cancels the claim outright: if anything has ever loaded, the channel works and
+the relay is a fair suspect again. GeoGuesser panoramas and Pixel Battle tiles are **proxied through
+our own VPS**, so GitHub really is the only second host. `tools/mg_net_diagnosis_test.js` pins all of
+it, including that no network error path calls `setStatus` with a hard-coded "Check the server"
+(which could not be corrected at runtime — that is how the wrong blame shipped).
+
+**How the engine actually fetches these images.** The loader dispatches on URL scheme into
+`CLoadFileURLTask`, whose completion is a Steamworks `HTTPRequestCompleted_t` callback
+(`game/bin/win64/panorama_strings.txt:413,493`) — i.e. remote images ride **Steam's HTTP stack**,
+not a socket the mod controls. The engine also knows an **`ImageFailedLoad`** panel event
+(`:3135`), but no shipped Deadlock layout or script listens for it, so `mg_net` subscribes to it
+**opportunistically**: when it fires we fail in milliseconds instead of `REQ_TIMEOUT_MS`, and when
+it never fires the polling timeout is still the authority and nothing changes. Both properties are
+pinned by `mg_net_diagnosis_test.js`. This matters for a blocked machine: the failure used to take
+3 probe attempts × 8 s of total silence before anything appeared on screen. Related failure strings
+worth knowing: `Image '%s' size too large (... image load failing)` (`:4728`, a compiled-in cap with
+no convar) and `Failed to load image data from %s` (`:2895`).
+
+⚠ There is **no convar, setting or allowlist** that enables/disables remote image loading — checked
+against all 13k lines of `DumpSource2/convars.txt`. So "tell the player to flip a setting" is not an
+available answer; the diagnosis message deliberately points at firewall/proxy/AV/another mod.
+
 **It still can't render.** Lint proves every referenced name exists and a few structural invariants
 hold; it says NOTHING about layout, animation, drag/drop, timing, or whether a move looks right.
 Those remain "in-game verified by the maintainer or unverified". `node_modules/` + `package-lock.json`
@@ -1742,6 +1787,37 @@ are gitignored and dev-only — nothing here is packed into the VPK.
 When in doubt about a Panorama capability, **grep the game's own files**
 (`G:\GameTracking-Deadlock\game\citadel\pak01_dir\panorama\`) or the maintainer's working
 mod (`D:\GitHub2\QOLLOCK\panorama`) for a proven pattern — do not invent CSS/JS API.
+
+#### 10.1.1 Driving a controller with clicks (`mg_checkers_play_test.js`)
+
+`mg_load_smoke_test.js` proves each controller **evaluates**; it stubs `$.Schedule` to never fire,
+so nothing in a controller's *behaviour* is covered. `tools/mg_checkers_play_test.js` closes that
+for checkers: a fake `$` with a **real virtual scheduler** (timestamp-ordered, single-steppable)
+plays full vs-bot games by firing the cells' own `onactivate` handlers, then judges the result from
+the **piece panels** — inverting `translate3d` + `mg-white`/`mg-black`/`mg-king` back into a board.
+So it asserts what is *on screen*, which is the only thing a player can actually report. Both
+variants, both seats, seeded RNG (a failure prints a reproducing seed).
+
+Three things it covers that nothing else could:
+- **Softlock**: the player had a legal move, clicked exactly it, and the visible board didn't change.
+- **Promotion is acknowledged**: random play loses in ~20 turns and never promotes, so the test
+  plays the engine's own search and also starts from a crafted near-promotion position.
+- **Impatient clicking**: the offline bot is *not* instant (stepped depth-5 search + 0.35 s per
+  animated hop), so a real player clicks during its think — landing in the premove path. The
+  harness single-steps the scheduler and clicks between steps to be genuinely mid-think.
+
+⚠ **Trap: review mode at the live position.** Found this way (player report 2026-08-03,
+"its not letting me move any other checkers either. im softlocked"). The move list is clickable and
+the **newest row is the highlighted "you are here" row** — the most natural one to click.
+`gotoReview(last)` used to call `setReview(last)`, rendering `history[last].boardAfter`, which *is*
+the live position: nothing changed on screen, the status still read "Your turn.", but `reviewIndex`
+was now set and `onCellClick` / `onCellDrop` / `DragStart` all bail on `reviewIndex !== null`. The
+board went dead while looking and claiming to be live. Two aggravating factors, both fixed:
+`setNavState` only *painted* buttons disabled (`.mg-nav-disabled`) while leaving them clickable — it
+now sets `enabled` too — and a click during a real review was swallowed in silence, so there was no
+symptom to report; it now says "Reviewing an earlier move. Press Live to play on." Reviewing the
+live position is meaningless in every case, so `gotoReview(last)` routes to `navLive()`.
+mg_chess.js had the identical three defects and got the identical fix.
 
 ### 10.2 ES6 in the shipped scripts (and the `var`s that must stay)
 

@@ -539,7 +539,14 @@
         }
         function shownIndex() { return reviewIndex === null ? history.length - 1 : reviewIndex; }
         function setReview(idx) { reviewIndex = idx; renderReview(); renderMoveList(); }
-        function gotoReview(idx) { if (idx >= 0 && idx < history.length) setReview(idx); }
+        // Same guard as mg_checkers.js: the newest row is the highlighted "you are here" row, and
+        // reviewing it renders a snapshot identical to the live position - so the board silently
+        // stopped accepting input while looking and claiming to be live. Route it to navLive().
+        function gotoReview(idx) {
+            if (idx < 0 || idx >= history.length) return;
+            if (idx === history.length - 1) { navLive(); return; }
+            setReview(idx);
+        }
         function navPrev() { if (history.length === 0) return; let t = shownIndex() - 1; if (t < -1) return; setReview(t); }
         function navNext() {
             if (reviewIndex === null) return;
@@ -679,7 +686,10 @@
         }
 
         function onCellClick(i) {
-            if (destroyed || reviewIndex !== null) return;
+            if (destroyed) return;
+            // Reviewing a PAST position: read-only snapshot, so a click cannot be a move. Say so
+            // rather than swallowing it - see the same guard in mg_checkers.js.
+            if (reviewIndex !== null) { status("Reviewing an earlier move. Press Live to play on."); sfx("Illegal"); return; }
             if (!myTurn()) { if (canPremove()) premoveClick(i); return; }
             if (selected >= 0) {
                 for (let t = 0; t < legalTargets.length; t++) {

@@ -367,6 +367,17 @@
             statusLabel.style.visibility = (t ? "visible" : "collapse");
         }
     }
+    // A network failure message that does NOT lie about whose fault it is. When the transport
+    // reports that not a single image has loaded this session - from the relay OR from GitHub,
+    // two unrelated hosts - the relay is provably not the problem, so blaming it sends the player
+    // (and us) after the wrong thing. That is exactly what happened on 2026-08-03: a player
+    // reported the server as down while it was serving normally, because every one of our
+    // messages said "Check the server". See MG.Net.diagnosis.
+    function setNetStatus(fallback) {
+        let d = null;
+        try { d = MG.Net && MG.Net.diagnosis ? MG.Net.diagnosis() : null; } catch (e) {}
+        setStatus(d || fallback);
+    }
     function setTitle(t) {
         if (titleLabel) titleLabel.text = t;
         // The long waiting-room title needs the reclaimed width; all other views keep the credit.
@@ -1153,8 +1164,10 @@
         updatePopup.AddClass("mg-open");
     }
     function checkUpdates(automatic) {
+        // Not a network failure: mg_net itself is missing/older than this UI, so there is no
+        // transport to diagnose. Say that instead of anything about the server.
         if (!(MG.Net && MG.Net.loadImage)) {
-            if (!automatic) setStatus("Couldn't check for updates.");
+            if (!automatic) setStatus("Update check unavailable (mod files are out of sync).");
             return;
         }
 
@@ -1169,7 +1182,9 @@
             try { img.DeleteAsync(0); } catch (e2) {}
         }
         function fail() {
-            if (alive() && !automatic && view === "menu") setStatus("Couldn't check for updates.");
+            // The update marker lives on raw.githubusercontent.com, NOT the relay - so when this
+            // also fails the honest read is "this PC loads no web images", which setNetStatus says.
+            if (alive() && !automatic && view === "menu") setNetStatus("Couldn't check for updates.");
         }
 
         if (!automatic) setStatus("Checking for updates...");
@@ -1302,7 +1317,7 @@
             renderGame(9, code, true, true, { solo: true }, ctx);
         }, () => {
             if (!actionAlive(ctx)) return;
-            setStatus("Couldn't start solo GeoGuesser. Check the server.");
+            setNetStatus("Couldn't start solo GeoGuesser. Check the server.");
         }, 0, "", true);
     }
 
@@ -1580,7 +1595,7 @@
         }, () => {
             if (!actionAlive(ctx)) return;
             log("create FAILED (request errored)");
-            setStatus("Couldn't create lobby. Check the server.");
+            setNetStatus("Couldn't create lobby. Check the server.");
         }, tc, cv);
     }
 
@@ -1811,7 +1826,7 @@
         }, () => {
             if (!actionAlive(ctx)) return;
             log("quick FAILED (request errored)");
-            setStatus("Couldn't reach matchmaking. Check the server.");
+            setNetStatus("Couldn't reach matchmaking. Check the server.");
         }, tcArg, cvArg);
     }
 
@@ -1925,7 +1940,10 @@
         }, (why) => {
             if (!actionAlive(ctx)) return;
             log(`mquick FAILED (${why})`);
-            setStatus(why === "games" ? "Pick at least one valid game." : "Couldn't reach matchmaking. Check the server.");
+            // "games" is a real input error (the player picked nothing valid), so it must NOT be
+            // overridden by the transport diagnosis; every other reason is a network failure.
+            if (why === "games") setStatus("Pick at least one valid game.");
+            else setNetStatus("Couldn't reach matchmaking. Check the server.");
         }, tcArg, cvArg);
     }
 

@@ -700,7 +700,21 @@
 
         function shownIndex() { return reviewIndex === null ? history.length - 1 : reviewIndex; }
         function setReview(idx) { reviewIndex = idx; renderReview(); renderMoveList(); }
-        function gotoReview(idx) { if (idx >= 0 && idx < history.length) setReview(idx); }
+        // ⚠ Jumping to the LAST row is "go live", not "review the live position". Reported by a
+        // player 2026-08-03 as a softlock: the newest row is the highlighted "you are here" row, so
+        // it is the most natural one to click - and clicking it used to call setReview(last), which
+        // renders history[last].boardAfter. That snapshot IS the live position, so absolutely
+        // nothing changed on screen and the status line still read "Your turn." - but reviewIndex
+        // was now set, and onCellClick / onCellDrop / DragStart all bail on `reviewIndex !== null`.
+        // The board went dead while looking and claiming to be live, with the Live button the only
+        // way out and no reason on screen to press it ("its not letting me move any other checkers
+        // either. im softlocked"). Reviewing the live position is meaningless in every case, so
+        // route it to navLive() instead: same picture, but the board stays playable.
+        function gotoReview(idx) {
+            if (idx < 0 || idx >= history.length) return;
+            if (idx === history.length - 1) { navLive(); return; }
+            setReview(idx);
+        }
         function navPrev() { if (history.length === 0) return; let t = shownIndex() - 1; if (t < -1) return; setReview(t); }
         function navNext() {
             if (reviewIndex === null) return;              // already live (latest)
@@ -874,7 +888,11 @@
         }
 
         function onCellClick(i) {
-            if (destroyed || reviewIndex !== null) return;
+            if (destroyed) return;
+            // Reviewing a PAST position: the board is a read-only snapshot, so a click can't be a
+            // move. Say so instead of swallowing it silently - a dead board with no explanation is
+            // indistinguishable from a broken game (that is how the review softlock was reported).
+            if (reviewIndex !== null) { status("Reviewing an earlier move. Press Live to play on."); sfx("Illegal"); return; }
             if (!myTurn()) { if (canPremove()) premoveClick(i); return; }
 
             // Clicking a legal target of the currently selected piece = execute a hop.
