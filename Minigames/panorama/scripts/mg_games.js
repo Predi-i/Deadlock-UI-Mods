@@ -476,9 +476,14 @@
         b.SetPanelEvent("onactivate", onClick);
         return b;
     }
+    // ⚠ `enabled` must be SET, not just painted. This used to only toggle .mg-nav-disabled, which
+    // greys the button but leaves it fully clickable - a "disabled" Next/Live still ran its
+    // handler. Panorama honours the `enabled` property for input, so set both: the class styles
+    // it, the property actually refuses the activation.
     function setNavState(btn, enabled) {
         if (!btn) return;
         if (enabled) btn.RemoveClass("mg-nav-disabled"); else btn.AddClass("mg-nav-disabled");
+        try { btn.enabled = !!enabled; } catch (e) {}
     }
 
     // Shared widget factories reused by the separate game files via MG.Widgets - they can't

@@ -1721,7 +1721,9 @@ crash only when their branch runs in-game, both invisible to every check we had.
 
 The one exception: state-free helpers hoisted onto `MG.Widgets` (mg_games.js) CAN be tested, and
 `tools/mg_widgets_test.js` does that for `winPos` / `parsePx` / `squareFromPanel` / `makeNavBtn` /
-`setNavState`. Anything that reads a controller's closure (board, cells, history) still can't be.
+`setNavState`. Anything that reads a controller's closure (board, cells, history) still can't be
+read directly — but it CAN be driven and observed through the panels, which is what
+`mg_checkers_play_test.js` does for checkers (§10.1.1). Every other controller remains uncovered.
 It is also possible to drive a whole view under a fake `$` — the lobby-room refactor was verified
 that way — but that is a per-change harness, not standing coverage.
 
@@ -1742,6 +1744,37 @@ are gitignored and dev-only — nothing here is packed into the VPK.
 When in doubt about a Panorama capability, **grep the game's own files**
 (`G:\GameTracking-Deadlock\game\citadel\pak01_dir\panorama\`) or the maintainer's working
 mod (`D:\GitHub2\QOLLOCK\panorama`) for a proven pattern — do not invent CSS/JS API.
+
+#### 10.1.1 Driving a controller with clicks (`mg_checkers_play_test.js`)
+
+`mg_load_smoke_test.js` proves each controller **evaluates**; it stubs `$.Schedule` to never fire,
+so nothing in a controller's *behaviour* is covered. `tools/mg_checkers_play_test.js` closes that
+for checkers: a fake `$` with a **real virtual scheduler** (timestamp-ordered, single-steppable)
+plays full vs-bot games by firing the cells' own `onactivate` handlers, then judges the result from
+the **piece panels** — inverting `translate3d` + `mg-white`/`mg-black`/`mg-king` back into a board.
+So it asserts what is *on screen*, which is the only thing a player can actually report. Both
+variants, both seats, seeded RNG (a failure prints a reproducing seed).
+
+Three things it covers that nothing else could:
+- **Softlock**: the player had a legal move, clicked exactly it, and the visible board didn't change.
+- **Promotion is acknowledged**: random play loses in ~20 turns and never promotes, so the test
+  plays the engine's own search and also starts from a crafted near-promotion position.
+- **Impatient clicking**: the offline bot is *not* instant (stepped depth-5 search + 0.35 s per
+  animated hop), so a real player clicks during its think — landing in the premove path. The
+  harness single-steps the scheduler and clicks between steps to be genuinely mid-think.
+
+⚠ **Trap: review mode at the live position.** Found this way (player report 2026-08-03,
+"its not letting me move any other checkers either. im softlocked"). The move list is clickable and
+the **newest row is the highlighted "you are here" row** — the most natural one to click.
+`gotoReview(last)` used to call `setReview(last)`, rendering `history[last].boardAfter`, which *is*
+the live position: nothing changed on screen, the status still read "Your turn.", but `reviewIndex`
+was now set and `onCellClick` / `onCellDrop` / `DragStart` all bail on `reviewIndex !== null`. The
+board went dead while looking and claiming to be live. Two aggravating factors, both fixed:
+`setNavState` only *painted* buttons disabled (`.mg-nav-disabled`) while leaving them clickable — it
+now sets `enabled` too — and a click during a real review was swallowed in silence, so there was no
+symptom to report; it now says "Reviewing an earlier move. Press Live to play on." Reviewing the
+live position is meaningless in every case, so `gotoReview(last)` routes to `navLive()`.
+mg_chess.js had the identical three defects and got the identical fix.
 
 ### 10.2 ES6 in the shipped scripts (and the `var`s that must stay)
 
