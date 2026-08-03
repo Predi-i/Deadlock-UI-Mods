@@ -309,6 +309,19 @@
         else rawRequestNow(job.path, job.params, success, failure);
     }
 
+    // Subscribe to the engine's own "this image could not be loaded" signal, if it exists.
+    //
+    // `ImageFailedLoad` is a real panel event in the shipped engine (string table:
+    // game/bin/win64/panorama_strings.txt:3135, next to ImageLoaded / ImageProxySource), but NO
+    // shipped layout or script in Deadlock listens for it, so we cannot claim it is delivered for
+    // remote loads - only that the engine knows the name. Therefore it is wired as a pure
+    // OPTIMISATION with no behaviour depending on it: every caller keeps its polling timeout, and
+    // if the event never fires nothing changes at all. Wrapped in try/catch because registering an
+    // unknown event name must never break the transport.
+    function failFast(panel, onFail) {
+        try { $.RegisterEventHandler("ImageFailedLoad", panel, onFail); } catch (e) {}
+    }
+
     // Load an ordinary PNG into an intrinsic-size panel. Unlike rawRequestNow,
     // success does NOT clear/delete the image: the caller receives the loaded
     // panel and owns its remaining lifetime.
@@ -345,6 +358,21 @@
             try { img.SetImage(""); } catch (e) {}
             try { img.DeleteAsync(0); } catch (e2) {}
         }
+        // The engine fires ImageFailedLoad when a load is REJECTED (bad URL type, decode failure,
+        // over the size limit, transport refused). Confirmed present in the shipped engine
+        // (game/bin/win64/panorama_strings.txt:3135), but NOT used by any shipped layout or script,
+        // so this is an opportunistic fast path only: the polling timeout below stays the authority
+        // and nothing depends on the event arriving. When it does arrive we fail in milliseconds
+        // instead of REQ_TIMEOUT_MS, which for a player whose machine blocks outbound images turns
+        // a ~24s silent wait (3 probe attempts x 8s) into an immediate, explained failure.
+        failFast(img, () => {
+            if (finished) return;
+            finished = true;
+            noteLoad(false, url);
+            discard();
+            log(`✗ IMAGE FAILED (engine reported ImageFailedLoad)`);
+            if (onError) onError("failed");
+        });
         function check() {
             if (finished) return;
             let w = Number(img.actuallayoutwidth);
@@ -414,6 +442,15 @@
             try { img.SetImage(""); } catch (e) {}
             try { img.DeleteAsync(0); } catch (e) {}
         }
+        // Opportunistic fast failure; the timeout below remains the authority. See failFast.
+        failFast(img, () => {
+            if (finished) return;
+            finished = true;
+            noteLoad(false, BASE_URL);
+            cleanup();
+            log(`✗ FAILED ${path} (engine reported ImageFailedLoad)`);
+            if (onError) onError("failed");
+        });
         function check() {
             if (finished) return;
             let w = img.actuallayoutwidth;

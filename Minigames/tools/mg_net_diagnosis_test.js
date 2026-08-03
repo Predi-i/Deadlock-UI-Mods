@@ -85,7 +85,14 @@ function makeHarness() {
         CancelScheduled(h) { const i = timers.indexOf(h); if (i >= 0) timers.splice(i, 1); },
         Msg: () => {}, Warning: () => {},
         Localize: (s) => s, LocalizeSafe: (s) => s,
-        RegisterEventHandler: () => 1, RegisterForUnhandledEvent: () => 1,
+        // mg_net subscribes to the engine's ImageFailedLoad via $.RegisterEventHandler, so the fake
+        // has to REMEMBER those handlers - dropping them would make the fast-fail path untestable,
+        // and an error path with no coverage is useless exactly when it matters.
+        RegisterEventHandler(name, panel, fn) {
+            if (panel) { (panel._evt = panel._evt || {})[name] = fn; }
+            return 1;
+        },
+        RegisterForUnhandledEvent: () => 1,
         UnregisterEventHandler: () => {}, UnregisterForUnhandledEvent: () => {},
         DispatchEvent: () => {}, DispatchEventAsync: () => {},
         PlaySoundEvent: () => {}, StopSoundEvent: () => {},
@@ -205,6 +212,63 @@ console.log("\n=== MG.Net.diagnosis(): never blame, and never exonerate, the ser
     h.run(60000, null);
     ok(h.$.MG.Net.diagnosis() === null,
         "later failures after a success do NOT claim the server is up (it might really be down)");
+}
+
+console.log("\n=== ImageFailedLoad: fail in milliseconds, but never depend on the event ===\n");
+// The engine knows this event (panorama_strings.txt:3135) but no shipped layout listens for it, so
+// it is wired as a pure optimisation. Both properties are asserted: when it fires the request fails
+// at once (a blocked machine currently waits 3 x 8s in silence), and when it never fires the
+// polling timeout still ends the request exactly as before.
+{
+    const h = makeHarness();
+    loadNet(h.$);
+    let err = null;
+    h.$.MG.Net.loadImage("https://raw.githubusercontent.com/a/b.png", () => { err = "loaded"; },
+        (e) => { err = e; });
+    // ⚠ $.Schedule takes SECONDS (mg_net uses 0.05s poll steps), so the virtual clock is in seconds
+    // too. The image panel is created synchronously inside loadImage -> drainQueue, so a tiny
+    // advance is enough for the subscription to exist.
+    h.run(0.2, null);
+    const img = h.images.filter((i) => !i._deleted && i._evt && i._evt.ImageFailedLoad).pop();
+    ok(!!img, "the loader subscribes to ImageFailedLoad on its Image panel");
+    if (img) {
+        // ⚠ drainQueue silently re-queues a failed non-probe job ONCE, so the caller's onError only
+        // runs after the SECOND attempt also fails - and the retry is a brand-new Image panel. Fire
+        // the event on every panel that appears, which is what a genuinely blocked machine does.
+        // The point being asserted is the LATENCY: this whole path resolves inside a second of
+        // virtual time, where the polling fallback alone would need 2 x 8000ms.
+        const deadline = 2.0;
+        let ticks = 0;
+        // `err` is written from mg_net's callback, so read it through a getter - a bare `err === null`
+        // reads to static analysis as a condition the loop never modifies.
+        const pending = () => err === null;
+        while (pending() && ticks++ < 40) {
+            for (const im of h.images) {
+                if (!im._deleted && im._evt && im._evt.ImageFailedLoad && !im._firedFail) {
+                    im._firedFail = true;
+                    im._evt.ImageFailedLoad();
+                }
+            }
+            h.run(0.05, null);
+        }
+        ok(err === "failed",
+            `a reported failure ends the request in well under a timeout (got ${JSON.stringify(err)} ` +
+            `within ${deadline}s of virtual time; the poll fallback alone needs 2 x 8s)`);
+        // And it must count as a failed load for the diagnosis, same as a timeout.
+        h.$.MG.Net.loadImage("https://example.net/c.png", () => {}, () => {});
+        h.run(60000, null);
+        ok(typeof h.$.MG.Net.diagnosis() === "string",
+            "an event-reported failure counts as evidence, like a timeout");
+    }
+}
+{
+    // No event at all: the timeout must still be the authority.
+    const h = makeHarness();
+    loadNet(h.$);
+    let err = null;
+    h.$.MG.Net.loadImage("https://example.org/d.png", () => { err = "loaded"; }, (e) => { err = e; });
+    h.run(60000, null);
+    ok(err === "timeout", `without the event the polling timeout still fires (got ${JSON.stringify(err)})`);
 }
 
 console.log("\n=== the UI must route network failures through the diagnosis ===\n");

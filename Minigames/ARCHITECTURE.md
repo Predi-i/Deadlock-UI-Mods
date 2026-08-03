@@ -1763,6 +1763,22 @@ our own VPS**, so GitHub really is the only second host. `tools/mg_net_diagnosis
 it, including that no network error path calls `setStatus` with a hard-coded "Check the server"
 (which could not be corrected at runtime — that is how the wrong blame shipped).
 
+**How the engine actually fetches these images.** The loader dispatches on URL scheme into
+`CLoadFileURLTask`, whose completion is a Steamworks `HTTPRequestCompleted_t` callback
+(`game/bin/win64/panorama_strings.txt:413,493`) — i.e. remote images ride **Steam's HTTP stack**,
+not a socket the mod controls. The engine also knows an **`ImageFailedLoad`** panel event
+(`:3135`), but no shipped Deadlock layout or script listens for it, so `mg_net` subscribes to it
+**opportunistically**: when it fires we fail in milliseconds instead of `REQ_TIMEOUT_MS`, and when
+it never fires the polling timeout is still the authority and nothing changes. Both properties are
+pinned by `mg_net_diagnosis_test.js`. This matters for a blocked machine: the failure used to take
+3 probe attempts × 8 s of total silence before anything appeared on screen. Related failure strings
+worth knowing: `Image '%s' size too large (... image load failing)` (`:4728`, a compiled-in cap with
+no convar) and `Failed to load image data from %s` (`:2895`).
+
+⚠ There is **no convar, setting or allowlist** that enables/disables remote image loading — checked
+against all 13k lines of `DumpSource2/convars.txt`. So "tell the player to flip a setting" is not an
+available answer; the diagnosis message deliberately points at firewall/proxy/AV/another mod.
+
 **It still can't render.** Lint proves every referenced name exists and a few structural invariants
 hold; it says NOTHING about layout, animation, drag/drop, timing, or whether a move looks right.
 Those remain "in-game verified by the maintainer or unverified". `node_modules/` + `package-lock.json`
