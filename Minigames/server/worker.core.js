@@ -3628,7 +3628,13 @@ async function handlePixelAdmin(hub, request, url) {
   if (request.method === "GET" && path === "/admin/api/action") {
     return adminPixelAction(hub, url);
   }
-  if (request.method === "GET" && path === "/admin/api/pixel") {
+  // ⚠ NOT "/admin/api/pixel". EasyPrivacy ships the GENERIC filter `/api/pixel?` (no domain
+  // anchor), so uBlock Origin / Firefox tracking protection kill this request in the browser
+  // before it leaves the machine. It presents as "NetworkError when attempting to fetch
+  // resource" from the eyedropper while undo/ban/preview all work, because those routes carry
+  // no blocklisted token. Nothing reaches Nginx, so the server logs are silent and the bug
+  // looks like a backend fault. See ARCHITECTURE.md §8.9.
+  if (request.method === "GET" && path === "/admin/api/owner") {
     return adminPixelInspect(hub, url);
   }
   if (request.method === "GET" && path === "/admin/api/ban-status") {

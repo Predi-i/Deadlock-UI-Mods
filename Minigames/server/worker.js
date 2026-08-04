@@ -2270,7 +2270,7 @@ const ADMIN_JS = `"use strict";
   async function inspectPixel(p){
     showDebug("PIXEL INSPECTOR","Inspecting "+p.x+", "+p.y+"…",[],[]);
     try{
-      var data=await api("/admin/api/pixel?x="+p.x+"&y="+p.y);stopPulse();preview={kind:"inspect",x:p.x,y:p.y};render();focusBounds([p.x,p.y,p.x,p.y]);
+      var data=await api("/admin/api/owner?x="+p.x+"&y="+p.y);stopPulse();preview={kind:"inspect",x:p.x,y:p.y};render();focusBounds([p.x,p.y,p.x,p.y]);
       var lines=[{text:"Color: "+data.colorName,className:"important"},{text:"Coordinate "+p.x+", "+p.y}],buttons=[];
       if(data.action){
         lines.push({text:"Last changed by "+actorName(data.action),className:"important"},{text:new Date(data.action.at).toLocaleString()},{text:"Action "+data.action.id});
@@ -6300,7 +6300,13 @@ async function handlePixelAdmin(hub, request, url) {
   if (request.method === "GET" && path === "/admin/api/action") {
     return adminPixelAction(hub, url);
   }
-  if (request.method === "GET" && path === "/admin/api/pixel") {
+  // ⚠ NOT "/admin/api/pixel". EasyPrivacy ships the GENERIC filter `/api/pixel?` (no domain
+  // anchor), so uBlock Origin / Firefox tracking protection kill this request in the browser
+  // before it leaves the machine. It presents as "NetworkError when attempting to fetch
+  // resource" from the eyedropper while undo/ban/preview all work, because those routes carry
+  // no blocklisted token. Nothing reaches Nginx, so the server logs are silent and the bug
+  // looks like a backend fault. See ARCHITECTURE.md §8.9.
+  if (request.method === "GET" && path === "/admin/api/owner") {
     return adminPixelInspect(hub, url);
   }
   if (request.method === "GET" && path === "/admin/api/ban-status") {

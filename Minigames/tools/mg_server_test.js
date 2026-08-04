@@ -609,7 +609,7 @@ async function main() {
     for (pi = 0; pi < 10; pi++) batch.push(pi + ",0,5");
     d = await req(adminHub, `/api/pxput.png?id=123456789&b=${batch.join(";")}`);
     ok(d.h * 64 + d.w === 90, "audited player upload still spends the normal bank");
-    let inspectedPixel = await adminReq(adminHub, "/admin/api/pixel?x=0&y=0", "GET");
+    let inspectedPixel = await adminReq(adminHub, "/admin/api/owner?x=0&y=0", "GET");
     ok(inspectedPixel.status === 200 && inspectedPixel.body.action &&
         inspectedPixel.body.action.steamid === "123456789",
         "pixel inspector attributes a painted coordinate to its Steam32 account");
@@ -620,7 +620,7 @@ async function main() {
         actionDetail.body.conflicts === 0,
         "action preview returns exact current/before/after pixels and safe-undo status");
     await adminHub.storage.delete("px:o:0");
-    inspectedPixel = await adminReq(adminHub, "/admin/api/pixel?x=0&y=0", "GET");
+    inspectedPixel = await adminReq(adminHub, "/admin/api/owner?x=0&y=0", "GET");
     ok(inspectedPixel.body.action && inspectedPixel.body.action.id === inspectedActionId &&
         (await adminHub.storage.get("px:o:0")) !== undefined,
         "inspector backfills attribution for pre-index audit actions and caches it");
@@ -679,7 +679,7 @@ async function main() {
     const adminTile = await adminHub.storage.get("px:t:0");
     ok(adminTile[0] === 6 && adminTile[1] === 0 && adminTile[32] === 7,
         "safe undo preserves the newer overlap and restores the other player pixels");
-    inspectedPixel = await adminReq(adminHub, "/admin/api/pixel?x=0&y=0", "GET");
+    inspectedPixel = await adminReq(adminHub, "/admin/api/owner?x=0&y=0", "GET");
     ok(inspectedPixel.body.action && inspectedPixel.body.action.actor === "admin",
         "pixel inspector follows current attribution after an overlapping admin edit");
     let adminState = await adminReq(adminHub, "/admin/api/state", "GET");
@@ -731,7 +731,7 @@ async function main() {
     await adminReq(ownerHub, "/admin/api/undo", "POST", {
         actionId: ownerActions.body.actions[0].id, force: false
     });
-    const restoredOwner = await adminReq(ownerHub, "/admin/api/pixel?x=0&y=0", "GET");
+    const restoredOwner = await adminReq(ownerHub, "/admin/api/owner?x=0&y=0", "GET");
     ok(restoredOwner.body.color === 5 && restoredOwner.body.action &&
         restoredOwner.body.action.steamid === "11111111",
         "undo restores both the previous colour and the previous pixel owner");

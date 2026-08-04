@@ -129,6 +129,50 @@ async function main() {
         response = await fetch(live.origin + "/admin");
         assert.strictEqual(response.status, 503, "admin must fail closed without OAuth secrets");
 
+        // ── admin URLs must survive a content blocker ─────────────────────────────
+        // The admin panel is an ORDINARY BROWSER PAGE, so every request it makes passes
+        // through the user's ad/tracker blocker before it ever reaches Nginx. EasyPrivacy
+        // ships GENERIC filters - no domain anchor - that match on path substrings alone,
+        // so a perfectly good self-hosted route is killed purely by its name.
+        //
+        // That is exactly what happened to the eyedropper (2026-08-04): it lived at
+        // `/admin/api/pixel`, EasyPrivacy carries the generic filter `/api/pixel?`, and
+        // uBlock Origin blocked the request in the browser. The symptom is maximally
+        // misleading - "NetworkError when attempting to fetch resource" on Inspect while
+        // undo, ban and preview all worked, and ZERO matching lines in the server's access
+        // log because nothing was ever sent. It reads as a backend fault and is not one.
+        //
+        // This guard is offline and hard-coded on purpose: fetching the live blocklists
+        // would make the suite depend on the network and on someone else's release cadence.
+        // These are the substrings that actually appear in EasyPrivacy/EasyList generic
+        // rules; add to the list rather than removing a route from the check.
+        const BLOCKED_URL_TOKENS = [
+            "/api/pixel", "/pixel.", "/pixel/", "pixel?", "/track", "/tracker",
+            "/analytics", "/telemetry", "/collect?", "/beacon", "/adserver", "/advert"
+        ];
+        // Every path the browser admin actually requests. A new admin route belongs here.
+        const ADMIN_BROWSER_URLS = [
+            "/admin", "/admin/stats", "/admin/stats.js", "/admin/style.css", "/admin/app.js",
+            "/admin/login", "/admin/auth/callback",
+            "/admin/api/state", "/admin/api/actions", "/admin/api/action", "/admin/api/owner",
+            "/admin/api/ban-status", "/admin/api/stats", "/admin/api/canvas",
+            "/admin/api/paint", "/admin/api/undo", "/admin/api/ban", "/admin/api/unban"
+        ];
+        for (const adminUrl of ADMIN_BROWSER_URLS) {
+            for (const token of BLOCKED_URL_TOKENS) {
+                assert.strictEqual(adminUrl.indexOf(token), -1,
+                    `admin route ${adminUrl} contains "${token}", which generic ad-blocker ` +
+                    "filters match on path alone - the browser will kill the request before " +
+                    "it reaches the server and the failure will look like a backend bug");
+            }
+        }
+        // The renamed eyedropper route must still be the one that is served.
+        assert(ADMIN_BROWSER_URLS.indexOf("/admin/api/owner") >= 0);
+        const adminSource = fs.readFileSync(
+            path.join(__dirname, "..", "server", "admin_panel.js"), "utf8");
+        assert(adminSource.indexOf("/admin/api/owner?x=") >= 0,
+            "the browser admin must call the un-blocked eyedropper route");
+
         // ── request statistics ────────────────────────────────────────────────────
         // Route folding is what bounds storage: an unknown path must never mint its own
         // key, or a scanner could grow the `st:` space without limit.

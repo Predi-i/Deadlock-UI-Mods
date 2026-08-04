@@ -1316,6 +1316,27 @@ is built but **not yet in-game verified**.
   pixel's current colour and whether safe undo would still apply, renders the exact post-undo
   colours, marks conflicts red, and zooms to the action bounds. Inspect makes one on-demand admin
   request per clicked coordinate and exposes the owning Steam32, action, user log, and ban path.
+  ⚠ **That route is `/admin/api/owner`, and the name is load-bearing — it must never contain
+  `pixel`, `track`, `analytics` or `telemetry`.** Unlike everything else in this mod, the admin
+  panel is an ORDINARY BROWSER PAGE, so every request it makes passes through the operator's
+  ad/tracker blocker before it reaches the network. EasyPrivacy ships **generic** filters — no
+  domain anchor, matched on path substring alone — and one of them is literally `/api/pixel?`.
+  The eyedropper originally lived at `/admin/api/pixel` and uBlock Origin killed it in the
+  browser (2026-08-04).
+  - **How it presented:** `NetworkError when attempting to fetch resource` on Inspect only, while
+    undo, ban, preview, canvas and stats all worked — because none of those paths carry a
+    blocklisted token. That split is the tell.
+  - **What pinned it:** `zgrep 'admin/api/pixel' /var/log/nginx/access.log*` returned **zero**
+    matches across all retained logs, while `/admin/api/action` and `/admin/api/state` were there
+    from the same session and the same second. A request that never reaches Nginx was never sent,
+    so the fault is client-side by elimination — no server code can be responsible. Reproduced by
+    downloading EasyPrivacy and matching the URL against its generic rules.
+  - **Do not diagnose this as a server bug.** The server logs will be silent, `curl` will answer
+    normally (401/200 as appropriate), and the route will look perfectly healthy from a shell.
+  - `mg_vps_server_test.js` now checks every admin URL the browser requests against a hard-coded
+    list of ad-blocker path tokens. It is offline on purpose — fetching live blocklists would make
+    the suite depend on the network and someone else's release cadence. Add new admin routes to
+    `ADMIN_BROWSER_URLS`.
 - Steam32 is client-reported, not a cryptographic Steam authentication ticket. A modified client
   can spoof an unbanned ID, and server-side rejection happens only after the VPS has received
   the request. The ban is therefore authoritative for normal clients and all requests using the
