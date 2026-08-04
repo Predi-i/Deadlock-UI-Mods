@@ -8,6 +8,7 @@
 	<CitadelMatchHistoryBlockSmall class="matchBlock">
 		<Panel class="teamStripe" />
 		<Label class="gameResult" text="{s:match_outcome}" />
+		<Label class="nsShort" text="NS" />
 		<Label class="heroName" text="{g:citadel_hero_name:hero_id}" style="visibility: collapse;" />
 		<CitadelHeroImage id="HeroImage" class="heroImg" />
 		<Panel id="Overlay">

@@ -41,7 +41,7 @@ CitadelMatchHistoryBlockSmall .teamStripe
 	visibility: collapse;
 }
 
-CitadelMatchHistoryBlockSmall .gameResult,CitadelMatchHistoryBlockSmall .gameResultShort
+CitadelMatchHistoryBlockSmall .gameResult,CitadelMatchHistoryBlockSmall .gameResultShort,CitadelMatchHistoryBlockSmall .nsShort
 {
 	width: 100%;
 	horizontal-align: center;
@@ -56,16 +56,25 @@ CitadelMatchHistoryBlockSmall .gameResult,CitadelMatchHistoryBlockSmall .gameRes
 	z-index: 10;
 }
 
+CitadelMatchHistoryBlockSmall .nsShort
+{
+	visibility: collapse;
+}
+
+CitadelMatchHistoryBlockSmall.not_scored .gameResult
+{
+	visibility: collapse;
+}
+
+CitadelMatchHistoryBlockSmall.not_scored .nsShort
+{
+	visibility: visible;
+	color: #C8C8C8 !important;
+}
+
 CitadelMatchHistoryBlockSmall.loss .gameResult,CitadelMatchHistoryBlockSmall.loss .gameResultShort
 {
 	color: #FF3538 !important;
-}
-
-CitadelMatchHistoryBlockSmall.not_scored .gameResult,CitadelMatchHistoryBlockSmall.not_scored .gameResultShort
-{
-	color: #C8C8C8 !important;
-	font-size: 12px;
-	line-height: 13px;
 }
 
 CitadelMatchHistoryBlockSmall .heroImg

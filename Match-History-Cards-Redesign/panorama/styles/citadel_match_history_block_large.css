@@ -90,7 +90,7 @@ CitadelMatchHistoryBlockLarge.loss .brawlAvgDuration,CitadelMatchHistoryBlockLar
 
 CitadelMatchHistoryBlockLarge.not_scored .brawlAvgDuration,CitadelMatchHistoryBlockLarge.not_scored .matchTime,CitadelMatchHistoryBlockLarge.not_scored #BrawlAvg Label,CitadelMatchHistoryBlockLarge.not_scored .gameDuration,CitadelMatchHistoryBlockLarge.not_scored .gameDate,CitadelMatchHistoryBlockLarge.not_scored .gameKDA,CitadelMatchHistoryBlockLarge.not_scored .gameMode
 {
-	color: #C8C8C8 !important;
+	color: #717171 !important;
 }
 
 CitadelMatchHistoryBlockLarge #BrawlAvg
@@ -146,7 +146,7 @@ CitadelMatchHistoryBlockLarge.not_scored .gameResult
 
 CitadelMatchHistoryBlockLarge.not_scored .gameMode
 {
-	margin-top: -7px !important;
+	margin-top: -5px !important;
 }
 
 CitadelMatchHistoryBlockLarge .heroName
