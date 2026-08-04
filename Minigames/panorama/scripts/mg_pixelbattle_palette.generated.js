@@ -3,8 +3,8 @@
 (function () {
     "use strict";
     var MG = $.MG = $.MG || {};
-    MG.PixelBattlePalette = ["#ffffff","#c4c9cc","#5e6670","#000000","#ff4500","#ffa800","#ffd635","#7eed56","#00a368","#51e9f4","#3690ea","#2450a4","#811e9f","#b44ac0","#ff99aa","#9c6926","#183443","#a5ab91","#6d001a","#be0039","#ffb470","#fff8b8","#00cc78","#00756f","#009eaa","#00ccc0","#94b3ff","#493ac1","#6a5cff","#e4abff","#de107f","#ff3881","#6d482f","#898d90"];
-    MG.PixelBattlePaletteNames = ["white","light_gray","dark_gray","black","red","orange","yellow","lime","green","cyan","blue","navy","purple","magenta","pink","brown","ocean","land","dark_red","crimson","tan","cream","mint","teal","dark_teal","aqua","light_blue","indigo","periwinkle","lavender","deep_pink","hot_pink","dark_brown","gray"];
-    MG.PixelBattlePaletteOrder = [19,20,5,6,21,7,22,8,23,9,24,25,26,10,27,11,12,28,29,13,14,30,31,32,15,33,16,1,2,34,3,4,17,18];
+    MG.PixelBattlePalette = ["#ffffff","#c4c9cc","#5e6670","#000000","#ff4500","#ffa800","#ffd635","#7eed56","#00a368","#51e9f4","#3690ea","#2450a4","#811e9f","#b44ac0","#ff99aa","#9c6926","#183443","#a5ab91","#6d001a","#be0039","#ffb470","#fff8b8","#00cc78","#00756f","#009eaa","#00ccc0","#94b3ff","#493ac1","#6a5cff","#e4abff","#de107f","#ff3881","#6d482f","#898d90","#ffe0bd","#e8b98a","#a9714b","#ff9d7e","#a33b0f","#7f0000","#d4af37","#c8860d","#808000","#6b8f3a","#4a5320","#1f5c2e","#bdf5d6","#bfe6ff","#0d1b4c","#c9b6f0","#3d1a4d"];
+    MG.PixelBattlePaletteNames = ["white","light_gray","dark_gray","black","red","orange","yellow","lime","green","cyan","blue","navy","purple","magenta","pink","brown","ocean","land","dark_red","crimson","tan","cream","mint","teal","dark_teal","aqua","light_blue","indigo","periwinkle","lavender","deep_pink","hot_pink","dark_brown","gray","skin_pale","skin_tan","skin_brown","salmon","rust","maroon","gold","amber","olive","moss","dark_olive","forest","pale_mint","sky","deep_blue","lilac","plum"];
+    MG.PixelBattlePaletteOrder = [40,19,20,5,39,6,42,41,21,7,22,8,23,47,9,43,44,45,46,24,25,26,10,48,27,11,12,49,28,29,50,13,51,14,30,31,32,15,38,35,36,37,33,16,1,2,34,3,4,17,18];
     MG.PixelBattlePaletteTerrain = [17,18];
 })();

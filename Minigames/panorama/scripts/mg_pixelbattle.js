@@ -226,10 +226,10 @@
         regenLabel.AddClass("mg-px-stat-regen");
         const queueLabel = addLabel(topbar, "mg-px-stat", "");
         queueLabel.AddClass("mg-px-stat-queue");
-        // Current-colour readout. With 34 swatches at 16px a selected border alone is easy to lose
+        // Current-colour readout. With 51 swatches at 18px a selected border alone is easy to lose
         // track of, so the active colour is also named here. It lives in the topbar rather than
-        // beside the tools because the control strip's 62px height is fully spent by two rows of
-        // buttons - a 62px-tall chip in that right-wrap row would push UPLOAD out of the strip.
+        // beside the tools because the control strip's 62px height is fully spent by the palette's
+        // three rows and two rows of buttons.
         const swatchCurrent = $.CreatePanel("Panel", topbar, "");
         swatchCurrent.AddClass("mg-px-current");
         const swatchPreview = $.CreatePanel("Panel", swatchCurrent, "");

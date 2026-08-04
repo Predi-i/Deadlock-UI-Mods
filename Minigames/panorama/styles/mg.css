@@ -2065,11 +2065,12 @@
     font-size: 14px;
     color: #8ea5b9;
 }
-/* 34 swatches (32 paint + ocean/land) in two rows of 17. The widths are an exact budget against
+/* 51 swatches (49 paint + ocean/land) in three rows of 17. The widths are an exact budget against
    the 768px control strip: navigation 208 + palette 340 + actions 220 = 768. A swatch is 18px plus
-   a 2px margin = 20, and 17 x 20 = 340 exactly - Panorama's right-wrap has no fractional slack, so
-   one pixel wider silently spills a third row, which grows the modal into the ui-scale viewport
-   clamp (trap 20). Change the swatch count and this arithmetic together. */
+   a 2px margin = 20, and 17 x 20 = 340 across by 3 x 20 = 60 down - which still fits the 62px strip,
+   so adding the third row does NOT grow the modal into the ui-scale viewport clamp (trap 20).
+   Panorama's right-wrap has no fractional slack: one pixel wider spills a fourth row and does grow
+   it. Change the swatch count and this arithmetic together. */
 .mg-px-palette {
     width: 340px;
     height: 62px;

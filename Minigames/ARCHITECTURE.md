@@ -1229,9 +1229,14 @@ is built but **not yet in-game verified**.
   `tools/assets/pixelbattle_palette.json`. The map builder emits both client and Worker constants;
   `mg_pixelbattle_palette_test.js` enforces uniqueness and minimum CIE L*a*b* distances between
   paint/terrain colours so a swatch cannot silently become indistinguishable from ocean or land.
-- **The palette is 34 colours (2026-08-04, v1.2): 32 paint + ocean/land.** It grew from 18 by
-  adding the missing half of the canonical r/place set (shading ramps: `dark_red`/`crimson`,
-  `teal`/`aqua`, `indigo`/`periwinkle`, `deep_pink`/`hot_pink`, `dark_brown`/`tan`, `gray`, …).
+- **The palette is 51 colours (2026-08-04, v1.2): 49 paint + ocean/land.** It grew from 18 in two
+  steps: the missing half of the canonical r/place set (shading ramps: `dark_red`/`crimson`,
+  `teal`/`aqua`, `indigo`/`periwinkle`, `deep_pink`/`hot_pink`, `dark_brown`/`tan`, `gray`, …), then
+  a third row the maintainer asked for — **skin tones** (`skin_pale`/`skin_tan`/`skin_brown`,
+  `salmon`), earth/metal (`maroon`, `rust`, `gold`, `amber`, `olive`, `moss`, `dark_olive`,
+  `forest`) and pastels (`pale_mint`, `sky`, `lilac`, `deep_blue`, `plum`). Every candidate was
+  measured against the live set before being added; 15 of 31 proposals were **rejected** for
+  landing inside the ΔE floor (e.g. `sea_green` 7.1 from `green`, `slate` 6.3 from ocean).
   Four things about that growth are load-bearing:
   - ⚠ **`paint` is STORAGE ORDER and is APPEND-ONLY.** A pixel persists as its 1-based index in
     that array, so inserting or reordering anything before the end **recolours every pixel already
@@ -1243,7 +1248,7 @@ is built but **not yet in-game verified**.
     `MG.PixelBattlePaletteOrder`, 1-based indices in draw order. Without it the palette would read
     as a rainbow followed by a second, unsorted rainbow.
   - **The ΔE floor between paint pairs moved 16 → 15**, a measured relaxation rather than a bent
-    threshold: the tightest pair is `deep_pink`/`hot_pink` at **15.4**, and a shading ramp is what a
+    threshold: the tightest pair is `skin_brown`/`brown` at **15.1**, and a shading ramp is what a
     denser palette is *for*. The check exists to catch an accidental near-duplicate (ΔE < 10, which
     is indistinguishable at an 18px swatch), so the floor sits just under the tightest intentional
     pair. Terrain separation is unchanged at 19 (`gray`/land is the closest, 19.1).
@@ -1265,12 +1270,14 @@ is built but **not yet in-game verified**.
   pixel, so a pick is never ambiguous) and disarms on the sample and on any zoom change, since a
   mode left armed below max zoom would silently eat the next click.
 - ⚠ **The control strip is an exact width/height budget, not a flexible row.** Navigation 208 +
-  palette 340 + actions 220 = **768**; a swatch is 18px + 2px margin so 17 × 20 = 340 exactly, and
-  the four tools wrap as 2 × (105 + 5) across by 2 × (28 + 3) = 62 down. Panorama's `right-wrap` has
-  no fractional slack: one pixel wider spills a third row, which grows the modal into the ui-scale
-  viewport clamp (trap 20) and can drop UPLOAD out of the clipped strip with no error anywhere. The
-  current-colour readout lives in the **topbar** for this reason — a 62px-tall chip in the actions
-  row pushes a button out of it. Change the swatch count and this arithmetic together.
+  palette 340 + actions 220 = **768**; a swatch is 18px + 2px margin so 17 × 20 = 340 across and
+  3 × 20 = 60 down (three rows still fit the 62px strip, so the third row did NOT grow the modal),
+  and the four tools wrap as 2 × (105 + 5) across by 2 × (28 + 3) = 62 down. Panorama's
+  `right-wrap` has no fractional slack: one pixel wider spills a fourth row, which grows the modal
+  into the ui-scale viewport clamp (trap 20) and can drop UPLOAD out of the clipped strip with no
+  error anywhere. The current-colour readout lives in the **topbar** for this reason — a 62px-tall
+  chip in the actions row pushes a button out of it. Change the swatch count and this arithmetic
+  together.
 - The server-authoritative bank is 100 pixels, regenerating 1 per 30 seconds and keyed by the
   Steam32 account id discovered through the local party avatar panel.
 - Eraser batches use colour index 0: the Worker removes stored paint to reveal the immutable map,
