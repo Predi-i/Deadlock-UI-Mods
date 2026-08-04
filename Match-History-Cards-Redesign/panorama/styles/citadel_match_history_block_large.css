@@ -23,6 +23,14 @@ CitadelMatchHistoryBlockLarge.loss
 	border: 2px solid #430001;
 }
 
+CitadelMatchHistoryBlockLarge.not_scored
+{
+	opacity: 1.0;
+	background-color: #1D1D1D;
+	background-image: url("s2r://panorama/images/black_bg.vtex");
+	border: 2px solid #2B2B2B;
+}
+
 CitadelMatchHistoryBlockLarge:hover
 {
 	brightness: 1.3;
@@ -80,6 +88,11 @@ CitadelMatchHistoryBlockLarge.loss .brawlAvgDuration,CitadelMatchHistoryBlockLar
 	color: #956E6E !important;
 }
 
+CitadelMatchHistoryBlockLarge.not_scored .brawlAvgDuration,CitadelMatchHistoryBlockLarge.not_scored .matchTime,CitadelMatchHistoryBlockLarge.not_scored #BrawlAvg Label,CitadelMatchHistoryBlockLarge.not_scored .gameDuration,CitadelMatchHistoryBlockLarge.not_scored .gameDate,CitadelMatchHistoryBlockLarge.not_scored .gameKDA,CitadelMatchHistoryBlockLarge.not_scored .gameMode
+{
+	color: #C8C8C8 !important;
+}
+
 CitadelMatchHistoryBlockLarge #BrawlAvg
 {
 	opacity: 1.0 !important;
@@ -124,6 +137,18 @@ CitadelMatchHistoryBlockLarge.loss .gameResult
 	color: #FF3538;
 }
 
+CitadelMatchHistoryBlockLarge.not_scored .gameResult
+{
+	color: #C8C8C8;
+	font-size: 26px;
+	margin-top: 6px;
+}
+
+CitadelMatchHistoryBlockLarge.not_scored .gameMode
+{
+	margin-top: -3px !important;
+}
+
 CitadelMatchHistoryBlockLarge .heroName
 {
 	horizontal-align: left;
@@ -136,6 +161,11 @@ CitadelMatchHistoryBlockLarge .heroName
 	color: white;
 	max-width: 150px;
 	text-overflow: shrink;
+}
+
+CitadelMatchHistoryBlockLarge.not_scored .heroName
+{
+	color: #C8C8C8;
 }
 
 CitadelMatchHistoryBlockLarge #BrawlAvg,CitadelMatchHistoryBlockLarge .gameDuration
@@ -166,6 +196,11 @@ CitadelMatchHistoryBlockLarge .gameNetworth
 	font-size: 31px;
 	color: #9BFFD6;
 	text-align: right;
+}
+
+CitadelMatchHistoryBlockLarge.not_scored .gameNetworth
+{
+	color: #C8C8C8;
 }
 
 CitadelMatchHistoryBlockLarge #brawl_score
