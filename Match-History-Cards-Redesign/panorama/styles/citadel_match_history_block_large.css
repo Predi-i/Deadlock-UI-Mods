@@ -141,12 +141,12 @@ CitadelMatchHistoryBlockLarge.not_scored .gameResult
 {
 	color: #C8C8C8;
 	font-size: 26px;
-	margin-top: 6px;
+	margin-top: 2px;
 }
 
 CitadelMatchHistoryBlockLarge.not_scored .gameMode
 {
-	margin-top: -3px !important;
+	margin-top: -7px !important;
 }
 
 CitadelMatchHistoryBlockLarge .heroName
