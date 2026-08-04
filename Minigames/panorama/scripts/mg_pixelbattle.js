@@ -53,6 +53,23 @@
     // Indices of the two swatches that repaint the base map exactly (generated, not guessed by
     // comparing hex values - a future paint colour could legitimately equal one of them).
     const PALETTE_TERRAIN = MG.PixelBattlePaletteTerrain || [];
+    // Retuning the palette onto the official wplace colours (v1.2) left a few OLDER indices sharing
+    // a shade with a newer one. Storage keeps them all so art painted before the retune still
+    // renders, but only one swatch per shade is drawn - so an index the eyedropper reports may have
+    // no button of its own. Fold any such index onto the drawn one with the same colour, or picking
+    // a pre-retune pixel would highlight nothing and leave the palette looking unresponsive.
+    const CANON_INDEX = {};
+    for (let ci = 0; ci < PALETTE_ORDER.length; ci++) {
+        const shownIndex = PALETTE_ORDER[ci];
+        const hex = PALETTE[shownIndex - 1];
+        for (let pi = 1; pi <= PALETTE.length; pi++) {
+            if (PALETTE[pi - 1] === hex && CANON_INDEX[pi] === undefined) CANON_INDEX[pi] = shownIndex;
+        }
+    }
+    function canonColor(index) {
+        const mapped = CANON_INDEX[index];
+        return mapped === undefined ? index : mapped;
+    }
     let accessCache = { accountId: "", status: "unknown", balance: BANK_CAP, callbacks: [] };
 
     function validAccountId(value) {
@@ -226,7 +243,7 @@
         regenLabel.AddClass("mg-px-stat-regen");
         const queueLabel = addLabel(topbar, "mg-px-stat", "");
         queueLabel.AddClass("mg-px-stat-queue");
-        // Current-colour readout. With 51 swatches at 18px a selected border alone is easy to lose
+        // Current-colour readout. With 65 swatches at 14px a selected border alone is easy to lose
         // track of, so the active colour is also named here. It lives in the topbar rather than
         // beside the tools because the control strip's 62px height is fully spent by the palette's
         // three rows and two rows of buttons.
@@ -417,10 +434,10 @@
                     outerStatus("Couldn't read that pixel.");
                     return;
                 }
-                selectedColor = w;
+                selectedColor = canonColor(w);
                 picking = false;
                 updatePalette();
-                outerStatus("Picked " + String(PALETTE_NAMES[w - 1] || w).toUpperCase() + ".");
+                outerStatus("Picked " + String(PALETTE_NAMES[selectedColor - 1] || w).toUpperCase() + ".");
             }, () => {
                 if (destroyed) return;
                 outerStatus("Couldn't read that pixel.");

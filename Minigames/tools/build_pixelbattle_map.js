@@ -44,15 +44,23 @@ if (paintRgb.length < 18) throw new Error("Pixel Battle paint indices are storag
 if (new Set(paintNames).size !== paintNames.length) throw new Error("duplicate palette name");
 
 // displayOrder is purely presentational (a list of NAMES, never indices), so it can be
-// rearranged without touching a single stored pixel. It must still cover the palette exactly.
+// rearranged without touching a single stored pixel. It lists each DISTINCT SHADE once rather than
+// every index: retuning the palette onto the official wplace colours (v1.2) landed some older
+// indices on a shade another index already had, and those must stay in storage so old art keeps
+// rendering while the picker shows the shade only once.
 const order = palette.displayOrder || paintNames;
 const nameIndex = new Map(paintNames.map((name, index) => [name, index + 1]));
-if (order.length !== paintNames.length || new Set(order).size !== order.length)
-    throw new Error("displayOrder must list every paint colour exactly once");
+if (new Set(order).size !== order.length)
+    throw new Error("displayOrder must not repeat a colour");
 const displayIndices = order.map(name => {
     if (!nameIndex.has(name)) throw new Error(`displayOrder names an unknown colour: ${name}`);
     return nameIndex.get(name);
 });
+const shownHex = displayIndices.map(index => paintHex[index - 1]);
+if (new Set(shownHex).size !== shownHex.length)
+    throw new Error("displayOrder must show each distinct shade only once");
+if (new Set(shownHex).size !== new Set(paintHex).size)
+    throw new Error("every distinct shade in storage must appear in displayOrder");
 
 // The eyedropper answers with what the player SEES, so an unpainted pixel must resolve to the
 // swatch that matches the base map underneath it. Those two swatches are declared in the JSON

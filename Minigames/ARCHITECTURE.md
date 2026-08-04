@@ -1229,29 +1229,36 @@ is built but **not yet in-game verified**.
   `tools/assets/pixelbattle_palette.json`. The map builder emits both client and Worker constants;
   `mg_pixelbattle_palette_test.js` enforces uniqueness and minimum CIE L*a*b* distances between
   paint/terrain colours so a swatch cannot silently become indistinguishable from ocean or land.
-- **The palette is 51 colours (2026-08-04, v1.2): 49 paint + ocean/land.** It grew from 18 in two
-  steps: the missing half of the canonical r/place set (shading ramps: `dark_red`/`crimson`,
-  `teal`/`aqua`, `indigo`/`periwinkle`, `deep_pink`/`hot_pink`, `dark_brown`/`tan`, `gray`, …), then
-  a third row the maintainer asked for — **skin tones** (`skin_pale`/`skin_tan`/`skin_brown`,
-  `salmon`), earth/metal (`maroon`, `rust`, `gold`, `amber`, `olive`, `moss`, `dark_olive`,
-  `forest`) and pastels (`pale_mint`, `sky`, `lilac`, `deep_blue`, `plum`). Every candidate was
-  measured against the live set before being added; 15 of 31 proposals were **rejected** for
-  landing inside the ΔE floor (e.g. `sea_green` 7.1 from `green`, `slate` 6.3 from ocean).
-  Four things about that growth are load-bearing:
-  - ⚠ **`paint` is STORAGE ORDER and is APPEND-ONLY.** A pixel persists as its 1-based index in
-    that array, so inserting or reordering anything before the end **recolours every pixel already
-    on the shared world** — and it would present as a server/rendering bug, not as a palette edit.
-    The 18 shipped entries are frozen; new colours go at the end. `mg_pixelbattle_palette_test.js`
-    asserts that exact prefix by name.
-  - **Draw order is therefore separate from storage order.** `displayOrder` (a list of NAMES, never
-    indices) interleaves the appended colours back into one hue ramp; the builder resolves it to
-    `MG.PixelBattlePaletteOrder`, 1-based indices in draw order. Without it the palette would read
-    as a rainbow followed by a second, unsorted rainbow.
-  - **The ΔE floor between paint pairs moved 16 → 15**, a measured relaxation rather than a bent
-    threshold: the tightest pair is `skin_brown`/`brown` at **15.1**, and a shading ramp is what a
-    denser palette is *for*. The check exists to catch an accidental near-duplicate (ΔE < 10, which
-    is indistinguishable at an 18px swatch), so the floor sits just under the tightest intentional
-    pair. Terrain separation is unchanged at 19 (`gray`/land is the closest, 19.1).
+- **The palette IS the official wplace set (2026-08-04, v1.2): its 63 colours plus our ocean/land,
+  65 swatches over 75 storage indices.** It started as r/place's 16, grew to 49 hand-picked
+  colours, and then moved wholesale onto wplace's because the hand-picked set was measurably
+  mis-tuned — our `red` was `#ff4500`, which is CSS **OrangeRed**, and read as orange in-game, with
+  a ΔE-50 hole between it and `orange`. The official values were extracted from the Blue Marble
+  userscript bundle (`SwingTheVine/Wplace-BlueMarble`), which carries them as `{id, premium, name,
+  rgb}` records — not retyped from a blog, and not from wplace.org itself, which sits behind a
+  Cloudflare challenge. Five things about this are load-bearing:
+  - ⚠ **An index may never CHANGE MEANING, but its HEX may be retuned in place.** A pixel is
+    persisted as its 1-based index, so inserting or reordering before the end recolours the live
+    canvas. Retuning is different and is what this migration did: the pixel keeps its index and
+    simply renders in the new shade. Median shift to existing art was **ΔE 8.3**, max 21.4 — the
+    world stayed recognisable. `mg_pixelbattle_palette_test.js` therefore pins **positions**
+    (`FROZEN_ROLES`), not colours.
+  - **Two indices may legitimately share a hex.** Retuning collapsed 10 older indices onto a shade
+    another index already had. They stay in storage so pre-retune art still renders; `displayOrder`
+    lists each **distinct shade** once, so the picker shows 65 rather than 75. The client folds a
+    duplicate index onto the drawn one (`canonColor`) — without it, the eyedropper could report a
+    hidden index and highlight no swatch at all.
+  - **The terrain ΔE floor is gone, and that is a design change, not a relaxation.** Ocean and land
+    used to be "the background you must not disappear into", so paint had to stay ΔE 19 away from
+    them. They are now two ordinary swatches in the set, so proximity to them is just proximity to
+    two more colours. The pair floor dropped to 5 for the same reason: **wplace's own set is denser
+    than our old floors allowed** — it ships deliberate shade ramps (Dark Slate/Dark Gray ΔE 6.0,
+    Stone/Tan 8.1, 17 pairs under 15), so a floor of 15 would have rejected the real palette. What
+    still protects the player is the assertion that no two *shown* swatches are identical.
+  - **Custom hex is impossible by construction**, and worth knowing before it is proposed again:
+    tiles are `Uint8Array` of palette **indices** and `/pxview` returns an **indexed** PNG
+    (colour type 3 + PLTE), so the wire carries colour *numbers*. The ceiling is 256 entries
+    (0 = eraser), leaving room for ~180 more colours.
   - The admin panel's colour names used to be a hand-written array in `worker.core.js` parallel to
     the generated palette. It is generated now (`PX_COLOR_NAMES`); the old copy would have rendered
     every added colour as `color 19`, `color 20`… in the audit log and the pixel inspector with
@@ -1270,14 +1277,14 @@ is built but **not yet in-game verified**.
   pixel, so a pick is never ambiguous) and disarms on the sample and on any zoom change, since a
   mode left armed below max zoom would silently eat the next click.
 - ⚠ **The control strip is an exact width/height budget, not a flexible row.** Navigation 208 +
-  palette 340 + actions 220 = **768**; a swatch is 18px + 2px margin so 17 × 20 = 340 across and
-  3 × 20 = 60 down (three rows still fit the 62px strip, so the third row did NOT grow the modal),
-  and the four tools wrap as 2 × (105 + 5) across by 2 × (28 + 3) = 62 down. Panorama's
-  `right-wrap` has no fractional slack: one pixel wider spills a fourth row, which grows the modal
-  into the ui-scale viewport clamp (trap 20) and can drop UPLOAD out of the clipped strip with no
-  error anywhere. The current-colour readout lives in the **topbar** for this reason — a 62px-tall
-  chip in the actions row pushes a button out of it. Change the swatch count and this arithmetic
-  together.
+  palette 368 + actions 192 = **768**; a swatch is 14px + 2px margin so 23 × 16 = 368 across and
+  3 × 16 = 48 down (inside the 62px strip, so the palette grew from 34 to 65 swatches without
+  growing the modal), and the four tools wrap as 2 × (91 + 5) across by 2 × (28 + 3) = 62 down.
+  Panorama's `right-wrap` has no fractional slack: a size that does not divide the row evenly
+  spills an extra row, which grows the modal into the ui-scale viewport clamp (trap 20) and can
+  drop UPLOAD out of the clipped strip with no error anywhere. The current-colour readout lives in
+  the **topbar** for this reason — a 62px-tall chip in the actions row pushes a button out of it.
+  Change the swatch count and this arithmetic together.
 - The server-authoritative bank is 100 pixels, regenerating 1 per 30 seconds and keyed by the
   Steam32 account id discovered through the local party avatar panel.
 - Eraser batches use colour index 0: the Worker removes stored paint to reveal the immutable map,

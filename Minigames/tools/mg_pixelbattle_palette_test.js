@@ -37,64 +37,70 @@ function assert(condition, message) {
 }
 
 assert(palette.paint.length >= 18, "palette is append-only and cannot shrink below its 18 shipped colours");
-assert(palette.paint.some(entry => entry.name === "brown"), "palette must retain brown");
 
-// ⚠ THE ONE INVARIANT THAT CANNOT BE RELAXED. A canvas pixel is persisted as its 1-based index
-// in `paint`, so these 18 entries are storage keys, not presentation. Reordering or inserting
-// before the end silently recolours every pixel already painted on the shared world - and it
-// would look like a server bug, not a palette edit. New colours append; this list is frozen.
-const FROZEN_PREFIX = [
-    "white", "light_gray", "dark_gray", "black", "red", "orange", "yellow", "lime",
-    "green", "cyan", "blue", "navy", "purple", "magenta", "pink", "brown", "ocean", "land"
+// ⚠ THE ONE INVARIANT THAT CANNOT BE RELAXED: a canvas pixel is persisted as its 1-based index in
+// `paint`, so an index may never CHANGE MEANING by being moved. Inserting or reordering before the
+// end silently recolours every pixel already painted on the shared world, and it would look like a
+// server bug rather than a palette edit.
+//
+// What IS allowed - and is what v1.2 did when the palette moved onto the official wplace colours -
+// is retuning an existing index's HEX in place: the pixel keeps its index and simply renders in the
+// new shade. So this checks POSITIONS, not colours. The 16 original slots plus ocean/land are
+// pinned by their semantic role; the eyedropper and the admin log read names from the same file.
+const FROZEN_ROLES = [
+    "white", "light_gray", "gray", "black", "red", "gold", "yellow", "light_green",
+    "dark_green", "cyan", "blue", "dark_blue", "dark_purple", "purple", "light_pink", "brown",
+    "ocean", "land"
 ];
-FROZEN_PREFIX.forEach((name, index) => {
+FROZEN_ROLES.forEach((name, index) => {
     assert(palette.paint[index] && palette.paint[index].name === name,
         `paint index ${index + 1} must stay "${name}": indices are storage keys for live pixels`);
 });
+assert(palette.paint[16].matchesTerrain === "ocean" && palette.paint[17].matchesTerrain === "land",
+    "indices 17/18 are the terrain swatches and must keep matching the base map");
 
 const names = palette.paint.map(entry => entry.name);
 assert(new Set(names).size === names.length, "palette names must be unique");
 
-// displayOrder is presentation only (names, never indices), so it is free to interleave the
-// appended colours into the rainbow. It must still cover the palette exactly once.
+// displayOrder is presentation only (names, never indices). Because two storage indices may share a
+// hex after a retune, it lists each DISTINCT SHADE once rather than every index - otherwise the
+// picker would show visually identical swatches side by side.
 const order = palette.displayOrder;
-assert(Array.isArray(order) && order.length === names.length && new Set(order).size === order.length,
-    "displayOrder must list every paint colour exactly once");
+assert(Array.isArray(order) && new Set(order).size === order.length,
+    "displayOrder must not repeat a colour");
 order.forEach(name => assert(names.includes(name), `displayOrder names an unknown colour: ${name}`));
+const shownHexes = order.map(name => palette.paint.find(e => e.name === name).hex.toLowerCase());
+assert(new Set(shownHexes).size === shownHexes.length,
+    "displayOrder must show each distinct shade only once");
+// Every shade that exists in storage must be reachable in the picker, or a colour would be
+// paintable by old art yet impossible to select.
+const allHexes = new Set(palette.paint.map(e => e.hex.toLowerCase()));
+assert(new Set(shownHexes).size === allHexes.size,
+    "every distinct shade in storage must appear in displayOrder");
 
-const regularPaint = palette.paint.filter(entry => !entry.matchesTerrain);
+const shown = order.map(name => palette.paint.find(e => e.name === name));
+const regularPaint = shown.filter(entry => !entry.matchesTerrain);
 const terrainPaint = palette.paint.filter(entry => entry.matchesTerrain);
-const paint = regularPaint.map(entry => entry.hex.toLowerCase());
 assert(regularPaint.length >= 16, "palette must retain at least the 16 original non-terrain colours");
-assert(new Set(paint).size === paint.length, "regular paint colours must be unique");
-assert(!paint.includes(palette.ocean.toLowerCase()), "regular paint cannot equal ocean");
-assert(!paint.includes(palette.land.toLowerCase()), "regular paint cannot equal land");
 assert(terrainPaint.length === 2, "palette must expose ocean and land swatches");
 for (const entry of terrainPaint) {
     assert(entry.hex.toLowerCase() === palette[entry.matchesTerrain].toLowerCase(),
         entry.name + " swatch must exactly match its terrain");
 }
 
-// 15, lowered from 16 when the palette grew from 16 to 32 paint colours in v1.2. This is a
-// deliberate, measured relaxation, NOT a threshold bent to make a commit pass: the closest pair is
-// deep_pink/hot_pink at ΔE 15.4 - both canonical r/place hues, and a shading ramp is exactly what
-// a denser palette is FOR. The point of the check is to catch an accidental near-duplicate
-// (ΔE < 10, indistinguishable at a 12px swatch), so the floor stays just under the tightest
-// intentional pair. Do not lower it again to admit a new colour without measuring first.
-const MIN_PAIR_DELTA = 15;
-const MIN_TERRAIN_DELTA = 19;
-
-let nearestTerrain = { distance: Infinity, paint: "", terrain: "" };
-for (const entry of regularPaint) {
-    for (const terrain of ["ocean", "land"]) {
-        const distance = delta(entry.hex, palette[terrain]);
-        if (distance < nearestTerrain.distance) {
-            nearestTerrain = { distance: distance, paint: entry.name, terrain: terrain };
-        }
-    }
-}
-assert(nearestTerrain.distance >= MIN_TERRAIN_DELTA,
-    `paint too close to terrain: ${nearestTerrain.paint}/${nearestTerrain.terrain}`);
+// The palette is the OFFICIAL wplace 63 plus our two terrain swatches (v1.2). That set is denser
+// than anything we would have authored: it ships deliberate shade ramps (Dark Slate/Dark Gray sit
+// ΔE 6.0 apart, Stone/Tan 8.1), so a floor of 15 would reject the real palette.
+//
+// The terrain floor is GONE, and that is the point of the redesign rather than a relaxation to make
+// this pass: ocean and land used to be "the background you must not disappear into", which is why
+// paint had to stay 19 away from them. They are now two ordinary swatches in the set, so a colour
+// near them is simply a colour near two other colours - the same situation as any adjacent pair.
+// What survives is the check that actually protects the player: no two swatches may be EXACTLY
+// equal (that would be a dead duplicate in the picker), which the distinct-hex assertions above
+// already enforce, plus a floor low enough to catch an accidental paste while admitting wplace's
+// own ramps.
+const MIN_PAIR_DELTA = 5;
 
 let nearestPair = { distance: Infinity, a: "", b: "" };
 for (let i = 0; i < regularPaint.length; i++) {
@@ -147,11 +153,18 @@ palette.paint.forEach((entry, index) => {
 // The admin panel names every colour it shows from this array; a short one renders "color 19".
 assert(serverNames.length === palette.paint.length + 1 && serverNames[0] === "eraser",
     "PX_COLOR_NAMES must be the eraser plus one name per paint colour");
-// Draw order is 1-based indices into the storage array, covering it exactly once.
-assert(JSON.stringify(clientOrder.slice().sort((a, b) => a - b)) ===
-    JSON.stringify(palette.paint.map((_, index) => index + 1)),
-    "generated palette draw order must permute every paint index exactly once");
+// Draw order is 1-based indices into the storage array. It covers each DISTINCT SHADE once, so it
+// is a subset of the indices (retuned duplicates stay in storage but are not drawn twice).
+assert(clientOrder.length === order.length,
+    "generated draw order must have one entry per displayed swatch");
+assert(new Set(clientOrder).size === clientOrder.length, "generated draw order must not repeat");
+clientOrder.forEach(index => {
+    assert(index >= 1 && index <= palette.paint.length,
+        `generated draw order index ${index} is outside the palette`);
+});
+assert(JSON.stringify(clientOrder.map(i => palette.paint[i - 1].name)) === JSON.stringify(order),
+    "generated draw order must match displayOrder exactly");
 
-console.log(`Pixel Battle palette passed: ${regularPaint.length} paint colours, nearest terrain ΔE=` +
-    nearestTerrain.distance.toFixed(1) + ", nearest paint pair ΔE=" +
+console.log(`Pixel Battle palette passed: ${palette.paint.length} storage indices, ` +
+    `${order.length} swatches shown (official wplace + ocean/land), nearest displayed pair ΔE=` +
     nearestPair.distance.toFixed(1));

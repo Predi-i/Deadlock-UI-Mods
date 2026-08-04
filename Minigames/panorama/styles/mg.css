@@ -2065,20 +2065,20 @@
     font-size: 14px;
     color: #8ea5b9;
 }
-/* 51 swatches (49 paint + ocean/land) in three rows of 17. The widths are an exact budget against
-   the 768px control strip: navigation 208 + palette 340 + actions 220 = 768. A swatch is 18px plus
-   a 2px margin = 20, and 17 x 20 = 340 across by 3 x 20 = 60 down - which still fits the 62px strip,
-   so adding the third row does NOT grow the modal into the ui-scale viewport clamp (trap 20).
-   Panorama's right-wrap has no fractional slack: one pixel wider spills a fourth row and does grow
-   it. Change the swatch count and this arithmetic together. */
+/* 65 swatches (the official wplace 63 + our ocean/land) in three rows of 23. The widths are an
+   exact budget against the 768px control strip: navigation 208 + palette 368 + actions 192 = 768.
+   A swatch is 14px + 2px margin = 16, and 23 x 16 = 368 across by 3 x 16 = 48 down, inside the
+   62px strip - so the palette grew without growing the modal into the ui-scale viewport clamp
+   (trap 20). Panorama's right-wrap has no fractional slack: any size that does not divide the row
+   evenly spills an extra row. Change the swatch count and this arithmetic together. */
 .mg-px-palette {
-    width: 340px;
+    width: 368px;
     height: 62px;
     flow-children: right-wrap;
 }
 .mg-px-swatch {
-    width: 18px;
-    height: 18px;
+    width: 14px;
+    height: 14px;
     margin: 0px 2px 2px 0px;
     border: 1px solid #00000088;
 }
@@ -2122,18 +2122,18 @@
     color: #9fb2c3;
 }
 .mg-px-editor-actions {
-    width: 220px;
+    width: 192px;
     height: 62px;
     flow-children: right-wrap;
     horizontal-align: right;
 }
-/* Four tools (PICK / ERASE / CLEAR / UPLOAD) wrap into two rows of two: 2 x (105 + 5) = 220 across
+/* Four tools (PICK / ERASE / CLEAR / UPLOAD) wrap into two rows of two: 2 x (91 + 5) = 192 across
    and 2 x (28 + 3) = 62 down, which fills the strip with nothing to spare. A taller button or
    margin drops UPLOAD out of the clipped control row entirely, which is how a primary action goes
    missing with no error anywhere. The current-colour chip is deliberately NOT in this row for the
    same reason - it lives in the topbar. */
 .mg-px-action {
-    width: 105px;
+    width: 91px;
     height: 28px;
     margin-left: 5px;
     margin-bottom: 3px;
@@ -2144,7 +2144,7 @@
     background-color: #24384c;
 }
 .mg-px-eraser {
-    width: 105px;
+    width: 91px;
 }
 .mg-px-eraser-selected {
     border-color: #ffffff;
