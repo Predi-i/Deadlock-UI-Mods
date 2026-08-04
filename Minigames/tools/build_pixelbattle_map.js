@@ -35,7 +35,43 @@ const landRgb = rgb(palette.land);
 const paintHex = palette.paint.map(entry => entry.hex.toLowerCase());
 const paintNames = palette.paint.map(entry => entry.name);
 const paintRgb = paintHex.map(rgb);
-if (paintRgb.length !== 18) throw new Error("Pixel Battle requires exactly 18 paint colours");
+
+// The paint array is STORAGE ORDER: a canvas pixel persists as its 1-based index here, so the
+// existing entries can never move. There is no fixed count any more (it was 18) - the palette
+// grew to 34 in v1.2 and may grow again - but a shrink would orphan every pixel already painted
+// in a removed colour, so the floor is enforced instead.
+if (paintRgb.length < 18) throw new Error("Pixel Battle paint indices are storage keys: append only");
+if (new Set(paintNames).size !== paintNames.length) throw new Error("duplicate palette name");
+
+// displayOrder is purely presentational (a list of NAMES, never indices), so it can be
+// rearranged without touching a single stored pixel. It lists each DISTINCT SHADE once rather than
+// every index: retuning the palette onto the official wplace colours (v1.2) landed some older
+// indices on a shade another index already had, and those must stay in storage so old art keeps
+// rendering while the picker shows the shade only once.
+const order = palette.displayOrder || paintNames;
+const nameIndex = new Map(paintNames.map((name, index) => [name, index + 1]));
+if (new Set(order).size !== order.length)
+    throw new Error("displayOrder must not repeat a colour");
+const displayIndices = order.map(name => {
+    if (!nameIndex.has(name)) throw new Error(`displayOrder names an unknown colour: ${name}`);
+    return nameIndex.get(name);
+});
+const shownHex = displayIndices.map(index => paintHex[index - 1]);
+if (new Set(shownHex).size !== shownHex.length)
+    throw new Error("displayOrder must show each distinct shade only once");
+if (new Set(shownHex).size !== new Set(paintHex).size)
+    throw new Error("every distinct shade in storage must appear in displayOrder");
+
+// The eyedropper answers with what the player SEES, so an unpainted pixel must resolve to the
+// swatch that matches the base map underneath it. Those two swatches are declared in the JSON
+// (`matchesTerrain`), so the server reads their indices from here instead of hard-coding 17/18 -
+// which would silently point at the wrong colour the moment the palette is reordered.
+const terrainIndex = {};
+for (const key of ["ocean", "land"]) {
+    const entry = palette.paint.find(item => item.matchesTerrain === key);
+    if (!entry) throw new Error(`the palette must expose a swatch matching ${key}`);
+    terrainIndex[key] = nameIndex.get(entry.name);
+}
 
 function project(coord) {
     return [
@@ -151,6 +187,12 @@ const generated =
     "const PX_PALETTE = " + JSON.stringify([[0, 0, 0]].concat(paintRgb)) + ";\n" +
     "const PX_ALPHA = " + JSON.stringify([0].concat(paintRgb.map(() => 255))) + ";\n" +
     "const PX_VIEW_PALETTE = " + JSON.stringify([oceanRgb, landRgb].concat(paintRgb)) + ";\n" +
+    // The admin panel's colour names used to be a hand-maintained copy inside worker.core.js, which
+    // silently went stale the moment the palette grew (every new index rendered as "color 19"...).
+    // Generated from the same source now, with the eraser at index 0 to match PX_PALETTE.
+    "const PX_COLOR_NAMES = " +
+    JSON.stringify(["eraser"].concat(paintNames.map(name => name.replace(/_/g, " ")))) + ";\n" +
+    "const PX_TERRAIN_INDEX = " + JSON.stringify(terrainIndex) + ";\n" +
     "const PX_LAND_SPANS = " + JSON.stringify(spans) + ";\n";
 fs.writeFileSync(serverMapPath, generated, "utf8");
 
@@ -162,6 +204,15 @@ const clientPalette =
     "    var MG = $.MG = $.MG || {};\n" +
     "    MG.PixelBattlePalette = " + JSON.stringify(paintHex) + ";\n" +
     "    MG.PixelBattlePaletteNames = " + JSON.stringify(paintNames) + ";\n" +
+    // 1-based colour indices in the order the swatches are DRAWN. Storage order (the arrays above)
+    // is append-only, so without this the palette would show 16 rainbow colours followed by a
+    // second, unsorted rainbow of everything added later.
+    "    MG.PixelBattlePaletteOrder = " + JSON.stringify(displayIndices) + ";\n" +
+    // 1-based indices of the two swatches that reproduce the base map exactly. The client flags
+    // them in the UI; it must not infer them by comparing hex values against the terrain colours,
+    // because a future paint colour could legitimately equal one of them.
+    "    MG.PixelBattlePaletteTerrain = " +
+    JSON.stringify([terrainIndex.ocean, terrainIndex.land]) + ";\n" +
     "})();\n";
 fs.writeFileSync(clientPalettePath, clientPalette, "utf8");
 console.log(`built ${outputPath} (${W}x${H}, ${png.length} bytes)`);

@@ -42,6 +42,34 @@
     // image to generate the land mask.)
     const PALETTE = MG.PixelBattlePalette || [];
     const PALETTE_NAMES = MG.PixelBattlePaletteNames || [];
+    // 1-based palette indices in the order the swatches are DRAWN. The palette array itself is
+    // storage order and append-only (a pixel persists as its index), so the 16 colours added in
+    // v1.2 sit at the end of it - drawing in that order would show a rainbow followed by a second,
+    // unsorted rainbow. This list interleaves them back into one hue ramp. Falls back to storage
+    // order if the generated module is older than this controller.
+    const PALETTE_ORDER = (MG.PixelBattlePaletteOrder && MG.PixelBattlePaletteOrder.length)
+        ? MG.PixelBattlePaletteOrder
+        : PALETTE.map((unused, index) => index + 1);
+    // Indices of the two swatches that repaint the base map exactly (generated, not guessed by
+    // comparing hex values - a future paint colour could legitimately equal one of them).
+    const PALETTE_TERRAIN = MG.PixelBattlePaletteTerrain || [];
+    // Retuning the palette onto the official wplace colours (v1.2) left a few OLDER indices sharing
+    // a shade with a newer one. Storage keeps them all so art painted before the retune still
+    // renders, but only one swatch per shade is drawn - so an index the eyedropper reports may have
+    // no button of its own. Fold any such index onto the drawn one with the same colour, or picking
+    // a pre-retune pixel would highlight nothing and leave the palette looking unresponsive.
+    const CANON_INDEX = {};
+    for (let ci = 0; ci < PALETTE_ORDER.length; ci++) {
+        const shownIndex = PALETTE_ORDER[ci];
+        const hex = PALETTE[shownIndex - 1];
+        for (let pi = 1; pi <= PALETTE.length; pi++) {
+            if (PALETTE[pi - 1] === hex && CANON_INDEX[pi] === undefined) CANON_INDEX[pi] = shownIndex;
+        }
+    }
+    function canonColor(index) {
+        const mapped = CANON_INDEX[index];
+        return mapped === undefined ? index : mapped;
+    }
     let accessCache = { accountId: "", status: "unknown", balance: BANK_CAP, callbacks: [] };
 
     function validAccountId(value) {
@@ -184,6 +212,10 @@
         // (instead of a half-pixel centre) is what makes max-zoom paint cells land exactly.
         let viewX = 0, viewY = 0;
         let selectedColor = 1;
+        // Eyedropper armed: the next max-zoom click reads a colour instead of painting one.
+        // One-shot - it disarms as soon as a pixel is sampled, so it cannot be left on by accident
+        // and silently swallow the click the player meant as paint.
+        let picking = false;
         const pending = {};
         let pendingOrder = [];
         const pendingPanels = {};
@@ -211,6 +243,15 @@
         regenLabel.AddClass("mg-px-stat-regen");
         const queueLabel = addLabel(topbar, "mg-px-stat", "");
         queueLabel.AddClass("mg-px-stat-queue");
+        // Current-colour readout. With 65 swatches at 14px a selected border alone is easy to lose
+        // track of, so the active colour is also named here. It lives in the topbar rather than
+        // beside the tools because the control strip's 62px height is fully spent by the palette's
+        // three rows and two rows of buttons.
+        const swatchCurrent = $.CreatePanel("Panel", topbar, "");
+        swatchCurrent.AddClass("mg-px-current");
+        const swatchPreview = $.CreatePanel("Panel", swatchCurrent, "");
+        swatchPreview.AddClass("mg-px-current-swatch");
+        const swatchLabel = addLabel(swatchCurrent, "mg-px-current-label", "");
         const coordLabel = addLabel(topbar, "mg-px-coord", "Click the map to zoom in");
 
         const viewport = $.CreatePanel("Panel", root, "");
@@ -280,12 +321,17 @@
 
         const palette = $.CreatePanel("Panel", controls, "");
         palette.AddClass("mg-px-palette");
-        const paletteButtons = [];
-        for (let color = 1; color <= PALETTE.length; color++) {
+        const paletteButtons = {};
+        for (let slot = 0; slot < PALETTE_ORDER.length; slot++) {
             ((colorIndex) => {
-                var swatch = $.CreatePanel("Button", palette, "");
+                if (!(colorIndex >= 1 && colorIndex <= PALETTE.length)) return;
+                const swatch = $.CreatePanel("Button", palette, "");
                 swatch.AddClass("mg-px-swatch");
-                if (colorIndex > 16) swatch.AddClass("mg-px-swatch-terrain");
+                if (PALETTE_TERRAIN.indexOf(colorIndex) !== -1) {
+                    // The two terrain swatches paint the exact base-map colours, so they read as
+                    // "erase to map" rather than as paint. Keep them visually flagged.
+                    swatch.AddClass("mg-px-swatch-terrain");
+                }
                 swatch.style.backgroundColor = PALETTE[colorIndex - 1] || "#ffffff";
                 swatch.SetPanelEvent("onmouseover", () => {
                     coordLabel.text = "COLOR  " +
@@ -293,16 +339,27 @@
                 });
                 swatch.SetPanelEvent("onactivate", () => {
                     selectedColor = colorIndex;
+                    picking = false;
                     updatePalette();
                 });
-                paletteButtons.push(swatch);
-            })(color);
+                paletteButtons[colorIndex] = swatch;
+            })(PALETTE_ORDER[slot]);
         }
 
         const actions = $.CreatePanel("Panel", controls, "");
         actions.AddClass("mg-px-editor-actions");
+        const pickButton = addButton(actions, "mg-px-action mg-px-eraser", "PICK", () => {
+            if (zoom !== MAX_ZOOM) {
+                outerStatus("Zoom to 8× to pick a colour off the map.");
+                return;
+            }
+            picking = !picking;
+            updatePalette();
+            if (picking) outerStatus("Click a pixel to copy its colour.");
+        });
         const eraserButton = addButton(actions, "mg-px-action mg-px-eraser", "ERASE", () => {
             selectedColor = 0;
+            picking = false;
             updatePalette();
         });
         const clearButton = addButton(actions, "mg-px-action", "CLEAR", clearPending);
@@ -339,10 +396,52 @@
         }
 
         function updatePalette() {
-            for (let i = 0; i < paletteButtons.length; i++) {
-                paletteButtons[i].SetHasClass("mg-px-swatch-selected", i + 1 === selectedColor);
+            // Keyed by colour index, not by draw position: the two orders differ (PALETTE_ORDER).
+            for (const key in paletteButtons) {
+                if (!Object.prototype.hasOwnProperty.call(paletteButtons, key)) continue;
+                paletteButtons[key].SetHasClass("mg-px-swatch-selected",
+                    Number(key) === selectedColor && !picking);
             }
-            eraserButton.SetHasClass("mg-px-eraser-selected", selectedColor === 0);
+            eraserButton.SetHasClass("mg-px-eraser-selected", selectedColor === 0 && !picking);
+            pickButton.SetHasClass("mg-px-eraser-selected", picking);
+            const current = PALETTE_NAMES[selectedColor - 1];
+            swatchLabel.text = picking
+                ? "PICK A PIXEL"
+                : (selectedColor === 0 ? "ERASER" : String(current || selectedColor).toUpperCase());
+            swatchPreview.style.backgroundColor =
+                selectedColor === 0 ? "#00000000" : (PALETTE[selectedColor - 1] || "#ffffff");
+            swatchPreview.SetHasClass("mg-px-current-empty", selectedColor === 0);
+        }
+
+        // Eyedropper. Panorama cannot read a colour out of the viewport bitmap it is already
+        // showing (the only channel back from an image is its two dimensions), so the pixel is
+        // named by the server: /api/pxpick answers the palette index at x,y. One request per pick,
+        // through the same FIFO as everything else. An unpainted pixel answers with the terrain
+        // swatch under it rather than the eraser, because that is the colour the player sees.
+        function pickPixel(x, y) {
+            if (!accountId || !picking) return;
+            outerStatus("Reading that pixel…");
+            MG.Net.request("/api/pxpick", { id: accountId, x: x, y: y }, (w, h) => {
+                if (destroyed || banned) return;
+                if (h === 63) {
+                    if (w === 5) { showBanned(); return; }
+                    outerStatus("Couldn't read that pixel.");
+                    return;
+                }
+                // h is always 0 for real data, so anything else is a stale UI scale rather than a
+                // colour. Refuse it instead of selecting whatever it decoded to.
+                if (h !== 0 || !(w >= 1 && w <= PALETTE.length)) {
+                    outerStatus("Couldn't read that pixel.");
+                    return;
+                }
+                selectedColor = canonColor(w);
+                picking = false;
+                updatePalette();
+                outerStatus("Picked " + String(PALETTE_NAMES[selectedColor - 1] || w).toUpperCase() + ".");
+            }, () => {
+                if (destroyed) return;
+                outerStatus("Couldn't read that pixel.");
+            });
         }
 
         function clampOrigin() {
@@ -358,11 +457,17 @@
             // Every zoom uses a server-rasterised VIEW_W x VIEW_H frame. This avoids
             // Panorama's bilinear filtering in previews as well as in the editor.
             crispImage.style.visibility = "visible";
+            // The eyedropper is only meaningful at max zoom (one cell = one canvas pixel). Zooming
+            // or panning out with it armed would leave a mode that silently eats the next click:
+            // the grid click handler routes to pickPixel only at MAX_ZOOM, so the press would do
+            // nothing at all. Disarm with the zoom instead.
+            if (picking && zoom !== MAX_ZOOM) picking = false;
             grid.SetHasClass("mg-px-grid-edit", zoom === MAX_ZOOM);
             zoomLabel.text = zoom + "×";
             helpLabel.text = zoom === MAX_ZOOM
-                ? "Pick a colour, then paint. Changes stay local until you press UPLOAD."
+                ? "Pick a colour, then paint. PICK copies a colour off the map. Changes stay local until you press UPLOAD."
                 : "Click a region to zoom in. At 8× each square is one canvas pixel.";
+            updatePalette();
             refreshPendingGeometry();
             scheduleCrispView();      // coalesced: a burst of pan/zoom presses costs ONE fetch
         }
@@ -812,7 +917,11 @@
                         if (zoom < MAX_ZOOM) drillInto(cellCol, cellRow);
                         else {
                             var point = mapPoint(cellCol, cellRow);
-                            placePixel(point.x, point.y);
+                            // The eyedropper consumes the click instead of painting. It is only
+                            // armed at max zoom, where one cell is exactly one canvas pixel, so a
+                            // pick can never be ambiguous about which pixel it read.
+                            if (picking) pickPixel(point.x, point.y);
+                            else placePixel(point.x, point.y);
                         }
                     });
                 })(col, row);

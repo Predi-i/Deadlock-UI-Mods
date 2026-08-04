@@ -9,10 +9,10 @@
 - For a new release, bump `MG_VERSION`, copy `relevant-template.png` to the matching marker name
   (`is-1-1-relevant.png`, and so on), then commit and push both marker changes to `main`.
 
-The next version's marker is staged one release ahead (`is-1-2-relevant.png` already exists while
-1.1 ships), so a release only has to retire the previous marker. The popup is driven by the
-OUTGOING version's marker: players on 1.0 are told to update because `is-1-0-relevant.png` was
-replaced with the wide template, not because 1.1 exists. Retiring it is therefore the step that
+The next version's marker is staged one release ahead (`is-1-3-relevant.png` already exists while
+1.2 ships), so a release only has to retire the previous marker. The popup is driven by the
+OUTGOING version's marker: players on 1.1 are told to update because `is-1-1-relevant.png` was
+replaced with the wide template, not because 1.2 exists. Retiring it is therefore the step that
 actually notifies anyone; forgetting it ships a release nobody is prompted to install.
 
 `mg_update_marker_test.js` also asserts that the marker for the current `MG_VERSION` exists and

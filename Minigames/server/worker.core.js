@@ -1,4 +1,4 @@
-/* global CompressionStream, GEO_COUNTRY_NAMES, GEO_CREDIT_KEYS, GEO_POOL_PACKED, PX_ALPHA, PX_LAND_SPANS, PX_PALETTE, PX_VIEW_PALETTE, adminAssetResponse, atob */
+/* global CompressionStream, GEO_COUNTRY_NAMES, GEO_CREDIT_KEYS, GEO_POOL_PACKED, PX_ALPHA, PX_COLOR_NAMES, PX_LAND_SPANS, PX_PALETTE, PX_TERRAIN_INDEX, PX_VIEW_PALETTE, adminAssetResponse, atob */
 /**
  * Deadlock Minigames relay - Worker-compatible CORE (authored source).
  *
@@ -36,6 +36,7 @@
  *   /api/pxversion                                -> (version&63, version>>6)     reload only after a change
  *   /api/pxbank?id=STEAM32                        -> (balance&63, balance>>6)     100 cap, +1 / 30 seconds
  *   /api/pxput?id=STEAM32&b=x,y,c;...             -> remaining balance           1..128 unique pixels
+ *   /api/pxpick?x=X&y=Y                          -> (paletteIndex, 0)            eyedropper; unpainted = terrain swatch
  *   /api/create?game=G&tok=T[&solo=1]             -> dCode(code, host=false)     new PRIVATE lobby, host = seat 0
  *   /api/quick?game=G&tok=T&tc=..&cv=..            -> dCode(code, JOINER|HOST)   role is the code BAND, not +100
  *   /api/mquick?games=..&tok=T&tc=..&cv=..         -> dCode(code, JOINER|HOST)   multi-select; game fixed on join
@@ -571,6 +572,29 @@ export class Hub {
         const result = await applyPixelBatch(this, account, batch, clientIp);
         if (!result.ok) return d(result.reason, 63);
         return pixelBankPng(result.balance);
+      }
+      // Eyedropper. Panorama can only read two integers out of an image, so the client cannot
+      // sample a colour from the viewport bitmap it already has - the pixel has to be named by the
+      // server. One reply carries the palette index directly: the value is 0..PX_PALETTE.length,
+      // far inside one level, so h stays 0 and the h=63 error band is untouched.
+      // Unpainted answers with the TERRAIN swatch under the cursor rather than the eraser, because
+      // the player is asking "what colour is this?", and the honest answer for bare map is the
+      // ocean/land swatch they can actually select. Those indices come from the generated palette.
+      if (p === "/api/pxpick") {
+        const account = validPixelAccount(q.get("id"));
+        if (account && await pixelBan(this, account)) return d(5, 63);
+        // ⚠ NOT clampInt. /api/pxview clamps deliberately (a viewport origin should slide back
+        // inside the canvas), but clamping a PICK turns x=512 into x=511 and answers with a
+        // confident colour for a pixel the client never asked about - a silently wrong answer to
+        // "what colour is this?", and the client has no way to notice. Reject instead.
+        const x = pixelCoord(q.get("x"), PX_W);
+        const y = pixelCoord(q.get("y"), PX_H);
+        if (x < 0 || y < 0) return d(2, 63);
+        const tiles = await pixelTiles(this);
+        const paint = pixelAt(tiles, x, y);
+        const index = paint ||
+          (pixelLandAt(x, y) ? PX_TERRAIN_INDEX.land : PX_TERRAIN_INDEX.ocean);
+        return d(index, 0);
       }
       if (p === "/api/geostate") {
         const access = await geoLobbyAccess(this, code, q.get("tok"));
@@ -2729,14 +2753,25 @@ const PX_ADMIN_MAX_BATCH = 4096;
 const PX_AUDIT_RETENTION_MS = 180 * 24 * 60 * 60000;
 const PX_AUDIT_PRUNE_INTERVAL_MS = 24 * 60 * 60000;
 const PX_AUDIT_PRUNE_LIMIT = 512; // bounded once-daily cleanup; enough for normal public traffic
-const PX_ADMIN_COLOR_NAMES = [
-  "eraser", "white", "light gray", "dark gray", "black", "red", "orange", "yellow",
-  "lime", "green", "cyan", "blue", "navy", "purple", "magenta", "pink", "brown",
-  "ocean", "land"
-];
+// The admin panel's colour names USED to be a hand-written array right here, parallel to the
+// generated PX_PALETTE. It went stale the moment the palette grew past 18 in v1.2: every added
+// colour rendered as "color 19", "color 20"… in the audit log and the pixel inspector, and nothing
+// failed. Both now come from tools/assets/pixelbattle_palette.json via the generated module.
+const PX_ADMIN_COLOR_NAMES = PX_COLOR_NAMES;
 
-function pixelViewZoom(raw) {
-  const zoom = Number(raw);
+// A canvas coordinate that must be EXACT. Returns -1 for anything outside 0..limit-1 (and for
+// junk/blank/fractional input) rather than clamping it to the nearest edge, so a caller that asks
+// about a pixel outside the canvas is told so instead of receiving a real answer about a different
+// pixel. Used by the eyedropper; /api/pxview keeps clampInt, where sliding an origin back inside
+// the canvas is the desired behaviour.
+function pixelCoord(raw, limit) {
+  const text = String(raw === null || raw === undefined ? "" : raw).trim();
+  if (!/^\d{1,5}$/.test(text)) return -1;
+  const n = parseInt(text, 10);
+  return n >= 0 && n < limit ? n : -1;
+}
+
+function pixelViewZoom(raw) {  const zoom = Number(raw);
   return zoom === 1 || zoom === 2 || zoom === 4 || zoom === 8 || zoom === 16 ? zoom : 16;
 }
 
@@ -3163,7 +3198,7 @@ const STAT_PRUNE_INTERVAL_MS = 60 * 60000;
 // this list is the complete storage key space for the `routes` map.
 const STAT_ROUTE_LIST = [
   "/api/probe", "/api/ping",
-  "/api/pxcanvas", "/api/pxview", "/api/pxversion", "/api/pxbank", "/api/pxput",
+  "/api/pxcanvas", "/api/pxview", "/api/pxversion", "/api/pxbank", "/api/pxput", "/api/pxpick",
   "/api/geostate", "/api/geoview", "/api/geoguess", "/api/geonext", "/api/geotarget",
   "/api/geopick", "/api/geoscore", "/api/geoinfo", "/api/geocredit",
   "/api/create", "/api/quick", "/api/mquick", "/api/cancel", "/api/leave", "/api/join",
@@ -3224,6 +3259,8 @@ const STAT_SENTINEL_MODE = {
   "/api/djoin": STAT_SENT_FULL, "/api/pjoin": STAT_SENT_FULL, "/api/geoview": STAT_SENT_FULL,
   "/api/join": STAT_SENT_GAME, "/api/match": STAT_SENT_GAME,
   "/api/pxput": STAT_SENT_H63, "/api/pxbank": STAT_SENT_H63, "/api/pxversion": STAT_SENT_H63,
+  // pxpick answers d(paletteIndex, 0): data always sits at h=0, so only the h=63 band is reserved.
+  "/api/pxpick": STAT_SENT_H63,
   "/api/pxview": STAT_SENT_H63, "/api/geoscore": STAT_SENT_H63, "/api/geoinfo": STAT_SENT_H63,
   "/api/geocredit": STAT_SENT_H63, "/api/geotarget": STAT_SENT_H63, "/api/geopick": STAT_SENT_H63,
   "/api/poll": STAT_SENT_RAW, "/api/dlog": STAT_SENT_RAW, "/api/plog": STAT_SENT_RAW,
@@ -3628,7 +3665,13 @@ async function handlePixelAdmin(hub, request, url) {
   if (request.method === "GET" && path === "/admin/api/action") {
     return adminPixelAction(hub, url);
   }
-  if (request.method === "GET" && path === "/admin/api/pixel") {
+  // ⚠ NOT "/admin/api/pixel". EasyPrivacy ships the GENERIC filter `/api/pixel?` (no domain
+  // anchor), so uBlock Origin / Firefox tracking protection kill this request in the browser
+  // before it leaves the machine. It presents as "NetworkError when attempting to fetch
+  // resource" from the eyedropper while undo/ban/preview all work, because those routes carry
+  // no blocklisted token. Nothing reaches Nginx, so the server logs are silent and the bug
+  // looks like a backend fault. See ARCHITECTURE.md §8.9.
+  if (request.method === "GET" && path === "/admin/api/owner") {
     return adminPixelInspect(hub, url);
   }
   if (request.method === "GET" && path === "/admin/api/ban-status") {

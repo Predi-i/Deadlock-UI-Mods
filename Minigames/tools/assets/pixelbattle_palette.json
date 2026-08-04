@@ -1,24 +1,386 @@
 {
+  "_comment": [
+    "`paint` is STORAGE ORDER and is APPEND-ONLY. A pixel is persisted as its index in this",
+    "array (1-based; 0 is the eraser), so reordering or inserting anything before the end",
+    "silently recolours every pixel already on the shared canvas. New colours go at the END.",
+    "A colour's HEX may be retuned in place - the pixel keeps its index and simply renders in",
+    "the new shade - which is how the palette moved onto the official wplace colours in v1.2.",
+    "Two indices MAY share a hex (older colours that retuned onto the same wplace shade);",
+    "storage keeps both so old art still renders, and `displayOrder` shows each shade once.",
+    "`displayOrder` is what the palette shows, and may be rearranged freely - it is a list of",
+    "names, not indices. mg_pixelbattle_palette_test.js enforces all of this."
+  ],
   "ocean": "#183443",
   "land": "#a5ab91",
   "paint": [
-    { "name": "white",      "hex": "#ffffff" },
-    { "name": "light_gray", "hex": "#c4c9cc" },
-    { "name": "dark_gray",  "hex": "#5e6670" },
-    { "name": "black",      "hex": "#000000" },
-    { "name": "red",        "hex": "#ff4500" },
-    { "name": "orange",     "hex": "#ffa800" },
-    { "name": "yellow",     "hex": "#ffd635" },
-    { "name": "lime",       "hex": "#7eed56" },
-    { "name": "green",      "hex": "#00a368" },
-    { "name": "cyan",       "hex": "#51e9f4" },
-    { "name": "blue",       "hex": "#3690ea" },
-    { "name": "navy",       "hex": "#2450a4" },
-    { "name": "purple",     "hex": "#811e9f" },
-    { "name": "magenta",    "hex": "#b44ac0" },
-    { "name": "pink",       "hex": "#ff99aa" },
-    { "name": "brown",      "hex": "#9c6926" },
-    { "name": "ocean",      "hex": "#183443", "matchesTerrain": "ocean" },
-    { "name": "land",       "hex": "#a5ab91", "matchesTerrain": "land" }
+    {
+      "name": "white",
+      "hex": "#ffffff"
+    },
+    {
+      "name": "light_gray",
+      "hex": "#d2d2d2"
+    },
+    {
+      "name": "gray",
+      "hex": "#787878"
+    },
+    {
+      "name": "black",
+      "hex": "#000000"
+    },
+    {
+      "name": "red",
+      "hex": "#ed1c24"
+    },
+    {
+      "name": "gold",
+      "hex": "#f6aa09"
+    },
+    {
+      "name": "yellow",
+      "hex": "#f9dd3b"
+    },
+    {
+      "name": "light_green",
+      "hex": "#87ff5e"
+    },
+    {
+      "name": "dark_green",
+      "hex": "#0eb968"
+    },
+    {
+      "name": "cyan",
+      "hex": "#60f7f2"
+    },
+    {
+      "name": "blue",
+      "hex": "#4093e4"
+    },
+    {
+      "name": "dark_blue",
+      "hex": "#28509e"
+    },
+    {
+      "name": "dark_purple",
+      "hex": "#780c99"
+    },
+    {
+      "name": "purple",
+      "hex": "#aa38b9"
+    },
+    {
+      "name": "light_pink",
+      "hex": "#f38da9"
+    },
+    {
+      "name": "brown",
+      "hex": "#95682a"
+    },
+    {
+      "name": "ocean",
+      "hex": "#183443",
+      "matchesTerrain": "ocean"
+    },
+    {
+      "name": "land",
+      "hex": "#a5ab91",
+      "matchesTerrain": "land"
+    },
+    {
+      "name": "deep_red",
+      "hex": "#600018"
+    },
+    {
+      "name": "dark_red",
+      "hex": "#a50e1e"
+    },
+    {
+      "name": "beige",
+      "hex": "#f8b277"
+    },
+    {
+      "name": "light_yellow",
+      "hex": "#fffabc"
+    },
+    {
+      "name": "dark_green_alt1",
+      "hex": "#0eb968"
+    },
+    {
+      "name": "dark_teal",
+      "hex": "#0c816e"
+    },
+    {
+      "name": "teal",
+      "hex": "#10aea6"
+    },
+    {
+      "name": "teal_alt1",
+      "hex": "#10aea6"
+    },
+    {
+      "name": "light_indigo",
+      "hex": "#99b1fb"
+    },
+    {
+      "name": "dark_indigo",
+      "hex": "#4d31b8"
+    },
+    {
+      "name": "indigo",
+      "hex": "#6b50f6"
+    },
+    {
+      "name": "light_purple",
+      "hex": "#e09ff9"
+    },
+    {
+      "name": "pink",
+      "hex": "#ec1f80"
+    },
+    {
+      "name": "pink_alt1",
+      "hex": "#ec1f80"
+    },
+    {
+      "name": "dark_brown",
+      "hex": "#684634"
+    },
+    {
+      "name": "gray_alt1",
+      "hex": "#787878"
+    },
+    {
+      "name": "light_beige",
+      "hex": "#ffc5a5"
+    },
+    {
+      "name": "light_tan",
+      "hex": "#d6b594"
+    },
+    {
+      "name": "brown_alt1",
+      "hex": "#95682a"
+    },
+    {
+      "name": "light_red",
+      "hex": "#fa8072"
+    },
+    {
+      "name": "dark_red_alt1",
+      "hex": "#a50e1e"
+    },
+    {
+      "name": "dark_red_alt2",
+      "hex": "#a50e1e"
+    },
+    {
+      "name": "goldenrod",
+      "hex": "#c5ad31"
+    },
+    {
+      "name": "gold_alt1",
+      "hex": "#f6aa09"
+    },
+    {
+      "name": "dark_goldenrod",
+      "hex": "#9c8431"
+    },
+    {
+      "name": "olive",
+      "hex": "#5a944a"
+    },
+    {
+      "name": "dark_olive",
+      "hex": "#4a6b3a"
+    },
+    {
+      "name": "dark_olive_alt1",
+      "hex": "#4a6b3a"
+    },
+    {
+      "name": "light_cyan",
+      "hex": "#bbfaf2"
+    },
+    {
+      "name": "light_slate",
+      "hex": "#b3b9d1"
+    },
+    {
+      "name": "dark_slate_blue",
+      "hex": "#4a4284"
+    },
+    {
+      "name": "light_slate_blue",
+      "hex": "#b5aef1"
+    },
+    {
+      "name": "dark_slate_blue_alt1",
+      "hex": "#4a4284"
+    },
+    {
+      "name": "dark_gray",
+      "hex": "#3c3c3c"
+    },
+    {
+      "name": "orange",
+      "hex": "#ff7f27"
+    },
+    {
+      "name": "green",
+      "hex": "#13e67b"
+    },
+    {
+      "name": "light_teal",
+      "hex": "#13e1be"
+    },
+    {
+      "name": "dark_pink",
+      "hex": "#cb007a"
+    },
+    {
+      "name": "medium_gray",
+      "hex": "#aaaaaa"
+    },
+    {
+      "name": "dark_orange",
+      "hex": "#e45c1a"
+    },
+    {
+      "name": "light_goldenrod",
+      "hex": "#e8d45f"
+    },
+    {
+      "name": "light_olive",
+      "hex": "#84c573"
+    },
+    {
+      "name": "dark_cyan",
+      "hex": "#0f799f"
+    },
+    {
+      "name": "light_blue",
+      "hex": "#7dc7ff"
+    },
+    {
+      "name": "slate_blue",
+      "hex": "#7a71c4"
+    },
+    {
+      "name": "light_brown",
+      "hex": "#dba463"
+    },
+    {
+      "name": "dark_beige",
+      "hex": "#d18051"
+    },
+    {
+      "name": "dark_peach",
+      "hex": "#9b5249"
+    },
+    {
+      "name": "peach",
+      "hex": "#d18078"
+    },
+    {
+      "name": "light_peach",
+      "hex": "#fab6a4"
+    },
+    {
+      "name": "dark_tan",
+      "hex": "#7b6352"
+    },
+    {
+      "name": "tan",
+      "hex": "#9c846b"
+    },
+    {
+      "name": "dark_slate",
+      "hex": "#333941"
+    },
+    {
+      "name": "slate",
+      "hex": "#6d758d"
+    },
+    {
+      "name": "dark_stone",
+      "hex": "#6d643f"
+    },
+    {
+      "name": "stone",
+      "hex": "#948c6b"
+    },
+    {
+      "name": "light_stone",
+      "hex": "#cdc59e"
+    }
+  ],
+  "displayOrder": [
+    "black",
+    "dark_gray",
+    "gray",
+    "light_gray",
+    "white",
+    "deep_red",
+    "red",
+    "orange",
+    "gold",
+    "yellow",
+    "light_yellow",
+    "dark_green",
+    "green",
+    "light_green",
+    "dark_teal",
+    "teal",
+    "light_teal",
+    "dark_blue",
+    "blue",
+    "cyan",
+    "indigo",
+    "light_indigo",
+    "dark_purple",
+    "purple",
+    "light_purple",
+    "dark_pink",
+    "pink",
+    "light_pink",
+    "dark_brown",
+    "brown",
+    "beige",
+    "medium_gray",
+    "dark_red",
+    "light_red",
+    "dark_orange",
+    "light_tan",
+    "dark_goldenrod",
+    "goldenrod",
+    "light_goldenrod",
+    "dark_olive",
+    "olive",
+    "light_olive",
+    "dark_cyan",
+    "light_cyan",
+    "light_blue",
+    "dark_indigo",
+    "dark_slate_blue",
+    "slate_blue",
+    "light_slate_blue",
+    "light_brown",
+    "dark_beige",
+    "light_beige",
+    "dark_peach",
+    "peach",
+    "light_peach",
+    "dark_tan",
+    "tan",
+    "dark_slate",
+    "slate",
+    "light_slate",
+    "dark_stone",
+    "stone",
+    "light_stone",
+    "ocean",
+    "land"
   ]
 }

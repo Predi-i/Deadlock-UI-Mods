@@ -255,6 +255,7 @@ dim. Only `/api/probe` stays **literal pixels** — it's the calibration referen
 | `/api/poll?code=C&since=S` | `(from, to)` RAW squares 0..63 · `(1,1)` nothing new |
 | `/api/reset?code=C&game=G&tok=T` | `(1,1)` · `(9,3)` bad-token |
 | `/api/clocks?code=C&seat=S` | `(30 + sec>>6, sec&63)` one seat · `(9,9)` gone · `(9,8)` untimed |
+| `/api/pxpick?x=X&y=Y` | `(paletteIndex, 0)` eyedropper · `(2,63)` bad coordinate · `(5,63)` banned — data always sits at `h=0`; an unpainted pixel answers with the ocean/land swatch, and coordinates are validated exactly (no clamping, §8.9) |
 | `/api/geostate?code=C&tok=T` | current round + authoritative guess/reveal/ready masks |
 | `/api/geoview?code=C&tok=T` | current 2:1 equirectangular image (ordinary JPEG/PNG, not a dimension message) |
 | `/api/geoguess?code=C&tok=T&cell=N` | `(1,1)` accepted · `(9,x)` rejected — `cell` is 0..131071 in the 512×256 authoritative grid (the uplink is unlimited, so precision is free here) |
@@ -1224,10 +1225,66 @@ is built but **not yet in-game verified**.
   integer top-left pixel rather than a fractional centre, so server pixels and pending client
   pixels share the exact same boundaries. Arrow/reset/zoom controls provide navigation without
   relying on `GameUI.GetCursorPosition`, which Deadlock does not expose.
-- Terrain, the 16 regular paint colours, and the ocean/land swatches have one source of truth in
+- Terrain, the regular paint colours, and the ocean/land swatches have one source of truth in
   `tools/assets/pixelbattle_palette.json`. The map builder emits both client and Worker constants;
   `mg_pixelbattle_palette_test.js` enforces uniqueness and minimum CIE L*a*b* distances between
   paint/terrain colours so a swatch cannot silently become indistinguishable from ocean or land.
+- **The palette IS the official wplace set (2026-08-04, v1.2): its 63 colours plus our ocean/land,
+  65 swatches over 75 storage indices.** It started as r/place's 16, grew to 49 hand-picked
+  colours, and then moved wholesale onto wplace's because the hand-picked set was measurably
+  mis-tuned — our `red` was `#ff4500`, which is CSS **OrangeRed**, and read as orange in-game, with
+  a ΔE-50 hole between it and `orange`. The official values were extracted from the Blue Marble
+  userscript bundle (`SwingTheVine/Wplace-BlueMarble`), which carries them as `{id, premium, name,
+  rgb}` records — not retyped from a blog, and not from wplace.org itself, which sits behind a
+  Cloudflare challenge. Five things about this are load-bearing:
+  - ⚠ **An index may never CHANGE MEANING, but its HEX may be retuned in place.** A pixel is
+    persisted as its 1-based index, so inserting or reordering before the end recolours the live
+    canvas. Retuning is different and is what this migration did: the pixel keeps its index and
+    simply renders in the new shade. Median shift to existing art was **ΔE 8.3**, max 21.4 — the
+    world stayed recognisable. `mg_pixelbattle_palette_test.js` therefore pins **positions**
+    (`FROZEN_ROLES`), not colours.
+  - **Two indices may legitimately share a hex.** Retuning collapsed 10 older indices onto a shade
+    another index already had. They stay in storage so pre-retune art still renders; `displayOrder`
+    lists each **distinct shade** once, so the picker shows 65 rather than 75. The client folds a
+    duplicate index onto the drawn one (`canonColor`) — without it, the eyedropper could report a
+    hidden index and highlight no swatch at all.
+  - **The terrain ΔE floor is gone, and that is a design change, not a relaxation.** Ocean and land
+    used to be "the background you must not disappear into", so paint had to stay ΔE 19 away from
+    them. They are now two ordinary swatches in the set, so proximity to them is just proximity to
+    two more colours. The pair floor dropped to 5 for the same reason: **wplace's own set is denser
+    than our old floors allowed** — it ships deliberate shade ramps (Dark Slate/Dark Gray ΔE 6.0,
+    Stone/Tan 8.1, 17 pairs under 15), so a floor of 15 would have rejected the real palette. What
+    still protects the player is the assertion that no two *shown* swatches are identical.
+  - **Custom hex is impossible by construction**, and worth knowing before it is proposed again:
+    tiles are `Uint8Array` of palette **indices** and `/pxview` returns an **indexed** PNG
+    (colour type 3 + PLTE), so the wire carries colour *numbers*. The ceiling is 256 entries
+    (0 = eraser), leaving room for ~180 more colours.
+  - The admin panel's colour names used to be a hand-written array in `worker.core.js` parallel to
+    the generated palette. It is generated now (`PX_COLOR_NAMES`); the old copy would have rendered
+    every added colour as `color 19`, `color 20`… in the audit log and the pixel inspector with
+    nothing failing.
+- **The eyedropper (`/api/pxpick`) has to be a server round-trip.** Panorama cannot sample a colour
+  out of the viewport bitmap it is already displaying — the only channel back from an `<Image>` is
+  its two dimensions (§2) — so the pixel is *named* by the Worker: one request answers
+  `d(paletteIndex, 0)`. Data always sits at `h=0`, which keeps the `h=63` error band unambiguous.
+  Two deliberate choices: an **unpainted** pixel answers with the terrain swatch under it rather
+  than the eraser (the player asked "what colour is this?", and for bare map the honest answer is
+  the ocean/land swatch they can actually select — those indices come from the generated palette,
+  never a hard-coded 17/18); and the route validates coordinates with `pixelCoord`, **not** the
+  `clampInt` that `/api/pxview` uses. Clamping is right for a viewport origin and wrong here —
+  `x=512` would slide to 511 and return a confident colour for a pixel the client never asked
+  about, which the client has no way to detect. It is armed only at 8× (one hit cell = one canvas
+  pixel, so a pick is never ambiguous) and disarms on the sample and on any zoom change, since a
+  mode left armed below max zoom would silently eat the next click.
+- ⚠ **The control strip is an exact width/height budget, not a flexible row.** Navigation 208 +
+  palette 368 + actions 192 = **768**; a swatch is 14px + 2px margin so 23 × 16 = 368 across and
+  3 × 16 = 48 down (inside the 62px strip, so the palette grew from 34 to 65 swatches without
+  growing the modal), and the four tools wrap as 2 × (91 + 5) across by 2 × (28 + 3) = 62 down.
+  Panorama's `right-wrap` has no fractional slack: a size that does not divide the row evenly
+  spills an extra row, which grows the modal into the ui-scale viewport clamp (trap 20) and can
+  drop UPLOAD out of the clipped strip with no error anywhere. The current-colour readout lives in
+  the **topbar** for this reason — a 62px-tall chip in the actions row pushes a button out of it.
+  Change the swatch count and this arithmetic together.
 - The server-authoritative bank is 100 pixels, regenerating 1 per 30 seconds and keyed by the
   Steam32 account id discovered through the local party avatar panel.
 - Eraser batches use colour index 0: the Worker removes stored paint to reveal the immutable map,
@@ -1316,6 +1373,27 @@ is built but **not yet in-game verified**.
   pixel's current colour and whether safe undo would still apply, renders the exact post-undo
   colours, marks conflicts red, and zooms to the action bounds. Inspect makes one on-demand admin
   request per clicked coordinate and exposes the owning Steam32, action, user log, and ban path.
+  ⚠ **That route is `/admin/api/owner`, and the name is load-bearing — it must never contain
+  `pixel`, `track`, `analytics` or `telemetry`.** Unlike everything else in this mod, the admin
+  panel is an ORDINARY BROWSER PAGE, so every request it makes passes through the operator's
+  ad/tracker blocker before it reaches the network. EasyPrivacy ships **generic** filters — no
+  domain anchor, matched on path substring alone — and one of them is literally `/api/pixel?`.
+  The eyedropper originally lived at `/admin/api/pixel` and uBlock Origin killed it in the
+  browser (2026-08-04).
+  - **How it presented:** `NetworkError when attempting to fetch resource` on Inspect only, while
+    undo, ban, preview, canvas and stats all worked — because none of those paths carry a
+    blocklisted token. That split is the tell.
+  - **What pinned it:** `zgrep 'admin/api/pixel' /var/log/nginx/access.log*` returned **zero**
+    matches across all retained logs, while `/admin/api/action` and `/admin/api/state` were there
+    from the same session and the same second. A request that never reaches Nginx was never sent,
+    so the fault is client-side by elimination — no server code can be responsible. Reproduced by
+    downloading EasyPrivacy and matching the URL against its generic rules.
+  - **Do not diagnose this as a server bug.** The server logs will be silent, `curl` will answer
+    normally (401/200 as appropriate), and the route will look perfectly healthy from a shell.
+  - `mg_vps_server_test.js` now checks every admin URL the browser requests against a hard-coded
+    list of ad-blocker path tokens. It is offline on purpose — fetching live blocklists would make
+    the suite depend on the network and someone else's release cadence. Add new admin routes to
+    `ADMIN_BROWSER_URLS`.
 - Steam32 is client-reported, not a cryptographic Steam authentication ticket. A modified client
   can spoof an unbanned ID, and server-side rejection happens only after the VPS has received
   the request. The ban is therefore authoritative for normal clients and all requests using the
