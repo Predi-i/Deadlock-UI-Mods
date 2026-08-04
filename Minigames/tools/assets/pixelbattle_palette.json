@@ -1,4 +1,11 @@
 {
+  "_comment": [
+    "`paint` is STORAGE ORDER and is APPEND-ONLY. A pixel is persisted as its index in this",
+    "array (1-based; 0 is the eraser), so reordering or inserting anything before the end",
+    "silently recolours every pixel already on the shared canvas. New colours go at the END.",
+    "`displayOrder` is what the palette shows, and may be rearranged freely - it is a list of",
+    "names, not indices. mg_pixelbattle_palette_test.js enforces both halves."
+  ],
   "ocean": "#183443",
   "land": "#a5ab91",
   "paint": [
@@ -19,6 +26,31 @@
     { "name": "pink",       "hex": "#ff99aa" },
     { "name": "brown",      "hex": "#9c6926" },
     { "name": "ocean",      "hex": "#183443", "matchesTerrain": "ocean" },
-    { "name": "land",       "hex": "#a5ab91", "matchesTerrain": "land" }
+    { "name": "land",       "hex": "#a5ab91", "matchesTerrain": "land" },
+
+    { "name": "dark_red",   "hex": "#6d001a" },
+    { "name": "crimson",    "hex": "#be0039" },
+    { "name": "tan",        "hex": "#ffb470" },
+    { "name": "cream",      "hex": "#fff8b8" },
+    { "name": "mint",       "hex": "#00cc78" },
+    { "name": "teal",       "hex": "#00756f" },
+    { "name": "dark_teal",  "hex": "#009eaa" },
+    { "name": "aqua",       "hex": "#00ccc0" },
+    { "name": "light_blue", "hex": "#94b3ff" },
+    { "name": "indigo",     "hex": "#493ac1" },
+    { "name": "periwinkle", "hex": "#6a5cff" },
+    { "name": "lavender",   "hex": "#e4abff" },
+    { "name": "deep_pink",  "hex": "#de107f" },
+    { "name": "hot_pink",   "hex": "#ff3881" },
+    { "name": "dark_brown", "hex": "#6d482f" },
+    { "name": "gray",       "hex": "#898d90" }
+  ],
+  "displayOrder": [
+    "dark_red", "crimson", "red", "orange", "tan", "yellow", "cream", "lime", "mint",
+    "green", "teal", "dark_teal", "aqua", "cyan", "light_blue", "blue", "navy",
+
+    "indigo", "periwinkle", "purple", "magenta", "lavender", "deep_pink", "hot_pink",
+    "pink", "dark_brown", "brown", "white", "light_gray", "gray", "dark_gray", "black",
+    "ocean", "land"
   ]
 }

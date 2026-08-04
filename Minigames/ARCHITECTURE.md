@@ -255,6 +255,7 @@ dim. Only `/api/probe` stays **literal pixels** — it's the calibration referen
 | `/api/poll?code=C&since=S` | `(from, to)` RAW squares 0..63 · `(1,1)` nothing new |
 | `/api/reset?code=C&game=G&tok=T` | `(1,1)` · `(9,3)` bad-token |
 | `/api/clocks?code=C&seat=S` | `(30 + sec>>6, sec&63)` one seat · `(9,9)` gone · `(9,8)` untimed |
+| `/api/pxpick?x=X&y=Y` | `(paletteIndex, 0)` eyedropper · `(2,63)` bad coordinate · `(5,63)` banned — data always sits at `h=0`; an unpainted pixel answers with the ocean/land swatch, and coordinates are validated exactly (no clamping, §8.9) |
 | `/api/geostate?code=C&tok=T` | current round + authoritative guess/reveal/ready masks |
 | `/api/geoview?code=C&tok=T` | current 2:1 equirectangular image (ordinary JPEG/PNG, not a dimension message) |
 | `/api/geoguess?code=C&tok=T&cell=N` | `(1,1)` accepted · `(9,x)` rejected — `cell` is 0..131071 in the 512×256 authoritative grid (the uplink is unlimited, so precision is free here) |
@@ -1224,10 +1225,52 @@ is built but **not yet in-game verified**.
   integer top-left pixel rather than a fractional centre, so server pixels and pending client
   pixels share the exact same boundaries. Arrow/reset/zoom controls provide navigation without
   relying on `GameUI.GetCursorPosition`, which Deadlock does not expose.
-- Terrain, the 16 regular paint colours, and the ocean/land swatches have one source of truth in
+- Terrain, the regular paint colours, and the ocean/land swatches have one source of truth in
   `tools/assets/pixelbattle_palette.json`. The map builder emits both client and Worker constants;
   `mg_pixelbattle_palette_test.js` enforces uniqueness and minimum CIE L*a*b* distances between
   paint/terrain colours so a swatch cannot silently become indistinguishable from ocean or land.
+- **The palette is 34 colours (2026-08-04, v1.2): 32 paint + ocean/land.** It grew from 18 by
+  adding the missing half of the canonical r/place set (shading ramps: `dark_red`/`crimson`,
+  `teal`/`aqua`, `indigo`/`periwinkle`, `deep_pink`/`hot_pink`, `dark_brown`/`tan`, `gray`, …).
+  Four things about that growth are load-bearing:
+  - ⚠ **`paint` is STORAGE ORDER and is APPEND-ONLY.** A pixel persists as its 1-based index in
+    that array, so inserting or reordering anything before the end **recolours every pixel already
+    on the shared world** — and it would present as a server/rendering bug, not as a palette edit.
+    The 18 shipped entries are frozen; new colours go at the end. `mg_pixelbattle_palette_test.js`
+    asserts that exact prefix by name.
+  - **Draw order is therefore separate from storage order.** `displayOrder` (a list of NAMES, never
+    indices) interleaves the appended colours back into one hue ramp; the builder resolves it to
+    `MG.PixelBattlePaletteOrder`, 1-based indices in draw order. Without it the palette would read
+    as a rainbow followed by a second, unsorted rainbow.
+  - **The ΔE floor between paint pairs moved 16 → 15**, a measured relaxation rather than a bent
+    threshold: the tightest pair is `deep_pink`/`hot_pink` at **15.4**, and a shading ramp is what a
+    denser palette is *for*. The check exists to catch an accidental near-duplicate (ΔE < 10, which
+    is indistinguishable at an 18px swatch), so the floor sits just under the tightest intentional
+    pair. Terrain separation is unchanged at 19 (`gray`/land is the closest, 19.1).
+  - The admin panel's colour names used to be a hand-written array in `worker.core.js` parallel to
+    the generated palette. It is generated now (`PX_COLOR_NAMES`); the old copy would have rendered
+    every added colour as `color 19`, `color 20`… in the audit log and the pixel inspector with
+    nothing failing.
+- **The eyedropper (`/api/pxpick`) has to be a server round-trip.** Panorama cannot sample a colour
+  out of the viewport bitmap it is already displaying — the only channel back from an `<Image>` is
+  its two dimensions (§2) — so the pixel is *named* by the Worker: one request answers
+  `d(paletteIndex, 0)`. Data always sits at `h=0`, which keeps the `h=63` error band unambiguous.
+  Two deliberate choices: an **unpainted** pixel answers with the terrain swatch under it rather
+  than the eraser (the player asked "what colour is this?", and for bare map the honest answer is
+  the ocean/land swatch they can actually select — those indices come from the generated palette,
+  never a hard-coded 17/18); and the route validates coordinates with `pixelCoord`, **not** the
+  `clampInt` that `/api/pxview` uses. Clamping is right for a viewport origin and wrong here —
+  `x=512` would slide to 511 and return a confident colour for a pixel the client never asked
+  about, which the client has no way to detect. It is armed only at 8× (one hit cell = one canvas
+  pixel, so a pick is never ambiguous) and disarms on the sample and on any zoom change, since a
+  mode left armed below max zoom would silently eat the next click.
+- ⚠ **The control strip is an exact width/height budget, not a flexible row.** Navigation 208 +
+  palette 340 + actions 220 = **768**; a swatch is 18px + 2px margin so 17 × 20 = 340 exactly, and
+  the four tools wrap as 2 × (105 + 5) across by 2 × (28 + 3) = 62 down. Panorama's `right-wrap` has
+  no fractional slack: one pixel wider spills a third row, which grows the modal into the ui-scale
+  viewport clamp (trap 20) and can drop UPLOAD out of the clipped strip with no error anywhere. The
+  current-colour readout lives in the **topbar** for this reason — a 62px-tall chip in the actions
+  row pushes a button out of it. Change the swatch count and this arithmetic together.
 - The server-authoritative bank is 100 pixels, regenerating 1 per 30 seconds and keyed by the
   Steam32 account id discovered through the local party avatar panel.
 - Eraser batches use colour index 0: the Worker removes stored paint to reveal the immutable map,

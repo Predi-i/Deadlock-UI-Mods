@@ -31,9 +31,11 @@ src = src.replace(/^export function /gm, "function ");
 // The reveal tables come out of the SAME bundle the Hub is using. Re-reading the generated file
 // separately would let the two drift and still pass, which is the failure this guards against.
 src += "\n;return { Hub, Worker: __workerDefault, GEO_COUNTRY_NAMES, GEO_CREDIT_KEYS," +
-    " STATS_JS, STATS_HTML, ADMIN_JS, ADMIN_HTML, adminAssetResponse };";
+    " STATS_JS, STATS_HTML, ADMIN_JS, ADMIN_HTML, adminAssetResponse, PX_PALETTE, PX_COLOR_NAMES," +
+    " PX_LAND_SPANS };";
 const { Hub, Worker, GEO_COUNTRY_NAMES, GEO_CREDIT_KEYS,
-    STATS_JS, STATS_HTML, ADMIN_JS, ADMIN_HTML, adminAssetResponse } = new Function(src)();
+    STATS_JS, STATS_HTML, ADMIN_JS, ADMIN_HTML, adminAssetResponse,
+    PX_PALETTE, PX_COLOR_NAMES, PX_LAND_SPANS } = new Function(src)();
 
 // Minimal Durable-Object storage stand-in.
 class FakeStorage {
@@ -214,6 +216,36 @@ async function main() {
     ok(d.h * 64 + d.w === 90, "10-pixel upload spends 10 from the server bank");
     d = await req(hub, "/api/pxversion.png");
     ok(d.w === 1 && d.h === 0, "accepted upload advances the shared canvas version");
+
+    // Eyedropper. Panorama cannot sample a colour out of the bitmap it is already displaying (the
+    // only channel back from an image is its two dimensions), so the palette index has to come from
+    // the server. Data always sits at h=0, which is what keeps the h=63 error band unambiguous.
+    d = await req(hub, "/api/pxpick.png?id=123456789&x=3&y=0");
+    ok(d.w === 5 && d.h === 0, "eyedropper reads the painted palette index at a coordinate");
+    // An unpainted pixel answers with the TERRAIN swatch the player can actually select, not the
+    // eraser: they asked what colour this is, and for bare map that is ocean/land. The indices come
+    // from the generated palette, so this also pins that ocean/land did not move.
+    // ⚠ Must be a coordinate the batch above did NOT paint - it filled (0,0)..(9,0) - and one the
+    // land mask agrees is ocean, so both are read off PX_LAND_SPANS rather than assumed.
+    const oceanRow = PX_LAND_SPANS.findIndex((spans) => { return spans && spans.length >= 2 && spans[0] > 0; });
+    const oceanPick = await req(hub, `/api/pxpick.png?id=123456789&x=0&y=${oceanRow}`);
+    ok(oceanPick.h === 0 && PX_COLOR_NAMES[oceanPick.w] === "ocean",
+        "eyedropper names bare ocean by its own swatch, never the eraser");
+    // Pick a genuinely-land coordinate straight off the generated mask rather than scanning for one
+    // (a brute-force sweep would be up to 131k requests and would trip the view/upload limiters).
+    const landRow = PX_LAND_SPANS.findIndex((spans) => { return spans && spans.length >= 2; });
+    const landPick = await req(hub,
+        `/api/pxpick.png?id=123456789&x=${PX_LAND_SPANS[landRow][0]}&y=${landRow}`);
+    ok(landPick.h === 0 && PX_COLOR_NAMES[landPick.w] === "land",
+        "eyedropper names bare land by its own swatch");
+    d = await req(hub, "/api/pxpick.png?id=123456789&x=512&y=0");
+    ok(d.w === 2 && d.h === 63, "eyedropper rejects an out-of-range coordinate");
+    d = await req(hub, "/api/pxpick.png?id=123456789");
+    ok(d.w === 2 && d.h === 63, "eyedropper rejects a missing coordinate");
+    // Every index the eyedropper can return must be selectable, or a pick would set a colour the
+    // palette cannot show.
+    ok(PX_PALETTE.length === PX_COLOR_NAMES.length,
+        "every pickable palette index has a name and a colour");
 
     // The version rides one 2-int reply as (lo6, hi6), and the client reads h === 63 as an error -
     // (5,63) specifically as "you are banned". A 12-bit version put 4032..4095 into that band, so a
@@ -683,8 +715,14 @@ async function main() {
     ok(inspectedPixel.body.action && inspectedPixel.body.action.actor === "admin",
         "pixel inspector follows current attribution after an overlapping admin edit");
     let adminState = await adminReq(adminHub, "/admin/api/state", "GET");
-    ok(adminState.body.painted === 150 && adminState.body.palette.length === 19,
+    // Derived from the bundle, not a literal: this was `=== 19` and broke the moment the palette
+    // grew to 34 colours in v1.2, which says nothing about the route being wrong.
+    ok(adminState.body.painted === 150 && adminState.body.palette.length === PX_PALETTE.length,
         "admin state reports the live painted count and shared palette");
+    // The admin panel names every colour from this array, so a short one silently renders the new
+    // indices as "color 19", "color 20"… in the audit log and the pixel inspector.
+    ok(PX_COLOR_NAMES.length === PX_PALETTE.length && PX_COLOR_NAMES[0] === "eraser",
+        "generated colour names cover every palette index, eraser first");
     actionList = await adminReq(adminHub, "/admin/api/actions?limit=50", "GET");
     const loggedPlayerAction = actionList.body.actions.find((a) => { return a.actor === "player"; });
     ok(actionList.body.actions.length === 3 && loggedPlayerAction && loggedPlayerAction.undoneAt > 0,
