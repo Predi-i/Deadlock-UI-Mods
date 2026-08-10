@@ -12,7 +12,7 @@ GeoGuesser use the Worker.
 
 Follow **[`CLOUDFLARE_SETUP.md`](CLOUDFLARE_SETUP.md)**. It covers Cloudflare login, the first
 deployment, secrets, GitHub OAuth, the Panorama endpoint, local testing, a custom domain and
-rollback.
+rollback. It also contains the VPS Pixel Battle backup/import and zero-loss cutover procedure.
 
 The short developer loop is:
 

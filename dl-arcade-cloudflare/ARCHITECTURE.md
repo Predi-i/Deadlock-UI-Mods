@@ -420,6 +420,13 @@ put SQLite/alarm bookkeeping on the hottest `/api/poll` path and spend the same 
 the migration is trying to conserve. The legacy `/admin/stats` assets and bounded bucket helpers
 remain build-compatible, but a fresh Cloudflare namespace does not populate them.
 
+Pixel Battle is migrated separately from ephemeral lobbies. A consistent VPS SQLite online backup
+is decoded with Node's V8 serializer, every `px:*` record is converted to a portable manifest, and
+a one-time secret-protected endpoint imports ordered chunks into the empty `Hub`. Canvas tiles stay
+`Uint8Array`; ownership refs stay `Uint16Array`. The target rejects overwrites and out-of-order
+chunks, retries are idempotent, and the importer decodes the public `/api/pxcanvas` PNG and compares
+its logical-pixel SHA-256 with the source manifest before the migration secret is removed.
+
 ⚠ **TRAP — `(w, h)` alone CANNOT identify a sentinel, and classifying on the pair alone
 manufactures errors out of normal play.** The downlink is 12 bits, so the protocol reuses the
 same small-integer space for real data. Three collisions are reachable in ordinary play:

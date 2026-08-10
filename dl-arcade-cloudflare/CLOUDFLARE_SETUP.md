@@ -205,9 +205,91 @@ npm run deploy:worker
 меняй его storage type ради отката: это lifecycle state Durable Object, а не обычная настройка.
 Rollback кода не должен пересекать изменение lifecycle Durable Object.
 
-## 11. Что будет со старыми данными VPS
+## 11. Сохранить и перенести Pixel Battle с VPS
 
-Этот проект создаёт свежий Durable Object. Активные лобби переносить бессмысленно. Pixel Battle
-canvas, audit, banks и bans из VPS SQLite автоматически не совместимы с DO storage и не импортируются.
-Перед отключением VPS реши отдельно, нужен ли экспорт этих данных. До отдельной проверенной утилиты
-миграции не удаляй VPS database/backups.
+Активные игровые лобби не переносятся, но Pixel Battle переносится полностью: canvas, ownership,
+audit, pixel banks и bans. Экспорт работает только с согласованным SQLite backup, а не с копией
+живого `.sqlite` без WAL.
+
+На 2026-08-10 уже сохранена контрольная точка:
+
+```text
+VPS:   /var/backups/deadlock-minigames/pinned-dl-arcade-pre-cloudflare-20260810T130224Z.sqlite.gz
+Local: D:\GitHub2\Deadlock-UI-Mods-WIP\dl-arcade-backups\minigames-20260810T130224Z.sqlite.gz
+SHA-256: 60545e49f79de4a6451cd6cac91363d944f5bcdaea992fd64dbd73b1343ba76d
+```
+
+Имя VPS-копии начинается с `pinned-`, поэтому штатный 14-дневный cleanup, который удаляет только
+`minigames-*.sqlite.gz`, её не затронет.
+
+Из неё также создан переносимый manifest:
+
+```text
+D:\GitHub2\Deadlock-UI-Mods-WIP\dl-arcade-backups\pixelbattle-20260810T130224Z.json
+2248 записей; 14251 нарисованных пикселей; canvas version 743
+Canvas SHA-256: fc039fe5b38342c3dceb8536a9e92eff9ee85498d4acb2a83f378b51e831ce70
+```
+
+Если импорт выполняется позже, сначала сделай новую финальную копию: после контрольной точки на VPS
+могли появиться новые пиксели. Штатный backup создаётся SQLite online backup-командой:
+
+```powershell
+ssh -i "$env:USERPROFILE\.ssh\codex_deadlock_vps_ed25519" root@178.236.246.13 `
+  "systemctl start deadlock-minigames-backup.service"
+```
+
+Скачай самый новый `minigames-*.sqlite.gz`, затем экспортируй `px:*` записи:
+
+```powershell
+node tools/mg_pixelbattle_export.js `
+  D:\path\to\minigames-TIMESTAMP.sqlite.gz `
+  D:\safe-backups\pixelbattle-TIMESTAMP.json
+```
+
+Утилита сначала проверяет SQLite integrity, сохраняет типы `Uint8Array`/`Uint16Array`, считает
+нарисованные пиксели и записывает SHA-256 логического canvas.
+
+Задеплой Worker, создай случайный одноразовый секрет и запиши его в Cloudflare:
+
+```powershell
+$migrationSecret = [Convert]::ToHexString(`
+  [Security.Cryptography.RandomNumberGenerator]::GetBytes(32)).ToLowerInvariant()
+$migrationSecret | npx wrangler secret put PIXEL_MIGRATION_SECRET --config server/wrangler.jsonc
+$env:PIXEL_MIGRATION_SECRET = $migrationSecret
+```
+
+Импорт разрешён только в пустой Pixel Battle namespace и идёт упорядоченными идемпотентными
+порциями. Повтор случайно подтверждённой порции не дублирует данные:
+
+```powershell
+node tools/mg_pixelbattle_import.js `
+  D:\safe-backups\pixelbattle-TIMESTAMP.json `
+  https://dl-arcade-cloudflare.<твой-subdomain>.workers.dev
+```
+
+В конце importer загружает публичный `/api/pxcanvas.png`, декодирует PNG и сравнивает SHA-256 всех
+512×256 логических пикселей с manifest. Только после сообщения `Canvas verified` удали временный
+секрет:
+
+```powershell
+Remove-Item Env:PIXEL_MIGRATION_SECRET
+Remove-Variable migrationSecret
+npx wrangler secret delete PIXEL_MIGRATION_SECRET --config server/wrangler.jsonc
+```
+
+После удаления секрета migration endpoint снова закрыт и отвечает `503`.
+
+## 12. Финальное переключение без потери новых пикселей
+
+Контрольная точка уже страхует текущее состояние, но для нулевой потери нужен короткий maintenance
+window:
+
+1. Остановить приём новых записей на VPS (`systemctl stop deadlock-minigames`).
+2. Сделать финальный SQLite backup и скачать его.
+3. Экспортировать новый manifest и импортировать его в ещё пустой Durable Object.
+4. Дождаться `Canvas verified`.
+5. Прописать Cloudflare host в `BASE_URL`, собрать и опубликовать VPK.
+6. Старую VPS database и обе backup-копии не удалять до проверки в игре.
+
+Не запускай пробный импорт в production DO, если туда уже рисовали: защита намеренно откажется
+перезаписывать непустой `px:*` namespace. Для репетиции используй отдельное имя Worker/отдельный DO.

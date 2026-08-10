@@ -87,7 +87,18 @@
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (isAdminPath(url.pathname)) {
+    if (url.pathname === "/internal/pixel-migration") {
+      const configured = String(env.PIXEL_MIGRATION_SECRET || "").trim();
+      const supplied = String(request.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
+      if (configured.length < 32) return adminError("Pixel migration is not enabled.", 503);
+      if (!await migrationSecretMatches(supplied, configured)) {
+        return adminError("Pixel migration authorization failed.", 401);
+      }
+      const headers = new Headers(request.headers);
+      headers.delete("Authorization");
+      headers.set("X-MG-Pixel-Migration", "authorized");
+      request = new Request(request, { headers: headers });
+    } else if (isAdminPath(url.pathname)) {
       if (url.pathname === "/admin/login") return beginGitHubLogin(url, env);
       if (url.pathname === "/admin/auth/callback") return finishGitHubLogin(request, url, env);
       if (url.pathname === "/admin/logout") return adminLogout(url);
@@ -189,6 +200,19 @@ function randomBase64Url(size) {
   const bytes = new Uint8Array(size);
   crypto.getRandomValues(bytes);
   return base64UrlEncode(bytes);
+}
+
+async function migrationSecretMatches(supplied, configured) {
+  if (!supplied || !configured) return false;
+  const encoder = new TextEncoder();
+  const digests = await Promise.all([
+    crypto.subtle.digest("SHA-256", encoder.encode(supplied)),
+    crypto.subtle.digest("SHA-256", encoder.encode(configured))
+  ]);
+  const left = new Uint8Array(digests[0]), right = new Uint8Array(digests[1]);
+  let difference = left.length ^ right.length;
+  for (let i = 0; i < Math.min(left.length, right.length); i++) difference |= left[i] ^ right[i];
+  return difference === 0;
 }
 
 function cookieValue(request, name) {
@@ -535,6 +559,7 @@ export class Hub {
     }
 
     try {
+      if (p === "/internal/pixel-migration") return await handlePixelMigration(this, request);
       if (p.startsWith("/admin/api/")) return await handlePixelAdmin(this, request, url);
       if (p === "/api/probe") return probeResponse();
       if (p === "/api/ping") return d(1, 1);
@@ -3330,6 +3355,139 @@ function adminJson(value, status) {
 
 function adminError(message, status) {
   return adminJson({ error: message }, status || 400);
+}
+
+const PIXEL_MIGRATION_MARKER = "_migration:px:v1";
+const PIXEL_MIGRATION_CHUNK_MAX = 64;
+
+function decodePixelMigrationValue(value, depth) {
+  const level = depth || 0;
+  if (level > 16) throw new Error("Migration value is nested too deeply.");
+  if (value === null || typeof value === "string" || typeof value === "boolean") return value;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new Error("Migration number is not finite.");
+    return value;
+  }
+  if (Array.isArray(value)) {
+    if (value.length > 20000) throw new Error("Migration array is too large.");
+    return value.map((item) => decodePixelMigrationValue(item, level + 1));
+  }
+  if (!value || typeof value !== "object") throw new Error("Unsupported migration value.");
+
+  if (Object.prototype.hasOwnProperty.call(value, "$typed")) {
+    const encoded = String(value.base64 || "");
+    if (!/^[A-Za-z0-9_-]*$/.test(encoded) || encoded.length > 3000000) {
+      throw new Error("Invalid typed-array payload.");
+    }
+    const bytes = base64UrlBytes(encoded);
+    if (value.$typed === "u8") return bytes;
+    if (value.$typed === "u16") {
+      if (bytes.length % 2) throw new Error("Invalid Uint16Array byte length.");
+      const result = new Uint16Array(bytes.length / 2);
+      for (let i = 0; i < result.length; i++) result[i] = bytes[i * 2] | (bytes[i * 2 + 1] << 8);
+      return result;
+    }
+    throw new Error("Unsupported typed-array kind.");
+  }
+
+  const keys = Object.keys(value);
+  if (keys.length > 512) throw new Error("Migration object has too many fields.");
+  const result = {};
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[i];
+    if (key.length > 128 || key === "__proto__" || key === "prototype" || key === "constructor") {
+      throw new Error("Invalid migration object field.");
+    }
+    result[key] = decodePixelMigrationValue(value[key], level + 1);
+  }
+  return result;
+}
+
+function pixelMigrationKey(value) {
+  const key = String(value || "");
+  return /^px:[A-Za-z0-9:_-]{1,180}$/.test(key) ? key : "";
+}
+
+async function handlePixelMigration(hub, request) {
+  if (request.headers.get("X-MG-Pixel-Migration") !== "authorized") {
+    return adminError("Pixel migration must pass through the authenticated Worker.", 403);
+  }
+  if (request.method !== "POST") return adminError("POST required.", 405);
+  const declaredSize = Number(request.headers.get("Content-Length") || 0);
+  if (declaredSize > 4000000) return adminError("Migration request is too large.", 413);
+
+  let body;
+  try {
+    body = await request.json();
+  } catch (error) {
+    return adminError("Invalid migration JSON.", 400);
+  }
+  const action = String(body && body.action || "");
+  const id = String(body && body.id || "").toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(id)) return adminError("Invalid migration id.", 400);
+
+  let marker = await hub.storage.get(PIXEL_MIGRATION_MARKER);
+  if (action === "begin") {
+    const total = Number(body.total);
+    if (!Number.isInteger(total) || total < 1 || total > 100000) {
+      return adminError("Invalid migration record count.", 400);
+    }
+    if (marker) {
+      if (marker.id !== id) return adminError("Another pixel migration already exists.", 409);
+      return adminJson(marker);
+    }
+    const existing = await hub.storage.list({ prefix: "px:", limit: 1 });
+    if (existing.size) return adminError("Target Pixel Battle storage is not empty.", 409);
+    marker = { id: id, total: total, next: 0, status: "importing", startedAt: Date.now() };
+    await hub.storage.put(PIXEL_MIGRATION_MARKER, marker);
+    return adminJson(marker, 201);
+  }
+
+  if (!marker || marker.id !== id) return adminError("Pixel migration was not started.", 409);
+  if (action === "status") return adminJson(marker);
+  if (action === "chunk") {
+    if (marker.status !== "importing") return adminError("Pixel migration is already complete.", 409);
+    const start = Number(body.start), records = body.records;
+    if (!Number.isInteger(start) || !Array.isArray(records) || !records.length ||
+        records.length > PIXEL_MIGRATION_CHUNK_MAX || start < 0 ||
+        start + records.length > marker.total) return adminError("Invalid migration chunk.", 400);
+    if (start < marker.next && start + records.length <= marker.next) {
+      return adminJson({ id: id, next: marker.next, duplicate: true });
+    }
+    if (start !== marker.next) return adminError("Migration chunk is out of order.", 409);
+
+    const decoded = [], seen = new Set();
+    try {
+      for (let i = 0; i < records.length; i++) {
+        const key = pixelMigrationKey(records[i] && records[i].key);
+        if (!key || seen.has(key)) throw new Error("Invalid or duplicate Pixel Battle key.");
+        seen.add(key);
+        decoded.push([key, decodePixelMigrationValue(records[i].value, 0)]);
+      }
+    } catch (error) {
+      return adminError(error.message || "Invalid migration record.", 400);
+    }
+
+    const next = start + decoded.length;
+    marker = await hub.storage.transaction(async function (txn) {
+      for (let i = 0; i < decoded.length; i++) await txn.put(decoded[i][0], decoded[i][1]);
+      const updated = Object.assign({}, marker, { next: next, updatedAt: Date.now() });
+      await txn.put(PIXEL_MIGRATION_MARKER, updated);
+      return updated;
+    });
+    return adminJson(marker);
+  }
+
+  if (action === "finish") {
+    if (marker.next !== marker.total) return adminError("Pixel migration is incomplete.", 409);
+    marker = Object.assign({}, marker, { status: "complete", completedAt: Date.now() });
+    await hub.storage.put(PIXEL_MIGRATION_MARKER, marker);
+    hub.pxTiles = null;
+    hub.pxViewCache.clear();
+    hub.pxCanvasCache = null;
+    return adminJson(marker);
+  }
+  return adminError("Unknown migration action.", 400);
 }
 
 function adminIdentity(request) {

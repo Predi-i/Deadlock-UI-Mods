@@ -34,9 +34,11 @@ Object storage contains lobbies, Pixel Battle tiles/banks/audit/ownership/bans a
 Ephemeral rate-limit and image caches are deliberately in memory and reset when Cloudflare evicts
 the object.
 
-This is a fresh Durable Object namespace. VPS SQLite data is not automatically imported. Live
-lobbies are ephemeral; Pixel Battle history/canvas and bans start clean unless a separate,
-explicit migration is written and tested.
+Live lobbies are intentionally not migrated. Pixel Battle has an explicit one-time migration:
+`tools/mg_pixelbattle_export.js` reads every `px:*` record from a consistent VPS SQLite backup,
+and `tools/mg_pixelbattle_import.js` uploads canvas tiles, ownership, audit, banks and bans in
+ordered chunks. The target must be empty, retries are idempotent, typed arrays retain their types,
+and the importer verifies the public canvas SHA-256 after completion.
 
 Cloudflare supplies trusted `CF-Connecting-IP`, so the existing per-IP soft abuse controls need no
 proxy-header adapter. GeoGuesser uses outbound `fetch`; `MG_MAPILLARY_TOKEN` is optional because
@@ -57,11 +59,17 @@ Optional:
 
 ```text
 MG_MAPILLARY_TOKEN
+PIXEL_MIGRATION_SECRET    # one-time only; delete immediately after a successful import
 ```
 
 Use `npx wrangler secret put NAME --config server/wrangler.jsonc`. Never place production values
 in `wrangler.jsonc`, `.dev.vars.example` or any committed file. See `ADMIN_SETUP.md` and the root
 `CLOUDFLARE_SETUP.md`.
+
+`/internal/pixel-migration` returns 503 unless `PIXEL_MIGRATION_SECRET` is configured. The outer
+Worker checks its bearer token, strips it before forwarding, and injects an internal authorization
+header. The Durable Object refuses direct access and refuses to begin when any `px:*` target data
+already exists.
 
 ## Operational notes
 
