@@ -1,0 +1,354 @@
+"use strict";
+
+/*
+ * rules/chess.js - pure chess rules, shared by client predictor + server authority.
+ * See rules/checkers.js header for the shared-namespace mechanism.
+ *
+ * Board is a flat Array(64), index = row*8 + col, row 0 = TOP (black back rank), row 7 =
+ * BOTTOM (white back rank). Piece value: 0 empty; SIGN = colour (white > 0, black < 0);
+ * ABS = type 1=pawn 2=knight 3=bishop 4=rook 5=queen 6=king. "Colour" here is +1 (white) /
+ * -1 (black) - the sign of the piece - NOT the checkers WHITE/BLACK strings. White = host,
+ * bottom rows (6-7), moves first. Promotion is ALWAYS to a queen (MVP). from/to alone
+ * travels the wire: castling / en-passant / promotion are derived by makeMove.
+ */
+
+(function () {
+    let R;
+    if (typeof $ !== "undefined" && $) {
+        const MG = ($.MG = $.MG || {});
+        R = (MG.Rules = MG.Rules || {});
+    } else if (typeof globalThis !== "undefined") {
+        R = (globalThis.MGRules = globalThis.MGRules || {});
+    } else {
+        R = (this.MGRules = this.MGRules || {});
+    }
+
+    const C_PAWN = 1, C_KNIGHT = 2, C_BISHOP = 3, C_ROOK = 4, C_QUEEN = 5, C_KING = 6;
+    const KNIGHT_D = [[-2, -1], [-2, 1], [-1, -2], [-1, 2], [1, -2], [1, 2], [2, -1], [2, 1]];
+    const KING_D   = [[-1, -1], [-1, 0], [-1, 1], [0, -1], [0, 1], [1, -1], [1, 0], [1, 1]];
+    const DIAG_D   = [[-1, -1], [-1, 1], [1, -1], [1, 1]];
+    const ORTHO_D  = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+    const QUEEN_D  = DIAG_D.concat(ORTHO_D);
+
+    function cSq(r, c) { return r * 8 + c; }
+    function cRow(i) { return (i / 8) | 0; }
+    function cCol(i) { return i % 8; }
+    function cOn(r, c) { return r >= 0 && r < 8 && c >= 0 && c < 8; }
+    function cSign(v) { return v > 0 ? 1 : (v < 0 ? -1 : 0); }
+    function cType(v) { return v < 0 ? -v : v; }
+
+    function initialChessBoard() {
+        const b = new Array(64);
+        for (let i = 0; i < 64; i++) b[i] = 0;
+        const back = [C_ROOK, C_KNIGHT, C_BISHOP, C_QUEEN, C_KING, C_BISHOP, C_KNIGHT, C_ROOK];
+        for (let c = 0; c < 8; c++) {
+            b[cSq(0, c)] = -back[c];   // black back rank (top)
+            b[cSq(1, c)] = -C_PAWN;    // black pawns
+            b[cSq(6, c)] = C_PAWN;     // white pawns
+            b[cSq(7, c)] = back[c];    // white back rank (bottom)
+        }
+        return b;
+    }
+
+    // Game state that from/to alone can't carry: castling rights + en-passant target square +
+    // the halfmove clock for the fifty-move rule (`half`: plies since the last capture or pawn
+    // move). `half` is a plain int so cloneChessState stays allocation-cheap inside the search.
+    // Threefold repetition is NOT tracked here - it needs the whole game's position list, which
+    // would make every search node copy an array. The caller keeps a positionKey() count instead
+    // and passes it to chessResult().
+    function initialChessState() { return { ep: -1, wK: true, wQ: true, bK: true, bQ: true, half: 0 }; }
+    function cloneChessState(st) { return { ep: st.ep, wK: st.wK, wQ: st.wQ, bK: st.bK, bQ: st.bQ, half: st.half || 0 }; }
+
+    function findKing(b, color) {
+        const k = color > 0 ? C_KING : -C_KING;
+        for (let i = 0; i < 64; i++) if (b[i] === k) return i;
+        return -1;
+    }
+
+    // Is square s attacked by any piece of `byColor` (+1/-1)? Used for check + castling.
+    function attacksSquare(b, s, byColor) {
+        let sr = cRow(s), sc = cCol(s), i, r, c, v;
+        // pawns: a byColor pawn attacking s sits one row "behind" s (row = sr + byColor).
+        const pr = sr + byColor;
+        if (pr >= 0 && pr < 8) {
+            if (sc > 0 && b[cSq(pr, sc - 1)] === byColor * C_PAWN) return true;
+            if (sc < 7 && b[cSq(pr, sc + 1)] === byColor * C_PAWN) return true;
+        }
+        for (i = 0; i < 8; i++) {                                  // knights
+            r = sr + KNIGHT_D[i][0]; c = sc + KNIGHT_D[i][1];
+            if (cOn(r, c) && b[cSq(r, c)] === byColor * C_KNIGHT) return true;
+        }
+        for (i = 0; i < 8; i++) {                                  // king
+            r = sr + KING_D[i][0]; c = sc + KING_D[i][1];
+            if (cOn(r, c) && b[cSq(r, c)] === byColor * C_KING) return true;
+        }
+        for (i = 0; i < 4; i++) {                                  // diagonals → bishop/queen
+            r = sr + DIAG_D[i][0]; c = sc + DIAG_D[i][1];
+            while (cOn(r, c)) {
+                v = b[cSq(r, c)];
+                if (v !== 0) { if (cSign(v) === byColor && (cType(v) === C_BISHOP || cType(v) === C_QUEEN)) return true; break; }
+                r += DIAG_D[i][0]; c += DIAG_D[i][1];
+            }
+        }
+        for (i = 0; i < 4; i++) {                                  // orthogonals → rook/queen
+            r = sr + ORTHO_D[i][0]; c = sc + ORTHO_D[i][1];
+            while (cOn(r, c)) {
+                v = b[cSq(r, c)];
+                if (v !== 0) { if (cSign(v) === byColor && (cType(v) === C_ROOK || cType(v) === C_QUEEN)) return true; break; }
+                r += ORTHO_D[i][0]; c += ORTHO_D[i][1];
+            }
+        }
+        return false;
+    }
+
+    function inCheck(b, color) {
+        const k = findKing(b, color);
+        return k >= 0 && attacksSquare(b, k, -color);
+    }
+
+    // Apply from→to on a COPY, deriving castling / en-passant / promotion from board+state so
+    // the network receive path needs only {from,to} (same "derive, don't transmit" trick as
+    // checkers applyHop). Returns [newBoard, newState]. Promotion is ALWAYS to a queen (MVP).
+    function makeMove(b, st, from, to) {
+        const nb = b.slice(), nst = cloneChessState(st);
+        let piece = b[from], color = cSign(piece), t = cType(piece);
+        const fr = cRow(from), fc = cCol(from), tr = cRow(to), tc = cCol(to);
+        // Fifty-move rule: the halfmove clock resets on a capture or ANY pawn move, else ticks.
+        // Read b[to] BEFORE the board is mutated below.
+        nst.half = (t === C_PAWN || b[to] !== 0) ? 0 : (st.half || 0) + 1;
+        nst.ep = -1;
+        nb[to] = piece; nb[from] = 0;
+        if (t === C_PAWN) {
+            if (Math.abs(tr - fr) === 2) nst.ep = cSq((fr + tr) >> 1, fc);   // double push sets ep
+            else if (tc !== fc && b[to] === 0) nb[cSq(fr, tc)] = 0;          // en-passant capture
+            if (tr === 0 || tr === 7) nb[to] = color * C_QUEEN;             // auto-queen promotion
+        } else if (t === C_KING) {
+            if (color > 0) { nst.wK = false; nst.wQ = false; } else { nst.bK = false; nst.bQ = false; }
+            if (tc - fc === 2) { nb[cSq(fr, 5)] = nb[cSq(fr, 7)]; nb[cSq(fr, 7)] = 0; }        // O-O
+            else if (fc - tc === 2) { nb[cSq(fr, 3)] = nb[cSq(fr, 0)]; nb[cSq(fr, 0)] = 0; }   // O-O-O
+        }
+        // a rook leaving OR being captured on its home corner forfeits that side's castling
+        if (from === cSq(7, 0) || to === cSq(7, 0)) nst.wQ = false;
+        if (from === cSq(7, 7) || to === cSq(7, 7)) nst.wK = false;
+        if (from === cSq(0, 0) || to === cSq(0, 0)) nst.bQ = false;
+        if (from === cSq(0, 7) || to === cSq(0, 7)) nst.bK = false;
+        return [nb, nst];
+    }
+
+    // King castling candidates, appended to `moves`. Blocks castling out of / through / into
+    // check and requires the squares between king and rook to be empty + the rook present.
+    function addCastles(b, st, color, ksq, moves) {
+        const row = color > 0 ? 7 : 0;
+        if (ksq !== cSq(row, 4)) return;
+        if (attacksSquare(b, ksq, -color)) return;                 // not out of check
+        const kSide = color > 0 ? st.wK : st.bK;
+        const qSide = color > 0 ? st.wQ : st.bQ;
+        if (kSide && b[cSq(row, 5)] === 0 && b[cSq(row, 6)] === 0 && b[cSq(row, 7)] === color * C_ROOK &&
+            !attacksSquare(b, cSq(row, 5), -color) && !attacksSquare(b, cSq(row, 6), -color)) {
+            moves.push({ from: ksq, to: cSq(row, 6) });
+        }
+        if (qSide && b[cSq(row, 1)] === 0 && b[cSq(row, 2)] === 0 && b[cSq(row, 3)] === 0 && b[cSq(row, 0)] === color * C_ROOK &&
+            !attacksSquare(b, cSq(row, 3), -color) && !attacksSquare(b, cSq(row, 2), -color)) {
+            moves.push({ from: ksq, to: cSq(row, 2) });
+        }
+    }
+
+    // Pseudo-legal moves for `color` (own-king-safety NOT yet filtered). Each is {from,to}.
+    function pseudoMoves(b, st, color) {
+        let moves = [], i, r, c, v, t, d, nr, nc;
+        for (i = 0; i < 64; i++) {
+            v = b[i];
+            if (v === 0 || cSign(v) !== color) continue;
+            t = cType(v); r = cRow(i); c = cCol(i);
+            if (t === C_PAWN) {
+                const fwd = -color;                         // white(+1) moves up the board (row-1)
+                const one = r + fwd;
+                if (one >= 0 && one < 8 && b[cSq(one, c)] === 0) {
+                    moves.push({ from: i, to: cSq(one, c) });
+                    const startRow = color > 0 ? 6 : 1, two = r + 2 * fwd;
+                    if (r === startRow && b[cSq(two, c)] === 0) moves.push({ from: i, to: cSq(two, c) });
+                }
+                for (d = -1; d <= 1; d += 2) {
+                    nc = c + d;
+                    if (nc < 0 || nc > 7 || one < 0 || one > 7) continue;
+                    const tsq = cSq(one, nc), tv = b[tsq];
+                    if ((tv !== 0 && cSign(tv) === -color) || tsq === st.ep) moves.push({ from: i, to: tsq });
+                }
+            } else if (t === C_KNIGHT) {
+                for (d = 0; d < 8; d++) {
+                    nr = r + KNIGHT_D[d][0]; nc = c + KNIGHT_D[d][1];
+                    if (cOn(nr, nc) && cSign(b[cSq(nr, nc)]) !== color) moves.push({ from: i, to: cSq(nr, nc) });
+                }
+            } else if (t === C_KING) {
+                for (d = 0; d < 8; d++) {
+                    nr = r + KING_D[d][0]; nc = c + KING_D[d][1];
+                    if (cOn(nr, nc) && cSign(b[cSq(nr, nc)]) !== color) moves.push({ from: i, to: cSq(nr, nc) });
+                }
+                addCastles(b, st, color, i, moves);
+            } else {
+                const dirs = t === C_BISHOP ? DIAG_D : (t === C_ROOK ? ORTHO_D : QUEEN_D);
+                for (d = 0; d < dirs.length; d++) {
+                    nr = r + dirs[d][0]; nc = c + dirs[d][1];
+                    while (cOn(nr, nc)) {
+                        const sv = b[cSq(nr, nc)];
+                        if (sv === 0) moves.push({ from: i, to: cSq(nr, nc) });
+                        else { if (cSign(sv) !== color) moves.push({ from: i, to: cSq(nr, nc) }); break; }
+                        nr += dirs[d][0]; nc += dirs[d][1];
+                    }
+                }
+            }
+        }
+        return moves;
+    }
+
+    // Legal moves = pseudo-legal minus those leaving one's own king in check.
+    function legalMoves(b, st, color) {
+        const ps = pseudoMoves(b, st, color), out = [];
+        for (let i = 0; i < ps.length; i++) {
+            let r = makeMove(b, st, ps[i].from, ps[i].to);
+            if (!inCheck(r[0], color)) out.push(ps[i]);
+        }
+        return out;
+    }
+
+    // Can EITHER side still force a mate with the material on the board? Draws the classic
+    // insufficient-material cases: K vs K, K+minor vs K, and K+B vs K+B on the same colour.
+    // Any pawn, rook or queen (or two minors on one side) can still mate, so those are "ongoing".
+    function insufficientMaterial(b) {
+        const minors = { 1: [], "-1": [] };      // bishop/knight squares per colour
+        for (let i = 0; i < 64; i++) {
+            let v = b[i];
+            if (v === 0) continue;
+            let t = cType(v);
+            if (t === C_KING) continue;
+            if (t === C_PAWN || t === C_ROOK || t === C_QUEEN) return false;   // mating material
+            minors[cSign(v)].push({ t: t, sq: i });
+        }
+        const w = minors[1], bl = minors["-1"];
+        if (w.length > 1 || bl.length > 1) return false;   // two minors can mate (BB, and BN)
+        if (w.length === 0 && bl.length === 0) return true;                    // K vs K
+        if (w.length + bl.length === 1) return true;                           // K+minor vs K
+        // one minor each: only a draw when both are bishops on the SAME colour complex
+        if (w[0].t === C_BISHOP && bl[0].t === C_BISHOP) {
+            const wc = (cRow(w[0].sq) + cCol(w[0].sq)) & 1;
+            const bc = (cRow(bl[0].sq) + cCol(bl[0].sq)) & 1;
+            return wc === bc;
+        }
+        return false;
+    }
+
+    // Compact position identity for threefold repetition: piece placement + side to move +
+    // castling rights + en-passant target. Two positions repeat only when ALL of those match
+    // (FIDE), so the key must include everything that changes the set of legal continuations.
+    function positionKey(b, st, color) {
+        let s = b.join(",");
+        return s + "|" + color + "|" + (st.wK ? 1 : 0) + (st.wQ ? 1 : 0) + (st.bK ? 1 : 0) + (st.bQ ? 1 : 0) + "|" + st.ep;
+    }
+
+    // "ongoing" | "checkmate" | "stalemate" | "draw50" | "repetition" | "insufficient"
+    // for `color` to move. `repeats` is OPTIONAL: how many times the CURRENT position has now
+    // occurred in this game (the caller counts positionKey() hits - the rules module can't, since
+    // it would have to carry the whole game history into every search node). Pass nothing and only
+    // the position-local draws are reported, which is what the bot search wants.
+    function chessResult(b, st, color, repeats) {
+        if (legalMoves(b, st, color).length > 0) {
+            // A checkmate/stalemate ALWAYS outranks a draw claim: you can be mated on move 100
+            // of a fifty-move count, and that is a loss, not a draw.
+            if (repeats >= 3) return "repetition";
+            if ((st.half || 0) >= 100) return "draw50";        // 100 plies = 50 full moves
+            if (insufficientMaterial(b)) return "insufficient";
+            return "ongoing";
+        }
+        return inCheck(b, color) ? "checkmate" : "stalemate";
+    }
+
+    // ── chess bot: material + light positional eval, alpha-beta negamax ──────────
+    function pieceValue(t) { return t === C_PAWN ? 100 : t === C_KNIGHT ? 320 : t === C_BISHOP ? 330
+        : t === C_ROOK ? 500 : t === C_QUEEN ? 900 : t === C_KING ? 20000 : 0; }
+
+    // White-positive static score: material + a small central pull for every piece.
+    function evalBoard(b) {
+        let s = 0;
+        for (let i = 0; i < 64; i++) {
+            let v = b[i];
+            if (v === 0) continue;
+            const sg = cSign(v);
+            s += sg * pieceValue(cType(v));
+            const center = (3.5 - Math.abs(3.5 - cCol(i))) + (3.5 - Math.abs(3.5 - cRow(i)));
+            s += sg * center * 2;
+        }
+        return s;
+    }
+
+    // Captures first → better alpha-beta pruning.
+    function orderChessMoves(b, moves) {
+        moves.sort((a, z) => {
+            return (b[z.to] !== 0 ? pieceValue(cType(b[z.to])) : 0) - (b[a.to] !== 0 ? pieceValue(cType(b[a.to])) : 0);
+        });
+    }
+
+    function negamax(b, st, color, depth, alpha, beta, budget) {
+        if (depth === 0) return color * evalBoard(b);
+        const moves = legalMoves(b, st, color);
+        if (moves.length === 0) return inCheck(b, color) ? -100000 - depth : 0;   // mate (deeper = worse) / stalemate
+        orderChessMoves(b, moves);
+        let best = -1e9;
+        for (let i = 0; i < moves.length; i++) {
+            if (budget.n++ > budget.max) break;                  // node cap: bail with best-so-far
+            let r = makeMove(b, st, moves[i].from, moves[i].to);
+            const sc = -negamax(r[0], r[1], -color, depth - 1, -beta, -alpha, budget);
+            if (sc > best) best = sc;
+            if (best > alpha) alpha = best;
+            if (alpha >= beta) break;
+        }
+        return best;
+    }
+
+    // Pick a move for `color`. Depth/budget tuned to stay responsive in Panorama; if the node
+    // budget trips mid-search the best move found so far is used. Tiny jitter avoids repetition.
+    function chessBotMove(b, st, color) {
+        const moves = legalMoves(b, st, color);
+        if (moves.length === 0) return null;
+        orderChessMoves(b, moves);
+        let budget = { n: 0, max: 120000 }, DEPTH = 3, best = null, bestScore = -1e9;
+        for (let i = 0; i < moves.length; i++) {
+            let r = makeMove(b, st, moves[i].from, moves[i].to);
+            const sc = -negamax(r[0], r[1], -color, DEPTH - 1, -1e9, 1e9, budget) + Math.random() * 8;
+            if (sc > bestScore) { bestScore = sc; best = moves[i]; }
+        }
+        return best;
+    }
+
+    // Resumable variant of chessBotMove: SAME depth-3 alpha-beta, but one root move per step so the
+    // caller can yield between them. Panorama JS is single-threaded - the one-shot search froze the
+    // whole HUD (the "лаги при ходе бота") and that freeze swallowed the premove-grab window.
+    // Stepping across frames keeps the UI responsive; the node budget is shared across steps so the
+    // total work (and playing strength) is unchanged.
+    // Usage: var d = chessBotMovePrep(b,st,color); while(!d.done()) d.step(); var mv = d.result();
+    function chessBotMovePrep(b, st, color) {
+        const moves = legalMoves(b, st, color);
+        orderChessMoves(b, moves);
+        let budget = { n: 0, max: 120000 }, DEPTH = 3, i = 0, best = null, bestScore = -1e9;
+        return {
+            done: function () { return i >= moves.length; },
+            step: function () {
+                if (i >= moves.length) return;
+                let r = makeMove(b, st, moves[i].from, moves[i].to);
+                const sc = -negamax(r[0], r[1], -color, DEPTH - 1, -1e9, 1e9, budget) + Math.random() * 8;
+                if (sc > bestScore) { bestScore = sc; best = moves[i]; }
+                i++;
+            },
+            result: function () { return best; }
+        };
+    }
+
+    R.chess = {
+        C_PAWN: C_PAWN, C_KNIGHT: C_KNIGHT, C_BISHOP: C_BISHOP, C_ROOK: C_ROOK, C_QUEEN: C_QUEEN, C_KING: C_KING,
+        cSq: cSq, cRow: cRow, cCol: cCol, cSign: cSign, cType: cType,
+        initialChessBoard: initialChessBoard, initialChessState: initialChessState, cloneChessState: cloneChessState,
+        findKing: findKing, attacksSquare: attacksSquare, inCheck: inCheck,
+        makeMove: makeMove, pseudoMoves: pseudoMoves, legalMoves: legalMoves, chessResult: chessResult,
+        insufficientMaterial: insufficientMaterial, positionKey: positionKey,
+        chessBotMove: chessBotMove, chessBotMovePrep: chessBotMovePrep
+    };
+})();

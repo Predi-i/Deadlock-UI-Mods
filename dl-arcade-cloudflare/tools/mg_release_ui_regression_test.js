@@ -1,0 +1,610 @@
+"use strict";
+
+// Regression guards for the release-audit UI fixes. The FIFO check executes the
+// real mg_net.js with a tiny Panorama fake; controller checks keep the relevant
+// call sites on that shared lane and ensure pending online actions park timers.
+
+const fs = require("fs");
+const path = require("path");
+
+const ROOT = path.join(__dirname, "..");
+function source(name) {
+    return fs.readFileSync(path.join(ROOT, "panorama", "scripts", name), "utf8");
+}
+function assert(condition, message) {
+    if (!condition) throw new Error(message);
+}
+
+const scheduled = [];
+const startedUrls = [];
+const context = makePanel("Panel", null, "context");
+
+function makePanel(type, parent, id) {
+    const panel = {
+        type: type,
+        id: id,
+        parent: parent || null,
+        children: [],
+        style: {},
+        actuallayoutwidth: 0,
+        actuallayoutheight: 0,
+        valid: true,
+        IsValid() { return this.valid; },
+        SetAttributeString() {},
+        SetImage(url) {
+            this.url = url;
+            if (url) startedUrls.push(url);
+        },
+        SetParent(next) {
+            if (this.parent) this.parent.children = this.parent.children.filter(child => child !== this);
+            this.parent = next;
+            next.children.push(this);
+        },
+        DeleteAsync() { this.valid = false; }
+    };
+    if (parent) parent.children.push(panel);
+    return panel;
+}
+
+const $ = {
+    MG: {},
+    GetContextPanel() { return context; },
+    CreatePanel(type, parent, id) { return makePanel(type, parent, id); },
+    Schedule(delay, callback) { scheduled.push({ delay: delay, callback: callback }); },
+    Msg() {},
+    Warning() {}
+};
+
+new Function("$", source("mg_net.js"))($);
+
+assert($.MG.Net.pollDelay(0) === 1.0 && $.MG.Net.pollDelay(3) === 1.0 &&
+    $.MG.Net.pollDelay(4) === 1.6 && $.MG.Net.pollDelay(11) === 1.6 &&
+    $.MG.Net.pollDelay(12) === 2.5,
+    "active-game polling must use the bounded 1.0s/1.6s/2.5s Workers Free cadence");
+assert($.MG.Net.waitDelay(0) === 1.5 && $.MG.Net.waitDelay(99) === 5,
+    "waiting-room polling must retain its separate conservative cadence");
+
+let firstLoaded = null;
+let secondLoaded = null;
+const display = makePanel("Panel", context, "display");
+$.MG.Net.loadImage("https://example.test/marker.png", (image) => {
+    firstLoaded = image;
+    image.SetParent(display);
+    // Real callbacks frequently enqueue protocol traffic synchronously. It must
+    // still wait for the release frame and the older pxview job. An uncalibrated
+    // request first queues /api/probe, which is enough to prove both job kinds
+    // really share this lane.
+    $.MG.Net.request("/api/status", { code: 1 }, () => {});
+});
+$.MG.Net.loadImage("https://example.test/pxview.png", (image) => {
+    secondLoaded = image;
+    image.SetParent(display);
+});
+
+assert(startedUrls.length === 1 && startedUrls[0].includes("marker.png"),
+    "the second external image must wait behind the first");
+
+function runScheduled() {
+    assert(scheduled.length > 0, "expected a scheduled Panorama callback");
+    scheduled.shift().callback();
+}
+function findPanel(root, predicate) {
+    if (predicate(root)) return root;
+    for (const child of root.children) {
+        const found = findPanel(child, predicate);
+        if (found) return found;
+    }
+    return null;
+}
+
+const markerPanel = findPanel(context, panel => panel.url && panel.url.includes("marker.png"));
+assert(markerPanel, "marker panel was not created");
+markerPanel.actuallayoutwidth = 64;
+markerPanel.actuallayoutheight = 64;
+runScheduled(); // marker dimension poll completes and synchronously enqueues followup
+assert(firstLoaded === markerPanel, "loaded marker ownership must pass to the caller");
+assert(startedUrls.length === 1, "the next image must wait for the FIFO release frame");
+runScheduled(); // FIFO release frame starts pxview
+assert(startedUrls.length === 2 && startedUrls[1].includes("pxview.png"),
+    "the next image must start only after the first completed");
+
+const pxPanel = findPanel(context, panel => panel.url && panel.url.includes("pxview.png"));
+assert(pxPanel, "Pixel Battle frame panel was not created");
+pxPanel.actuallayoutwidth = 800;
+pxPanel.actuallayoutheight = 400;
+runScheduled();
+assert(secondLoaded === pxPanel, "loaded Pixel Battle panel ownership must pass to the caller");
+assert(startedUrls.length === 2, "protocol work must still wait while pxview completion is releasing");
+runScheduled(); // FIFO release frame starts the calibration probe queued by MG.Net.request
+assert(startedUrls.length === 3 && startedUrls[2].includes("/api/probe.png"),
+    "dimension-encoded protocol traffic must share the external-image FIFO");
+const probePanel = findPanel(context, panel => panel.url && panel.url.includes("/api/probe.png"));
+assert(probePanel, "calibration probe panel was not created");
+probePanel.actuallayoutwidth = 600;
+probePanel.actuallayoutheight = 1000;
+runScheduled(); // finish calibration before exercising its ordinary-image discriminator
+assert($.MG.Net.isLevelEncodedSize(69, 582),
+    "ordinary-image consumers must recognize a calibrated Worker error sentinel");
+assert(!$.MG.Net.isLevelEncodedSize(640, 960),
+    "an ordinary host-clamped panorama must not be mistaken for a protocol image");
+assert(!$.MG.Net.isLevelEncodedSize(640, 1440),
+    "the 2880x1440 GeoGuesser source must survive a 640px request-host clamp");
+
+const ui = source("mg_ui.js");
+const pixel = source("mg_pixelbattle.js");
+const durak = source("mg_durak.js");
+const poker = source("mg_poker.js");
+const geo = source("mg_geoguesser.js");
+const games = source("mg_games.js");
+const worker = fs.readFileSync(path.join(ROOT, "server", "worker.core.js"), "utf8");
+// The GENERATED bundle, plus the shipped reveal tables. The two are indexed by position, so the
+// GeoGuesser assertions below compare them against each other rather than trusting either alone.
+const workerBuilt = fs.readFileSync(path.join(ROOT, "server", "worker.js"), "utf8");
+const credits = source("mg_geo_credits.generated.js");
+const baseHud = fs.readFileSync(path.join(ROOT, "panorama", "layout", "base_hud.xml"), "utf8");
+const css = fs.readFileSync(path.join(ROOT, "panorama", "styles", "mg.css"), "utf8");
+
+assert(/\b(?:var|let|const) MULTI_GAME_IDS = \[1, 2, 3, 4, 5\];/.test(ui),
+    "multi-quick tick set must include heads-up Durak");
+assert(/function waitForMultiMatch[\s\S]*?isDurakOnlineGame\(st\.game\)[\s\S]*?renderRoom\(code, isHost, true, ctx\)/.test(ui),
+    "a multi-quick Durak result must enter its two-seat dealer room");
+assert(/function renderRoom[\s\S]*?autoStartOnly:\s*true/.test(ui),
+    "a matched heads-up Durak room must rely on server auto-start");
+assert(/function mountOnlineGame[\s\S]*?function retryMatch[\s\S]*?MG\.Api\.match[\s\S]*?m\.gone[\s\S]*?m\.variant/.test(ui) &&
+    !/function mountOnlineGame[\s\S]{0,1400}opts\.variant\s*=\s*"russian"/.test(ui),
+    "online checkers must retry authoritative match metadata instead of guessing Russian");
+const net = source("mg_net.js");
+// ── decode guards on the write/handshake routes ──────────────────────────────────────────────
+// `move` is the most safety-critical write in the mod and was the ONLY one accepting any non-9
+// width as success (`else cb({ok:true})`). On a stale UI scale that read a mis-decoded reply as
+// accepted AND a real (9,2) rejection as accepted, and because nothing tripped suspectDecode the
+// bad scale was never repaired - the client kept a prediction the server refused and the board
+// desynced progressively. Every sibling write already asserts exactly (1,1).
+(() => {
+    const moveSrc = net.match(/move:\s*function[\s\S]*?\r?\n        \},/);
+    assert(moveSrc, "MG.Api.move must be present");
+    assert(/if \(w === 1 && h === 1\) \{ cb\(\{ ok: true \}\); return; \}/.test(moveSrc[0]),
+        "MG.Api.move must accept ONLY an exact (1,1); any other width read as success desyncs the board");
+    assert(/suspectDecode\(`move w=/.test(moveSrc[0]),
+        "an out-of-vocabulary /api/move reply must trip suspectDecode so the stale scale is repaired");
+    assert(!/\}\s*else\s*\{\s*cb\(\{ ok: true \}\)/.test(moveSrc[0]),
+        "MG.Api.move must not fall back to a catch-all success branch");
+})();
+// `rematch` fed `w` and a raw `h-1` straight to a consumer that restarts the board on
+// `state === 2 || gen > baseGen`, so a mis-decoded "still waiting" reply restarted one client
+// unilaterally and latched a garbage gen the server could never match again (dead Play Again).
+// Server vocabulary: w in {1,2,9}; h = gen+1 with gen wrapped to 6 bits, so h is 1..63.
+(() => {
+    const rematchSrc = net.match(/rematch:\s*function[\s\S]*?\r?\n        \},/);
+    assert(rematchSrc, "MG.Api.rematch must be present");
+    assert(/w === 1 \|\| w === 2 \|\| w === 9/.test(rematchSrc[0]) && /h < 1 \|\| h > 63/.test(rematchSrc[0]),
+        "MG.Api.rematch must range-check both dims before acting on a restart");
+    assert(/suspectDecode\(`rematch w=/.test(rematchSrc[0]) && /err\("decode"\)/.test(rematchSrc[0]),
+        "a corrupt rematch reply must trip suspectDecode AND re-arm the poll through err()");
+})();
+// A dropped queue job must still fire onError. Silence is terminal for any caller whose next step
+// lives inside the dropped callback: MG.Api.clocks issues seat 1 only from seat 0's callback, and
+// GeoGuesser chains its second panorama copy from the first. createClock's resyncTick is re-armed
+// ONLY by its error path, so a silent drop freezes the clock while the server keeps counting.
+assert(/clearQueue:\s*function[\s\S]{0,2400}onError\("cancelled"\)/.test(net),
+    "clearQueue must fire onError on every dropped job, or chained callers stall forever");
+// kickToMenu is conditional (view must be game/waiting/room), so it can decline. When it does, a
+// bare `return` left the caller with no callback at all - for dlog/plog, the table's only event
+// stream, that is a permanently frozen game. Inspect each (9,9) branch for the unconditional err.
+(() => {
+    // Extract by indentation rather than by naming the NEXT method: an anchor like `dcard:` is a
+    // guess that silently makes this whole check vacuous when it is wrong. Every MG.Api method
+    // sits at 8 spaces and closes on a bare `        },`, and nested closings are deeper.
+    function apiMethod(name) {
+        const start = net.indexOf(`\n        ${name}: function`);
+        if (start < 0) return null;
+        const end = net.indexOf("\n        },", start);
+        return end < 0 ? null : net.slice(start, end);
+    }
+    for (const name of ["poll", "geoState", "dlog", "plog"]) {
+        const src = apiMethod(name);
+        assert(src, `MG.Api.${name} must be present`);
+        assert(/kickToMenu\("Opponent left\."\)/.test(src), `${name} must have a kickToMenu("Opponent left.") call`);
+        // The critical fix: after calling kickToMenu, the handler must also call err() so a declined
+        // kick cannot strand the poll loop. Look for `if (err) err(` anywhere after the kick.
+        const afterKick = src.slice(src.indexOf('kickToMenu("Opponent left.")'));
+        assert(/if \(err\) err\(/.test(afterKick),
+            `${name}'s (9,9) handler must call err() after kickToMenu so a refused kick cannot kill the poll loop`);
+    }
+    // geoState's guard was `else if (err)`, so the kick branch and the error branch were mutually
+    // exclusive - a (9,9) that declined to kick returned with no callback at all and froze the round.
+    assert(!/kickToMenu\("Opponent left\."\);\s*\r?\n\s*else if \(err\)/.test(net),
+        "a kick must not be mutually exclusive with the error callback");
+})();
+// The join reply's height is tcIndex + 1 (the worker's `+ 1` keeps h clear of 0), so the index
+// must be recovered with h - 1. Reading tcFromIndex(h) shifted every bank by one step for the
+// JOINER and wrapped across the timed/untimed boundary in both directions: an untimed lobby handed
+// the joiner a 60s clock panel, a 600s lobby handed them none. `match` already decodes h - 1.
+(() => {
+    const joinSrc = net.match(/join:\s*function[\s\S]*?\r?\n        \},/);
+    assert(joinSrc, "MG.Api.join must be present");
+    assert(/tcFromIndex\(h - 1\)/.test(joinSrc[0]),
+        "MG.Api.join must decode the time control as tcFromIndex(h - 1); the wire value is tcIndex + 1");
+    assert(/tcIndex\(lobby\.tc \|\| 0\) \+ 1/.test(worker),
+        "the worker must still send tcIndex + 1 (the +1 this decode compensates for)");
+})();
+// A level is 0..63 by construction, so the reveal decoders must bound `h` DIRECTLY. Testing only
+// the assembled value let impossible dims through wherever the limit sat above 63*63: h=64,w=0
+// assembled to 4032 and h=65,w=0 to exactly 4095, both under the old `score > 4095` guard, and
+// both were reported to the player as a real total. (4095 is not even reachable - five rounds cap
+// at 750 each = 3750 - and floor(4095/63) is 65, a level that cannot be encoded at all.)
+assert(/geoScore:\s*function[\s\S]{0,1600}h < 0 \|\| h > 62/.test(net),
+    "geoScore must bound h directly, not just the assembled score");
+assert(/geoPointAxis:\s*function[\s\S]{0,1600}h < 0 \|\| h > 62/.test(net),
+    "geoPointAxis must bound h directly, not just the assembled value");
+// The probe owns its own retry loop (PROBE_ATTEMPTS); letting drainQueue retry it too multiplied
+// the two into 3 x 2 x REQ_TIMEOUT_MS = 48s of wedged FIFO before failCalib, with every protocol
+// request parked in calibWaiters for the duration - an in-game freeze with no status change.
+assert(/noRetry: path === "\/api\/probe"/.test(net),
+    "the probe must opt out of drainQueue's retry layer so the two retry policies cannot multiply");
+assert(/if \(!job\.noRetry && job\.tries < 2\)/.test(net),
+    "drainQueue must honour the noRetry flag");
+// isLevelEncodedSize must fail CLOSED: while uncalibrated it cannot tell a 582px-max level PNG
+// from a host-clamped photograph, and answering "real image" fed GeoGuesser a d(6,63) busy
+// sentinel stretched across the 2880x1440 stage as if it were a panorama.
+assert(/function isLevelEncodedSize[\s\S]{0,1200}if \(!calibrated\) return true;/.test(net),
+    "isLevelEncodedSize must fail closed while uncalibrated, not vouch for an unverifiable payload");
+
+assert(/clocks:\s*function[\s\S]*?w === 9 && h === 8/.test(net) &&
+    /if \(w === 9\) \{ fail\(/.test(net) &&
+    /request\("\/api\/clocks"[\s\S]{0,1000}\}, fail\);/.test(net),
+    "clock transport/server failures must reach createClock's retry callback");
+// The failure callback may be spelled `function ()` or as an arrow `()`; what this guards is
+// that the error path still checks `!stopped` and reschedules, so accept either form.
+assert(/function resyncTick[\s\S]*?(?:function )?\(\)(?: =>)? \{ if \(!stopped\) \$\.Schedule/.test(games),
+    "createClock must retain a retry path for transient authoritative-clock failures");
+assert(/\b(?:var|let|const) RESYNC_S = 8;/.test(games),
+    "authoritative clock resync must stay infrequent so it cannot crowd out move traffic");
+assert(/status:\s*function \(code, tok, cb, err\)[\s\S]{0,150}tok:\s*tok \|\| ""/.test(net) &&
+    /room:\s*function \(code, tok, cb, err\)/.test(net) &&
+    /droom:\s*function \(code, tok, cb, err\)/.test(net) &&
+    /proom:\s*function \(code, tok, cb, err\)/.test(net) &&
+    /cfg\.roomApi\(code, ctx \? ctx\.tok : currentTok/.test(ui),
+    "authenticated waiting-room polls must carry their seat token for sparse TTL refresh");
+const statusSource = net.match(/status:\s*function[\s\S]*?\r?\n        },\r?\n\r?\n        \/\/ Resolved-options/);
+const matchSource = net.match(/match:\s*function[\s\S]*?\r?\n        },\r?\n\r?\n        \/\/ The seat token/);
+assert(statusSource && /w === 9 && h === 1/.test(statusSource[0]) &&
+    /err\("transient"\)/.test(statusSource[0]) &&
+    matchSource && /w === 9 && h === 1/.test(matchSource[0]) &&
+    /err\("transient"\)/.test(matchSource[0]),
+    "status/match must retry non-gone server sentinels instead of closing a live lobby");
+assert(/function checkUpdates[\s\S]*?MG\.Net\.loadImage\(url,/.test(ui),
+    "update marker must load through the shared MG.Net FIFO");
+assert(!/function checkUpdates[\s\S]*?img\.SetImage\(url\)/.test(ui),
+    "update marker must not start a direct Image.SetImage request");
+assert(/function refreshCrispView[\s\S]*?MG\.Net\.loadImage\(url,/.test(pixel),
+    "Pixel Battle viewport must load through the shared MG.Net FIFO");
+assert(!/crispImage\.SetImage\(MG\.Net\.getBaseUrl\(\)/.test(pixel),
+    "Pixel Battle must not bypass the FIFO with a direct remote SetImage");
+assert(/function loadPanorama[\s\S]*?MG\.Net\.loadImage\(url,/.test(geo),
+    "GeoGuesser's cold panorama load must use the shared MG.Net FIFO");
+assert(/MG\.Net\.isLevelEncodedSize\(loadedW, loadedH\)/.test(geo) &&
+    !/\b(?:var|let|const) aspect = shortSide > 0/.test(geo),
+    "GeoGuesser must not validate intrinsic panorama aspect from host-clamped layout dimensions");
+// An <Image> `scaling` token the engine doesn't know is NOT an error — it silently falls back to
+// the native-size default, which letterboxes the bitmap inside the panel. That is what made the
+// GeoGuesser panorama paint 2048x1024 centred in its 2880x1440 strip (416px of black each side,
+// 208px top/bottom) and limited the usable heading to roughly 95°..270° in-game. Whitelist taken
+// from every scaling= token that appears on an <Image> in G:\GameTracking-Deadlock.
+(() => {
+    const VALID = ["stretch-to-fit-preserve-aspect", "stretch-to-fit-y-preserve-aspect",
+        "stretch-to-fit-x-preserve-aspect", "stretch-to-cover-preserve-aspect",
+        "cover", "contain", "none"];
+    const files = { "mg_geoguesser.js": geo, "mg_ui.js": ui, "mg_pixelbattle.js": pixel, "mg_net.js": net };
+    const bad = [];
+    Object.keys(files).forEach((name) => {
+        let re = /scaling:\s*"([a-z-]+)"/g, m;
+        while ((m = re.exec(files[name]))) {
+            if (VALID.indexOf(m[1]) === -1) bad.push(name + ': "' + m[1] + '"');
+        }
+    });
+    assert(bad.length === 0,
+        `unknown <Image> scaling token (silently falls back to native size):\n  ${bad.join("\n  ")}`);
+})();
+assert(/\b(?:var|let|const) PANO_SCALING = "cover"/.test(geo) &&
+    !/scaling: *"stretch-to-fit"/.test(geo),
+    "GeoGuesser panorama strips must use a scaling token that fills the whole 2880x1440 box");
+assert(/PANO_W = 2880, PANO_H = 1440, PANO_STEP = PANO_W - 2/.test(geo) &&
+    /configurePanoImage\(image, PANO_STEP\)/.test(geo) &&
+    /addCachedCopy\(url, PANO_STEP \* 2, myGen/.test(geo),
+    "GeoGuesser's three panorama strips must share one exact, slightly-overlapped step");
+// The side copies must ride the shared FIFO. A direct `copy.SetImage(url)` overlaps the centre
+// load and the running polls, which wedges Panorama's image loader: both neighbours stall at
+// dims 0 and never paint, leaving a mostly BLACK viewport (and an empty frame once heading walks
+// onto the missing copy). Also assert the reveal is CHAINED off the second copy rather than
+// fired by a fixed timer that can't know whether the loads finished.
+// (`CB` below = either `function ()` or an arrow `()`; the callback SPELLING is irrelevant,
+// the nesting order and the final panoramaReady assignment are what matter.)
+assert(/function addCachedCopy\(url, offset, myGen, done\)[\s\S]{0,600}MG\.Net\.loadImage\(url,/.test(geo) &&
+    !/\$\.CreatePanel\("Image", stage[\s\S]{0,200}SetImage\(url\)/.test(geo) &&
+    /addCachedCopy\(url, 0, myGen, (?:function )?\(\)(?: =>)?[\s\S]{0,400}addCachedCopy\(url, PANO_STEP \* 2, myGen, (?:function )?\(\)(?: =>)?[\s\S]{0,300}panoramaReady = true/.test(geo),
+    "GeoGuesser's side panorama copies must load through the shared FIFO and gate panoramaReady");
+// The 359°→0° wrap re-centres the strip by a whole PANO_STEP. With the transition on the BASE
+// class the engine animates that 2878px jump and it reads as a super-fast full spin, so the
+// transition must live on a toggled class that applyCamera drops for the wrap frame.
+assert(/\.mg-geo-stage\s*\{[^}]*\}/.test(css) &&
+    !/\.mg-geo-stage\s*\{[^}]*transition-property/.test(css) &&
+    /\.mg-geo-stage\.mg-geo-anim\s*\{[^}]*transition-property:\s*transform;/.test(css) &&
+    /Math\.abs\(x - lastStageX\) > PANO_STEP \/ 2/.test(geo) &&
+    /if \(wrapped\) stage\.RemoveClass\("mg-geo-anim"\)/.test(geo),
+    "GeoGuesser must not animate the yaw-wrap re-centre (fast-spin artifact at the 359/0 seam)");
+// All four stacked rows share one width, or the panorama sits inset above a wider map row and the
+// panel reads as ragged/cut off. VIEW_W/VIEW_H in the controller must match the CSS viewport.
+(() => {
+    const want = ["\\.mg-geo\\s*\\{", "\\.mg-geo-stats\\s*\\{", "\\.mg-geo-viewport\\s*\\{",
+        "\\.mg-geo-camera-controls\\s*\\{", "\\.mg-geo-lower\\s*\\{"];
+    want.forEach((sel) => {
+        const block = new RegExp(sel + "[^}]*width:\\s*860px;").test(css);
+        assert(block, `GeoGuesser row ${sel.replace(/\\\\|\\s\*\\\{/g, "")} must be 860px wide`);
+    });
+    assert(/\b(?:var|let|const) VIEW_W = 860, VIEW_H = 360;/.test(geo) &&
+        /\.mg-geo-viewport\s*\{[^}]*height:\s*360px;/.test(css),
+        "GeoGuesser VIEW_W/VIEW_H must match the CSS viewport box");
+})();
+// Pitch is 8px per degree (1440px strip / 180°). The old hard-coded 4 moved at half rate. And the
+// constant must be declared AFTER PANO_H — `var` hoists the name, not the value, so reading it a
+// line early silently yields NaN and breaks tilt while every syntax check still passes.
+assert(/\b(?:var|let|const) PANO_W = 2880, PANO_H = 1440[\s\S]{0,600}\b(?:var|let|const) PITCH_PX_PER_DEG = PANO_H \/ 180;/.test(geo) &&
+    /pitch \* PITCH_PX_PER_DEG/.test(geo),
+    "GeoGuesser pitch must use PITCH_PX_PER_DEG, declared after PANO_H");
+// Map zoom: engine has no ondblclick, so the run is timestamp-keyed, and a new round must reset to
+// the whole world (a leftover 8x zoom would strand the player in an unrelated region).
+assert(/\b(?:var|let|const) MULTI_CLICK_MS = 400;/.test(geo) &&
+    /clickRun = \(now - lastClickAt < MULTI_CLICK_MS\) \? clickRun \+ 1 : 1;/.test(geo) &&
+    /if \(clickRun === 2\) setMapZoom\(mapZoomLevel \* 2, f\.x, f\.y\);/.test(geo) &&
+    /else if \(clickRun >= 3\) setMapZoom\(1, null, null\);/.test(geo) &&
+    /clearMapMarkers\(\);[\s\S]{0,400}setMapZoom\(1, null, null\);/.test(geo),
+    "GeoGuesser map must zoom on double-click, reset on triple-click, and reset each round");
+// Precision comes from the hit grid NOT scaling with the map: it is a sibling of the zoom
+// wrapper, pinned over the window, so at zoom Z its 64x32 panels address 64Z x 32Z cells. If it
+// were created inside mapZoom again, zooming would just enlarge the same coarse cells.
+assert(/\b(?:var|let|const) grid = \$\.CreatePanel\("Panel", map, ""\);/.test(geo) &&
+    !/\$\.CreatePanel\("Panel", mapZoom, ""\);\s*\n\s*grid\.AddClass/.test(geo) &&
+    /x: panX \+ \(col \+ 0\.5\) \/ \(GRID_W \* mapZoomLevel\)/.test(geo),
+    "GeoGuesser hit grid must stay fixed over the window so zoom buys precision");
+// Reveal points are world-anchored panels, not tinted grid buttons: a grid button points
+// somewhere else the moment the window pans. Labels/markers must not eat the grid's clicks.
+assert(/labelLayer\.SetAttributeString\("hittest", "false"\)/.test(geo) &&
+    /markerLayer\.SetAttributeString\("hittest", "false"\)/.test(geo) &&
+    /function addMarker\(cell, cls\)/.test(geo) &&
+    !/function markPoint\(/.test(geo),
+    "GeoGuesser reveal markers must be world-anchored and input-transparent");
+// A 512x256 point overflows the two-level base-63 reply, so each axis is its own request and the
+// marker may only be placed once BOTH halves are in.
+assert(/MG\.Api\.geoTarget\(code, tok, axis, ok, fail\)/.test(geo) &&
+    /function readPoint\(fetch, cls\)[\s\S]{0,400}fetch\(0, ok, fail\)[\s\S]{0,300}fetch\(1, ok2, fail2\)/.test(geo) &&
+    /revealReadsPending = solo \? 7 : 10;/.test(geo),
+    "GeoGuesser reveal must read each point axis-by-axis and wait for both halves");
+assert(/images\/geoguesser\/world_map\.vtex/.test(geo) &&
+    /\b(?:var|let|const) GRID_W = 64, GRID_H = 32/.test(geo),
+    "GeoGuesser must use its dedicated map and fine 64x32 authoritative guess grid");
+// The de-glow overrides only bind if they out-specify the GAME's own `Slider.HorizontalSlider
+// #SliderThumb` (111) — a bare `.mg-geo-camera-controls #SliderThumb` is 110 and loses, which is
+// why the green glow survived the first pass (trap 22). Assert the winning prefix on all three
+// sub-panels plus the hover/active states, and that `none` is used rather than a transparent
+// zero shadow (which does not clear the game's `fill`-keyword glow).
+assert(/\.mg-geo-camera-controls Slider\.HorizontalSlider #SliderThumb\s*\{[\s\S]{0,400}background-image:\s*none;[\s\S]{0,400}box-shadow:\s*none;/.test(css) &&
+    /\.mg-geo-camera-controls Slider\.HorizontalSlider #SliderTrackProgress\s*\{[\s\S]{0,300}box-shadow:\s*none;/.test(css) &&
+    /\.mg-geo-camera-controls Slider\.HorizontalSlider #SliderThumb:hover\s*\{[\s\S]{0,300}box-shadow:\s*none;/.test(css) &&
+    /#SliderThumb:active\s*\{[\s\S]{0,300}box-shadow:\s*none;/.test(css) &&
+    !/\.mg-geo-camera-controls[\s\S]{0,2000}#62f28c/.test(css),
+    "GeoGuesser camera controls must out-specify and suppress the native slider glow (trap 22)");
+// House style has no outer glow anywhere: no rule may carry a zero-offset blurred box-shadow.
+// A hard ring (`0px 0px 0px 3px`, zero blur) and offset drop shadows are both still fine.
+(() => {
+    // Blank out /* … */ comments, PRESERVING newlines so reported line numbers stay accurate.
+    // Needed because the trap-22 note and the .mg-pk-active note both QUOTE the removed glow
+    // declarations verbatim, and a naive scan flags its own documentation.
+    const live = css.replace(/\/\*[\s\S]*?\*\//g, (m) => { return m.replace(/[^\n]/g, " "); });
+    const glow = [];
+    live.split(/\r?\n/).forEach((line, i) => {
+        const decl = /box-shadow:\s*([^;}]+)/.exec(line);
+        if (!decl) return;
+        // Tokenise instead of pattern-matching the whole value: `fill`/`inset` keywords and colours
+        // (#rrggbbaa, brandGreen&11, rgba(...)) may precede OR follow the lengths, and a single
+        // regex with an optional prefix can silently absorb the first 0px and mistake the SPREAD
+        // for the blur — which is what made `0px 0px 0px 3px` (a hard ring) read as a glow.
+        const lengths = decl[1].split(/\s+/)
+            .filter((t) => { return /^-?[\d.]+px$/.test(t); })
+            .map(parseFloat);
+        // Glow = no offset in either axis AND a non-zero blur radius. Offset drop shadows and
+        // zero-blur spread rings are both legitimate house style.
+        if (lengths.length >= 3 && lengths[0] === 0 && lengths[1] === 0 && lengths[2] > 0) {
+            glow.push((i + 1) + ": " + line.trim());
+        }
+    });
+    assert(glow.length === 0, `no outer glow allowed in mg.css, found:\n  ${glow.join("\n  ")}`);
+})();
+assert(/\.mg-geo-cell\s*\{[\s\S]{0,250}width:\s*fill-parent-flow\(1\);[\s\S]{0,250}border-radius:\s*50%;/.test(css),
+    "GeoGuesser map selection must render as fine circular markers, not coarse squares");
+assert(/RegisterEventHandler\("DragStart"[\s\S]*?RegisterEventHandler\("DragEnd"/.test(geo) &&
+    /MG\.Widgets\.winPos\(dragGhost\)/.test(geo),
+    "GeoGuesser must reuse the proven chess/checkers native drag position channel");
+assert(/\$\.CreatePanel\("Slider"[\s\S]*?onvaluechanged[\s\S]*?yaw = nextYaw/.test(geo) &&
+    /\$\.CreatePanel\("Slider"[\s\S]*?onvaluechanged[\s\S]*?pitch = nextPitch/.test(geo),
+    "GeoGuesser must keep a continuous native-slider camera path when image drag updates only on release");
+assert(/revealReadsPending = solo \? 7 : 10;[\s\S]*?setAction\("LOADING RESULT…", false/.test(geo) &&
+    /revealReadsPending === 0[\s\S]*?setAction\(currentRound/.test(geo),
+    "GeoGuesser must not allow next/finish before every authoritative reveal read completes");
+// The pool is PREBUILT (server/geo_pool.generated.js) rather than swept live, so this no longer
+// looks for a catalog URL. What still matters: the pool is large and two-source, the reveal credits
+// whichever project the location came from, and nobody has quietly gone back to a handful of
+// hard-coded places.
+assert(/geoCredit:\s*function[\s\S]*?\/api\/geocredit/.test(net) &&
+    /MG\.Api\.geoCredit\(code, tok/.test(geo) &&
+    / · Mapillary · CC BY-SA 4\.0/.test(credits) &&
+    / · Panoramax · CC BY-SA 4\.0/.test(credits) &&
+    !/const GEO_LOCATIONS =/.test(worker),
+    "GeoGuesser must credit both panorama sources and keep its locations out of a hard-coded list");
+// The credit line must NOT go back to being transported as text. It used to arrive two characters
+// per request (`?i=0` for the length, then ceil(len/2) chained reads - up to 26 for one label) and
+// the reveal button waited on all of them, which is what made the post-guess pause feel broken.
+// Both replies are single indices into tables that ship with the mod.
+assert(!/geocredit"[^)]*i:/.test(net) && !/GEO_CREDIT_ALPHABET/.test(worker) &&
+    !/GEO_CREDIT_ALPHABET/.test(net) &&
+    /MG\.GeoCredits/.test(net) && /MG\.GeoCountries/.test(net),
+    "GeoGuesser reveal labels must be single-request indices, not text walked over the side channel");
+// The two generated artifacts are indexed by position, so a reveal is only correct while they agree.
+(() => {
+    const packed = /const GEO_POOL_PACKED = "([^"]*)"/.exec(workerBuilt);
+    const names = /const GEO_COUNTRY_NAMES = (\[[\s\S]*?\]);/.exec(workerBuilt);
+    const keys = /const GEO_CREDIT_KEYS = (\[[\s\S]*?\]);/.exec(workerBuilt);
+    assert(packed && names && keys,
+        "the generated worker must carry the pool and both reveal tables");
+    const countries = JSON.parse(names[1]);
+    const creditKeys = JSON.parse(keys[1]);
+    const clientCountries = /MG\.GeoCountries = (\[[\s\S]*?\]);/.exec(credits);
+    const clientCredits = /MG\.GeoCredits = (\[[\s\S]*?\]);/.exec(credits);
+    assert(clientCountries && clientCredits,
+        "the shipped credit script must define both reveal tables");
+    assert(JSON.stringify(JSON.parse(clientCountries[1])) === JSON.stringify(countries),
+        "server and client country tables must be identical and identically ordered");
+    assert(JSON.parse(clientCredits[1]).length === creditKeys.length,
+        "server credit keys and client credit lines must be the same length");
+    // Every row the worker can draw has to be nameable by those tables, or the reveal shows the
+    // wrong country. An empty country is legal: a few panoramas sit at sea and reveal as a region.
+    const rows = packed[1].split("\\n").filter(Boolean);
+    let placed = 0;
+    for (const row of rows) {
+        const parts = row.split("|");
+        const country = parts[6] || "";
+        const continent = Number(parts[7]);
+        assert(creditKeys.indexOf(parts[0] + "|" + parts[5]) >= 0,
+            `pooled provider missing from the credit table: ${parts[5]}`);
+        if (!country) { assert(continent === -1, "an unplaced row must carry continent -1"); continue; }
+        assert(countries.indexOf(country) >= 0,
+            `pooled country missing from the country table: ${country}`);
+        assert(continent >= 0 && continent < 6, `bad continent for ${country}`);
+        placed++;
+    }
+    // Almost every row should be placed; a build that suddenly cannot name most of the pool means
+    // the country resolver broke, not that the world changed.
+    assert(placed >= rows.length * 0.95,
+        `most pooled rows must resolve to a country (${placed}/${rows.length})`);
+    // The place code packs country and continent into one reply: 6 + idx*6 + continent must stay
+    // inside the two-base-63-level range, with h=63 reserved for errors.
+    assert(6 + countries.length * 6 <= 63 * 63,
+        "place codes must fit one downlink reply");
+    assert(creditKeys.length <= 63 * 63, "credit codes must fit one downlink reply");
+})();
+(() => {
+    // The pool lives in the GENERATED artifact, not the authored core, so read that one here.
+    const built = fs.readFileSync(path.join(ROOT, "server", "worker.js"), "utf8");
+    const packed = /const GEO_POOL_PACKED = "([^"]*)"/.exec(built);
+    assert(packed, "the generated worker must carry the prebuilt GeoGuesser pool");
+    const rows = packed[1].split("\\n").filter(Boolean);
+    assert(rows.length >= 1000,
+        `the GeoGuesser pool must stay large (found ${rows.length} locations, want 1000+)`);
+    // Even coverage is the whole point of the offline build: a pool that is 90% Europe makes five
+    // rounds feel like one country. Every labelled region must be represented.
+    const perRegion = [0, 0, 0, 0, 0, 0];
+    for (const row of rows) {
+        const region = Number(row.split("|")[4]);
+        if (region >= 0 && region < 6) perRegion[region]++;
+    }
+    assert(perRegion.every((count) => { return count >= 50; }),
+        `every GeoGuesser region needs 50+ pooled locations, got ${perRegion.join("/")}`);
+})();
+assert(/bl\.text = selectedGameId === 9 \? "PLAY SOLO" : "PLAY VS BOT"/.test(ui) &&
+    /function startGeoSolo\(\)[\s\S]*?MG\.Api\.create\(9,[\s\S]*?\{ solo: true \}/.test(ui) &&
+    /if \(access\.lobby\.solo\) st\.ready\[1\] = 1/.test(worker) &&
+    /code === null \|\| code === undefined \|\| !tok/.test(geo),
+    "GeoGuesser Play Solo must create a server-backed session and advance without a second client");
+assert(/MG\.Games\.register\(\{ id: 9,[\s\S]*?enabled: true \}\)/.test(geo) &&
+    /mg_geoguesser\.vjs_c/.test(baseHud),
+    "GeoGuesser controller must be registered and loaded before the menu shell");
+assert(/\b(?:var|let|const) aspect = shortSide > 0 \? longSide \/ shortSide : 0;[\s\S]{0,350}Map server is busy/.test(pixel),
+    "Pixel Battle must reject and retry the Worker's viewport-throttle image sentinel");
+assert(/lastOuterStatus === "Map server is busy\. Retrying…"[\s\S]{0,100}Shared world loaded/.test(pixel),
+    "Pixel Battle must clear the busy status after a successful viewport retry");
+assert(/if \(!crispReady\)[\s\S]{0,200}Map view is still loading/.test(pixel) &&
+    /function scheduleCrispView[\s\S]{0,400}crispReady = false/.test(pixel),
+    "Pixel Battle must block grid clicks while the matching viewport frame is loading");
+
+// ── Pixel Battle geometry: client, CSS and server must agree exactly ─────────────────────────
+// The hit grid must divide the viewport into WHOLE pixels. A fractional cell is the GeoGuesser
+// off-by-one (ARCHITECTURE §8.11): the engine rounds the laid-out cell, the click arithmetic does
+// not, and the selection drifts further the further you click. 768/64 = 384/32 = 12 exactly;
+// 800 would be 12.5 against a 64-wide grid.
+const pxGrid = /\b(?:var|let|const) GRID_COLS = (\d+), GRID_ROWS = (\d+);/.exec(pixel);
+const pxView = /\b(?:var|let|const) VIEW_W = (\d+), VIEW_H = (\d+);/.exec(pixel);
+const pxMaxZoom = /\b(?:var|let|const) MAX_ZOOM = (\d+);/.exec(pixel);
+assert(pxGrid && pxView && pxMaxZoom, "Pixel Battle must declare its grid, viewport and max zoom");
+const pxCols = Number(pxGrid[1]), pxRows = Number(pxGrid[2]);
+const pxViewW = Number(pxView[1]), pxViewH = Number(pxView[2]);
+assert(pxViewW % pxCols === 0 && pxViewH % pxRows === 0,
+    `Pixel Battle viewport ${pxViewW}x${pxViewH} must divide evenly by its ${pxCols}x${pxRows} hit ` +
+    "grid, or a laid-out cell and the click maths address different pixels");
+// One cell must be exactly one canvas pixel at max zoom, or the editor cannot place single pixels.
+assert(pxCols * Number(pxMaxZoom[1]) === 512 && pxRows * Number(pxMaxZoom[1]) === 256,
+    "at MAX_ZOOM one hit cell must cover exactly one 512x256 canvas pixel");
+const pxServerView = /const PX_VIEW_W = (\d+), PX_VIEW_H = (\d+);/.exec(worker);
+assert(pxServerView && Number(pxServerView[1]) === pxViewW && Number(pxServerView[2]) === pxViewH,
+    "PX_VIEW_W/H in worker.core.js must match VIEW_W/H in mg_pixelbattle.js");
+assert(new RegExp(`\\.mg-px-grid\\s*\\{[^}]*width:\\s*${pxViewW}px[^}]*height:\\s*${pxViewH}px`).test(css),
+    ".mg-px-grid CSS size must match the client's VIEW_W/VIEW_H");
+// A manual UPLOAD of a single pixel is a legitimate batch, so the server's floor must accept one.
+// A mismatch here makes the server reject the client's smallest real batch as malformed.
+const pxMinClient = /\b(?:var|let|const) MIN_BATCH = (\d+);/.exec(pixel);
+const pxMinServer = /const PX_MIN_BATCH = (\d+),/.exec(worker);
+assert(pxMinClient && pxMinServer && pxMinClient[1] === pxMinServer[1] && pxMinServer[1] === "1",
+    "MIN_BATCH and PX_MIN_BATCH must both be 1 so a single-pixel UPLOAD is accepted");
+// Paint must NEVER commit itself. An auto-flush shipped on 2026-08-01 and was reverted: it took
+// away the player's last chance to change their mind, and in-game it read as pixels placing
+// themselves without UPLOAD ever being pressed. placePixel may only touch local state.
+assert(!/scheduleAutoFlush/.test(pixel) && !/AUTO_FLUSH_S/.test(pixel),
+    "Pixel Battle must not auto-flush: paint commits only when the player presses UPLOAD");
+assert(/function placePixel\(x, y\)[\s\S]*?\n        \}/.exec(pixel) &&
+    !/function placePixel\(x, y\)[\s\S]*?uploadPending\(\)[\s\S]*?\n        \}/.test(
+        /function placePixel\(x, y\)[\s\S]*?\n        \}/.exec(pixel)[0]),
+    "placePixel must not start an upload; only the UPLOAD button calls uploadPending");
+// Cloudflare Free quota profile: quick while active, then back off when the canvas is quiet.
+const pxPoll = /\b(?:var|let|const) POLL_ACTIVE_S = (\d+), POLL_WARM_S = (\d+), POLL_IDLE_S = (\d+);/.exec(pixel);
+assert(pxPoll && Number(pxPoll[1]) === 8 && Number(pxPoll[2]) === 15 && Number(pxPoll[3]) === 30,
+    "Pixel Battle canvas-version poll must use the Cloudflare Free 8/15/30s backoff");
+// The viewport must not be blanked while its replacement loads: the new frame is a debounce plus a
+// full FIFO round-trip away, so collapsing the old one turns every pan/zoom/poll into a ~0.5s black
+// flash. The swap in refreshCrispView is already atomic (parent the new panel, then delete the old).
+assert(!/crispImage\.style\.visibility = "collapse"/.test(pixel),
+    "the loaded Pixel Battle viewport must stay visible until its replacement is parented");
+// Because the stale frame now stays up, a failed viewport load is INVISIBLE: the map looks fine
+// while crispReady stays false and every grid click is refused forever. Both failure paths must
+// therefore self-heal. (The busy-sentinel path always had its own 1.2s retry; these two did not.)
+assert(/function scheduleCrispRetry\(gen\)/.test(pixel),
+    "a failed Pixel Battle viewport load must schedule a retry, or the map wedges unclickable");
+assert((pixel.match(/scheduleCrispRetry\(myGen\);/g) || []).length >= 2,
+    "both the display-exception and the load-error paths must arm the viewport retry");
+// `v` is a CLIENT cache key only - /api/pxview never reads it and always renders the current
+// canvas. The optimistic post-upload bump lied twice: the server skips the version bump entirely
+// when a batch changes nothing (changed.length === 0), and the client wrapped at 4096 against the
+// server's PX_VERSION_MOD of 4032. Once ahead, the refresh requested a `v` it had already cached,
+// so another player's paint silently never appeared.
+assert(!/knownVersion = \(knownVersion \+ 1\)/.test(pixel),
+    "the upload path must not optimistically bump knownVersion; the poll owns the authoritative value");
+assert(/if \(changed\.length === 0\) return \{ ok: true/.test(worker),
+    "worker must still short-circuit a zero-change batch (the reason the optimistic bump was wrong)");
+// Consequence of dropping the bump: refreshing straight after an upload would re-request the
+// pre-upload `v` and Panorama would serve the cached pre-upload bitmap, hiding the player's own
+// paint. Re-read the authoritative version instead and let it drive the refresh.
+assert(/pollGeneration\+\+;\s*\r?\n\s*pollVersion\(\);/.test(pixel),
+    "after an upload drains, Pixel Battle must re-read the authoritative version rather than refresh blind");
+
+for (const entry of [{ name: "Durak", text: durak }, { name: "Poker", text: poker }]) {
+    assert(/pendingAct = true;\s*refreshTimer\(\);/.test(entry.text),
+        entry.name + " must park its timer before starting the action request");
+    assert(/function onTimerExpire[\s\S]{0,500}pendingAct/.test(entry.text),
+        entry.name + " expiry must ignore a pending authoritative action");
+    // `\r?\n` because these sources are CRLF: a bare `\n        }\n` never matches, the slice
+    // comes back null, and the assertion below then fails for the wrong reason.
+    const send = entry.text.match(/function sendAct[\s\S]*?\r?\n        }\r?\n/);
+    assert(send, entry.name + " sendAct body could not be sliced (check the indentation anchor)");
+    assert(send && (send[0].match(/refreshTimer\(\)/g) || []).length >= 3,
+        entry.name + " must re-arm after both rejection and transport failure");
+}
+
+console.log("release UI regression tests passed (shared image FIFO, timers, multi-quick)");
