@@ -8,6 +8,10 @@ Games: Checkers, Tic-Tac-Toe, Chess, Connect Four, Durak, Poker, Pixel Battle, W
 GeoGuesser. Wordle and bot modes stay offline; online rooms, shared state, Pixel Battle and
 GeoGuesser use the Worker.
 
+The empty production Worker is deployed at
+`https://dl-arcade-cloudflare.deadlock-teammate-cooldowns.workers.dev`. `BASE_URL` intentionally
+remains blank until the final Pixel Battle snapshot is imported and verified.
+
 ## Start here
 
 Follow **[`CLOUDFLARE_SETUP.md`](CLOUDFLARE_SETUP.md)**. It covers Cloudflare login, the first

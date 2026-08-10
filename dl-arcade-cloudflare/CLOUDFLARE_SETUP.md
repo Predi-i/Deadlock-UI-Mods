@@ -11,6 +11,15 @@
 - VPS-адаптер, Nginx, systemd, certbot и локальная SQLite из этой копии удалены.
 - Polling возвращён к более экономному режиму для лимита Free.
 
+Fresh Worker уже создан в Cloudflare-аккаунте `modding.predi@gmail.com`:
+
+```text
+https://dl-arcade-cloudflare.deadlock-teammate-cooldowns.workers.dev
+```
+
+`BASE_URL` пока намеренно пуст: сначала нужен финальный Pixel Battle import из остановленного VPS,
+иначе между ранним snapshot и переключением успеют появиться потерянные новые пиксели.
+
 ## 1. Установить зависимости
 
 Нужен Node.js 20+ и npm.
