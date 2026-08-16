@@ -35,7 +35,7 @@ These mods are built using the Panorama API (XML/CSS/JS) to improve overall play
 - [Bloody Mina Gloat Icon](https://gamebanana.com/mods/655050)
 - [Meowl Soul Container](https://gamebanana.com/mods/652905)
 
-For every published release, see [Predi_i's GameBanana profile](https://gamebanana.com/members/5107678).
+All published releases are on [GameBanana](https://gamebanana.com/members/5107678).
 
 ## ⚙️ Build & Installation
 
