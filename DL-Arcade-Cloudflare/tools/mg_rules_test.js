@@ -1,0 +1,199 @@
+"use strict";
+// Ad-hoc rules test for the shared checkers + ttt engines. Run: node tools/mg_rules_test.js
+// Since the trust refactor the pure rules live in panorama/scripts/rules/*.js - the exact
+// same files the authoritative server runs. We load them here: each file's IIFE sees no `$`
+// (Node), so it attaches to globalThis.MGRules, which we then read.
+const fs = require("fs");
+const path = require("path");
+
+const rulesDir = path.join(__dirname, "..", "panorama", "scripts", "rules");
+function loadRules(name) {
+    const src = fs.readFileSync(path.join(rulesDir, name), "utf8");
+    new Function(src)(); // populates globalThis.MGRules.<game>
+}
+loadRules("checkers.js");
+loadRules("ttt.js");
+const R = globalThis.MGRules;
+const M = Object.assign({}, R.checkers, R.ttt);
+const E = R.checkersEnglish;
+
+
+let failures = 0;
+function ok(cond, msg) { if (!cond) { failures++; console.log(`  ✗ ${msg}`); } else { console.log(`  ✓ ${msg}`); } }
+function empty() { return new Array(64).fill(0); }
+
+// English draughts differ from Russian draughts in the two rule branches that
+// matter to move validation: men only jump forward, and kings move one square.
+(() => {
+    ok(!!E, "English draughts rules are exposed");
+    if (!E) return;
+
+    let b = empty();
+    b[E.idx(3, 3)] = 1; // white man
+    b[E.idx(4, 4)] = 3; // black man behind it
+    ok(E.captureMoves(b, E.idx(3, 3)).length === 0, "English man cannot capture backward");
+
+    b = empty();
+    b[E.idx(7, 0)] = 2; // white king
+    let moves = E.simpleMoves(b, E.idx(7, 0)).map((m) => { return m.to; });
+    ok(moves.length === 1 && moves[0] === E.idx(6, 1), "English king moves one diagonal square");
+
+    // English king captures forward AND backward (one square over), but NOT at range.
+    b = empty();
+    b[E.idx(4, 4)] = 2; b[E.idx(3, 3)] = 3; b[E.idx(5, 5)] = 3;
+    const caps = E.captureMoves(b, E.idx(4, 4));
+    ok(caps.some((c) => { return c.to === E.idx(2, 2); }), "English king captures forward");
+    ok(caps.some((c) => { return c.to === E.idx(6, 6); }), "English king captures backward");
+    b = empty();
+    b[E.idx(7, 0)] = 2; b[E.idx(5, 2)] = 3; // enemy 2 squares away - no gap to land
+    ok(E.captureMoves(b, E.idx(7, 0)).length === 0, "English king cannot capture at range");
+
+    // English: promotion ends the turn even when further captures exist.
+    b = empty();
+    b[E.idx(2, 1)] = 1; b[E.idx(1, 2)] = 3; b[E.idx(1, 4)] = 3;
+    const seqs = E.legalSequences(b, E.WHITE);
+    ok(seqs.length === 1 && seqs[0].length === 1, "English promotion ends turn (no continue-as-king)");
+})();
+
+// Russian: promotion during capture - man becomes king and MUST continue as flying king.
+(() => {
+    // White man at (2,1), black at (1,2) and (1,4). After capturing (1,2) and landing on (0,3)
+    // the man is crowned; as a flying king it can now capture (1,4) and land on (2,5) or (3,6).
+    let b = empty();
+    b[M.idx(2, 1)] = 1; b[M.idx(1, 2)] = 3; b[M.idx(1, 4)] = 3;
+    const seqs = M.legalSequences(b, M.WHITE);
+    ok(seqs.length > 0 && seqs.every((s) => { return s.length === 2; }),
+        "Russian promotion mid-capture: turn continues as flying king (2-hop sequence)");
+    ok(seqs.some((s) => { return s[0].to === M.idx(0, 3); }),
+        "Russian promotion mid-capture: first hop lands on crowning row (0,3)");
+})();
+
+// 1) Man captures BACKWARD (white moves up, this capture goes down a row).
+(() => {
+    const b = empty();
+    b[M.idx(3, 3)] = 1; // white man
+    b[M.idx(4, 4)] = 3; // black man behind it
+    const caps = M.captureMoves(b, M.idx(3, 3));
+    const land = M.idx(5, 5);
+    const found = caps.some(c => c.to === land && c.cap === M.idx(4, 4));
+    ok(found, `white man captures backward (to ${land})`);
+})();
+
+// 2) Flying king slides multiple squares on an empty diagonal.
+(() => {
+    const b = empty();
+    b[M.idx(7, 0)] = 2; // white king, bottom-left corner
+    const moves = M.simpleMoves(b, M.idx(7, 0)).map(m => m.to);
+    ok(moves.includes(M.idx(0, 7)), "flying king reaches far corner (0,7)");
+    ok(moves.length === 7, `flying king has 7 slide targets, got ${moves.length}`);
+})();
+
+// 3) Flying king captures at range and may land beyond the taken piece.
+(() => {
+    const b = empty();
+    b[M.idx(7, 0)] = 2;  // white king
+    b[M.idx(4, 3)] = 3;  // black man in its path
+    const caps = M.captureMoves(b, M.idx(7, 0));
+    const cap = M.idx(4, 3);
+    ok(caps.every(c => c.cap === cap), "all captures take the single enemy at (4,3)");
+    ok(caps.some(c => c.to === M.idx(3, 4)), "king can land right behind the enemy (3,4)");
+    ok(caps.some(c => c.to === M.idx(0, 7)), "king can land far behind the enemy (0,7)");
+})();
+
+// 4) applyHop removes the piece on the diagonal (ranged king capture) & keeps king.
+(() => {
+    const b = empty();
+    b[M.idx(7, 0)] = 2;
+    b[M.idx(4, 3)] = 3;
+    const res = M.applyHop(b, M.idx(7, 0), M.idx(0, 7));
+    ok(res.captured === true, "applyHop reports captured");
+    ok(b[M.idx(4, 3)] === 0, "captured enemy removed from board");
+    ok(b[M.idx(7, 0)] === 0, "king left its origin");
+    ok(b[M.idx(0, 7)] === 2, "king landed and stayed a king");
+})();
+
+// 5) Man promotion on a simple forward move still works.
+(() => {
+    const b = empty();
+    b[M.idx(1, 2)] = 1; // white man one step from the back rank
+    const res = M.applyHop(b, M.idx(1, 2), M.idx(0, 1));
+    ok(res.promoted === true && b[M.idx(0, 1)] === 2, "white man promotes to king on reaching row 0");
+})();
+
+// 6) Full bot-vs-bot game terminates cleanly with only legal moves.
+// The loop mirrors the controller: it applies the SAME draw rules the real game does. Without
+// them a king-vs-king endgame shuffles forever and this test hit the 300-move safety cap ~15%
+// of the time (the bot's tie-break is an unseeded Math.random, so it was a genuine flake and
+// not a fixed-seed failure).
+(() => {
+    let b = M.initialBoard();
+    let color = M.WHITE, moves = 0, allLegal = true, idleTurns = 0, ended = "";
+    const t0 = Date.now();
+    while (moves < 300) {
+        const dr = M.drawReason(b, idleTurns);
+        if (dr) { ended = `draw:${dr}`; break; }
+        const seqs = M.legalSequences(b, color);
+        if (seqs.length === 0) { ended = "no-move"; break; }
+        const seq = M.chooseBotMove(b, color);
+        if (!seq) { ended = "no-move"; break; }
+        // verify the chosen sequence is among the legal ones (by from/to of first hop)
+        const legalFirst = seqs.some(s => s[0].from === seq[0].from && s[0].to === seq[0].to);
+        if (!legalFirst) allLegal = false;
+        const mover = b[seq[0].from];
+        const captured = M.anyCaptureFor(b, color);      // captures are forced, so this IS a capture
+        for (const h of seq) M.applyHop(b, h.from, h.to);
+        idleTurns = (captured || mover === 1 || mover === 3) ? 0 : idleTurns + 1;
+        color = color === M.WHITE ? M.BLACK : M.WHITE;
+        moves++;
+    }
+    const ms = Date.now() - t0;
+    let wc = 0, bc = 0;
+    for (let i = 0; i < 64; i++) { if (M.colorOf(b[i]) === M.WHITE) wc++; else if (M.colorOf(b[i]) === M.BLACK) bc++; }
+    ok(allLegal, "bot only played legal moves");
+    ok(moves < 300, `game terminated in ${moves} moves via ${ended || "cap"} (not the safety cap)`);
+    console.log(`    (white=${wc} black=${bc} moves=${moves} end=${ended} time=${ms}ms)`);
+})();
+
+// ── tic-tac-toe ──────────────────────────────────────────────────────────────
+// X=1, O=2, empty=0; cells 0..8 left→right, top→bottom.
+(() => {
+    // 7) detect a row / column / diagonal win
+    ok(M.tttWinner([1, 1, 1, 0, 2, 0, 2, 0, 0]).mark === 1, "top row is an X win");
+    ok(M.tttWinner([2, 0, 0, 2, 1, 1, 2, 0, 1]).mark === 2, "left column is an O win");
+    ok(M.tttWinner([1, 2, 0, 0, 1, 2, 0, 0, 1]).mark === 1, "main diagonal is an X win");
+    ok(M.tttWinner([0, 0, 0, 0, 0, 0, 0, 0, 0]) === null, "empty board has no winner");
+
+    // 8) full board / draw
+    ok(M.tttFull([1, 2, 1, 1, 2, 2, 2, 1, 1]) === true, "no empty cells => full");
+    ok(M.tttFull([1, 2, 1, 1, 0, 2, 2, 1, 1]) === false, "an empty cell => not full");
+    ok(M.tttWinner([1, 2, 1, 1, 2, 2, 2, 1, 1]) === null, "that full board is a draw (no line)");
+
+    // 9) bot takes an immediate win over blocking
+    ok(M.tttBotMove([1, 1, 0, 2, 2, 0, 0, 0, 0], 1) === 2, "bot completes its own row to win");
+    // 10) bot blocks the opponent's imminent win
+    ok(M.tttBotMove([2, 2, 0, 1, 0, 0, 0, 0, 0], 1) === 2, "bot blocks O's top-row threat");
+    // 11) bot must not mutate the board it evaluates
+    (() => {
+        const before = [1, 1, 0, 2, 2, 0, 0, 0, 0];
+        const snap = before.slice();
+        M.tttBotMove(before, 1);
+        ok(before.join() === snap.join(), "bot move leaves the board unmutated");
+    })();
+    // 12) a heuristic bot never loses to itself: self-play always ends in a draw
+    (() => {
+        let b = new Array(9).fill(0), mark = 1, safety = 0, decided = null;
+        while (safety++ < 9) {
+            const mv = M.tttBotMove(b, mark);
+            if (mv < 0) break;
+            b[mv] = mark;
+            const w = M.tttWinner(b);
+            if (w) { decided = w.mark; break; }
+            if (M.tttFull(b)) break;
+            mark = mark === 1 ? 2 : 1;
+        }
+        ok(decided === null, "bot-vs-bot ends in a draw (optimal heuristic never loses to itself)");
+    })();
+})();
+
+console.log(failures === 0 ? "\nALL RULES TESTS PASSED" : `\n${failures} FAILURE(S)`);
+process.exit(failures === 0 ? 0 : 1);

@@ -1,0 +1,27 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "dl-arcade-cloudflare",
+  "main": "worker.js",
+  "compatibility_date": "2026-08-08",
+  "workers_dev": true,
+  "observability": {
+    "enabled": true
+  },
+
+  // One named object is the authoritative consistency domain for every lobby,
+  // Pixel Battle tile, ban and audit record.
+  "durable_objects": {
+    "bindings": [
+      { "name": "HUB", "class_name": "Hub" }
+    ]
+  },
+
+  // Declarative Durable Object exports replace the legacy migrations array for
+  // new Workers. SQLite-backed objects are the only new-namespace option on Free.
+  "exports": {
+    "Hub": {
+      "type": "durable-object",
+      "storage": "sqlite"
+    }
+  }
+}

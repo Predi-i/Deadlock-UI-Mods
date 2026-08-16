@@ -1,0 +1,13 @@
+node_modules/
+npm-debug.log*
+server/data/
+server/.wrangler/
+server/.dev.vars
+server/.dev.vars.*
+!server/.dev.vars.example
+
+# Natural Earth source rasters fetched for tools/build_ne_raster.js (~207 MiB unpacked).
+# Only its downsampled output, tools/assets/ne2_natural_2048.png, is committed.
+tools/assets/.cache/
+backups/
+*.pixelbattle-export.json

@@ -1,0 +1,22 @@
+{
+  "name": "dl-arcade-cloudflare",
+  "version": "0.0.0",
+  "private": true,
+  "description": "DL Arcade mod plus its Cloudflare Workers and Durable Objects backend.",
+  "scripts": {
+    "build:wordle-words": "node tools/build_wordle_words.js",
+    "build:geoguesser-map": "node tools/build_geoguesser_map.js",
+    "build:geo-pool": "node tools/build_geo_pool_module.js && node tools/build_geo_credit_tables.js && node tools/build_worker.js",
+    "build:worker": "node tools/build_worker.js",
+    "dev:worker": "npm run build:worker && wrangler dev --config server/wrangler.jsonc",
+    "deploy:worker": "npm run build:worker && wrangler deploy --config server/wrangler.jsonc",
+    "deploy:worker:dry": "npm run build:worker && wrangler deploy --config server/wrangler.jsonc --dry-run",
+    "tail:worker": "wrangler tail --config server/wrangler.jsonc",
+    "lint": "eslint panorama/scripts server/worker.core.js server/admin_panel.js tools",
+    "test": "node tools/build_worker.js --check && node tools/mg_cloudflare_config_test.js && node tools/mg_pixelbattle_migration_test.js && node tools/mg_chess_test.js && node tools/mg_rules_test.js && node tools/mg_checkers_play_test.js && node tools/mg_connectfour_test.js && node tools/mg_durak_test.js && node tools/mg_poker_test.js && node tools/mg_wordle_test.js && node tools/mg_pixelbattle_palette_test.js && node tools/mg_geoguesser_map_test.js && node tools/mg_server_test.js && node tools/mg_parity_test.js && node tools/mg_widgets_test.js && node tools/mg_timer_test.js && node tools/mg_uiscale_test.js && node tools/mg_update_marker_test.js && node tools/mg_release_ui_regression_test.js && node tools/mg_load_smoke_test.js && node tools/mg_net_diagnosis_test.js && node tools/mg_es6_invariants_test.js && node tools/mg_es6_codemod_test.js && node tools/mg_es6_arrows_test.js && node tools/mg_es6_templates_test.js"
+  },
+  "devDependencies": {
+    "eslint": "9.39.5",
+    "wrangler": "4.120.0"
+  }
+}
