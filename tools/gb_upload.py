@@ -1,7 +1,7 @@
 """
 GameBanana uploader for Show-Nicknames-In-TopBar.
-Usage: python tools/gb_upload.py <zip_path> <version>
-  e.g. python tools/gb_upload.py builds/Show-Nicknames-In-TopBar.zip 2026.07.02
+Usage: python tools/gb_upload.py <zip_path> [<zip_path> ...] <version>
+  e.g. python tools/gb_upload.py builds/Show-Nicknames-In-TopBar.zip builds/Show-Nicknames-In-TopBar-No-Offsets.zip 2026.07.02
 
 Required env vars:
   GB_USERNAME  — GameBanana login
@@ -55,8 +55,8 @@ DESCRIPTION = (
     "</ul>"
     "<strong>Choose one VPK from the download:</strong>"
     "<ul>"
-    "<li><strong>Show-Nicknames-In-TopBar.vpk</strong>: adds space for the names by lowering the top bar and moving the game clock.</li>"
-    "<li><strong>Show-Nicknames-In-TopBar-No-Offsets.vpk</strong>: keeps the vanilla top bar and game clock positions, with names drawn above the other top bar elements.</li>"
+    "<li><strong>Show-Nicknames-In-TopBar.zip</strong>: adds space for the names by lowering the top bar and moving the game clock.</li>"
+    "<li><strong>Show-Nicknames-In-TopBar-No-Offsets.zip</strong>: keeps the vanilla top bar and game clock positions, with names drawn above the other top bar elements.</li>"
     "</ul>"
     "Note: if you couple this mod with another mod that changes the top bar, "
     "either this or that mod will probably not work."
@@ -336,7 +336,7 @@ class GameBananaUploader:
 
     # ── Edit form submit ──────────────────────────────────────────────────
 
-    def post_edit(self, upload: dict, version: str,
+    def post_edit(self, uploads: list[dict], version: str,
                   files_json_name: str, image_json_name: str):
         html = self._get_edit_page()
         fields = self._scrape_form(html)
@@ -354,12 +354,15 @@ class GameBananaUploader:
         description_field_name = self._find_description_field(soup, fields)
         logger.info("description_field=%s", description_field_name)
 
-        file_entries = [[
-            {"name": "_sDescription", "value": ""},
-            {"name": "_sVersion", "value": str(version)},
-            {"name": "_idFileRow", "value": str(upload["file_row_id"])},
-            {"name": "_sUploadReceiptId", "value": upload["upload_receipt_id"]},
-        ]]
+        file_entries = [
+            [
+                {"name": "_sDescription", "value": ""},
+                {"name": "_sVersion", "value": str(version)},
+                {"name": "_idFileRow", "value": str(upload["file_row_id"])},
+                {"name": "_sUploadReceiptId", "value": upload["upload_receipt_id"]},
+            ]
+            for upload in uploads
+        ]
 
         ticket_ids = self._find_ticket_ids(html)
         image_json_entries = []
@@ -475,35 +478,37 @@ class GameBananaUploader:
 
     # ── Main entry ────────────────────────────────────────────────────────
 
-    def publish(self, zip_path: Path, version: str):
+    def publish(self, zip_paths: list[Path], version: str):
         self.authenticate()
 
         html = self._get_edit_page()
         sdpid, files_json_name, image_json_name = self._get_upload_fields(html)
 
-        upload = self.upload_zip(zip_path, sdpid)
-        self.post_edit(upload, version, files_json_name, image_json_name)
+        uploads = [self.upload_zip(zip_path, sdpid) for zip_path in zip_paths]
+        self.post_edit(uploads, version, files_json_name, image_json_name)
 
         logger.info("Waiting 30s for CDN/cache to settle...")
         time.sleep(30)
         self.notify_deadlockmods()
-        logger.info("Done. Published version %s to GameBanana mod %d", version, self.mod_id)
+        logger.info("Done. Published version %s with %d files to GameBanana mod %d",
+                    version, len(zip_paths), self.mod_id)
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
 def main():
     if len(sys.argv) < 3:
-        print(f"Usage: {sys.argv[0]} <zip_path> <version>")
-        print("  e.g. python tools/gb_upload.py builds/Show-Nicknames-In-TopBar.zip 2026.07.02")
+        print(f"Usage: {sys.argv[0]} <zip_path> [<zip_path> ...] <version>")
+        print("  e.g. python tools/gb_upload.py builds/Show-Nicknames-In-TopBar.zip builds/Show-Nicknames-In-TopBar-No-Offsets.zip 2026.07.02")
         sys.exit(1)
 
-    zip_path = Path(sys.argv[1])
-    version = sys.argv[2]
+    zip_paths = [Path(path) for path in sys.argv[1:-1]]
+    version = sys.argv[-1]
 
-    if not zip_path.exists():
-        print(f"Error: zip not found: {zip_path}")
-        sys.exit(1)
+    for zip_path in zip_paths:
+        if not zip_path.exists():
+            print(f"Error: zip not found: {zip_path}")
+            sys.exit(1)
 
     username = os.environ.get("GB_USERNAME")
     password = os.environ.get("GB_PASSWORD")
@@ -512,7 +517,7 @@ def main():
         sys.exit(1)
 
     uploader = GameBananaUploader(username=username, password=password, mod_id=MOD_ID)
-    uploader.publish(zip_path=zip_path, version=version)
+    uploader.publish(zip_paths=zip_paths, version=version)
 
 
 if __name__ == "__main__":

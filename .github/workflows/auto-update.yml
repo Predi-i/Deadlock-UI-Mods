@@ -158,20 +158,22 @@ jobs:
             "Show-Nicknames-In-TopBar-No-Offsets"
           )
           $Version = (Get-Date -Format "yyyy.MM.dd")
-          $ZipPath = "builds\Show-Nicknames-In-TopBar.zip"
-          $VpkPaths = $ModNames | ForEach-Object { "builds\$_.vpk" }
-          Compress-Archive -Path $VpkPaths -DestinationPath $ZipPath -Force
+          foreach ($ModName in $ModNames) {
+              $ZipPath = "builds\$ModName.zip"
+              Compress-Archive -Path "builds\$ModName.vpk" -DestinationPath $ZipPath -Force
+          }
           # Export version for downstream steps
           echo "MOD_VERSION=$Version" >> $env:GITHUB_ENV
-          echo "MOD_ZIP=$ZipPath" >> $env:GITHUB_ENV
+          echo "MOD_ZIP_WITH_OFFSETS=builds\Show-Nicknames-In-TopBar.zip" >> $env:GITHUB_ENV
+          echo "MOD_ZIP_NO_OFFSETS=builds\Show-Nicknames-In-TopBar-No-Offsets.zip" >> $env:GITHUB_ENV
 
       - name: Create GitHub Release
         if: steps.git_check.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            builds/Show-Nicknames-In-TopBar.vpk
-            builds/Show-Nicknames-In-TopBar-No-Offsets.vpk
+            builds/Show-Nicknames-In-TopBar.zip
+            builds/Show-Nicknames-In-TopBar-No-Offsets.zip
           tag_name: "v${{ github.run_number }}"
           name: "Show Nicknames In Top Bar v${{ env.MOD_VERSION }}"
 
@@ -192,4 +194,4 @@ jobs:
         env:
           GB_USERNAME: ${{ secrets.GB_USERNAME }}
           GB_PASSWORD: ${{ secrets.GB_PASSWORD }}
-        run: python tools/gb_upload.py "${{ env.MOD_ZIP }}" "${{ env.MOD_VERSION }}"
+        run: python tools/gb_upload.py "${{ env.MOD_ZIP_WITH_OFFSETS }}" "${{ env.MOD_ZIP_NO_OFFSETS }}" "${{ env.MOD_VERSION }}"
