@@ -5,3 +5,6 @@
 
 # Local VPK output from build_mod.ps1.
 tools/builds/
+
+# Python bytecode generated when validating or running helper scripts.
+__pycache__/

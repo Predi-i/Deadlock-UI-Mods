@@ -20,13 +20,15 @@ jobs:
         run: |
           $stylesBaseURL = "https://raw.githubusercontent.com/SteamTracking/GameTracking-Deadlock/master/game/citadel/pak01_dir/panorama/styles"
           $layoutBaseURL = "https://raw.githubusercontent.com/SteamTracking/GameTracking-Deadlock/master/game/citadel/pak01_dir/panorama/layout"
-          $baseCssPath = "Show-Nicknames-In-TopBar/panorama/styles/base/citadel_hud_top_bar.css"
-          $overrideXmlPath = "Show-Nicknames-In-TopBar/panorama/layout/citadel_hud_top_bar_player.xml"
-
-          New-Item -ItemType Directory -Force -Path "Show-Nicknames-In-TopBar/panorama/styles/base" | Out-Null
-          New-Item -ItemType Directory -Force -Path "Show-Nicknames-In-TopBar/panorama/layout" | Out-Null
-
-          Invoke-WebRequest -Uri "$stylesBaseURL/citadel_hud_top_bar.css" -OutFile $baseCssPath
+          $modNames = @(
+            "Show-Nicknames-In-TopBar",
+            "Show-Nicknames-In-TopBar-No-Offsets"
+          )
+          foreach ($modName in $modNames) {
+              $baseCssPath = "$modName/panorama/styles/base/citadel_hud_top_bar.css"
+              New-Item -ItemType Directory -Force -Path "$modName/panorama/styles/base" | Out-Null
+              Invoke-WebRequest -Uri "$stylesBaseURL/citadel_hud_top_bar.css" -OutFile $baseCssPath
+          }
 
           $xml = (Invoke-WebRequest -Uri "$layoutBaseURL/citadel_hud_top_bar_player.xml").Content
 
@@ -52,7 +54,11 @@ jobs:
               $labelLine = $indent + '<Label class="AlwaysPlayerName" text="{s:player_name}" />' + "`r`n`r`n"
               $xml = $xml.Insert($anchorIndex, $labelLine)
           }
-          [System.IO.File]::WriteAllText((Resolve-Path ".").Path + "\" + $overrideXmlPath, $xml, (New-Object System.Text.UTF8Encoding $false))
+          foreach ($modName in $modNames) {
+              $overrideXmlPath = "$modName/panorama/layout/citadel_hud_top_bar_player.xml"
+              New-Item -ItemType Directory -Force -Path "$modName/panorama/layout" | Out-Null
+              [System.IO.File]::WriteAllText((Resolve-Path ".").Path + "\" + $overrideXmlPath, $xml, (New-Object System.Text.UTF8Encoding $false))
+          }
 
       - name: Commit changes
         id: git_check
@@ -62,6 +68,8 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Show-Nicknames-In-TopBar/panorama/styles/base/citadel_hud_top_bar.css
           git add Show-Nicknames-In-TopBar/panorama/layout/citadel_hud_top_bar_player.xml
+          git add Show-Nicknames-In-TopBar-No-Offsets/panorama/styles/base/citadel_hud_top_bar.css
+          git add Show-Nicknames-In-TopBar-No-Offsets/panorama/layout/citadel_hud_top_bar_player.xml
 
           if git diff --staged --quiet; then
             echo "changed=false" >> $GITHUB_OUTPUT
@@ -96,7 +104,10 @@ jobs:
         if: steps.git_check.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
         shell: pwsh
         run: |
-          $ModName = "Show-Nicknames-In-TopBar"
+          $ModNames = @(
+            "Show-Nicknames-In-TopBar",
+            "Show-Nicknames-In-TopBar-No-Offsets"
+          )
           $CsdkRoot = "C:\Reduced_CSDK_12"
 
           if (-not (Test-Path "$CsdkRoot\game\bin_cs2\win64\resourcecompiler.exe")) {
@@ -108,32 +119,33 @@ jobs:
           $Compiler = "$CsdkRoot\game\bin_cs2\win64\resourcecompiler.exe"
           $Packer = "$CsdkRoot\game\bin\win64\CSDKCfgVPK.exe"
 
-          $ContentDir = "$CsdkRoot\content\citadel_addons\build_$ModName"
-          $GameDir = "$CsdkRoot\game\citadel_addons\build_$ModName"
-
-          New-Item -ItemType Directory -Force -Path $ContentDir | Out-Null
-          Copy-Item -Path "$ModName\*" -Destination $ContentDir -Recurse -Force
-
-          $Files = Get-ChildItem -Path $ContentDir -Recurse -File | Where-Object { $_.Extension -in @('.css', '.xml', '.js') }
-          foreach ($f in $Files) {
-              & $Compiler -i $f.FullName -nop4 2>&1 | Out-Null
-          }
-
           New-Item -ItemType Directory -Force -Path "builds" | Out-Null
-          $OutVpk = "$PWD\builds\$ModName.vpk"
+          foreach ($ModName in $ModNames) {
+              $ContentDir = "$CsdkRoot\content\citadel_addons\build_$ModName"
+              $GameDir = "$CsdkRoot\game\citadel_addons\build_$ModName"
 
-          $PackerDir = Split-Path $Packer
-          $Proc = Start-Process -FilePath $Packer -ArgumentList "`"$GameDir`"", "`"$OutVpk`"" -WorkingDirectory $PackerDir -PassThru
+              New-Item -ItemType Directory -Force -Path $ContentDir | Out-Null
+              Copy-Item -Path "$ModName\*" -Destination $ContentDir -Recurse -Force
 
-          try {
-              $Proc | Wait-Process -Timeout 30 -ErrorAction Stop
-          } catch {
-              $Proc | Stop-Process -Force -ErrorAction SilentlyContinue
-          }
+              $Files = Get-ChildItem -Path $ContentDir -Recurse -File | Where-Object { $_.Extension -in @('.css', '.xml', '.js') }
+              foreach ($f in $Files) {
+                  & $Compiler -i $f.FullName -nop4 2>&1 | Out-Null
+              }
 
-          if (-not (Test-Path $OutVpk)) {
-              Write-Error "VPK file was not found at $OutVpk"
-              exit 1
+              $OutVpk = "$PWD\builds\$ModName.vpk"
+              $PackerDir = Split-Path $Packer
+              $Proc = Start-Process -FilePath $Packer -ArgumentList "`"$GameDir`"", "`"$OutVpk`"" -WorkingDirectory $PackerDir -PassThru
+
+              try {
+                  $Proc | Wait-Process -Timeout 30 -ErrorAction Stop
+              } catch {
+                  $Proc | Stop-Process -Force -ErrorAction SilentlyContinue
+              }
+
+              if (-not (Test-Path $OutVpk)) {
+                  Write-Error "VPK file was not found at $OutVpk"
+                  exit 1
+              }
           }
           exit 0
 
@@ -141,10 +153,14 @@ jobs:
         if: steps.git_check.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
         shell: pwsh
         run: |
-          $ModName = "Show-Nicknames-In-TopBar"
+          $ModNames = @(
+            "Show-Nicknames-In-TopBar",
+            "Show-Nicknames-In-TopBar-No-Offsets"
+          )
           $Version = (Get-Date -Format "yyyy.MM.dd")
-          $ZipPath = "builds\$ModName.zip"
-          Compress-Archive -Path "builds\$ModName.vpk" -DestinationPath $ZipPath -Force
+          $ZipPath = "builds\Show-Nicknames-In-TopBar.zip"
+          $VpkPaths = $ModNames | ForEach-Object { "builds\$_.vpk" }
+          Compress-Archive -Path $VpkPaths -DestinationPath $ZipPath -Force
           # Export version for downstream steps
           echo "MOD_VERSION=$Version" >> $env:GITHUB_ENV
           echo "MOD_ZIP=$ZipPath" >> $env:GITHUB_ENV
@@ -153,7 +169,9 @@ jobs:
         if: steps.git_check.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
-          files: builds/Show-Nicknames-In-TopBar.vpk
+          files: |
+            builds/Show-Nicknames-In-TopBar.vpk
+            builds/Show-Nicknames-In-TopBar-No-Offsets.vpk
           tag_name: "v${{ github.run_number }}"
           name: "Show Nicknames In Top Bar v${{ env.MOD_VERSION }}"
 
