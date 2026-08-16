@@ -11,7 +11,7 @@ These mods are built using the Panorama API (XML/CSS/JS) to improve overall play
 
 | Source folder | Mod | What it does |
 | --- | --- | --- |
-| `dl-arcade-cloudflare` | [DL Arcade](https://gamebanana.com/mods/699538) | Online mini-games in Deadlock's pause menu: board games, cards, Pixel Battle, Wordle and GeoGuesser. |
+| `DL-Arcade-Cloudflare` | [DL Arcade](https://gamebanana.com/mods/699538) | Online mini-games in Deadlock's pause menu: board games, cards, Pixel Battle, Wordle and GeoGuesser. |
 | `Old-Minimap-Player-Icon` | [Old Minimap Player Icon](https://gamebanana.com/mods/684302) | Restores the previous player icon on the minimap. |
 | `Parry-Cooldown` | [Parry Cooldown Timer](https://gamebanana.com/mods/682538) | Displays the parry cooldown. |
 | `Match-History-Cards-Redesign` | [Match History Cards Redesign](https://gamebanana.com/mods/674856) | A cleaner redesign of the match-history cards. Collaborative project. |
@@ -23,12 +23,11 @@ These mods are built using the Panorama API (XML/CSS/JS) to improve overall play
 | `Smaller-Commend-Box` | [Smaller Commend Notification](https://gamebanana.com/mods/648719) | Reduces the commend notification footprint. |
 | `Bridge-Buff-Reminder` | [Bridge Buff Reminder](https://gamebanana.com/mods/645941) | Alerts shortly before the bridge buff spawns. |
 
-### Present in this repository, but not an active GameBanana release
+### Included in this repository, but not published on GameBanana
 
-- `Minimap-Cheat`
-- `Rem-Bug-Abuse`
-- `Minigames` — the original self-hosted/VPS version of DL Arcade; the Cloudflare edition lives in
-  `dl-arcade-cloudflare`.
+- `Minimap-Cheat` — press **M** to send two waves of minimap pings over every visible enemy marker.
+- `Rem-Bug-Abuse` — a local proof of concept that automates the cast, Tier 1 upgrade and undo
+  sequence for Rem's third ability. It is intentionally not published.
 
 ### Published on GameBanana, but source is not in this repository
 
@@ -38,7 +37,7 @@ These mods are built using the Panorama API (XML/CSS/JS) to improve overall play
 
 For every published release, see [Predi_i's GameBanana profile](https://gamebanana.com/members/5107678).
 
-## Build and installation
+## ⚙️ Build & Installation
 
 This repository contains source code. Build a mod into a `.vpk` before installing it.
 
@@ -62,7 +61,7 @@ instead. It creates a temporary `*-stripped` folder and leaves the source tree u
 Add the resulting `.vpk` to [Deadlock Mod Manager](https://gamebanana.com/tools/20646) or
 [Grimoire Mod Manager](https://gamebanana.com/tools/22583), then enable it.
 
-## License
+## 📜 License & Usage
 
 Unless a file says otherwise (for example, bundled third-party assets), this repository is licensed
 under the [Apache License 2.0](LICENSE).

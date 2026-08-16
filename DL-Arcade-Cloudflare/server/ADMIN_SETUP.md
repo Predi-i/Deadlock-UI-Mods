@@ -4,7 +4,7 @@
 
 ## 1. Сначала задеплой Worker
 
-Из `dl-arcade-cloudflare`:
+Из `DL-Arcade-Cloudflare`:
 
 ```powershell
 npx wrangler login

@@ -32,7 +32,7 @@ After the first deploy, paste the printed `https://...workers.dev` URL (or a Cus
 `BASE_URL` at the top of `panorama/scripts/mg_net.js`, then build the VPK from the repository root:
 
 ```powershell
-.\tools\build_mod_strip_comments.ps1 dl-arcade-cloudflare
+.\tools\build_mod_strip_comments.ps1 DL-Arcade-Cloudflare
 ```
 
 ## Runtime layout

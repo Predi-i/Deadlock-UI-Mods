@@ -1,7 +1,7 @@
 # Перенос DL Arcade на Cloudflare Workers Free — пошагово
 
 Ниже путь от чистого клона до работающего Worker и VPK. Все команды выполняются из
-`D:\GitHub2\Deadlock-UI-Mods\dl-arcade-cloudflare`, если не сказано иначе.
+`D:\GitHub2\Deadlock-UI-Mods\DL-Arcade-Cloudflare`, если не сказано иначе.
 
 ## 0. Что уже подготовлено
 
@@ -145,7 +145,7 @@ curl.exe -I http://127.0.0.1:8787/api/ping.png
 Из корня `D:\GitHub2\Deadlock-UI-Mods`:
 
 ```powershell
-.\tools\build_mod_strip_comments.ps1 dl-arcade-cloudflare
+.\tools\build_mod_strip_comments.ps1 DL-Arcade-Cloudflare
 ```
 
 Нужен Reduced CSDK 12, настроенный для существующего build tool. Готовый VPK появится в

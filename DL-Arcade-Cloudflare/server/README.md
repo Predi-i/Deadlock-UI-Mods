@@ -14,7 +14,7 @@ preserved without the former Node/Nginx/SQLite VPS adapter.
 
 ## Commands
 
-Run from `dl-arcade-cloudflare`:
+Run from `DL-Arcade-Cloudflare`:
 
 ```powershell
 npm run build:worker
