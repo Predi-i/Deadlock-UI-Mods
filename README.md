@@ -1,28 +1,42 @@
 # Deadlock UI/UX & QoL Mods
 
-Source for **Predi_i**'s custom User Interface, quality-of-life and cosmetic mods for Valve's
-**Deadlock** (Source 2). The mods use Panorama XML, CSS and JavaScript.
+A collection of custom User Interface modifications and Quality of Life scripts for Valve's
+**Deadlock** (Source 2).
 
-Published releases are available from [my GameBanana profile](https://gamebanana.com/members/5107678).
+These mods are built using the Panorama API (XML/CSS/JS) to improve overall player experience.
 
-## Released mods
+## 🛠️ Included Mods
 
-| Mod | What it does |
-| --- | --- |
-| [DL Arcade](https://gamebanana.com/mods/699538) | Online mini-games in Deadlock's pause menu: board games, cards, Pixel Battle, Wordle and GeoGuesser. |
-| [Old Minimap Player Icon](https://gamebanana.com/mods/684302) | Restores the previous player icon on the minimap. |
-| [Parry Cooldown Timer](https://gamebanana.com/mods/682538) | Displays the parry cooldown. |
-| [Blind Draft for Street Brawl](https://gamebanana.com/mods/677142) | Hides Street Brawl draft information until it should be revealed. |
-| [Match History Cards Redesign](https://gamebanana.com/mods/674856) | A cleaner redesign of the match-history cards. Collaborative project. |
-| [Commend Everyone Button](https://gamebanana.com/mods/670840) | Adds a button that commends all eligible players after a match. |
-| [Old Abilities Progress Bars](https://gamebanana.com/mods/658996) | Restores the classic ability-progress UI. |
-| [Show Nicknames in Top Bar](https://gamebanana.com/mods/656390) | Shows player nicknames in the top HUD bar. |
-| [Show Nicknames Above Heroes](https://gamebanana.com/mods/656352) | Shows player nicknames above heroes; useful for broadcasts and spectators. |
-| [Bloody Mina Gloat Icon](https://gamebanana.com/mods/655050) | Cosmetic Mina gloat icon. |
-| [Meowl Soul Container](https://gamebanana.com/mods/652905) | Cat-themed soul-container replacement. |
-| [Remove Incoming Damage From HUD](https://gamebanana.com/mods/648923) | Removes incoming-damage notifications from the HUD. |
-| [Smaller Commend Notification](https://gamebanana.com/mods/648719) | Reduces the commend notification footprint. |
-| [Bridge Buff Reminder](https://gamebanana.com/mods/645941) | Alerts shortly before the bridge buff spawns. |
+### Published on GameBanana and included in this repository
+
+| Source folder | Mod | What it does |
+| --- | --- | --- |
+| `dl-arcade-cloudflare` | [DL Arcade](https://gamebanana.com/mods/699538) | Online mini-games in Deadlock's pause menu: board games, cards, Pixel Battle, Wordle and GeoGuesser. |
+| `Old-Minimap-Player-Icon` | [Old Minimap Player Icon](https://gamebanana.com/mods/684302) | Restores the previous player icon on the minimap. |
+| `Parry-Cooldown` | [Parry Cooldown Timer](https://gamebanana.com/mods/682538) | Displays the parry cooldown. |
+| `Match-History-Cards-Redesign` | [Match History Cards Redesign](https://gamebanana.com/mods/674856) | A cleaner redesign of the match-history cards. Collaborative project. |
+| `Commend-Everyone-Button` | [Commend Everyone Button](https://gamebanana.com/mods/670840) | Adds a button that commends all eligible players after a match. |
+| `Old-Progress-Bars` | [Old Abilities Progress Bars](https://gamebanana.com/mods/658996) | Restores the classic ability-progress UI. |
+| `Show-Nicknames-In-TopBar` | [Show Nicknames in Top Bar](https://gamebanana.com/mods/656390) | Shows player nicknames in the top HUD bar. |
+| `Show-Nicknames-Above-Heroes` | [Show Nicknames Above Heroes](https://gamebanana.com/mods/656352) | Shows player nicknames above heroes; useful for broadcasts and spectators. |
+| `No-Incoming-Damage` | [Remove Incoming Damage From HUD](https://gamebanana.com/mods/648923) | Removes incoming-damage notifications from the HUD. |
+| `Smaller-Commend-Box` | [Smaller Commend Notification](https://gamebanana.com/mods/648719) | Reduces the commend notification footprint. |
+| `Bridge-Buff-Reminder` | [Bridge Buff Reminder](https://gamebanana.com/mods/645941) | Alerts shortly before the bridge buff spawns. |
+
+### Present in this repository, but not an active GameBanana release
+
+- `Minimap-Cheat`
+- `Rem-Bug-Abuse`
+- `Minigames` — the original self-hosted/VPS version of DL Arcade; the Cloudflare edition lives in
+  `dl-arcade-cloudflare`.
+
+### Published on GameBanana, but source is not in this repository
+
+- [Blind Draft for Street Brawl](https://gamebanana.com/mods/677142)
+- [Bloody Mina Gloat Icon](https://gamebanana.com/mods/655050)
+- [Meowl Soul Container](https://gamebanana.com/mods/652905)
+
+For every published release, see [Predi_i's GameBanana profile](https://gamebanana.com/members/5107678).
 
 ## Build and installation
 

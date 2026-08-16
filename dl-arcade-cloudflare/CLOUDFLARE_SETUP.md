@@ -14,7 +14,7 @@
 Fresh Worker уже создан в Cloudflare-аккаунте `modding.predi@gmail.com`:
 
 ```text
-https://dl-arcade-cloudflare.deadlock-teammate-cooldowns.workers.dev
+https://dl-arcade-cloudflare.predi-i.workers.dev
 ```
 
 `BASE_URL` пока намеренно пуст: сначала нужен финальный Pixel Battle import из остановленного VPS,

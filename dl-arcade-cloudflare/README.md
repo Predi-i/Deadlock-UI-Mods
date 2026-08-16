@@ -9,7 +9,7 @@ GeoGuesser. Wordle and bot modes stay offline; online rooms, shared state, Pixel
 GeoGuesser use the Worker.
 
 The empty production Worker is deployed at
-`https://dl-arcade-cloudflare.deadlock-teammate-cooldowns.workers.dev`. `BASE_URL` intentionally
+`https://dl-arcade-cloudflare.predi-i.workers.dev`. `BASE_URL` intentionally
 remains blank until the final Pixel Battle snapshot is imported and verified.
 
 ## Start here
