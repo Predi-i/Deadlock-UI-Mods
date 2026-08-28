@@ -33,10 +33,9 @@
     // single pixel is a legitimate batch.
     const MIN_BATCH = 1;
     const MAX_BATCH = 128;
-    // The canvas version poll. 20s: the Cloudflare 100k/day bucket that forced the old 8/15/30s
-    // backoff ladder is gone (the VPS is not metered per request), so a steady cadence is simpler,
-    // and 20s is the maintainer's chosen trade between seeing other players' paint and traffic.
-    const POLL_ACTIVE_S = 20, POLL_WARM_S = 20, POLL_IDLE_S = 20;
+    // Canvas polling uses the original Free-plan backoff. A just-changed canvas is checked soon;
+    // an idle editor settles at one request per 30s instead of burning the shared 100k/day quota.
+    const POLL_ACTIVE_S = 8, POLL_WARM_S = 15, POLL_IDLE_S = 30;
     // (world_map.vtex is no longer referenced from the client: the map is baked into the
     // server-rendered /api/pxview frame. tools/build_pixelbattle_map.js still reads the source
     // image to generate the land mask.)
@@ -730,7 +729,7 @@
         // single press still lands well inside the eye's tolerance.
         // ⚠ Do NOT collapse crispImage here. It used to be hidden the moment a refresh was
         // scheduled, but the replacement frame only arrives 0.12s later plus a full FIFO
-        // round-trip to the VPS - so the viewport went black for roughly half a second on every
+        // round-trip to the Worker - so the viewport went black for roughly half a second on every
         // pan, zoom and version poll (the "map disappears during the update" report, 2026-08-01).
         // The swap in refreshCrispView is already atomic: the new panel is sized and parented
         // before the old one is deleted, so leaving the old frame up costs nothing and the

@@ -57,10 +57,10 @@ const $ = {
 
 new Function("$", source("mg_net.js"))($);
 
-assert($.MG.Net.pollDelay(0) === 0.5 && $.MG.Net.pollDelay(5) === 0.5 &&
-    $.MG.Net.pollDelay(6) === 0.9 && $.MG.Net.pollDelay(17) === 0.9 &&
-    $.MG.Net.pollDelay(18) === 1.5,
-    "active-game polling must use the bounded 0.5s/0.9s/1.5s VPS cadence");
+assert($.MG.Net.pollDelay(0) === 1.0 && $.MG.Net.pollDelay(3) === 1.0 &&
+    $.MG.Net.pollDelay(4) === 1.6 && $.MG.Net.pollDelay(11) === 1.6 &&
+    $.MG.Net.pollDelay(12) === 2.5,
+    "active-game polling must use the Cloudflare Workers 1.0s/1.6s/2.5s cadence");
 assert($.MG.Net.waitDelay(0) === 1.5 && $.MG.Net.waitDelay(99) === 5,
     "waiting-room polling must retain its separate conservative cadence");
 
@@ -565,8 +565,8 @@ assert(/function placePixel\(x, y\)[\s\S]*?\n        \}/.exec(pixel) &&
     "placePixel must not start an upload; only the UPLOAD button calls uploadPending");
 // The version poll cadence. Flat, and slow enough not to be a background traffic drip.
 const pxPoll = /\b(?:var|let|const) POLL_ACTIVE_S = (\d+), POLL_WARM_S = (\d+), POLL_IDLE_S = (\d+);/.exec(pixel);
-assert(pxPoll && Number(pxPoll[1]) >= 20 && Number(pxPoll[2]) >= 20 && Number(pxPoll[3]) >= 20,
-    "Pixel Battle canvas-version poll must be 20s or slower on every tier");
+assert(pxPoll && Number(pxPoll[1]) === 8 && Number(pxPoll[2]) === 15 && Number(pxPoll[3]) === 30,
+    "Pixel Battle canvas-version poll must use the Cloudflare 8/15/30s cadence");
 // The viewport must not be blanked while its replacement loads: the new frame is a debounce plus a
 // full FIFO round-trip away, so collapsing the old one turns every pan/zoom/poll into a ~0.5s black
 // flash. The swap in refreshCrispView is already atomic (parent the new panel, then delete the old).
