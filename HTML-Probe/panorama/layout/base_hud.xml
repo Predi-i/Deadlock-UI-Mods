@@ -1,0 +1,14 @@
+<!-- HTML-Probe - base_hud override. Diagnostic-only mod: no UI, no gameplay change.
+     Loads one script that dumps the Panorama JS API surface and every candidate
+     server->JS data channel to the dev console, starting 30s after HUD load. -->
+<root>
+	<styles>
+		<include src="s2r://panorama/styles/base.vcss_c" />
+	</styles>
+	<scripts>
+		<include src="s2r://panorama/scripts/html_probe.vjs_c" />
+	</scripts>
+	<Panel class="WindowRoot" hittest="false" disallowedstyleflags="hover,descendantfocus">
+		<CitadelHud id="Hud" hittest="false" />
+	</Panel>
+</root>

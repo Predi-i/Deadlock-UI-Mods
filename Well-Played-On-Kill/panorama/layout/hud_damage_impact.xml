@@ -1,0 +1,50 @@
+<!-- xml reconstructed by Source 2 Viewer - https://valveresourceformat.github.io -->
+<root>
+	<styles>
+		<include src="s2r://panorama/styles/citadel_base_styles.vcss_c" />
+		<include src="s2r://panorama/styles/hud_damage_impact.vcss_c" />
+	</styles>
+	<scripts>
+		<include src="s2r://panorama/scripts/well_played_on_kill.vjs_c" />
+	</scripts>
+	<snippets>
+		<snippet name="ImpactDamage">
+			<Panel class="damageImpactInstance">
+				<CitadelHeroBadge id="heroBadge" />
+				<Panel class="healthBarContainer">
+					<Panel id="healthBar_backer" />
+					<Panel id="healthBar">
+						<Panel id="healthRemaining" />
+						<Panel id="healthRemoved" />
+						<Panel id="healthGained" />
+						<Panel id="barrierGained" />
+					</Panel>
+					<Panel id="healthBar_border" />
+				</Panel>
+				<Panel class="bulletShieldBarContainer">
+					<Panel id="bulletShieldBar">
+						<Panel id="bulletShieldRemaining" />
+						<Panel id="bulletShieldRemoved" />
+					</Panel>
+				</Panel>
+				<Panel class="techShieldBarContainer">
+					<Panel id="techShieldBar">
+						<Panel id="techShieldRemaining" />
+						<Panel id="techShieldRemoved" />
+					</Panel>
+				</Panel>
+				<Label class="criticalLabel" text="#Citadel_Hud_Critical" />
+				<Panel id="KillAssistContainer">
+					<Label class="killLabel" text="#Citadel_HUD_Impact_Kill" />
+					<Label class="assistLabel" html="true" text="#Citadel_HUD_Impact_Assist" />
+					<Label class="playerName" text="{s:damagedPlayerName}" />
+				</Panel>
+				<Panel class="statusEffectIcon statusEffectDisplay" />
+				<Label class="statusEffectLabel statusEffectDisplay" text="{s:status_effect}" />
+			</Panel>
+		</snippet>
+	</snippets>
+	<CitadelDamageImpact class="damageImpactContainer" hittest="false">
+		<Panel id="damageImpactInfo" />
+	</CitadelDamageImpact>
+</root>
