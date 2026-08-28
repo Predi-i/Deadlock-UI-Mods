@@ -69,11 +69,14 @@ const id = sha256(Buffer.from(JSON.stringify(manifest.records)));
 if (id !== manifest.id) throw new Error("Manifest record hash does not match its migration id");
 
 async function call(body) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 60000);
     const response = await fetch(origin + "/internal/pixel-migration", {
         method: "POST",
         headers: { "Authorization": `Bearer ${secret}`, "Content-Type": "application/json" },
-        body: JSON.stringify(body)
-    });
+        body: JSON.stringify(body),
+        signal: controller.signal
+    }).finally(() => clearTimeout(timeout));
     const result = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(`Migration HTTP ${response.status}: ${result.error || "unknown error"}`);
     return result;
@@ -81,11 +84,21 @@ async function call(body) {
 
 (async () => {
     let status = await call({ action: "begin", id, total: manifest.total });
-    const chunkSize = 64;
-    for (let start = status.next; start < manifest.records.length; start += chunkSize) {
+    const chunkSize = 5;
+    for (let start = status.next; start < manifest.records.length; ) {
         const records = manifest.records.slice(start, start + chunkSize);
-        status = await call({ action: "chunk", id, start, records });
-        console.log(`Imported ${status.next}/${manifest.total} Pixel Battle records`);
+        try {
+            status = await call({ action: "chunk", id, start, records });
+            if (typeof status.next !== "number") throw new Error("Missing next in response: " + JSON.stringify(status));
+            if (status.duplicate) { start = status.next; continue; }
+            start = status.next;
+            console.log(`Imported ${status.next}/${manifest.total} Pixel Battle records`);
+        } catch (e) {
+            console.log(`Error at ${start}: ${e.message}. Retrying in 2s...`);
+            await new Promise(r => setTimeout(r, 2000));
+            status = await call({ action: "status", id }).catch(() => ({ next: start }));
+            start = typeof status.next === "number" ? status.next : start;
+        }
     }
     status = await call({ action: "finish", id });
     if (status.status !== "complete" || status.next !== manifest.total) throw new Error("Migration did not complete");

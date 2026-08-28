@@ -3470,7 +3470,9 @@ async function handlePixelMigration(hub, request) {
 
     const next = start + decoded.length;
     marker = await hub.storage.transaction(async function (txn) {
-      for (let i = 0; i < decoded.length; i++) await txn.put(decoded[i][0], decoded[i][1]);
+      const batch = {};
+      for (let i = 0; i < decoded.length; i++) batch[decoded[i][0]] = decoded[i][1];
+      await txn.put(batch);
       const updated = Object.assign({}, marker, { next: next, updatedAt: Date.now() });
       await txn.put(PIXEL_MIGRATION_MARKER, updated);
       return updated;
