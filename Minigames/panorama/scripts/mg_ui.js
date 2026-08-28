@@ -16,7 +16,7 @@
     if (MG.UI) return;
 
     // Mod version, shown bottom-left of the footer. Bump on a user-facing release.
-    const MG_VERSION = "1.2";
+    const MG_VERSION = "1.3";
     // Each shipped version checks its own marker on the public main branch. A square marker means
     // the release is still relevant; changing that marker to a wide image marks it outdated.
     // Aspect ratio is intentional: Panorama may UI-scale or swap the reported dimensions.
