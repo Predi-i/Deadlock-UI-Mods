@@ -49,15 +49,16 @@ function verify(name, expected) {
 
 verify("relevant-template.png", "current");
 verify("outdated-template.png", "outdated");
-// 1.2 is the shipped release; 1.3 is staged so the next bump only has to retire this one.
-verify("is-1-2-relevant.png", "current");
+// 1.3 is the shipped release; 1.4 is staged so the next bump only has to retire this one.
 verify("is-1-3-relevant.png", "current");
+verify("is-1-4-relevant.png", "current");
 // 1.0 shipped the poker leaveSeat infinite loop (rules/poker.js runout) and is retired, so its
 // players get the update popup.
 verify("is-1-0-relevant.png", "outdated");
-// 1.1 is retired by the 1.2 release (the 34-colour Pixel Battle palette + eyedropper). Retiring
+// 1.2 is retired by the 1.3 release. Retiring
 // the OUTGOING marker is the step that actually notifies anyone - see update-markers/README.md.
 verify("is-1-1-relevant.png", "outdated");
+verify("is-1-2-relevant.png", "outdated");
 
 // The shipped MG_VERSION must have a marker on disk, or every client's update check silently
 // fails ("Couldn't verify the update marker") instead of reporting up to date. Nothing tied the

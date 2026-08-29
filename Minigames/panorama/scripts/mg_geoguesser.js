@@ -1,7 +1,7 @@
 /*
  * GeoGuesser - five server-authoritative panorama rounds for online or solo play.
  *
- * The VPS chooses the hidden location and proxies a fixed open-licensed 2:1
+ * The Cloudflare Worker chooses the hidden location and proxies a fixed open-licensed 2:1
  * equirectangular image. Panorama has no projection shader, so the view is a
  * clipped, wrapped image strip. Native DragStart/DragEnd (the chess/checkers
  * recipe) turns a release displacement into yaw/pitch. Panorama does not expose
