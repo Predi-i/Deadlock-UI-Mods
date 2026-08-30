@@ -155,6 +155,26 @@
         if (!CONFIG.REQUIRE_ALL_TARGET) return true;
         if (!isValid(State.chatTargetLabel)) return false;
 
+        // The text is localized, so checking for "(ALL)" breaks on non-English clients.
+        // The root chat panel has a class indicating the current target, e.g. "ChatTarget_GameAll".
+        let cursor = State.chatTargetLabel;
+        let guard = 0;
+        while (cursor && guard < 20) {
+            if (hasClass(cursor, 'ChatTarget_GameAll')) return true;
+            if (hasClass(cursor, 'ChatTarget_Team') || hasClass(cursor, 'ChatTarget_Party')) return false;
+            try {
+                if (typeof cursor.GetParent === 'function') {
+                    cursor = cursor.GetParent();
+                } else {
+                    break;
+                }
+            } catch (e) {
+                break;
+            }
+            guard += 1;
+        }
+
+        // Fallback for safety
         let text = '';
         try {
             text = String(State.chatTargetLabel.text || '').trim();
