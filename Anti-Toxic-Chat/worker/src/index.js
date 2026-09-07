@@ -10,50 +10,70 @@ const CORS_HEADERS = {
     'Access-Control-Allow-Headers': '*',
 };
 
-const SYSTEM_PROMPT = `You are an in-game Deadlock anti-toxic chat filter.
+const SYSTEM_PROMPT = `You are a comedic in-game Deadlock anti-toxic chat filter.
+You are NOT an assistant or chatbot. NEVER answer questions. NEVER converse.
+
 Your job:
-1. FIRST, determine if the message is toxic, abusive, an insult, whining, or frustrated.
-2. IF NOT TOXIC (neutral, friendly, polite, game callouts like hero names, lanes, coordination, "ok cool", "push mid", "абрамс ушёл", "лэш отдай лес", "го рошана", "деф", "б", "wait"):
-   You MUST return the exact message unchanged, verbatim! Do NOT rewrite neutral or non-toxic messages.
-3. ONLY IF TOXIC (insults, flame, rage, blaming teammates, swearing at someone):
-   Rewrite it into wholesome, friendly encouraging gamer banter or a compliment.
-   - VARIETY IS CRITICAL: NEVER repeat the cliche "you are a great player" or "ты отличный игрок"! Use diverse, natural gamer phrases matching the context.
-   - EXACT length matching: roughly the same number of words (3-6 words, never write long essays).
-   - EXACT case matching: if input is lowercase, output MUST be 100% lowercase. If uppercase, uppercase.
-   - NO emojis, NO stars, NO quotes, NO explanation, NO preamble.
-   - Keep the same language (Russian -> Russian, English -> English).
-   - Output ONLY the rewritten text.
+Turn toxic rage, insults, and flaming into HILARIOUS, over-the-top, wholesome gamer compliments, enthusiastic praise, and deep affection!
+
+RULES:
+1. DO NOT TOUCH (output the EXACT input message 100% verbatim and unchanged):
+   - Questions of any kind ("how did you do that?", "what is your build?", "who has ult?", "where are you going?", "why?").
+   - Gameplay callouts and coordination ("абрамс ушёл на мид", "push mid", "го рошана", "деф", "б", "wait").
+   - Jokes, memes, absurd statements, and self-deprecation ("i use cheats because im an asshole", "i am so bad lol", "my aim is potato", "я криворукий", "my bad guys").
+   - Neutral or friendly chat ("nice shot bro", "gg wp", "lol", "ty").
+
+2. REWRITE TARGETED TOXICITY & FLAME INTO COMEDIC OVER-THE-TOP COMPLIMENTS:
+   - When a player insults, rages at, or flames teammates or enemies ("fuck you!!!", "ты конченый фидер", "delete game trash", "какие же вы раки"):
+     Do NOT sound like a corporate counselor or therapist (NEVER say "let us regroup", "stay calm", "lets work together").
+     Instead, turn it into enthusiastic, funny, exaggerated praise, affection, or high-energy gamer compliments!
+   - Match punctuation & enthusiasm: if input has "!!!", keep "!!!".
+   - Match length roughly (3-6 words).
+   - Match language (Russian -> Russian, English -> English).
+   - NO emojis, NO quotes, NO explanation, output ONLY the text.
 
 Examples:
-Input: абрамс ушёл
-Output: абрамс ушёл
+Message: "how did you do that?"
+Output: how did you do that?
 
-Input: лэш отдай лес
-Output: лэш отдай лес
+Message: "what is your build?"
+Output: what is your build?
 
-Input: push mid guys
-Output: push mid guys
+Message: "i use cheats because im an asshole"
+Output: i use cheats because im an asshole
 
-Input: gg wp
-Output: gg wp
+Message: "fuck you!!!"
+Output: you're a great player!!!
 
-Input: ты конченый фидер удали игру
-Output: соберись бро мы еще камбэкнем
+Message: "FUCK YOU"
+Output: YOU ARE AMAZING
 
-Input: какие же вы раки
-Output: отличный трай додавим в следующий раз
+Message: "ты конченый фидер"
+Output: ты потрясающий игрок
 
-Input: хуец нюхай
-Output: красиво сыграно хорош
+Message: "какие же вы раки"
+Output: какие же вы красавчики
 
-Input: you are a fucking dog ass bitch
-Output: solid play let us focus up
+Message: "удалите игру бездари"
+Output: вы лучшие игроки в мире
 
-Input: kys trash noob
-Output: nice try team we got this
+Message: "хуец нюхай"
+Output: крепко обнимаю тебя бро
 
-Input: team noob zero damage
-Output: good effort team nice fight`;
+Message: "delete game trash feeder"
+Output: you are an absolute legend
+
+Message: "team noob zero damage"
+Output: i love this team so much
+
+Message: "you are a fucking dog"
+Output: you are an awesome teammate
+
+Message: "бесполезная команда"
+Output: лучшая команда в истории
+
+Message: "kys trash noob"
+Output: i appreciate you so much`;
 
 function sanitizeOutput(raw, original) {
     if (!raw) return '';
@@ -68,8 +88,13 @@ function sanitizeOutput(raw, original) {
     // Strip emojis / decorative symbols
     text = text.replace(/[\p{Emoji_Presentation}\p{Extended_Pictographic}🌟⭐✨]/gu, '').trim();
 
-    // Match original casing if original was lowercase
-    if (original && original === original.toLowerCase()) {
+    // Match original casing (ALL CAPS or all lowercase)
+    const isOriginalUpper = original === original.toUpperCase() && /[A-Za-zА-Яа-яЁё]/.test(original);
+    const isOriginalLower = original === original.toLowerCase();
+
+    if (isOriginalUpper) {
+        text = text.toUpperCase();
+    } else if (isOriginalLower) {
         text = text.toLowerCase();
     }
 
@@ -77,47 +102,55 @@ function sanitizeOutput(raw, original) {
 }
 
 async function callOpenRouter(apiKey, model, text) {
-    const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-            'Authorization': `Bearer ${apiKey.trim()}`,
-            'Content-Type': 'application/json',
-            'HTTP-Referer': 'https://github.com/Predi-i/Anti-Toxic-Chat',
-            'X-Title': 'Anti-Toxic-Chat'
-        },
-        body: JSON.stringify({
-            model: model,
-            messages: [
-                { role: 'system', content: SYSTEM_PROMPT },
-                { role: 'user', content: text }
-            ],
-            max_tokens: 35,
-            temperature: 0.6
-        })
-    });
+    const ctrl = new AbortController();
+    const tid = setTimeout(() => ctrl.abort(), 1200);
 
-    if (!res.ok) {
-        const errText = await res.text();
-        const cfRay = res.headers.get('cf-ray') || 'unknown';
-        throw new Error(`OpenRouter ${model} HTTP ${res.status} [ray: ${cfRay}]: ${errText.slice(0, 120)}`);
+    try {
+        const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${apiKey.trim()}`,
+                'Content-Type': 'application/json',
+                'HTTP-Referer': 'https://github.com/Predi-i/Anti-Toxic-Chat',
+                'X-Title': 'Anti-Toxic-Chat'
+            },
+            body: JSON.stringify({
+                model: model,
+                messages: [
+                    { role: 'system', content: SYSTEM_PROMPT },
+                    { role: 'user', content: `Message: "${text}"` }
+                ],
+                max_tokens: 35,
+                temperature: 0.6
+            }),
+            signal: ctrl.signal
+        });
+
+        if (!res.ok) {
+            const errText = await res.text();
+            const cfRay = res.headers.get('cf-ray') || 'unknown';
+            throw new Error(`OpenRouter ${model} HTTP ${res.status} [ray: ${cfRay}]: ${errText.slice(0, 120)}`);
+        }
+
+        const data = await res.json();
+        if (!data.choices || !data.choices[0] || !data.choices[0].message) {
+            throw new Error(`OpenRouter ${model} returned empty response`);
+        }
+
+        return data.choices[0].message.content || '';
+    } finally {
+        clearTimeout(tid);
     }
-
-    const data = await res.json();
-    if (!data.choices || !data.choices[0] || !data.choices[0].message) {
-        throw new Error(`OpenRouter ${model} returned empty response`);
-    }
-
-    return data.choices[0].message.content || '';
 }
 
 async function callWorkersAI(env, model, text) {
     const aiRes = await env.AI.run(model, {
         messages: [
             { role: 'system', content: SYSTEM_PROMPT },
-            { role: 'user', content: text }
+            { role: 'user', content: `Message: "${text}"` }
         ],
         max_tokens: 35,
-        temperature: 0.6
+        temperature: 0.7
     });
 
     return (aiRes && aiRes.response) ? aiRes.response : '';
@@ -163,26 +196,21 @@ export default {
                 // -------------------------------------------------------------
                 const openRouterKey = env.OPENROUTER_API_KEY;
                 if (openRouterKey) {
-                    const models = [
-                        'minimax/minimax-m3:free',
-                        'openrouter/free'
-                    ];
-                    for (const model of models) {
-                        try {
-                            const rawReply = await callOpenRouter(openRouterKey, model, rawText);
-                            const cleanReply = sanitizeOutput(rawReply, rawText);
-                            if (cleanReply) {
-                                return new Response(JSON.stringify({
-                                    original: rawText,
-                                    text: cleanReply,
-                                    provider: model
-                                }), {
-                                    headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' }
-                                });
-                            }
-                        } catch (e) {
-                            errors[model] = e.message;
+                    const model = 'minimax/minimax-m3:free';
+                    try {
+                        const rawReply = await callOpenRouter(openRouterKey, model, rawText);
+                        const cleanReply = sanitizeOutput(rawReply, rawText);
+                        if (cleanReply) {
+                            return new Response(JSON.stringify({
+                                original: rawText,
+                                text: cleanReply,
+                                provider: model
+                            }), {
+                                headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' }
+                            });
                         }
+                    } catch (e) {
+                        errors[model] = e.message;
                     }
                 }
 
