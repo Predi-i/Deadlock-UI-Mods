@@ -16,7 +16,7 @@
         CMD_PARTY: 'say_chat_party',
 
         // Max time to wait for AI response before dropping or submitting fallback (in seconds)
-        TIMEOUT_SECS: 3.5,
+        TIMEOUT_SECS: 4.5,
 
         DEBUG: false,
     };
@@ -193,7 +193,7 @@
             "  var tid = setTimeout(function() {",
             "    if (ctrl) ctrl.abort();",
             "    document.title = ['AT', reqId, cmd, encodeURIComponent(safeFallback)].join('|');",
-            "  }, 3200);",
+            "  }, 4200);",
             "  fetch(" + JSON.stringify(CONFIG.WORKER_URL) + ", {",
             "    method: 'POST',",
             "    headers: { 'Content-Type': 'application/json' },",
