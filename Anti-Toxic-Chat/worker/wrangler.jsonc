@@ -1,0 +1,13 @@
+{
+  "$schema": "../../DL-Arcade-Cloudflare/node_modules/wrangler/config-schema.json",
+  "name": "anti-toxic-chat",
+  "main": "src/index.js",
+  "compatibility_date": "2026-08-08",
+  "workers_dev": true,
+  "placement": {
+    "mode": "smart"
+  },
+  "ai": {
+    "binding": "AI"
+  }
+}
