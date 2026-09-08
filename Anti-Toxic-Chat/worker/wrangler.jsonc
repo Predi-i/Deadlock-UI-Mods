@@ -5,7 +5,7 @@
   "compatibility_date": "2026-08-08",
   "workers_dev": true,
   "placement": {
-    "mode": "smart"
+    "region": "aws:us-east-1"
   },
   "ai": {
     "binding": "AI"

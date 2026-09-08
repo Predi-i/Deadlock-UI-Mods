@@ -8,7 +8,6 @@
 
     const CONFIG = {
         WORKER_URL: 'https://anti-toxic-chat.predi.workers.dev/api/transform',
-        SAFE_FALLBACK: 'gg wp',
 
         // Commands for opening chat channels
         CMD_ALL: 'say_chat',
@@ -16,9 +15,9 @@
         CMD_PARTY: 'say_chat_party',
 
         // Max time to wait for AI response before dropping or submitting fallback (in seconds)
-        TIMEOUT_SECS: 4.5,
+        TIMEOUT_SECS: 3.5,
 
-        DEBUG: false,
+        DEBUG: true,
     };
 
     const IDS = {
@@ -181,11 +180,11 @@
     function buildBridgeHtml() {
         const js = [
             "window.sendToWorker = function(raw, reqId, cmd) {",
-            "  var safeFallback = " + JSON.stringify(CONFIG.SAFE_FALLBACK) + ";",
+            "  var safeFallback = raw;",
             "  function clean(t) {",
             "    if (!t) return safeFallback;",
             "    var s = String(t).trim();",
-            "    s = s.replace(/^[\"\'«“](.*)[\"\'»”]$/s, '$1').trim();",
+            "    s = s.replace(/^[\"\'\\u00AB\\u201C](.*)[\"\'\\u00BB\\u201D]$/s, '$1').trim();",
             "    s = s.replace(/[*_~`#]/g, '');",
             "    return s || safeFallback;",
             "  }",
@@ -193,7 +192,7 @@
             "  var tid = setTimeout(function() {",
             "    if (ctrl) ctrl.abort();",
             "    document.title = ['AT', reqId, cmd, encodeURIComponent(safeFallback)].join('|');",
-            "  }, 4200);",
+            "  }, 3200);",
             "  fetch(" + JSON.stringify(CONFIG.WORKER_URL) + ", {",
             "    method: 'POST',",
             "    headers: { 'Content-Type': 'application/json' },",
@@ -399,13 +398,13 @@
         };
         State.pendingMap.set(reqId, reqItem);
 
-        // 4. Timeout fallback in case network drops: submit safe polite text, NEVER raw toxic text
+        // 4. Timeout fallback in case network drops: submit original text (NEVER "gg wp")
         $.Schedule(CONFIG.TIMEOUT_SECS, () => {
             if (State.pendingMap.has(reqId)) {
-                log('Request #' + reqId + ' timed out, using safe fallback');
+                log('Request #' + reqId + ' timed out, falling back to original message');
                 const timedOut = State.pendingMap.get(reqId);
                 State.pendingMap.delete(reqId);
-                enqueueOutbox(timedOut.cmd, CONFIG.SAFE_FALLBACK);
+                enqueueOutbox(timedOut.cmd, timedOut.raw);
             }
         });
 

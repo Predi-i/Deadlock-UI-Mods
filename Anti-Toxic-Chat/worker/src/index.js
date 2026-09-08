@@ -1,7 +1,7 @@
 /**
  * Anti-Toxic-Chat Cloudflare Worker
- * Primary: OpenRouter (MiniMax M3 Free)
- * Fallback: Cloudflare Workers AI (Meta Llama 3.3 70B)
+ * Primary: Groq (Qwen 3.8 27B)
+ * Fallbacks: OpenRouter, Cloudflare Workers AI
  */
 
 const CORS_HEADERS = {
@@ -101,6 +101,46 @@ function sanitizeOutput(raw, original) {
     return text;
 }
 
+async function callGroq(apiKey, model, text) {
+    const ctrl = new AbortController();
+    const tid = setTimeout(() => ctrl.abort(), 2800);
+
+    try {
+        const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${apiKey.trim()}`,
+                'Content-Type': 'application/json',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+            },
+            body: JSON.stringify({
+                model: model || 'qwen/qwen3.8-27b',
+                messages: [
+                    { role: 'system', content: SYSTEM_PROMPT },
+                    { role: 'user', content: `Message: "${text}"` }
+                ],
+                max_tokens: 35,
+                temperature: 0.6
+            }),
+            signal: ctrl.signal
+        });
+
+        if (!res.ok) {
+            const errText = await res.text();
+            throw new Error(`Groq HTTP ${res.status}: ${errText.slice(0, 150)}`);
+        }
+
+        const data = await res.json();
+        if (!data.choices || !data.choices[0] || !data.choices[0].message) {
+            throw new Error('Groq returned empty response');
+        }
+
+        return data.choices[0].message.content || '';
+    } finally {
+        clearTimeout(tid);
+    }
+}
+
 async function callOpenRouter(apiKey, model, text) {
     const ctrl = new AbortController();
     const tid = setTimeout(() => ctrl.abort(), 1200);
@@ -112,7 +152,8 @@ async function callOpenRouter(apiKey, model, text) {
                 'Authorization': `Bearer ${apiKey.trim()}`,
                 'Content-Type': 'application/json',
                 'HTTP-Referer': 'https://github.com/Predi-i/Anti-Toxic-Chat',
-                'X-Title': 'Anti-Toxic-Chat'
+                'X-Title': 'Anti-Toxic-Chat',
+                'User-Agent': 'AntiToxicChat/1.0'
             },
             body: JSON.stringify({
                 model: model,
@@ -192,11 +233,34 @@ export default {
                 let errors = {};
 
                 // -------------------------------------------------------------
-                // 1. PRIMARY: OpenRouter (MiniMax M3 Free)
+                // 1. PRIMARY: Groq (Meta Llama 3.3 70B Versatile)
+                // -------------------------------------------------------------
+                const groqKey = env.GROQ_API_KEY;
+                if (groqKey) {
+                    const model = 'qwen/qwen3.8-27b';
+                    try {
+                        const rawReply = await callGroq(groqKey, model, rawText);
+                        const cleanReply = sanitizeOutput(rawReply, rawText);
+                        if (cleanReply) {
+                            return new Response(JSON.stringify({
+                                original: rawText,
+                                text: cleanReply,
+                                provider: 'groq/' + model
+                            }), {
+                                headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' }
+                            });
+                        }
+                    } catch (e) {
+                        errors['groq/' + model] = e.message;
+                    }
+                }
+
+                // -------------------------------------------------------------
+                // 2. SECONDARY: OpenRouter (Google Gemma 4 26B MoE Free)
                 // -------------------------------------------------------------
                 const openRouterKey = env.OPENROUTER_API_KEY;
                 if (openRouterKey) {
-                    const model = 'minimax/minimax-m3:free';
+                    const model = 'google/gemma-4-26b-a4b-it:free';
                     try {
                         const rawReply = await callOpenRouter(openRouterKey, model, rawText);
                         const cleanReply = sanitizeOutput(rawReply, rawText);
@@ -215,7 +279,7 @@ export default {
                 }
 
                 // -------------------------------------------------------------
-                // 2. FALLBACK: Cloudflare Workers AI (Meta Llama 3.3 70B)
+                // 3. FALLBACK: Cloudflare Workers AI (Meta Llama 3.3 70B)
                 // -------------------------------------------------------------
                 if (env.AI) {
                     const cfModel = '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
