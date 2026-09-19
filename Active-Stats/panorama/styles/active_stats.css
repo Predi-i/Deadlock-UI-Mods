@@ -1,0 +1,77 @@
+#ActiveStatsCrosshairOverlay
+{
+    visibility: collapse;
+    horizontal-align: center;
+    vertical-align: center;
+    width: fit-children;
+    height: fit-children;
+    margin-left: 135px;
+    margin-top: 0px;
+    flow-children: down;
+    padding: 2px 0px;
+}
+
+.ActiveStatsRow
+{
+    flow-children: right;
+    vertical-align: center;
+    width: fit-children;
+    margin: 2px 0px;
+    padding: 2px 7px 2px 5px;
+    border-radius: 3px;
+    background-color: #000000a6;
+    border-left: 2px solid #ffffff30;
+    transition-property: background-color;
+    transition-duration: 0.15s;
+    visibility: collapse;
+}
+
+.ActiveStatsRow.isBuff
+{
+    border-left: 2px solid #7ae66e;
+}
+
+.ActiveStatsRow.isDebuff
+{
+    border-left: 2px solid #ff6e6e;
+}
+
+.ActiveStatsIcon
+{
+    width: 17px;
+    height: 17px;
+    vertical-align: center;
+    margin-right: 6px;
+    background-size: contain;
+    background-repeat: no-repeat;
+    wash-color: #FFEFD7;
+}
+
+.ActiveStatsRow.isBuff .ActiveStatsIcon
+{
+    wash-color: #FFEFD7;
+}
+
+.ActiveStatsRow.isDebuff .ActiveStatsIcon
+{
+    wash-color: #FFEFD7;
+}
+
+.ActiveStatsValue
+{
+    font-size: 14px;
+    font-weight: bold;
+    font-family: sansMono;
+    vertical-align: center;
+    text-shadow: 0px 1px 3px 2.0 #000000;
+}
+
+.ActiveStatsRow.isBuff .ActiveStatsValue
+{
+    color: #7ae66e;
+}
+
+.ActiveStatsRow.isDebuff .ActiveStatsValue
+{
+    color: #ff6e6e;
+}

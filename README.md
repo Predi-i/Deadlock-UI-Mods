@@ -25,6 +25,7 @@ These mods are built using the Panorama API (XML/CSS/JS) to improve overall play
 
 ### Included in this repository, but not published on GameBanana
 
+- `Active-Stats` — mirrors active hero combat buffs and debuffs directly beside the crosshair.
 - `Minimap-Cheat` — press **M** to send two waves of minimap pings over every visible enemy marker.
 - `Rem-Bug-Abuse` — a local proof of concept that automates the cast, Tier 1 upgrade and undo
   sequence for Rem's third ability. It is intentionally not published.
