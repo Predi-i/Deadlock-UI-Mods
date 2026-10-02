@@ -1,0 +1,6 @@
+<root>
+    <scripts>
+        <include src="s2r://panorama/scripts/djinn_mark_relay.vjs_c" />
+    </scripts>
+    <Panel class="DjinnMarkRelay" hittest="false" hittestchildren="false" style="width: 0px; height: 0px;" />
+</root>
