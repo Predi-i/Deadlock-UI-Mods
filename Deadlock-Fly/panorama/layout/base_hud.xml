@@ -1,0 +1,25 @@
+<!-- Deadlock-Fly (Drosophila melanogaster) - base_hud override.
+     Injects the biological connectome spiking neural network, sensory hooks,
+     and visual insect overlay scripts into Deadlock's root HUD. -->
+<root>
+	<styles>
+		<include src="s2r://panorama/styles/base.vcss_c" />
+		<include src="s2r://panorama/styles/fly.vcss_c" />
+	</styles>
+	<scripts>
+		<!-- Core Runtime & LIF Connectome Engine -->
+		<include src="s2r://panorama/scripts/core/fly_namespace.vjs_c" />
+		<include src="s2r://panorama/scripts/core/fly_constants.vjs_c" />
+		<include src="s2r://panorama/scripts/core/fly_connectome.vjs_c" />
+
+		<!-- Features & Simulation Modules -->
+		<include src="s2r://panorama/scripts/features/fly_sensors.vjs_c" />
+		<include src="s2r://panorama/scripts/features/fly_brain.vjs_c" />
+		<include src="s2r://panorama/scripts/features/fly_physics.vjs_c" />
+		<include src="s2r://panorama/scripts/features/fly_render.vjs_c" />
+		<include src="s2r://panorama/scripts/features/fly_debug.vjs_c" />
+	</scripts>
+	<Panel class="WindowRoot" hittest="false" disallowedstyleflags="hover,descendantfocus">
+		<CitadelHud id="Hud" hittest="false" />
+	</Panel>
+</root>

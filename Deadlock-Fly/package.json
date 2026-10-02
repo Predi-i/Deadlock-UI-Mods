@@ -1,0 +1,10 @@
+{
+  "name": "deadlock-fly",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Deadlock-Fly — Digital Drosophila melanogaster Connectome Simulation for Deadlock",
+  "scripts": {
+    "lint": "node ../../QOLLOCK/node_modules/eslint/bin/eslint.js -c eslint.config.js panorama/scripts --max-warnings 0",
+    "test": "node tests/smoke_test.js && npm run lint"
+  }
+}

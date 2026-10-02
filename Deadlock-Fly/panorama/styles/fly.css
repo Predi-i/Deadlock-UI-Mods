@@ -1,0 +1,296 @@
+/* Prettified and structured according to Source 2 GameTracking standards. */
+@import url("s2r://panorama/styles/citadel_base_styles.vcss_c");
+
+/* =========================================================================
+   DEADLOCK-FLY (Drosophila melanogaster) - UNIFIED HUD STYLESHEET
+   100% compliant with Source 2 Panorama CSS parser and GameTracking idioms.
+   ========================================================================= */
+
+/* --- OVERLAY CONTAINER --- */
+.WindowRoot
+{
+	flow-children: none;
+}
+
+#DrosophilaOverlay
+{
+	width: 100%;
+	height: 100%;
+	position: 0px 0px 0px;
+	flow-children: none;
+	z-index: 9999;
+	hittest: false;
+	hittestchildren: false;
+}
+
+/* --- THE FLY ROOT ACTOR --- */
+.FlyRoot
+{
+	width: 128px;
+	height: 128px;
+	flow-children: none;
+	hittest: false;
+	hittestchildren: false;
+}
+
+/* --- MAIN FLY SPRITE --- */
+.FlySprite
+{
+	width: 100%;
+	height: 100%;
+	horizontal-align: center;
+	vertical-align: center;
+	hittest: false;
+	hittestchildren: false;
+}
+
+/* --- DYNAMIC SHADOW --- */
+.FlyShadow
+{
+	width: 32px;
+	height: 54px;
+	horizontal-align: center;
+	vertical-align: center;
+	background-color: #0000008c;
+	border-radius: 16px;
+	transition-property: opacity;
+	transition-duration: 0.1s;
+	hittest: false;
+	hittestchildren: false;
+}
+
+/* --- DYNAMIC WINGS --- */
+.FlyWing
+{
+	width: 44px;
+	height: 68px;
+	opacity: 0.0;
+	transform-origin: 50% 10%;
+	margin-top: 30px;
+	transition-property: opacity;
+	transition-duration: 0.15s;
+	hittest: false;
+	hittestchildren: false;
+}
+
+.WingLeft
+{
+	margin-left: 20px;
+	transform: rotateZ(16deg);
+}
+
+.WingRight
+{
+	horizontal-align: right;
+	margin-right: 20px;
+	transform: rotateZ(-16deg);
+}
+
+/* --- KEYFRAME ANIMATIONS (Strictly single-quoted GameTracking syntax) --- */
+
+@keyframes 'WingFlap'
+{
+	0%
+	{
+		opacity: 0.6;
+	}
+	100%
+	{
+		opacity: 0.9;
+	}
+}
+
+@keyframes 'PanicJitter'
+{
+	0%
+	{
+		transform: translate3d(-1px, 0px, 0px);
+	}
+	50%
+	{
+		transform: translate3d(1px, -1px, 0px);
+	}
+	100%
+	{
+		transform: translate3d(0px, 1px, 0px);
+	}
+}
+
+@keyframes 'FeedBob'
+{
+	0%
+	{
+		pre-transform-scale2d: 1.0;
+	}
+	100%
+	{
+		pre-transform-scale2d: 1.05;
+	}
+}
+
+@keyframes 'GroomTilt'
+{
+	0%
+	{
+		transform: rotateZ(-3deg);
+	}
+	100%
+	{
+		transform: rotateZ(3deg);
+	}
+}
+
+/* --- STATE CLASSES --- */
+
+.state-fly .FlyWing,
+.state-panic .FlyWing
+{
+	opacity: 0.75;
+	animation-name: WingFlap;
+	animation-duration: 0.025s;
+	animation-iteration-count: infinite;
+	animation-direction: alternate;
+}
+
+.state-panic .FlySprite
+{
+	animation-name: PanicJitter;
+	animation-duration: 0.04s;
+	animation-iteration-count: infinite;
+}
+
+.state-feed .FlySprite
+{
+	animation-name: FeedBob;
+	animation-duration: 0.4s;
+	animation-iteration-count: infinite;
+	animation-direction: alternate;
+	animation-timing-function: ease-in-out;
+}
+
+.state-groom .FlySprite
+{
+	animation-name: GroomTilt;
+	animation-duration: 0.3s;
+	animation-iteration-count: infinite;
+	animation-direction: alternate;
+}
+
+/* --- NEURAL MONITOR BADGE --- */
+.FlyMonitor
+{
+	width: 250px;
+	background-color: #0a0e16f0;
+	border: 1px solid #5686ce59;
+	border-radius: 6px;
+	box-shadow: #000000a6 0px 4px 16px 0px;
+	margin-top: 70px;
+	margin-right: 24px;
+	horizontal-align: right;
+	padding: 10px 12px;
+	flow-children: down;
+	transition-property: opacity, transform;
+	transition-duration: 0.2s;
+	hittest: false;
+	hittestchildren: false;
+}
+
+.FlyMonitor.collapsed
+{
+	opacity: 0.0;
+	visibility: collapse;
+}
+
+.MonitorHeader
+{
+	width: 100%;
+	flow-children: right;
+	margin-bottom: 8px;
+	border-bottom: 1px solid #ffffff14;
+	padding-bottom: 4px;
+}
+
+.MonitorTitle
+{
+	font-family: sansMono;
+	font-size: 11px;
+	font-weight: bold;
+	color: #72a6e8;
+	letter-spacing: 0.5px;
+	vertical-align: center;
+}
+
+.MonitorState
+{
+	font-family: sansMono;
+	font-size: 11px;
+	font-weight: bold;
+	color: #e5b958;
+	horizontal-align: right;
+	vertical-align: center;
+}
+
+.MonitorChannels
+{
+	width: 100%;
+	flow-children: down;
+}
+
+.MonitorRow
+{
+	width: 100%;
+	flow-children: right;
+	margin-bottom: 4px;
+}
+
+.ChanLabel
+{
+	font-family: sansMono;
+	font-size: 10px;
+	color: #9ab4d0;
+	width: 82px;
+	vertical-align: center;
+}
+
+.ChanBarContainer
+{
+	width: fill-parent-flow(1.0);
+	height: 8px;
+	background-color: #ffffff0f;
+	border-radius: 2px;
+	vertical-align: center;
+}
+
+.ChanBar
+{
+	height: 100%;
+	width: 0%;
+	border-radius: 2px;
+	transition-property: width;
+	transition-duration: 0.03s;
+}
+
+#Bar_DN_GF
+{
+	background-color: gradient(linear, 0% 0%, 100% 0%, from(#e03131), to(#ff8787));
+}
+
+#Bar_VIS_LPTC
+{
+	background-color: gradient(linear, 0% 0%, 100% 0%, from(#1971c2), to(#4dabf7));
+}
+
+#Bar_DAN_PAM
+{
+	background-color: gradient(linear, 0% 0%, 100% 0%, from(#2f9e44), to(#69db7c));
+}
+
+#Bar_DAN_PPL1
+{
+	background-color: gradient(linear, 0% 0%, 100% 0%, from(#f08c00), to(#ffd43b));
+}
+
+#Bar_WINGS
+{
+	background-color: gradient(linear, 0% 0%, 100% 0%, from(#0ca678), to(#38d9a9));
+}

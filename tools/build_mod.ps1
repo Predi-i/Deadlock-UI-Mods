@@ -538,7 +538,7 @@ while ($true) {
         $FilesToCompile = New-Object System.Collections.Generic.List[string]
         
         $Utf8NoBom = New-Object System.Text.UTF8Encoding $false
-        $AllowedExts = @('.xml', '.css', '.js', '.vsndevts', '.wav', '.vtex', '.vsvg', '.vpcf', '.vmdl', '.vmat')
+        $AllowedExts = @('.xml', '.css', '.js', '.vsndevts', '.wav', '.vtex', '.vsvg', '.svg', '.vpcf', '.vmdl', '.vmat')
         $CompileOutputs = @{
             '.xml'      = '.vxml_c'
             '.css'      = '.vcss_c'
@@ -547,6 +547,7 @@ while ($true) {
             '.wav'      = '.vsnd_c'
             '.vtex'     = '.vtex_c'
             '.vsvg'     = '.vsvg_c'
+            '.svg'      = '.vsvg_c'
             '.vpcf'     = '.vpcf_c'
             '.vmdl'     = '.vmdl_c'
             '.vmat'     = '.vmat_c'
