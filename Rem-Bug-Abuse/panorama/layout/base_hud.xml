@@ -4,6 +4,7 @@
 		<include src="s2r://panorama/styles/base.vcss_c" />
 	</styles>
 		<scripts>
+		<include src="s2r://panorama/scripts/hud_lookup.vjs_c" />
 		<include src="s2r://panorama/scripts/script_skill.vjs_c" />
 	</scripts>
 	<Panel class="WindowRoot" hittest="false" disallowedstyleflags="hover,descendantfocus">

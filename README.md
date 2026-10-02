@@ -5,6 +5,9 @@ A collection of custom User Interface modifications and Quality of Life scripts 
 
 These mods are built using the Panorama API (XML/CSS/JS) to improve overall player experience.
 
+Native resource synchronization and offline HUD lookup checks are documented in
+[tools/UPDATING.md](tools/UPDATING.md).
+
 ## 🛠️ Included Mods
 
 ### Published on GameBanana and included in this repository

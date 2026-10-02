@@ -1,0 +1,12 @@
+<!-- Diagnostic HUD override for a single, user-created local text file. -->
+<root>
+	<styles>
+		<include src="s2r://panorama/styles/base.vcss_c" />
+	</styles>
+	<scripts>
+		<include src="s2r://panorama/scripts/file_read_probe.vjs_c" />
+	</scripts>
+	<Panel class="WindowRoot" hittest="false" disallowedstyleflags="hover,descendantfocus">
+		<CitadelHud id="Hud" hittest="false" />
+	</Panel>
+</root>

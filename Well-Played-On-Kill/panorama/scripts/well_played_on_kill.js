@@ -94,7 +94,7 @@
     function findChild(root, id) {
         if (!isValid(root) || typeof root.FindChildTraverse !== 'function') return null;
         try {
-            const found = root.FindChildTraverse(id);
+            const found = $.ModHudLookup.find(id);
             return isValid(found) ? found : null;
         } catch (e) {
             return null;

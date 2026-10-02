@@ -30,7 +30,7 @@
     const IDS = {
         overlay: 'ActiveStatsCrosshairOverlay',
         rowPrefix: 'ActiveStatsRow_',
-        source: 'hudPlayerStats',
+        source: 'hudActivePlayerStats',
         gameplayHud: 'gameplay_hud',
     };
 
@@ -54,11 +54,19 @@
     }
 
     function findChild(root, id) {
-        if (!isValid(root) || typeof root.FindChildTraverse !== 'function') return null;
+        if (!isValid(root) || typeof root.Children !== 'function') return null;
         try {
-            const found = root.FindChildTraverse(id);
-            return isValid(found) ? found : null;
+            return (root.Children() || []).find(child => isValid(child) && child.id === id) || null;
         } catch (e) { return null; }
+    }
+
+    function ancestor(id) {
+        let panel = CTX;
+        for (let i = 0; isValid(panel) && i < 50; i++) {
+            if (panel.id === id) return panel;
+            panel = panel.GetParent ? panel.GetParent() : null;
+        }
+        return null;
     }
 
     function getRoot() {
@@ -113,10 +121,8 @@
         { id: 'spiritContainer',          key: 'spirit',           iconClass: 'Spirit',                svg: 's2r://panorama/images/icons/properties/spirit.vsvg' },
         { id: 'abilityRangeContainer',    key: 'range',            iconClass: 'Range',                 svg: 's2r://panorama/images/icons/properties/range.vsvg' },
         { id: 'abilityDurationContainer', key: 'duration',         iconClass: 'Duration',              svg: 's2r://panorama/images/icons/properties/duration.vsvg' },
-        { id: 'damageAmpContainer',       key: 'damageAmp',        iconClass: 'DamageWeapon',          svg: 's2r://panorama/images/icons/properties/damage_bullet.vsvg' },
         { id: 'clipSizeContainer',        key: 'clipSize',         iconClass: 'AmmoClipSize',          svg: 's2r://panorama/images/icons/properties/ammo_clip_size.vsvg' },
         { id: 'regenPerSecondContainer',  key: 'regen',            iconClass: 'HealthRegen',           svg: 's2r://panorama/images/icons/properties/health_regen.vsvg' },
-        { id: 'bulletEvasionContainer',   key: 'bulletEvasion',    iconClass: 'MoveDodge',             svg: 's2r://panorama/images/icons/properties/move_dodge.vsvg' },
     ];
 
     // ---------------------------------------------------------------- state
@@ -128,12 +134,16 @@
         rowValues: new Map(),
         rowIcons: new Map(),
         sourceContainers: new Map(),
+        sourceScopes: new Map(),
+        valuePanels: new Map(),
         lastLayoutSig: '',
         lastContentSig: '',
         lastVisibleCount: -1,
         isScoreboardSuppressed: false,
+        scoreboardEventVisible: false,
         scheduledTick: null,
     };
+    let scoreboardListener = null;
 
     // ---------------------------------------------------------------- value extraction & classification
     function stripHtml(s) {
@@ -158,8 +168,8 @@
         let queue = [];
         try { if (root.Children) queue = (root.Children() || []).slice(); } catch (e) { return ''; }
         let guard = 0;
-        while (queue.length && guard < VALUE_BFS_LIMIT) {
-            const node = queue.shift();
+        while (guard < queue.length && guard < VALUE_BFS_LIMIT) {
+            const node = queue[guard];
             guard++;
             if (!node) continue;
             try { if (node.id === 'casterList') continue; } catch (e) {}
@@ -181,10 +191,26 @@
 
     function readModifierValue(container) {
         if (!isValid(container)) return '';
-        let core = null;
-        try { core = container.FindChildTraverse('miniModifierCore'); } catch (e) {}
-        if (!isValid(core)) return readBfs(container);
-        return readBfs(core);
+        let labels = State.valuePanels.get(container);
+        if (!labels || !isValid(labels.value) || (labels.postfix && !isValid(labels.postfix))) {
+            // The core has a CLASS, not an ID. Native labels are now split into
+            // statNumber + statPostfix, with core stats wrapped once more.
+            const core = (container.Children() || []).find(child => hasClass(child, 'miniModifierCore'));
+            if (!core) return readBfs(container);
+            const children = core.Children() || [];
+            const wrapper = children.find(child => hasClass(child, 'statWithPostfix'));
+            const candidates = wrapper ? wrapper.Children() || [] : children;
+            labels = {
+                value: candidates.find(child => hasClass(child, 'statNumber')),
+                postfix: candidates.find(child => hasClass(child, 'statPostfix')),
+            };
+            if (!isValid(labels.value)) return readBfs(core);
+            State.valuePanels.set(container, labels);
+        }
+        const value = labels.value.text || '';
+        let postfix = isValid(labels.postfix) ? labels.postfix.text || '' : '';
+        if (postfix.charAt(0) === '#') postfix = $.Localize(postfix, labels.postfix);
+        return value + (postfix.charAt(0) === '#' ? '' : postfix);
     }
 
     function classifyBySign(txt) {
@@ -210,25 +236,19 @@
     function classifyByCasterConsensus(container) {
         if (!isValid(container)) return 0;
         let list = null;
-        try { list = container.FindChildTraverse('casterList'); } catch (e) {}
+        list = findChild(container, 'casterList');
         if (!isValid(list)) return 0;
-        let queue = [];
-        try { if (list.Children) queue = (list.Children() || []).slice(); } catch (e) { return 0; }
-        let guard = 0, enemy = 0, friend = 0;
-        while (queue.length && guard < VALUE_BFS_LIMIT) {
-            const node = queue.shift();
-            guard++;
+        let casters = [];
+        try { if (list.Children) casters = list.Children() || []; } catch (e) { return 0; }
+        let enemy = 0, friend = 0;
+        // casterSnippet owns direct children; modifierList descendants do not
+        // participate in caster affiliation and need no recursive walk.
+        for (const node of casters) {
             if (!node) continue;
             try {
                 if (node.BHasClass && node.BHasClass('casterAndModifiers')) {
                     if (node.BHasClass('enemy')) enemy++;
                     else if (node.BHasClass('friend')) friend++;
-                }
-            } catch (e) {}
-            try {
-                if (node.Children) {
-                    const kids = node.Children() || [];
-                    for (let i = 0; i < kids.length; i++) queue.push(kids[i]);
                 }
             } catch (e) {}
         }
@@ -252,18 +272,19 @@
     }
 
     function isScoreboardOpen(root) {
-        if (State.isScoreboardSuppressed) return true;
+        if (State.scoreboardEventVisible) return true;
         if (!isValid(root)) return false;
         if (hasClass(root, 'gScoreboardOpen') || hasClass(root, 'ScoreboardOpen') || hasClass(root, 'wants_scoreboard')) {
             return true;
         }
-        const hud = findChild(root, 'Hud') || root;
+        const hud = ancestor('Hud') || root;
         return hasClass(hud, 'gScoreboardOpen') || hasClass(hud, 'ScoreboardOpen') || hasClass(hud, 'wants_scoreboard');
     }
 
     function onScoreboardToggle(data) {
         if (isRetired()) return;
         const isVisible = !!(data && data.visible);
+        State.scoreboardEventVisible = isVisible;
         State.isScoreboardSuppressed = isVisible;
         if (isValid(State.overlay)) {
             State.overlay.style.visibility = isVisible ? 'collapse' : (State.lastVisibleCount > 0 ? 'visible' : 'collapse');
@@ -280,54 +301,43 @@
     }
 
     if (typeof $.RegisterForUnhandledEvent === 'function') {
-        $.RegisterForUnhandledEvent('CitadelScoreboardToggle', onScoreboardToggle);
+        scoreboardListener = $.RegisterForUnhandledEvent('CitadelScoreboardToggle', onScoreboardToggle);
     }
 
     // ---------------------------------------------------------------- DOM & overlay creation
     function resolveGameplayHud() {
-        if (isValid(State.gameplayHud)) {
-            if (State.gameplayHud.id !== IDS.gameplayHud) {
-                const root = getRoot();
-                const gh = findChild(root, IDS.gameplayHud);
-                if (isValid(gh)) State.gameplayHud = gh;
-            }
-            return State.gameplayHud;
-        }
-        const root = getRoot();
-        const gh = findChild(root, IDS.gameplayHud);
-        if (isValid(gh)) {
-            State.gameplayHud = gh;
-            return State.gameplayHud;
-        }
-        const hud = findChild(root, 'Hud');
-        State.gameplayHud = isValid(hud) ? hud : root;
+        if (isValid(State.gameplayHud)) return State.gameplayHud;
+        const source = resolveSourcePanel();
+        const core = isValid(source) && source.GetParent ? source.GetParent() : null;
+        State.gameplayHud = findChild(core, IDS.gameplayHud);
         return State.gameplayHud;
     }
 
     function resolveSourcePanel() {
         if (isValid(State.sourcePanel)) return State.sourcePanel;
         State.sourceContainers.clear();
-        if (isValid(CTX) && CTX.id === IDS.source) {
-            State.sourcePanel = CTX;
-            return State.sourcePanel;
-        }
-        const root = getRoot();
-        const found = findChild(root, IDS.source);
-        if (isValid(found)) {
-            State.sourcePanel = found;
-            return State.sourcePanel;
-        }
-        if (isValid(CTX) && CTX.FindChildTraverse) {
-            State.sourcePanel = CTX;
-            return State.sourcePanel;
-        }
-        return null;
+        State.sourceScopes.clear();
+        State.valuePanels.clear();
+        State.sourcePanel = ancestor(IDS.source);
+        return State.sourcePanel;
     }
 
     function getSourceContainer(source, def) {
         let container = State.sourceContainers.get(def.key);
         if (isValid(container)) return container;
-        container = (isValid(source) && source.FindChildTraverse) ? source.FindChildTraverse(def.id) : null;
+        if (container) State.valuePanels.delete(container);
+        const weapon = ['fireRate', 'clipSize', 'bulletLifesteal'];
+        const spirit = ['duration', 'range', 'techLifesteal'];
+        const coreStat = def.key === 'weaponPower' ? 'Weapon' : def.key === 'spirit' ? 'Spirit' : null;
+        const scopeId = coreStat || (weapon.includes(def.key) ? 'WeaponColumn' : spirit.includes(def.key) ? 'SpiritColumn' : 'VitalityColumn');
+        let scope = State.sourceScopes.get(scopeId);
+        if (!isValid(scope)) {
+            scope = coreStat
+                ? findChild(findChild(findChild(source, 'HudStatBlock'), 'CoreStats'), coreStat)
+                : findChild(findChild(source, 'StatList'), scopeId);
+            if (isValid(scope)) State.sourceScopes.set(scopeId, scope);
+        }
+        container = findChild(scope, def.id);
         if (isValid(container)) {
             State.sourceContainers.set(def.key, container);
             return container;
@@ -355,7 +365,7 @@
         overlay.style.padding = '2px 0px';
         overlay.style.visibility = 'collapse';
 
-        // Pre-build row panels for all 15 stats
+        // Pre-build rows for the supported native stats.
         State.rowPanels.clear();
         State.rowIcons.clear();
         State.rowValues.clear();
@@ -418,6 +428,10 @@
     }
 
     function removeOverlay() {
+        if (scoreboardListener !== null && typeof $.UnregisterForUnhandledEvent === 'function') {
+            try { $.UnregisterForUnhandledEvent('CitadelScoreboardToggle', scoreboardListener); } catch (e) {}
+            scoreboardListener = null;
+        }
         if (State.scheduledTick) {
             try { $.CancelScheduled(State.scheduledTick); } catch (e) {}
             State.scheduledTick = null;
@@ -432,6 +446,8 @@
         State.rowIcons.clear();
         State.rowValues.clear();
         State.sourceContainers.clear();
+        State.sourceScopes.clear();
+        State.valuePanels.clear();
         State.lastLayoutSig = '';
         State.lastContentSig = '';
         State.lastVisibleCount = -1;

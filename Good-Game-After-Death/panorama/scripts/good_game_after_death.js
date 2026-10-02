@@ -65,7 +65,7 @@
     function findChild(root, id) {
         if (!isValid(root) || typeof root.FindChildTraverse !== 'function') return null;
         try {
-            const found = root.FindChildTraverse(id);
+            const found = $.ModHudLookup.find(id);
             return isValid(found) ? found : null;
         } catch (e) { return null; }
     }
@@ -236,7 +236,7 @@
         let timerPanel = null;
         
         let localRespawnRoot = null;
-        try { localRespawnRoot = root.FindChildTraverse("respawn_timer"); } catch (e) {}
+        try { localRespawnRoot = $.ModHudLookup.find("respawn_timer"); } catch (e) {}
         
         if (localRespawnRoot && localRespawnRoot.FindChildrenWithClassTraverse) {
             let localLabels = [];

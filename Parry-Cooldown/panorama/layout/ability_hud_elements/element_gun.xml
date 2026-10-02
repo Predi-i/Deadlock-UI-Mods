@@ -6,6 +6,7 @@
 		<include src="s2r://panorama/styles/ability_hud_elements/element_gun.vcss_c" />
 	</styles>
 	<scripts>
+		<include src="s2r://panorama/scripts/hud_lookup.vjs_c" />
 		<include src="s2r://panorama/scripts/parry_cooldooown.vjs_c" />
 	</scripts>
 	<Citadel_AbilityHUDElement_Gun class="ability_element_gun">
@@ -51,7 +52,11 @@
 				<Label class="weapon_ammo_max" text=" / {i:max_clip_ammp}" />
 				<Panel class="weapon_ammo_infinite" />
 			</Panel>
-			<Panel id="parry_unavailable" />
+			<Label id="auto_fire_indicator" text="#Citadel_Hud_AutoFire" />
+			<Panel id="parry_unavailable">
+				<Panel id="ParryImage" />
+				<Panel id="ParryCooldownBorder" />
+			</Panel>
 			<Panel id="reticle_status">
 				<CircularProgressBar id="reticle_status_progress_bar_bg" />
 				<CircularProgressBar id="attack_delayed_progress_bar" />

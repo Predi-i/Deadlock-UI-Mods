@@ -40,16 +40,16 @@
             return null;
         }
 
-        State.rootPanel = top.FindChildTraverse ? (top.FindChildTraverse("Hud") || top) : top;
+        State.rootPanel = $.ModHudLookup.find("Hud") || top;
         return State.rootPanel;
     }
 
     function isModeIgnored(root) {
         if (!root || !root.BHasClass) return false;
-        
+
         if (root.BHasClass("connectedToHideout") || root.BHasClass("InHideout") || root.BHasClass("connectedToHeroTesting")) return true;
         if (root.BHasClass("gamemode_streetbrawl")) return true;
-        
+
         return false;
     }
 
@@ -57,7 +57,7 @@
         if (!root) return null;
 
         if (!isValidPanel(State.clockPanel)) {
-            State.clockPanel = root.FindChildTraverse ? root.FindChildTraverse("GameTime") : null;
+            State.clockPanel = $.ModHudLookup.find("GameTime");
             if (!State.clockPanel) return null;
         }
 
@@ -66,7 +66,7 @@
 
         var parts = text.split(':');
         var isNegative = text.charAt(0) === '-';
-        
+
         var hours = 0, mins = 0, secs = 0;
 
         if (parts.length === 3) {
@@ -87,7 +87,7 @@
     }
 
     function loop() {
-        if (!CTX || !CTX.IsValid()) return; 
+        if (!CTX || !CTX.IsValid()) return;
 
         var root = getRoot();
 
@@ -115,7 +115,7 @@
             if (currentTime >= targetTime && currentTime < (targetTime + CONFIG.ALERT_WINDOW)) {
                 if (State.lastAlertTime < targetTime) {
                     $.DispatchEvent("PlaySoundEffect", CONFIG.SOUND_NAME);
-                    State.lastAlertTime = targetTime; 
+                    State.lastAlertTime = targetTime;
                 }
             }
         }

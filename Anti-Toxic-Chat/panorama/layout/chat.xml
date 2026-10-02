@@ -4,6 +4,7 @@
 		<include src="s2r://panorama/styles/chat.vcss_c" />
 	</styles>
 	<scripts>
+		<include src="s2r://panorama/scripts/hud_lookup.vjs_c" />
 		<include src="s2r://panorama/scripts/anti_toxic_chat.vjs_c" />
 	</scripts>
 	<snippets>
@@ -20,7 +21,8 @@
 		</snippet>
 		<snippet name="ChatMessageContents_Ping">
 			<Panel class="Ping">
-				<Label id="PingLabel" text="{s:ping_text}" />
+				<Image id="TargetHeroImage" />
+				<Label id="PingLabel" text="{s:ping_text}" html="true" />
 			</Panel>
 		</snippet>
 		<snippet name="ChatMessageSender_HeroImage">

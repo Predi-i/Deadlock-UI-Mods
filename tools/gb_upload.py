@@ -336,11 +336,54 @@ class GameBananaUploader:
 
     # ── Edit form submit ──────────────────────────────────────────────────
 
+    def _ai_usage_fields(self, soup: BeautifulSoup) -> list[tuple[str, str]]:
+        """Read field names/values from GB's matrix instead of guessing hashes.
+
+        Maintainer choice: Minor for code, None for every other area. Column
+        captions may include explanatory text. Preserve all unrelated fields.
+        """
+        result = []
+        code_found = False
+        for table in soup.find_all("table"):
+            rows = table.find_all("tr")
+            if not rows:
+                continue
+            headers = rows[0].find_all(["th", "td"], recursive=False)
+            captions = [cell.get_text(" ", strip=True) for cell in headers]
+            if not captions or "mod area" not in captions[0].lower():
+                continue
+            columns = {}
+            for level in ("None", "Minor"):
+                matches = [i for i, text in enumerate(captions)
+                           if re.match(rf"^{level}\b", text, re.I)]
+                if len(matches) != 1:
+                    raise RuntimeError(f"AI Usage matrix has no unambiguous {level} column")
+                columns[level] = matches[0]
+            for row in rows[1:]:
+                cells = row.find_all(["th", "td"], recursive=False)
+                if not cells:
+                    continue
+                area = cells[0].get_text(" ", strip=True)
+                is_code = bool(re.search(r"\b(code|coding|programming|scripts?)\b", area, re.I))
+                level = "Minor" if is_code else "None"
+                index = columns[level]
+                option = cells[index].find("input", attrs={"type": "radio"}) if index < len(cells) else None
+                if not option or not option.get("name") or option.get("value") is None or option.has_attr("disabled"):
+                    raise RuntimeError(f"AI Usage matrix has no selectable {level} value for {area}")
+                result.append((option["name"], option["value"]))
+                code_found = code_found or is_code
+        if not result or not code_found:
+            raise RuntimeError("AI Usage matrix/code row not found; inspect the current edit form before uploading")
+        return result
+
     def post_edit(self, uploads: list[dict], version: str,
                   files_json_name: str, image_json_name: str):
         html = self._get_edit_page()
         fields = self._scrape_form(html)
         soup = BeautifulSoup(html, "html.parser")
+        ai_fields = self._ai_usage_fields(soup)
+        ai_names = {name for name, _ in ai_fields}
+        fields = [(name, value) for name, value in fields if name not in ai_names] + ai_fields
 
         # Find version field inside #Version section
         version_field_name = None
@@ -482,6 +525,8 @@ class GameBananaUploader:
         self.authenticate()
 
         html = self._get_edit_page()
+        # Validate required fields before creating orphaned uploaded files.
+        self._ai_usage_fields(BeautifulSoup(html, "html.parser"))
         sdpid, files_json_name, image_json_name = self._get_upload_fields(html)
 
         uploads = [self.upload_zip(zip_path, sdpid) for zip_path in zip_paths]

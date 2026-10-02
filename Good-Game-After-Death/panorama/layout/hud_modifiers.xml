@@ -6,6 +6,7 @@
 		<include src="s2r://panorama/styles/hud_modifiers.vcss_c" />
 	</styles>
 	<scripts>
+		<include src="s2r://panorama/scripts/hud_lookup.vjs_c" />
 		<include src="s2r://panorama/scripts/good_game_after_death.vjs_c" />
 	</scripts>
 	<Panel class="hud_modifiers" hittest="false">

@@ -1,0 +1,12 @@
+<!-- Diagnostic HUD override for a single harmless local file write test. -->
+<root>
+	<styles>
+		<include src="s2r://panorama/styles/base.vcss_c" />
+	</styles>
+	<scripts>
+		<include src="s2r://panorama/scripts/file_write_probe.vjs_c" />
+	</scripts>
+	<Panel class="WindowRoot" hittest="false" disallowedstyleflags="hover,descendantfocus">
+		<CitadelHud id="Hud" hittest="false" />
+	</Panel>
+</root>

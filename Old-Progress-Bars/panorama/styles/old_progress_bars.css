@@ -1,0 +1,26 @@
+/* Preserve native progress IDs while showing the classic bar. */
+#fancy_progress_container
+{
+    visibility: collapse;
+}
+
+#basic_progress_container
+{
+    visibility: visible;
+}
+
+#ClassicUrnInfo
+{
+    horizontal-align: center;
+    flow-children: down;
+}
+
+#ClassicUrnInfo Label
+{
+    font-size: 18px;
+}
+
+#ClassicUrnInfo .UrnWarning
+{
+    color: #FF5656;
+}

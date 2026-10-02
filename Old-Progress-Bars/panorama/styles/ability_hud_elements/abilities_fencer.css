@@ -7,22 +7,23 @@
 	{
 		transform: translateX( 1px );
 	}
-	
+
 	50%
 	{
 		transform: translateY( 1px );
 	}
-	
+
 	100%
 	{
 		transform: translateX( -1px );
 	}
-	
+
 }
 
 #fancy_progress_container
 {
 	visibility: visible;
+	ui-scale: 80%;
 }
 
 #basic_progress_container
@@ -33,6 +34,7 @@
 .ModifierProgressBar
 {
 	background-color: fencerColor;
+	visibility: collapse;
 }
 
 .BarAndNameContainer
@@ -45,14 +47,14 @@
 	visibility: collapse;
 }
 
-.ability_fencer_lunge.ability_element_progress
+.ability_fencer_lunge.ability_element_progress,.ability_fencer_throwblade.ability_element_progress
 {
 	transform: rotateZ(0deg);
 	ui-scale: 100%;
 	margin-left: 0px;
 }
 
-.ability_fencer_lunge .SplitLabelProgressBar .SplitLabelName Image
+.ability_fencer_lunge .SplitLabelProgressBar .SplitLabelName Image,.ability_fencer_throwblade .SplitLabelProgressBar .SplitLabelName Image
 {
 	animation-name: DefaultAnim;
 	animation-duration: 0.4s;
@@ -61,17 +63,17 @@
 	animation-frame-time: 300ms;
 }
 
-.ability_fencer_lunge .SplitLabelProgressBar .SplitLabelName Image:nth-child(odd)
+.ability_fencer_lunge .SplitLabelProgressBar .SplitLabelName Image:nth-child(odd),.ability_fencer_throwblade .SplitLabelProgressBar .SplitLabelName Image:nth-child(odd)
 {
 	animation-direction: alternate-reverse;
 }
 
-.ability_fencer_lunge .SplitLabelProgressBar .SplitLabelName Image:nth-child(even)
+.ability_fencer_lunge .SplitLabelProgressBar .SplitLabelName Image:nth-child(even),.ability_fencer_throwblade .SplitLabelProgressBar .SplitLabelName Image:nth-child(even)
 {
 	animation-direction: alternate;
 }
 
-.ability_fencer_lunge .SplitLabelProgressBar .SplitLabelProgress
+.ability_fencer_lunge .SplitLabelProgressBar .SplitLabelProgress,.ability_fencer_throwblade .SplitLabelProgressBar .SplitLabelProgress
 {
 	wash-color: fencerColor;
 }

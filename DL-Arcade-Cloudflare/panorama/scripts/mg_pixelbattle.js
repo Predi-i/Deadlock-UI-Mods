@@ -102,7 +102,7 @@
         } catch (e) {}
         if (!root || !root.FindChildTraverse) return "";
         try {
-            const partyContainer = root.FindChildTraverse("CitadelPartyContainer");
+            const partyContainer = $.ModHudLookup.find("CitadelPartyContainer");
             const party = partyContainer && partyContainer.FindChildTraverse("CitadelParty");
             const localPlayer = party && party.FindChildTraverse("LocalPlayer");
             const avatar = localPlayer && localPlayer.FindChildTraverse("AvatarImage");

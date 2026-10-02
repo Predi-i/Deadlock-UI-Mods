@@ -53,7 +53,7 @@
             return;
         }
 
-        var slot3 = root.FindChildTraverse("slot_signature_3");
+        var slot3 = $.ModHudLookup.find("slot_signature_3");
         if (!slot3) {
             ResetCombo();
             return;
@@ -110,7 +110,7 @@
         var root = GetUIRoot();
         if (!root) return;
 
-        var slot3 = root.FindChildTraverse("slot_signature_3");
+        var slot3 = $.ModHudLookup.find("slot_signature_3");
         if (!slot3) return;
 
         var tier1Pip = slot3.FindChildTraverse("AbilityUnlock1");

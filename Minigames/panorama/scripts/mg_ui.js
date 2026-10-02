@@ -165,14 +165,14 @@
         let root = topRoot();
         if (!root || !root.FindChildTraverse) return null;
         // SubOptions holds Settings/Quit; fall back to the Menu container.
-        return root.FindChildTraverse("SubOptions") || root.FindChildTraverse("Menu");
+        return $.ModHudLookup.find("SubOptions") || $.ModHudLookup.find("Menu");
     }
 
     // The native escape menu panel (id="EscapeMenu", type CitadelHudEscapeMenu). It
     // always exists in hud.xml; ".ShowEscapeMenu" is toggled on an ancestor to open it.
     function findEscapeMenu() {
         let root = topRoot();
-        return root && root.FindChildTraverse ? root.FindChildTraverse("EscapeMenu") : null;
+        return $.ModHudLookup.find("EscapeMenu");
     }
     function isEscapeOpen() {
         let p = findEscapeMenu();
@@ -188,7 +188,7 @@
     // modal is open, restore it when we're done.
     function setEscapeBackgroundActive(active) {
         let root = topRoot();
-        const bg = root && root.FindChildTraverse ? root.FindChildTraverse("EscapeBackground") : null;
+        const bg = $.ModHudLookup.find("EscapeBackground");
         if (bg) { try { bg.SetAttributeString("hittest", active ? "true" : "false"); } catch (e) {} }
     }
 

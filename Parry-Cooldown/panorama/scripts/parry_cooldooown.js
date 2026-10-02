@@ -30,7 +30,7 @@
 
     function HasRebuttal(root) {
         if (!State.cachedInventory || !State.cachedInventory.IsValid()) {
-            State.cachedInventory = root.FindChildTraverse("StatsAndModsContainer");
+            State.cachedInventory = $.ModHudLookup.find("StatsAndModsContainer");
         }
         if (!State.cachedInventory) return false;
         
@@ -71,7 +71,7 @@
 
     function IsCarryingUrn(root) {
         if (!State.cachedBuffModifiers || !State.cachedBuffModifiers.IsValid()) {
-            State.cachedBuffModifiers = root.FindChildTraverse("BuffModifiers");
+            State.cachedBuffModifiers = $.ModHudLookup.find("BuffModifiers");
         }
         if (!State.cachedBuffModifiers) return false;
         
@@ -90,7 +90,7 @@
 
             var gunData = State.cachedGunData;
             if (!gunData || !gunData.IsValid()) {
-                gunData = root.FindChildTraverse("gun_data");
+                gunData = $.ModHudLookup.find("gun_data");
                 State.cachedGunData = gunData || null;
                 if (gunData) {
                     State.cachedGunElement = gunData.GetParent();

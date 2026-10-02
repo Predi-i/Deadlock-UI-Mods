@@ -1,4 +1,4 @@
-name: TopBar Mod Updater
+name: Mod Updater
 
 on:
   repository_dispatch:
@@ -6,6 +6,10 @@ on:
   schedule:
     - cron: '39 2 * * *'
   workflow_dispatch:
+
+concurrency:
+  group: mod-updater
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -17,99 +21,87 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Download vanilla CSS and rebuild XML override
+      - name: Checkout GameTracking
+        uses: actions/checkout@v4
+        with:
+          repository: SteamTracking/GameTracking-Deadlock
+          path: upstream
+          fetch-depth: 0
+          filter: blob:none
+          sparse-checkout: game/citadel/pak01_dir/panorama
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Update native overrides
         shell: pwsh
         run: |
-          $stylesBaseURL = "https://raw.githubusercontent.com/SteamTracking/GameTracking-Deadlock/master/game/citadel/pak01_dir/panorama/styles"
-          $layoutBaseURL = "https://raw.githubusercontent.com/SteamTracking/GameTracking-Deadlock/master/game/citadel/pak01_dir/panorama/layout"
-          $modNames = @(
-            "Show-Nicknames-In-TopBar",
-            "Show-Nicknames-In-TopBar-No-Offsets"
-          )
-          foreach ($modName in $modNames) {
-              $baseCssPath = "$modName/panorama/styles/base/citadel_hud_top_bar.css"
-              New-Item -ItemType Directory -Force -Path "$modName/panorama/styles/base" | Out-Null
-              Invoke-WebRequest -Uri "$stylesBaseURL/citadel_hud_top_bar.css" -OutFile $baseCssPath
-          }
+          python tools/update_mods.py --game-root upstream
+          if ($LASTEXITCODE -ne 0) { throw "Native override update failed" }
+          python tools/sync_hud_lookup.py
+          if ($LASTEXITCODE -ne 0) { throw "HUD helper sync failed" }
 
-          $xml = (Invoke-WebRequest -Uri "$layoutBaseURL/citadel_hud_top_bar_player.xml").Content
-
-          if ($xml.Contains('AlwaysPlayerName')) {
-              Write-Host "AlwaysPlayerName label already present in generated XML."
-          } else {
-              $anchor = '<Panel id="PlayerNameNWContainer" onmouseover="CitadelTopDownScoreboardPlayerHovered();">'
-              $anchorIndex = $xml.IndexOf($anchor)
-
-              if ($anchorIndex -lt 0) {
-                  throw "Could not find PlayerNameNWContainer anchor while rebuilding top bar XML override."
-              }
-
-              $lineStart = $xml.LastIndexOf("`n", $anchorIndex)
-              if ($lineStart -lt 0) {
-                  $lineStart = 0
-              } else {
-                  $lineStart += 1
-              }
-
-              $linePrefix = $xml.Substring($lineStart, $anchorIndex - $lineStart)
-              $indent = ($linePrefix -replace '[^\s].*$', '')
-              $labelLine = $indent + '<Label class="AlwaysPlayerName" text="{s:player_name}" />' + "`r`n`r`n"
-              $xml = $xml.Insert($anchorIndex, $labelLine)
-          }
-          foreach ($modName in $modNames) {
-              $overrideXmlPath = "$modName/panorama/layout/citadel_hud_top_bar_player.xml"
-              New-Item -ItemType Directory -Force -Path "$modName/panorama/layout" | Out-Null
-              [System.IO.File]::WriteAllText((Resolve-Path ".").Path + "\" + $overrideXmlPath, $xml, (New-Object System.Text.UTF8Encoding $false))
-          }
-
-      - name: Commit changes
-        id: git_check
-        shell: bash
+      - name: Validate source updates
+        shell: pwsh
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Show-Nicknames-In-TopBar/panorama/styles/base/citadel_hud_top_bar.css
-          git add Show-Nicknames-In-TopBar/panorama/layout/citadel_hud_top_bar_player.xml
-          git add Show-Nicknames-In-TopBar-No-Offsets/panorama/styles/base/citadel_hud_top_bar.css
-          git add Show-Nicknames-In-TopBar-No-Offsets/panorama/layout/citadel_hud_top_bar_player.xml
+          pip install requests beautifulsoup4
+          if ($LASTEXITCODE -ne 0) { throw "Test dependency installation failed" }
+          python -m unittest discover -s tools/tests -v
+          if ($LASTEXITCODE -ne 0) { throw "Updater regression tests failed" }
+          foreach ($Flag in @("", "--delayed-layout", "--old-layout", "--modern-layout", "--wrapped-effects")) {
+              if ($Flag) { node Djinn-Mark-In-TopBar/tests/djinn_mark.test.cjs $Flag }
+              else { node Djinn-Mark-In-TopBar/tests/djinn_mark.test.cjs }
+              if ($LASTEXITCODE -ne 0) { throw "Djinn regression tests failed" }
+          }
 
-          if git diff --staged --quiet; then
-            echo "changed=false" >> $GITHUB_OUTPUT
-          else
-            echo "changed=true" >> $GITHUB_OUTPUT
-            git commit -m "chore: auto-update topbar base panorama files"
-            git pull --rebase origin main
-            git push
-          fi
+      - name: Commit source updates and select builds
+        id: git_check
+        shell: pwsh
+        run: |
+          git config user.name "Predi-i"
+          git config user.email "Predi-i@users.noreply.github.com"
+          git add -- tools/upstream.json
+          Get-ChildItem -Directory | Where-Object { Test-Path "$($_.FullName)/panorama" } | ForEach-Object { git add -- $_.Name }
+          git diff --staged --quiet
+          if ($LASTEXITCODE -eq 1) {
+              git commit -m "chore: update native panorama overrides"
+              if ($LASTEXITCODE -ne 0) { throw "Source commit failed" }
+              git push
+              if ($LASTEXITCODE -ne 0) { throw "Source push failed" }
+          } elseif ($LASTEXITCODE -ne 0) { throw "Git diff failed" }
+          python tools/select_mod_builds.py --output builds/selection.json --all="${{ github.event_name == 'workflow_dispatch' }}"
+          if ($LASTEXITCODE -ne 0) { throw "Build selection failed" }
+          $Selection = Get-Content builds/selection.json -Raw | ConvertFrom-Json
+          "changed=$($Selection.mods.Count -gt 0)".ToLowerInvariant() >> $env:GITHUB_OUTPUT
+          "nicknames=$($Selection.nicknames)".ToLowerInvariant() >> $env:GITHUB_OUTPUT
 
       # Cache the 2.4 GB CSDK zip so we only pull it from Drive once.
       # Bump the key (csdk-zip-v2, ...) whenever the CSDK contents change.
       - name: Cache CSDK
         id: cache-csdk
-        if: steps.git_check.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
+        if: steps.git_check.outputs.changed == 'true'
         uses: actions/cache@v4
         with:
           path: csdk.zip
           key: csdk-zip-v1
 
       - name: Download CSDK
-        if: (steps.git_check.outputs.changed == 'true' || github.event_name == 'workflow_dispatch') && steps.cache-csdk.outputs.cache-hit != 'true'
+        if: (steps.git_check.outputs.changed == 'true') && steps.cache-csdk.outputs.cache-hit != 'true'
         shell: bash
         run: curl -L "${{ secrets.CSDK_DRIVE_URL }}" -o csdk.zip
 
       - name: Extract CSDK
-        if: steps.git_check.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
+        if: steps.git_check.outputs.changed == 'true'
         shell: bash
         run: 7z x csdk.zip -oC:/ -y
 
       - name: Compile and Pack VPK
-        if: steps.git_check.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
+        if: steps.git_check.outputs.changed == 'true'
         shell: pwsh
         run: |
-          $ModNames = @(
-            "Show-Nicknames-In-TopBar",
-            "Show-Nicknames-In-TopBar-No-Offsets"
-          )
+          $ModNames = (Get-Content builds/selection.json -Raw | ConvertFrom-Json).mods
           $CsdkRoot = "C:\Reduced_CSDK_12"
 
           if (-not (Test-Path "$CsdkRoot\game\bin_cs2\win64\resourcecompiler.exe")) {
@@ -127,24 +119,37 @@ jobs:
               $GameDir = "$CsdkRoot\game\citadel_addons\build_$ModName"
 
               New-Item -ItemType Directory -Force -Path $ContentDir | Out-Null
-              Copy-Item -Path "$ModName\*" -Destination $ContentDir -Recurse -Force
+              Copy-Item -Path "$ModName\panorama" -Destination $ContentDir -Recurse -Force
+              python tools/prepare_ci_assets.py --content $ContentDir --game $GameDir
+              if ($LASTEXITCODE -ne 0) { throw "Asset preparation failed: $ModName" }
 
-              $Files = Get-ChildItem -Path $ContentDir -Recurse -File | Where-Object { $_.Extension -in @('.css', '.xml', '.js') }
+              $Outputs = @{
+                  '.css' = '.vcss_c'; '.xml' = '.vxml_c'; '.js' = '.vjs_c'
+                  '.svg' = '.vsvg_c'; '.vsvg' = '.vsvg_c'; '.vtex' = '.vtex_c'
+                  '.vsndevts' = '.vsndevts_c'; '.wav' = '.vsnd_c'
+                  '.vpcf' = '.vpcf_c'; '.vmdl' = '.vmdl_c'; '.vmat' = '.vmat_c'
+              }
+              $Files = Get-ChildItem -Path $ContentDir -Recurse -File | Where-Object { $_.Extension -in @('.css', '.xml', '.js', '.svg', '.vsvg', '.vtex', '.vsndevts', '.wav', '.vpcf', '.vmdl', '.vmat') }
               foreach ($f in $Files) {
-                  & $Compiler -i $f.FullName -nop4 2>&1 | Out-Null
+                  & $Compiler -i $f.FullName -nop4
+                  if ($LASTEXITCODE -ne 0) { throw "Compilation failed: $($f.FullName)" }
+                  $Relative = $f.FullName.Substring($ContentDir.Length + 1)
+                  $Compiled = Join-Path $GameDir ([System.IO.Path]::ChangeExtension($Relative, $Outputs[$f.Extension]))
+                  if (-not (Test-Path -LiteralPath $Compiled)) { throw "Compiled output missing: $Compiled" }
               }
 
               $OutVpk = "$PWD\builds\$ModName.vpk"
               $PackerDir = Split-Path $Packer
-              $Proc = Start-Process -FilePath $Packer -ArgumentList "`"$GameDir`"", "`"$OutVpk`"" -WorkingDirectory $PackerDir -PassThru
+              $Proc = Start-Process -FilePath $Packer -ArgumentList "`"$GameDir`"", "`"$OutVpk`"" -WorkingDirectory $PackerDir -WindowStyle Hidden -PassThru
 
               try {
-                  $Proc | Wait-Process -Timeout 30 -ErrorAction Stop
+                  $Proc | Wait-Process -Timeout 120 -ErrorAction Stop
               } catch {
                   $Proc | Stop-Process -Force -ErrorAction SilentlyContinue
+                  throw "VPK packing timed out: $ModName"
               }
 
-              if (-not (Test-Path $OutVpk)) {
+              if ($Proc.ExitCode -ne 0 -or -not (Test-Path $OutVpk)) {
                   Write-Error "VPK file was not found at $OutVpk"
                   exit 1
               }
@@ -152,13 +157,10 @@ jobs:
           exit 0
 
       - name: Zip VPK for upload
-        if: steps.git_check.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
+        if: steps.git_check.outputs.changed == 'true'
         shell: pwsh
         run: |
-          $ModNames = @(
-            "Show-Nicknames-In-TopBar",
-            "Show-Nicknames-In-TopBar-No-Offsets"
-          )
+          $ModNames = (Get-Content builds/selection.json -Raw | ConvertFrom-Json).mods
           $Version = (Get-Date -Format "yyyy.MM.dd")
           foreach ($ModName in $ModNames) {
               $ZipPath = "builds\$ModName.zip"
@@ -170,30 +172,38 @@ jobs:
           echo "MOD_ZIP_NO_OFFSETS=builds\Show-Nicknames-In-TopBar-No-Offsets.zip" >> $env:GITHUB_ENV
 
       - name: Create GitHub Release
-        if: steps.git_check.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
+        if: steps.git_check.outputs.changed == 'true'
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            builds/Show-Nicknames-In-TopBar.zip
-            builds/Show-Nicknames-In-TopBar-No-Offsets.zip
+          files: builds/*.zip
+          fail_on_unmatched_files: true
           tag_name: "v${{ github.run_number }}"
-          name: "Show Nicknames In Top Bar v${{ env.MOD_VERSION }}"
-
-      - name: Set up Python
-        if: steps.git_check.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
+          name: "Deadlock UI Mods ${{ env.MOD_VERSION }}"
+          target_commitish: main
 
       - name: Install uploader dependencies
-        if: steps.git_check.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
+        if: steps.git_check.outputs.nicknames == 'true'
         shell: bash
         run: pip install requests beautifulsoup4
 
       - name: Upload to GameBanana
-        if: steps.git_check.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
+        if: steps.git_check.outputs.nicknames == 'true'
         shell: bash
         env:
           GB_USERNAME: ${{ secrets.GB_USERNAME }}
           GB_PASSWORD: ${{ secrets.GB_PASSWORD }}
         run: python tools/gb_upload.py "${{ env.MOD_ZIP_WITH_OFFSETS }}" "${{ env.MOD_ZIP_NO_OFFSETS }}" "${{ env.MOD_VERSION }}"
+
+      - name: Record published source hashes
+        if: steps.git_check.outputs.changed == 'true'
+        shell: pwsh
+        run: |
+          Copy-Item -LiteralPath builds/selection.json -Destination .github/mod-build-state.json
+          git add .github/mod-build-state.json
+          git diff --staged --quiet
+          if ($LASTEXITCODE -eq 1) {
+              git commit -m "chore: record published mod source hashes"
+              if ($LASTEXITCODE -ne 0) { throw "Build state commit failed" }
+              git push
+              if ($LASTEXITCODE -ne 0) { throw "Build state push failed" }
+          } elseif ($LASTEXITCODE -ne 0) { throw "Git diff failed" }

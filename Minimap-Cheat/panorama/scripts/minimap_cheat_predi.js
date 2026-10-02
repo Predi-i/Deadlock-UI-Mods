@@ -37,7 +37,7 @@
             return State.minimapPanel;
         }
         if (root) {
-            State.minimapPanel = root.FindChildTraverse('hud_minimap') || root.FindChildTraverse('minimap_container');
+            State.minimapPanel = $.ModHudLookup.find('hud_minimap') || $.ModHudLookup.find('minimap_container');
         }
         return State.minimapPanel;
     }
