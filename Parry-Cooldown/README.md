@@ -2,27 +2,33 @@
 
 Reads the native `ParryCooldownBorder.style.clip` radial sweep under
 `gun_data/parry_unavailable`. Remaining seconds follow the native angle rather
-than a timer started when the icon first becomes visible. The existing cooldown
-values seed the first sample; subsequent decreasing samples calibrate duration
-from native angular speed measured from the cycle's first sample. Unchanged clip
-polls do not reset that time baseline. Invalid clips and urn carrying hide the label.
+than a timer started when the icon first becomes visible. The calculation is
+`remaining sweep / 360 * cooldown duration`, with no wall-clock calibration or
+division by small angle changes. Native `scripts/abilities.vdata` defines 4.5s
+for `citadel_ability_melee_parry.AbilityCooldown`; Rebuttal subtracts 1.75s, giving
+2.75s. Inventory is checked once per observed cooldown, including ring resets.
+Invalid clips and urn carrying hide the label. Other future duration modifiers
+require updating this mapping; this implementation does not infer their duration.
 
-The label is a child of `parry_unavailable`, centered below its native 40px icon,
-so it inherits the icon position instead of guessing a percentage of `gun_data`.
-The container is extended from 40px to 66px to fit the entire 24px label at y=42px.
-Its centered y offset changes from 55px to 68px, keeping the native icon's top
-unchanged; the image and radial border retain their 40px height. This does not
-depend on drawing children outside their parent's bounds. `gun_data` is resolved
+The label is a sibling of `parry_unavailable` under `gun_data`, outside the icon's
+40px clipping bounds, wash-color and brightness animation. Its original color
+is `#e75b5b`. The native icon is 40px high, centered vertically at y=55px, x=60%;
+the 24px label uses the same x and width, with centered y=89px for a 2px gap below
+the icon. Native icon dimensions are unchanged. `gun_data` is resolved
 from this mod's own layout first. Missing
 native panels and an unreadable active radial clip produce a diagnostic once per
 failure state rather than silently hiding the timer.
 Startup is deferred by one second, as in the original implementation, so the
 included script does not exit while its layout is still being constructed. It
-always logs `Loaded angle timer v4` when the include executes, then reports native
+always logs `Loaded angle timer v5` when the include executes, then reports native
 cooldown activation, zero sweep, urn suppression and runtime errors. An empty
 clip getter falls back to the native inline style attribute. These diagnostics
 require a compiled/repacked version of this source; offline tests cannot verify
 the native getter or rendered position.
+The existing 0.03s active and 0.1s inactive polling intervals are unchanged.
+Native panel references are cached; active ticks read the ring and the scoped urn
+modifier subtree, without searching the full HUD or repeatedly reading inventory.
+Text and visibility are assigned only when their displayed values change.
 Reload cancels the old scheduled tick and deletes its label. A deleted layout
 stops scheduling. This is source-only until compiled/repacked by the maintainer.
 

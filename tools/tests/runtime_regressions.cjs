@@ -54,6 +54,9 @@ function runtime(context, extra = {}) {
     const border = holder.add(new Panel('ParryCooldownBorder'));
     const inventory = new Panel('StatsAndModsContainer');
     const buffs = new Panel('BuffModifiers');
+    let inventoryReads = 0;
+    const findItems = inventory.FindChildrenWithClassTraverse.bind(inventory);
+    inventory.FindChildrenWithClassTraverse = name => { inventoryReads++; return findItems(name); };
     const r = runtime(context, {ModHudLookup: {find: id => ({gun_data: gun, StatsAndModsContainer: inventory, BuffModifiers: buffs})[id]}});
     let now = 0; r.sandbox.Date = {now: () => now};
     context.AddClass('parry_on_cooldown'); border.style.clip = 'radial(50% 50%, 0deg, -180deg)';
@@ -64,21 +67,58 @@ function runtime(context, extra = {}) {
     assert.equal(r.jobs.size, 1);
     assert.equal(holder.FindChildTraverse('CustomParryTimerText'), null);
     context.alive = true; r.advance();
-    const label = holder.FindChildTraverse('CustomParryTimerText');
-    assert.equal(label.parent, holder); assert.equal(label.style.textAlign, 'center');
-    assert.equal(holder.style.height, '66px');
-    assert.equal(holder.style.y, '68px');
-    assert.equal(image.style.height, '40px'); assert.equal(border.style.height, '40px');
-    assert.equal(-66 / 2 + 68, -40 / 2 + 55, 'native icon top must not move');
+    const label = gun.FindChildTraverse('CustomParryTimerText');
+    assert.equal(label.parent, gun, 'label must be outside the animated/wash-colored icon container');
+    assert.equal(label.style.textAlign, 'center');
+    assert.equal(holder.style.height, undefined); assert.equal(holder.style.y, undefined);
+    assert.equal(image.style.height, undefined); assert.equal(border.style.height, undefined);
+    assert.equal(label.style.color, '#e75b5b', 'preserve the original label color');
+    assert.equal(label.style.x, '60%'); assert.equal(label.style.width, '40px');
+    assert.equal(-24 / 2 + parseFloat(label.style.y), -40 / 2 + 55 + 40 + 2,
+        'label must begin 2px below the native icon');
     assert.equal(label.style.height, '24px');
-    assert.ok(parseFloat(label.style.y) + parseFloat(label.style.height) <= parseFloat(holder.style.height),
-        'the whole label must fit inside its parent without overflow');
     assert.equal(label.text, '2.3');
     // Several JS ticks see the same native clip. They must not shorten the
     // measured elapsed time when the next native angle finally arrives.
     now = 900; r.advance(); now = 970; r.advance();
     now = 1000; border.style.clip = '  radial(50% 50%, 0deg, -100deg) '; r.advance();
     assert.equal(label.text, '1.3');
+    assert.equal(inventoryReads, 1, 'inventory is read once per cooldown, not per tick');
+    border.style.clip = 'radial(50% 50%, 0deg, -359.999deg)'; r.advance();
+    assert.equal(label.text, '4.5');
+    let visibilityWrites = 0, textWrites = 0;
+    let visibility = label.style.visibility, displayed = label.text;
+    Object.defineProperty(label.style, 'visibility', {
+        get: () => visibility, set: value => { visibility = value; visibilityWrites++; }, configurable: true
+    });
+    Object.defineProperty(label, 'text', {
+        get: () => displayed, set: value => { displayed = value; textWrites++; }, configurable: true
+    });
+    // Reproduce delayed first clip changes and wall-clock jumps. A tiny
+    // movement after a long stall must never generate a huge initial number.
+    for (let i = 0; i < 60; i++) {
+        now += 10000;
+        border.style.clip = `radial(50% 50%, 0deg, -${359.998 - i * 0.001}deg)`;
+        r.advance(); assert.ok(Number(label.text) <= 4.5); assert.equal(label.text, '4.5');
+    }
+    assert.equal(inventoryReads, 2, 'sixty ticks must not rescan inventory');
+    assert.equal(visibilityWrites, 0, 'unchanged visibility must not be written every tick');
+    assert.equal(textWrites, 0, 'unchanged displayed text must not be written every tick');
+    context.RemoveClass('parry_on_cooldown'); r.advance();
+    const item = inventory.add(new Panel('item', ['isTier1']));
+    item.add(new Panel('rebuttal', ['parryRebuttal']));
+    context.AddClass('parry_on_cooldown');
+    border.style.clip = 'radial(50% 50%, 0deg, -360deg)'; r.advance();
+    assert.equal(label.text, '2.8', 'Rebuttal full ring is 2.75s');
+    border.style.clip = 'radial(50% 50%, 0deg, -180deg)'; r.advance();
+    assert.equal(label.text, '1.4', 'Rebuttal half ring is half its own duration');
+    border.style.clip = 'radial(50% 50%, 0deg, -450deg)'; r.advance();
+    assert.ok(Number(label.text) <= 2.8, 'out-of-range native clip is clamped to a full ring');
+    context.RemoveClass('parry_on_cooldown'); r.advance();
+    item.RemoveClass('isTier1'); item.AddClass('isTier3');
+    context.AddClass('parry_on_cooldown');
+    border.style.clip = 'radial(50% 50%, 0deg, -360deg)'; r.advance();
+    assert.equal(label.text, '4.5', 'Counterspell must not use the Rebuttal reduction');
     border.style.clip = ''; r.advance(); assert.equal(label.style.visibility, 'collapse');
     border.GetAttributeString = () => 'clip: radial(50% 50%, 0deg, -100deg);';
     r.advance(); assert.equal(label.style.visibility, 'visible', 'native style attribute fallback');

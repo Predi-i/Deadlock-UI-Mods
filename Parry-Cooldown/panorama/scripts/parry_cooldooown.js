@@ -1,5 +1,5 @@
 (function() {
-    $.Msg('[ParryTimer] Loaded angle timer v4; waiting for layout');
+    $.Msg('[ParryTimer] Loaded angle timer v5; waiting for layout');
     const BASE_PARRY_COOLDOWN = 4.5;
     const REBUTTAL_PARRY_COOLDOWN = 2.75;
 
@@ -80,14 +80,19 @@
     let job = null;
     let border = null;
     let holder = null;
-    let boundsConfigured = false;
     let lastAngle = null;
-    let sampleAngle = null;
-    let sampleTime = 0;
-    let secondsPerDegree = null;
+    let cooldownDuration = null;
     let lastFailure = '';
     let lastException = '';
     let wasActive = false;
+    let lastVisibility = null;
+    const show = (label, visible) => {
+        const next = visible ? 'visible' : 'collapse';
+        if (next !== lastVisibility) {
+            label.style.visibility = next;
+            lastVisibility = next;
+        }
+    };
     const diagnose = message => {
         if (message !== lastFailure) $.Msg('[ParryTimer] ' + message);
         lastFailure = message;
@@ -125,42 +130,30 @@
                 gun = child(context, 'gun_data') || $.ModHudLookup.find('gun_data');
                 State.cachedGunData = gun;
             }
-            const nextHolder = child(gun, 'parry_unavailable');
-            if (nextHolder !== holder || !border || !border.IsValid()) {
-                holder = nextHolder;
+            if (!holder || !holder.IsValid() || !border || !border.IsValid()) {
+                holder = child(gun, 'parry_unavailable');
                 border = child(holder, 'ParryCooldownBorder');
                 lastAngle = null;
-                secondsPerDegree = null;
+                cooldownDuration = null;
                 State.customParryLabel = null;
-                boundsConfigured = false;
             }
             if (!holder || !border) {
                 diagnose('Waiting for gun_data/parry_unavailable/ParryCooldownBorder');
                 return;
             }
-            // Native: 40px high, vertically centered, y=55px. Reserve 26px
-            // below it for the label. Raising y by half the added height keeps
-            // the icon's top at precisely the same screen position:
-            // -40/2 + 55 == -66/2 + 68. No child extends outside this container.
-            phase = 'reserve timer bounds';
-            if (!boundsConfigured) {
-                holder.style.height = '66px';
-                holder.style.y = '68px';
-                const image = child(holder, 'ParryImage');
-                if (image) image.style.height = '40px';
-                border.style.height = '40px';
-                boundsConfigured = true;
-            }
             phase = 'create/configure timer label';
             let label = State.customParryLabel;
             if (!label || !label.IsValid()) {
-                label = child(holder, 'CustomParryTimerText') || $.CreatePanel('Label', holder, 'CustomParryTimerText');
-                // The label follows the native icon's own x/y, rather than a
-                // percentage of the much wider gun_data panel.
-                label.style.horizontalAlign = 'center';
-                label.style.verticalAlign = 'top';
-                label.style.y = '42px';
-                label.style.width = '100%';
+                label = child(gun, 'CustomParryTimerText') || $.CreatePanel('Label', gun, 'CustomParryTimerText');
+                // Sibling of the icon: do not inherit its wash-color/brightness
+                // animation or clip against its 40px bounds. Native icon:
+                // x=60%, center aligned, height=40px, y=55px. For a 24px label
+                // with a 2px gap: 55 + 40/2 + 24/2 + 2 = 89.
+                label.style.horizontalAlign = 'left';
+                label.style.verticalAlign = 'center';
+                label.style.x = '60%';
+                label.style.y = '89px';
+                label.style.width = '40px';
                 label.style.height = '24px';
                 label.style.textAlign = 'center';
                 label.style.fontSize = '18px';
@@ -169,6 +162,7 @@
                 label.style.textShadow = '0px 0px 4px #000000, 0px 1px 3px #000000';
                 label.style.zIndex = '100';
                 label.style.visibility = 'collapse';
+                lastVisibility = 'collapse';
                 State.customParryLabel = label;
             }
             const gunElement = gun.GetParent();
@@ -178,33 +172,28 @@
             wasActive = !!active;
             const angle = active ? readAngle(border) : null;
             if (active && angle === null) diagnose('Native radial clip is unreadable: ' + String(border.style.clip).slice(0, 160));
-            const now = Date.now();
             phase = 'check urn modifier';
             const carryingUrn = active && angle !== null && angle > 0 && IsCarryingUrn(GetUIRoot());
             if (carryingUrn) diagnose('Timer hidden: holding urn');
             if (active && angle === 0) diagnose('Timer hidden: native radial sweep is zero');
             if (!active || angle === null || angle <= 0 || carryingUrn) {
-                label.style.visibility = 'collapse';
+                show(label, false);
                 lastAngle = null;
-                secondsPerDegree = null;
+                cooldownDuration = null;
                 return;
             }
             delay = 0.03;
             phase = 'calculate remaining time';
             if (lastAngle === null || angle > lastAngle + 2) {
-                secondsPerDegree = (HasRebuttal(GetUIRoot()) ? REBUTTAL_PARRY_COOLDOWN : BASE_PARRY_COOLDOWN) / 360;
-                sampleAngle = angle;
-                sampleTime = now;
-            } else if (lastAngle - angle > 0.01 && now > sampleTime) {
-                // Measure from the cycle's first sample. Native clip updates
-                // can be slower than polling; unchanged ticks must not reset
-                // the time baseline and make the remaining time approach 0.1.
-                secondsPerDegree = (now - sampleTime) / 1000 / (sampleAngle - angle);
+                // Native abilities.vdata: 4.5s base, Rebuttal subtracts 1.75s.
+                // Read inventory once per cycle; never estimate angular speed
+                // from wall-clock timing or divide by a tiny angle difference.
+                cooldownDuration = HasRebuttal(GetUIRoot()) ? REBUTTAL_PARRY_COOLDOWN : BASE_PARRY_COOLDOWN;
             }
             lastAngle = angle;
-            const text = Math.max(0.1, angle * secondsPerDegree).toFixed(1);
+            const text = Math.max(0.1, angle / 360 * cooldownDuration).toFixed(1);
             if (label.text !== text) label.text = text;
-            label.style.visibility = 'visible';
+            show(label, true);
             lastFailure = '';
             lastException = '';
         } catch (error) {
