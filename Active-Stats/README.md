@@ -17,6 +17,13 @@ polled. Existing polling rates and presentation settings remain unchanged.
 The scoreboard class and event both suppress the readout. Reload retires the
 previous tick and listener; destroyed source panels and labels are resolved again.
 
+The readout also follows native gameplay HUD visibility: joining/leaving the
+team, Escape/takeover screens, post-game state and the shop's gameplay-HUD gate.
+While hidden, the existing idle tick checks only cached HUD state; it skips
+modifier lookups, value reads and row updates. Returning to the HUD refreshes the
+values and restores visibility. A hidden startup does not create the overlay.
+This reduces script work; it is not a measured FPS improvement.
+
 Run the offline capture regression from the repository root:
 
 ```text

@@ -129,6 +129,9 @@
     const State = {
         overlay: null,
         gameplayHud: null,
+        nativeGameplayHud: null,
+        hudAncestors: null,
+        isHudSuppressed: false,
         sourcePanel: null,
         rowPanels: new Map(),
         rowValues: new Map(),
@@ -260,7 +263,7 @@
         State.scoreboardEventVisible = isVisible;
         State.isScoreboardSuppressed = isVisible;
         if (isValid(State.overlay)) {
-            State.overlay.style.visibility = isVisible ? 'collapse' : (State.lastVisibleCount > 0 ? 'visible' : 'collapse');
+            State.overlay.style.visibility = !isVisible && isGameplayHudShown() && State.lastVisibleCount > 0 ? 'visible' : 'collapse';
         }
         if (!isVisible) {
             State.lastContentSig = '';
@@ -278,6 +281,34 @@
     }
 
     // ---------------------------------------------------------------- DOM & overlay creation
+    function isGameplayHudShown() {
+        if (!State.hudAncestors || !isValid(State.hudAncestors[0])) {
+            const hud = ancestor('Hud') || findChild(getRoot(), 'Hud');
+            if (!isValid(hud)) return false;
+            State.hudAncestors = [];
+            let panel = hud;
+            for (let i = 0; isValid(panel) && i < 50; i++) {
+                State.hudAncestors.push(panel);
+                panel = panel.GetParent ? panel.GetParent() : null;
+            }
+        }
+        // These are the game's own hud.css gates. No stat containers or
+        // labels need to be touched while the gameplay HUD is hidden.
+        if (!State.hudAncestors.some(panel => hasClass(panel, 'joined_team'))) return false;
+        for (const panel of State.hudAncestors) {
+            if (!isValid(panel) || panel.visible === false || hasClass(panel, 'HudHiddenPanel') ||
+                hasClass(panel, 'ShowEscapeMenu') || hasClass(panel, 'HudTakeoverEnabled') ||
+                hasClass(panel, 'inPostGame') || hasClass(panel, 'GameStatePostGame')) return false;
+        }
+        const core = resolveGameplayHud();
+        if (!isValid(core) || core.visible === false || hasClass(core, 'HudHiddenPanel')) return false;
+        if (!isValid(State.nativeGameplayHud)) State.nativeGameplayHud = findChild(core, IDS.gameplayHud);
+        const gameplay = State.nativeGameplayHud;
+        return isValid(gameplay) && gameplay.visible !== false && !hasClass(gameplay, 'gShopOpen') &&
+            !hasClass(gameplay, 'HudHiddenPanel') && gameplay.style.visibility !== 'collapse' &&
+            gameplay.style.opacity !== '0' && gameplay.style.opacity !== '0.0';
+    }
+
     function resolveGameplayHud() {
         if (isValid(State.gameplayHud)) return State.gameplayHud;
         const source = resolveSourcePanel();
@@ -419,6 +450,8 @@
         }
         State.overlay = null;
         State.gameplayHud = null;
+        State.nativeGameplayHud = null;
+        State.hudAncestors = null;
         State.sourcePanel = null;
         State.rowPanels.clear();
         State.rowIcons.clear();
@@ -476,6 +509,19 @@
         }
 
         try {
+            if (!isGameplayHudShown()) {
+                if (isValid(State.overlay) && !State.isHudSuppressed) State.overlay.style.visibility = 'collapse';
+                State.isHudSuppressed = true;
+                // Reuse the existing idle interval: only check HUD state, never
+                // resolve/read modifiers or repaint rows while hidden.
+                State.scheduledTick = $.Schedule(CONFIG.IDLE_POLL_RATE, tick);
+                return;
+            }
+            if (State.isHudSuppressed) {
+                State.isHudSuppressed = false;
+                State.lastContentSig = '';
+                State.lastVisibleCount = -1;
+            }
             const root = getRoot();
             if (!isValid(root)) {
                 State.scheduledTick = $.Schedule(CONFIG.IDLE_POLL_RATE, tick);

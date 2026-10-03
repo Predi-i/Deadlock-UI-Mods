@@ -79,7 +79,7 @@ reset();
 for (let tick = 0; tick < 60; tick++) for (const id of ids) tree.FindChildTraverse(id);
 const unscoped = metrics();
 
-function activeStats(sourceCode) {
+function activeStats(sourceCode, initialHidden = false) {
     const root = new Panel(capture.domTree);
     const source = root.FindChildTraverse('hudActivePlayerStats');
     assert.ok(source);
@@ -104,6 +104,7 @@ function activeStats(sourceCode) {
         Localize: token => token, Msg: () => {},
     };
     const sandbox = vm.createContext({$, console});
+    if (initialHidden) root.FindChildTraverse('Hud').classes.delete('joined_team');
     reset();
     vm.runInContext(sourceCode, sandbox);
     const advance = count => {
@@ -165,11 +166,41 @@ current.listeners.get('CitadelScoreboardToggle')({visible: true}); current.advan
 assert.equal(overlay.style.visibility, 'collapse');
 current.listeners.get('CitadelScoreboardToggle')({visible: false});
 assert.equal(overlay.style.visibility, 'visible');
+// Hiding the native HUD must stop modifier reads as well as painting.
+let valueReads = 0;
+let fireValue = '-10';
+Object.defineProperty(current.core.children[0], 'text', {
+    get() { valueReads++; return fireValue; }, set(value) { fireValue = value; }, configurable: true,
+});
+currentHud.classes.delete('joined_team');
+reset(); current.advance(5);
+assert.equal(overlay.style.visibility, 'collapse');
+assert.equal(valueReads, 0, 'hidden HUD must not read native stat values');
+assert.equal(metrics().childReads, 0, 'hidden HUD must not walk modifier children');
+current.listeners.get('CitadelScoreboardToggle')({visible: false});
+assert.equal(overlay.style.visibility, 'collapse', 'scoreboard close must not reveal a hidden HUD');
+fireValue = '-12';
+currentHud.classes.add('joined_team'); current.advance(1);
+assert.equal(overlay.style.visibility, 'visible');
+assert.equal(current.value.text, '-12%', 'HUD return must refresh hidden changes');
+const gameplay = current.root.FindChildTraverse('gameplay_hud');
+for (const flag of ['ShowEscapeMenu', 'HudTakeoverEnabled', 'GameStatePostGame', 'inPostGame']) {
+    currentHud.classes.add(flag); current.advance(1);
+    assert.equal(overlay.style.visibility, 'collapse', flag);
+    currentHud.classes.delete(flag); current.advance(1);
+    assert.equal(overlay.style.visibility, 'visible', flag + ' recovery');
+}
+gameplay.classes.add('gShopOpen'); current.advance(1);
+assert.equal(overlay.style.visibility, 'collapse');
+gameplay.classes.delete('gShopOpen'); current.advance(1);
+assert.equal(overlay.style.visibility, 'visible');
 vm.runInContext(currentCode, current.sandbox);
 assert.equal(current.listeners.size, 1, 'reload must retire the old event handler');
 assert.equal(current.jobs.size, 1, 'reload must retire the old tick');
 current.advance(1);
-assert.equal(current.root.FindChildTraverse('ActiveStatsRow_fireRate_val').text, '-10%');
+assert.equal(current.root.FindChildTraverse('ActiveStatsRow_fireRate_val').text, '-12%');
+const hiddenStart = activeStats(currentCode, true);
+assert.equal(hiddenStart.root.FindChildTraverse('ActiveStatsCrosshairOverlay'), null, 'hidden startup must not create overlay');
 console.log(JSON.stringify({capture: capture.timestampUtc, panels: capture.summary.totalPanels,
     scopedHud: scoped, equivalentUnscoped: unscoped,
     activeStatsBefore: oldStats ? {...oldStats.measured, displayedFireRate: oldStats.shown} : null,
