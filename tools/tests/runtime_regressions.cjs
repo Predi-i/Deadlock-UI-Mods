@@ -59,8 +59,10 @@ function runtime(context, extra = {}) {
     r.run('Parry-Cooldown/panorama/scripts/parry_cooldooown.js');
     const label = holder.FindChildTraverse('CustomParryTimerText');
     assert.equal(label.parent, holder); assert.equal(label.style.textAlign, 'center');
+    assert.equal(holder.style.overflow, 'noclip', 'below-icon text must escape the 40px parent bounds');
+    assert.equal(label.style.height, '24px');
     assert.equal(label.text, '2.3');
-    now = 1000; border.style.clip = 'radial(50% 50%, 0deg, -100deg)'; r.advance();
+    now = 1000; border.style.clip = '  radial(50% 50%, 0deg, -100deg) '; r.advance();
     assert.equal(label.text, '1.3');
     border.style.clip = ''; r.advance(); assert.equal(label.style.visibility, 'collapse');
     r.run('Parry-Cooldown/panorama/scripts/parry_cooldooown.js'); assert.equal(r.jobs.size, 1);

@@ -82,12 +82,17 @@
     let lastAngle = null;
     let lastSample = 0;
     let secondsPerDegree = null;
+    let lastFailure = '';
+    const diagnose = message => {
+        if (message !== lastFailure) $.Msg('[ParryTimer] ' + message);
+        lastFailure = message;
+    };
     const child = (panel, id) => panel && panel.IsValid()
         ? panel.Children().find(node => node.id === id) : null;
 
     // Native C++ writes the radial clip on this border; the icon is static.
     function readAngle(panel) {
-        const clip = String(panel.style.clip || '');
+        const clip = String(panel.style.clip || '').trim();
         if (!/^radial\s*\(/i.test(clip)) return null;
         const degrees = clip.match(/[-+]?(?:\d+\.?\d*|\.\d+)\s*deg/gi);
         if (!degrees || degrees.length !== 2) return null;
@@ -101,7 +106,7 @@
         try {
             let gun = State.cachedGunData;
             if (!gun || !gun.IsValid()) {
-                gun = $.ModHudLookup.find('gun_data');
+                gun = child(context, 'gun_data') || $.ModHudLookup.find('gun_data');
                 State.cachedGunData = gun;
             }
             const nextHolder = child(gun, 'parry_unavailable');
@@ -112,7 +117,13 @@
                 secondsPerDegree = null;
                 State.customParryLabel = null;
             }
-            if (!holder || !border) return;
+            if (!holder || !border) {
+                diagnose('Waiting for gun_data/parry_unavailable/ParryCooldownBorder');
+                return;
+            }
+            // The timer sits below the native 40x40 icon. Without noclip the
+            // label at y=42 is entirely outside the parent's clipping bounds.
+            if (holder.style.overflow !== 'noclip') holder.style.overflow = 'noclip';
             let label = State.customParryLabel;
             if (!label || !label.IsValid()) {
                 label = child(holder, 'CustomParryTimerText') || $.CreatePanel('Label', holder, 'CustomParryTimerText');
@@ -122,6 +133,7 @@
                 label.style.verticalAlign = 'top';
                 label.style.y = '42px';
                 label.style.width = '100%';
+                label.style.height = '24px';
                 label.style.textAlign = 'center';
                 label.style.fontSize = '18px';
                 label.style.fontWeight = 'bold';
@@ -133,6 +145,8 @@
             const gunElement = gun.GetParent();
             const active = gunElement && gunElement.BHasClass('parry_on_cooldown');
             const angle = active ? readAngle(border) : null;
+            if (active && angle === null) diagnose('Native radial clip is unreadable: ' + String(border.style.clip).slice(0, 160));
+            else lastFailure = '';
             const now = Date.now();
             if (!active || angle === null || angle <= 0 || IsCarryingUrn(GetUIRoot())) {
                 label.style.visibility = 'collapse';
