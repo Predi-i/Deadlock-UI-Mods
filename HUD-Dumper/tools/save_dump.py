@@ -9,7 +9,6 @@ import re
 import sys
 import tempfile
 import time
-import xml.etree.ElementTree as ET
 
 MAX_CHUNKS = 2048
 MAX_CHARS = 8 * 1024 * 1024
@@ -307,6 +306,46 @@ def reconstruct(stream):
             "warnings": warnings, "domTree": root}
 
 
+def parse_debugger_open(text):
+    """Read native diagnostic syntax: raw attributes, with literal text last.
+
+    The verified client formatter does not XML-escape values. In the capture,
+    every text attribute is last; its value may contain quotes, &, <, or >.
+    Parsing it as XML would reject valid descriptions or change literal entities.
+    """
+    if not text.startswith("<") or text.startswith("</") or not text.endswith(">"):
+        raise ValueError("not an opening description")
+    self_closing = text.endswith("/>")
+    body = text[1:-2 if self_closing else -1].rstrip()
+    match = re.match(r"([A-Za-z_][\w.:-]*)(?=\s|$)", body)
+    if not match:
+        raise ValueError("invalid panel type")
+    panel_type, position, attrs = match[1], match.end(), {}
+    while position < len(body):
+        if not body[position].isspace():
+            raise ValueError("missing attribute separator")
+        while position < len(body) and body[position].isspace():
+            position += 1
+        if position == len(body):
+            break
+        field = re.match(r'([A-Za-z_][\w.:-]*)="', body[position:])
+        if not field or field[1] in attrs:
+            raise ValueError("invalid or duplicate attribute")
+        name = field[1]
+        position += field.end()
+        if name == "text":
+            if not body.endswith('"'):
+                raise ValueError("unterminated native text")
+            attrs[name] = body[position:-1]
+            position = len(body)
+        else:
+            end = body.find('"', position)
+            if end < 0:
+                raise ValueError("unterminated native attribute")
+            attrs[name], position = body[position:end], end + 1
+    return panel_type, attrs, self_closing
+
+
 def reconstruct_debugger_rows(header, footer, records):
     """Preserve native descriptions even when their markup cannot form a tree."""
     meta = footer.get("meta")
@@ -323,7 +362,7 @@ def reconstruct_debugger_rows(header, footer, records):
     opens = closes = failed = 0
     ids, classes, types = set(), set(), set()
     stack, nodes, errors = [], [], []
-    root = None
+    roots = []
     collapsed = 0
 
     def error(message):
@@ -354,18 +393,10 @@ def reconstruct_debugger_rows(header, footer, records):
         if len(stack) >= 80:
             raise ValueError("debugger description depth exceeds limit")
         collapsed += int(record["collapsed"])
-        self_closing = text.endswith("/>")
         try:
-            if not text.startswith("<") or text.startswith("</") or not text.endswith(">"):
-                raise ValueError("not an opening tag")
-            # Parse one native tag, never a whole guessed XML document. Attributes
-            # containing unescaped markup remain raw evidence, not silently fixed.
-            element = ET.fromstring(text if self_closing else text[:-1] + "/>")
-            if not isinstance(element.tag, str) or list(element) or element.text:
-                raise ValueError("unexpected markup inside opening description")
-            attrs = dict(element.attrib)
+            panel_type, attrs, self_closing = parse_debugger_open(text)
             node_classes = attrs.get("class", "").split()
-            node = {"id": attrs.get("id", ""), "type": element.tag,
+            node = {"id": attrs.get("id", ""), "type": panel_type,
                     "classes": list(dict.fromkeys(node_classes)), "classesStatus": "Debugger-rendered",
                     "children": [], "debuggerRowIndex": i, "debuggerRowVisible": record["visible"],
                     "debuggerHasChildren": record["hasChildren"], "debuggerCollapsed": record["collapsed"],
@@ -384,15 +415,13 @@ def reconstruct_debugger_rows(header, footer, records):
             nodes.append(node)
             if stack:
                 stack[-1]["children"].append(node)
-            elif root is None:
-                root = node
             else:
-                error(f"Row {i}: multiple roots or omitted closing/opening descriptions")
+                roots.append(node)
             if record["hasChildren"] and self_closing:
                 error(f"Row {i}: branch described as self-closing")
             if not self_closing:
                 stack.append(node)
-        except (ET.ParseError, ValueError) as exc:
+        except ValueError as exc:
             failed += 1
             error(f"Row {i}: invalid opening description: {exc}")
     if (type(summary.get("openRows")) is not int or summary["openRows"] != opens
@@ -402,30 +431,58 @@ def reconstruct_debugger_rows(header, footer, records):
         raise ValueError("debugger collapsed branch count mismatch")
     if stack:
         error(f"Unclosed descriptions: {len(stack)}")
-    if root is None:
+    if not roots:
         error("No described root")
     unrepresented = sum(n["debuggerHasChildren"] and not n["children"] for n in nodes)
-    tree_valid = not errors
-    meta = dict(meta, treeValid=tree_valid, classesIncomplete=failed,
-                unrepresentedBranches=unrepresented, descriptionParseErrors=errors)
+    forest_valid = not errors
+    hud_roots = [r for r in roots if r["id"] == "CitadelHudRoot" and r["type"] == "Panel"]
+    root = None
+    selection = "none"
+    if forest_valid:
+        if len(hud_roots) == 1:
+            root, selection = hud_roots[0], "CitadelHudRoot"
+        elif len(roots) == 1:
+            root, selection = roots[0], "only-described-root"
+    tree_valid = root is not None
+    selected_nodes = []
+    if root is not None:
+        todo = [root]
+        while todo:
+            node = todo.pop()
+            selected_nodes.append(node)
+            todo.extend(reversed(node["children"]))
+    scope_nodes = selected_nodes if root is not None else nodes
+    selected_ids = {n["id"] for n in scope_nodes if n["id"]}
+    selected_classes = {c for n in scope_nodes for c in n["classes"]}
+    selected_types = {n["type"] for n in scope_nodes}
+    meta = dict(meta, treeValid=tree_valid, forestValid=forest_valid, classesIncomplete=failed,
+                unrepresentedBranches=unrepresented, descriptionParseErrors=errors,
+                domTreeSelection=selection, hudRootMatches=len(hud_roots),
+                descriptionEncoding="native raw attributes; literal final text field")
     warnings = ["Native debugger descriptions may retain earlier state; their refresh timing is unverified.",
                 "Complete debugger rows do not establish complete live HUD coverage; fullHudCapture is false."]
     if collapsed:
         warnings.append(f"Collapsed debugger branches remain: {collapsed}")
     if unrepresented:
         warnings.append(f"Branches marked as having children without represented descendants: {unrepresented}")
-    if not tree_valid:
-        warnings.append("Descriptions do not form a verified tree. Raw debuggerRows retained; domTree is null.")
-    missing_text = sum(n.get("textStatus") == "unavailable-in-description" for n in nodes)
+    if not forest_valid:
+        warnings.append("Descriptions do not form a verified forest. Raw debuggerRows retained; domTree/domForest are null.")
+    elif not tree_valid:
+        warnings.append("Multiple described roots without a unique CitadelHudRoot; domForest retained, domTree is null.")
+    missing_text = sum(n.get("textStatus") == "unavailable-in-description" for n in scope_nodes)
     meta["textUnavailable"] = missing_text
+    meta["debuggerTextUnavailable"] = sum(n.get("textStatus") == "unavailable-in-description" for n in nodes)
     if missing_text:
         warnings.append(f"Label/TextEntry descriptions without a text attribute: {missing_text}")
     return {"version": header["version"], "format": header["format"], "timestampUtc": header.get("timestampUtc"),
-            "durationMs": footer.get("durationMs"), "scope": header.get("scope"), "meta": meta,
-            "summary": {"totalPanels": opens, "totalRows": len(records), "uniqueIdsCount": len(ids),
-                        "uniqueClassesCount": len(classes), "uniqueTypesCount": len(types)},
-            "uniqueIds": sorted(ids), "uniqueClasses": sorted(classes), "uniqueTypes": sorted(types),
-            "warnings": warnings, "domTree": root if tree_valid else None, "debuggerRows": records}
+            "durationMs": footer.get("durationMs"), "scope": (root["id"] or root["type"]) if root else header.get("scope"), "meta": meta,
+            "summary": {"totalPanels": len(scope_nodes), "uniqueIdsCount": len(selected_ids),
+                        "uniqueClassesCount": len(selected_classes), "uniqueTypesCount": len(selected_types)},
+            "debuggerSummary": {"totalPanels": opens, "totalRows": len(records), "totalRoots": len(roots),
+                                "uniqueIdsCount": len(ids), "uniqueClassesCount": len(classes), "uniqueTypesCount": len(types)},
+            "uniqueIds": sorted(selected_ids), "uniqueClasses": sorted(selected_classes), "uniqueTypes": sorted(selected_types),
+            "debuggerUniqueClasses": sorted(classes), "warnings": warnings, "domTree": root,
+            "domForest": roots if forest_valid else None, "debuggerRows": records}
 
 
 def save_capture(data, session, output_dir, label):

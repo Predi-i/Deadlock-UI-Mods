@@ -35,7 +35,8 @@ def stream_packet(session, index, kind, body):
 def debugger_stream(texts):
     rows = [{"kind": "row", "index": i, "childIndex": i,
              "role": "close" if text.startswith("</") else "open", "text": text,
-             "visible": True, "hasChildren": i == 0, "collapsed": False} for i, text in enumerate(texts)]
+             "visible": True, "hasChildren": not text.startswith("</") and not text.endswith("/>"),
+             "collapsed": False} for i, text in enumerate(texts)]
     footer = {"kind": "end", "summary": {"totalRows": len(rows),
               "openRows": sum(r["role"] == "open" for r in rows),
               "closeRows": sum(r["role"] == "close" for r in rows)},
@@ -57,23 +58,60 @@ class ReceiverTests(unittest.TestCase):
         self.assertEqual(data['summary']['totalPanels'], 2)
         label = data['domTree']['children'][0]
         self.assertEqual(label['classes'], ['native-only', 'statNumber'])
-        self.assertEqual(label['text'], '123 & "x"')
+        self.assertEqual(label['text'], '123 &amp; &quot;x&quot;')
         self.assertFalse(label['debuggerRowVisible'])
         self.assertNotIn('visible', label)  # Inspector visibility is not HUD visibility.
         self.assertEqual(data['debuggerRows'][1]['text'], text)
 
-    def test_debugger_malformed_and_unbalanced_markup_retains_raw_rows_without_a_guessed_tree(self):
+    def test_debugger_malformed_and_unbalanced_descriptions_retain_raw_rows_without_a_guessed_tree(self):
         for texts in [
-            ['<Panel>', '<Label class="safe" text="unescaped & value" />', '</Panel>'],
+            ['<Panel>', '<Label class="safe" unexpected />', '</Panel>'],
             ['<Panel>', '<Label class="safe" />', '</Wrong>'],
             ['<Panel>', '<Panel>', '</Panel>'],
-            ['<Panel />', '<Panel />'],
         ]:
             data = receiver.reconstruct(debugger_stream(texts))
             self.assertFalse(data['meta']['treeValid'])
             self.assertIsNone(data['domTree'])
             self.assertTrue(data['meta']['descriptionParseErrors'])
             self.assertEqual([r['text'] for r in data['debuggerRows']], texts)
+
+    def test_native_text_is_literal_including_quotes_markup_entities_and_final_text_looking_fields(self):
+        samples = ['"Player" Employee', 'name <3', 'Cooldown & Charges',
+                   '<!plural: variable num_damage_rows not found>',
+                   'literal &amp; &quot; &#13;', 'a" id="not-an-attribute', 'x > y\nnext']
+        for text in samples:
+            data = receiver.reconstruct(debugger_stream(['<Panel>', f'<Label text="{text}" />', '</Panel>']))
+            self.assertTrue(data['meta']['treeValid'])
+            self.assertEqual(data['domTree']['children'][0]['text'], text)
+            self.assertEqual(data['meta']['classesIncomplete'], 0)
+
+    def test_native_forest_selects_only_the_unique_hud_root_and_keeps_other_window_trees(self):
+        texts = ['<Panel id="CitadelDashboardRoot" class="dashboard">', '<Label text="Main menu" />', '</Panel>',
+                 '<Panel id="CitadelHudRoot" class="WindowRoot">', '<CitadelHud id="Hud" class="alive native-state" />', '</Panel>',
+                 '<Panel id="panorama_world_panel_15" class="WorldUIRoot" />']
+        data = receiver.reconstruct(debugger_stream(texts))
+        self.assertTrue(data['meta']['treeValid'])
+        self.assertTrue(data['meta']['forestValid'])
+        self.assertEqual(data['meta']['domTreeSelection'], 'CitadelHudRoot')
+        self.assertEqual(data['scope'], 'CitadelHudRoot')
+        self.assertEqual(data['domTree']['id'], 'CitadelHudRoot')
+        self.assertEqual(data['summary']['totalPanels'], 2)
+        self.assertEqual(data['uniqueClasses'], ['WindowRoot', 'alive', 'native-state'])
+        self.assertEqual(data['debuggerSummary']['totalPanels'], 5)
+        self.assertEqual(data['debuggerSummary']['totalRoots'], 3)
+        self.assertIn('dashboard', data['debuggerUniqueClasses'])
+        self.assertEqual(len(data['domForest']), 3)
+        self.assertEqual([r['text'] for r in data['debuggerRows']], texts)
+
+    def test_ambiguous_native_roots_are_kept_as_a_forest_without_inventing_a_parent_or_hud_root(self):
+        for texts in [['<Panel />', '<Panel />'],
+                      ['<Panel id="CitadelHudRoot" />', '<Panel id="CitadelHudRoot" />']]:
+            data = receiver.reconstruct(debugger_stream(texts))
+            self.assertTrue(data['meta']['forestValid'])
+            self.assertFalse(data['meta']['treeValid'])
+            self.assertIsNone(data['domTree'])
+            self.assertEqual(len(data['domForest']), 2)
+            self.assertEqual(data['meta']['descriptionParseErrors'], [])
 
     def test_debugger_empty_classes_and_missing_label_text_are_distinct_from_failed_descriptions(self):
         value = debugger_stream(['<Panel>', '<Label />', '<Panel class="nativeClass" />', '</Panel>'])

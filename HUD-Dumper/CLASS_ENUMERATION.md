@@ -105,9 +105,21 @@ addresses are investigation evidence only; runtime code does not call them.
 The override now includes a streaming row exporter. It activates collapsed
 native branch controls with the existing `Activated(panel, "mouse")` signature
 used by QOLLOCK, checking the effect on this particular control before
-proceeding. The client has not yet verified those activations, direct row
-enumeration, full streaming, automatic restoration, or resulting tree validity.
+proceeding. The first client export verified activations, direct row enumeration
+and full streaming: session `musbu75a-debug` has 593 verified data batches and its
+completion marker, 29,526 rows, 20,275 described panels, and 9,242 expanded
+branches. All recorded toggles were expanded. Automatic restoration still needs
+its console completion to be checked separately.
 The completed API and bounded row probes are retained without default includes.
+
+The same packet journal reconstructs into 89 balanced native roots. The unique
+`CitadelHudRoot` subtree has 15,435 panels and 1,331 distinct displayed classes;
+the complete forest has 1,479 classes. The initial XML parser rejected seven
+otherwise valid descriptions because native text is not escaped, and rejected
+independent roots as though only one window could exist. The corrected receiver
+preserves literal final `text` fields, all forest roots and the selected HUD
+subtree. It finds no parse failures, collapsed or unrepresented branches in this
+capture. This repairs interpretation without changing or recapturing native data.
 
 A usable native inspector export or another verified native enumeration bridge
 must expose panel identity, parent/child relationships, and the complete current

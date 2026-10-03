@@ -461,7 +461,7 @@ with tempfile.TemporaryDirectory() as d:
    result=r.accept(p)
    if result:
     x=result[1];assert x['meta']['treeValid'];assert x['summary']['totalPanels']==5
-    assert 'another-native-class' in x['uniqueClasses'];assert x['domTree']['children'][0]['children'][0]['text'].endswith('🚀 & 123')
+    assert 'another-native-class' in x['uniqueClasses'];assert x['domTree']['children'][0]['children'][0]['text'].endswith('🚀 &amp; 123')
  finally:r.close()
 `;
     const python = spawnSync('python', ['-c', code, receiverPath], { input: JSON.stringify(e.packets), encoding: 'utf8' });

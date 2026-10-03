@@ -30,6 +30,8 @@ After maintainer compilation/repacking:
    opening the debugger. Do not also start an M-key HUD capture during this export.
 2. Open Panorama Debugger on the HUD tree whose root is `CitadelHudRoot`. Keep the
    inspector open and its target and expansion state unchanged during collection.
+   The inspector can still include other window roots; the receiver retains that
+   forest and selects the unique `CitadelHudRoot` as the profiler's `domTree`.
 3. Look for `[HUD-DEBUGGER-EXPORT] LOADED`, then `BEGIN` after the startup delay.
    The script discovers `ShowChildren` rows using the native resource contract
    and activates collapsed `DebugLabelToggle` controls one per scheduled step.
@@ -48,16 +50,38 @@ After maintainer compilation/repacking:
    coverage and description freshness are established independently.
 
 The `debugger-rows-v1` payload records exact raw Label descriptions and expansion
-flags. Python reconstructs parents from opening/closing tags, never debugger UI
-depth or row visibility. It retains every raw row even if native markup cannot
-form a balanced tree; in that case `domTree` is null. The debugger's visibility
+flags. Python reconstructs parents from opening/closing descriptions, never
+debugger UI depth or row visibility. The native description is not XML: values
+are unescaped, and the verified final `text` field can contain quotes, `<`, `>`
+and `&`. Its literal content, including entity-like strings, is preserved.
+Other attributes are parsed strictly; unsupported descriptions retain explicit
+errors rather than repaired or guessed parentage.
+
+The native inspector can describe multiple independent window roots. They are
+preserved in `domForest` without an invented common parent. The unique
+`CitadelHudRoot` is selected as `domTree`; `summary` and the `unique*` lists describe
+that selected subtree. `debuggerSummary` and `debuggerUniqueClasses` describe the
+entire inspector export. A single-root export is also supported. Multiple roots
+without a unique HUD root leave `domTree` null. `forestValid` and `treeValid`
+distinguish these results. Every raw row is retained even when descriptions are
+unbalanced; in that case neither tree representation is published.
+The debugger's visibility
 flag is recorded separately and never substituted for target HUD visibility.
 Missing text attributes on Label/TextEntry descriptions are explicit. No XML
 class whitelist is used. Successful parsing of a displayed class list means
 `Debugger-rendered`, not a verified freshly sampled HUD state.
 
-Automatic expansion and the full export have not yet been verified in the
-client. Native expansion creates actual debugger UI widgets and can be costly
+The first client export completed with 593 verified batches, 29,526 rows,
+20,275 panels across 89 native roots, and 9,242 automatically expanded branches.
+The HUD subtree reconstructed from those same packets contains 15,435 panels
+and 1,331 distinct displayed classes. No collapsed or unrepresented branches
+or description parse failures remain in that export. Its collection/transfer
+interval was about nine minutes; freshness and independent live HUD coverage
+remain unverified. Receiver repair/reconstruction does not require another
+compile/repack or another game capture. Automatic restoration still needs its
+client console result to be checked separately.
+
+Native expansion creates actual debugger UI widgets and can be costly
 for large trees; scheduling cannot interrupt one expensive native operation.
 Collapsing after export restores the UI state, but does not prove those widgets
 are freed. The script does not promise FPS, capture speed or freedom from native
