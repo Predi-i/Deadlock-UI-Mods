@@ -49,7 +49,6 @@
 				</Panel>
 				<Panel id="ClassicUrnInfo">
 					<Label class="UrnDescription" text="#modifier_citadel_holding_golden_idol" />
-					<Label class="UrnWarning" text="#modifier_citadel_holding_golden_idol_visible" />
 				</Panel>
 			</Panel>
 		</Panel>

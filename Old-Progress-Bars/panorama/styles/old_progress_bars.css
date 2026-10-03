@@ -13,14 +13,15 @@
 {
     horizontal-align: center;
     flow-children: down;
+    visibility: collapse;
+}
+
+CitadelHudModifiers_Entry.MODIFIER_STATE_HOLDING_IDOL #ClassicUrnInfo
+{
+    visibility: visible;
 }
 
 #ClassicUrnInfo Label
 {
     font-size: 18px;
-}
-
-#ClassicUrnInfo .UrnWarning
-{
-    color: #FF5656;
 }

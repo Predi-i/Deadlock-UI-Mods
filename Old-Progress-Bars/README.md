@@ -8,6 +8,11 @@ native fancy and basic branches. Shared classic visibility rules use the
 vendored ability stylesheet imports those rules so dynamic style loading does
 not restore the fancy branch.
 
+The classic urn caption is collapsed by default and appears only under the native
+`MODIFIER_STATE_HOLDING_IDOL` modifier. Other ability/modifier bars never carry the
+caption. No unconditional "Visible to Enemies" warning is added; native visibility
+conditions must not be replaced with a permanently visible duplicate label.
+
 This preserves source bindings but requires client verification after repacking:
 check all Fencer abilities separately, other affected heroes, modifier-channel
 bars and urn text. XML validation cannot prove native progress animation.
