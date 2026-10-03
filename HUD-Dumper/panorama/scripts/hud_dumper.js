@@ -5,8 +5,8 @@
     // Temporary diagnostic controls; no persistent settings or game config writes.
     const ROOT_ID = 'Hud'; // Or a verified subtree ID, e.g. hudActivePlayerStats.
     const INCLUDE_MEASUREMENTS = false;
-    const SLICE_DELAY = 0.02;
-    const PACKET_DELAY = 0.1;
+    const SLICE_DELAY = 0.01;
+    const PACKET_DELAY = 0.05;
     const PACKET_COPIES = 2;
     const DEADLINE_MS = 1800000;
     let job = null, handle = null, sequence = 0, lastKeyMs = -Infinity;
