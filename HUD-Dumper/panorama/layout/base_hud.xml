@@ -7,7 +7,6 @@
     <scripts>
         <include src="s2r://panorama/scripts/hud_dump_core.vjs_c" />
         <include src="s2r://panorama/scripts/hud_dumper.vjs_c" />
-        <include src="s2r://panorama/scripts/hud_api_probe.vjs_c" />
     </scripts>
     <!-- ==== End HUD-Dumper scripts ==== -->
     <Panel class="WindowRoot" hittest="false" disallowedstyleflags="hover,descendantfocus">

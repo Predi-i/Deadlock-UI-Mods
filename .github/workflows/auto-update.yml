@@ -28,7 +28,9 @@ jobs:
           path: upstream
           fetch-depth: 0
           filter: blob:none
-          sparse-checkout: game/citadel/pak01_dir/panorama
+          sparse-checkout: |
+            game/citadel/pak01_dir/panorama
+            game/core/pak01_dir/panorama/layout
 
       - name: Set up Python
         uses: actions/setup-python@v5

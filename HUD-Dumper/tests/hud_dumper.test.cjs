@@ -8,6 +8,7 @@ const { spawnSync } = require('node:child_process');
 const corePath = path.resolve(__dirname, '../panorama/scripts/hud_dump_core.js');
 const adapterPath = path.resolve(__dirname, '../panorama/scripts/hud_dumper.js');
 const probePath = path.resolve(__dirname, '../panorama/scripts/hud_api_probe.js');
+const debuggerProbePath = path.resolve(__dirname, '../panorama/scripts/hud_debugger_probe.js');
 const C = require(corePath);
 
 class Panel {
@@ -68,7 +69,8 @@ function engine(root, eventThrows = false, probeFactory = null) {
         tasks.delete(entry[0]); now = entry[1].at; entry[1].cb(); return true;
     }
     return { tasks, packets, messages, bindings, tick, key: () => bindings[0].cb(), elapse: ms => { now += ms; },
-        now: () => now, runProbe: () => vm.runInContext(fs.readFileSync(probePath, 'utf8'), sandbox) };
+        now: () => now, runProbe: () => vm.runInContext(fs.readFileSync(probePath, 'utf8'), sandbox),
+        runDebuggerProbe: () => vm.runInContext(fs.readFileSync(debuggerProbePath, 'utf8'), sandbox) };
 }
 
 test('captures labels and fixture getter data, without style/whitelist reads', () => {
@@ -331,4 +333,53 @@ test('class-attribute probe distinguishes attribute storage from live classes an
         }
         assert.equal(e.packets.length, 0);
     }
+});
+
+test('debugger probe samples raw inspector row text after delay without native class or style reads', () => {
+    const root = new Panel('DebugLayout', 'DebugLayout');
+    root.add(new Panel('DebugLayoutPanelOpen', 'Label', '',
+        '&lt;Panel <span class="syntax">class="NativeClass UnknownClass"</span>&gt;'));
+    root.add(new Panel('DebugLayoutPanelClose', 'Label', '', '</Panel>'));
+    const e = engine(root); e.runDebuggerProbe();
+    assert.equal([...e.tasks.values()][0].at, 21000);
+    assert.ok(!e.messages.some(m => m.includes('[HUD-DEBUGGER-PROBE] BEGIN')));
+    while (e.tick()) {}
+    const rows = e.messages.filter(m => m.includes('[HUD-DEBUGGER-PROBE] ROW '))
+        .map(m => JSON.parse(m.slice(m.indexOf('{'))));
+    assert.equal(rows.length, 2);
+    assert.equal(rows[0].text, root.children[0].text);
+    assert.equal(rows[1].text, '</Panel>');
+    const summary = JSON.parse(e.messages.find(m => m.includes('[HUD-DEBUGGER-PROBE] FINISHED ')).split('FINISHED ')[1]);
+    assert.equal(summary.openRows, 1); assert.equal(summary.closeRows, 1);
+    assert.equal(summary.uiScanComplete, true); assert.equal(summary.fullHudCapture, false);
+    assert.equal(root.reads + root.children.reduce((n, p) => n + p.reads, 0), 0);
+    assert.equal(e.packets.length, 0);
+});
+
+test('debugger probe bounds wide scans and Unicode previews and cancels on reload or destruction', () => {
+    const root = new Panel('DebugLayout', 'DebugLayout');
+    for (let i = 0; i < 2000; i++) root.add(new Panel('DebugLayoutPanelOpen', 'Label', '', 'x'.repeat(2047) + '🚀'));
+    const e = engine(root); e.runDebuggerProbe();
+    const oldHandle = [...e.tasks.keys()][0]; e.runDebuggerProbe();
+    assert.ok(!e.tasks.has(oldHandle)); assert.equal(e.tasks.size, 1);
+    let ticks = 0;
+    while (e.tick()) {
+        assert.ok(e.tasks.size <= 1);
+        if (++ticks > 500) throw new Error('debugger probe stalled');
+    }
+    assert.ok(ticks > 1);
+    const rows = e.messages.filter(m => m.includes('[HUD-DEBUGGER-PROBE] ROW '))
+        .map(m => JSON.parse(m.slice(m.indexOf('{'))));
+    assert.equal(rows.length, 8);
+    assert.equal(rows[0].text.length, 2047); assert.equal(rows[0].truncated, true);
+    const summary = JSON.parse(e.messages.find(m => m.includes('[HUD-DEBUGGER-PROBE] FINISHED ')).split('FINISHED ')[1]);
+    assert.equal(summary.visited, 1500); assert.equal(summary.limited, true);
+    assert.equal(summary.uiScanComplete, false);
+    const dyingRoot = new Panel('DebugLayout', 'DebugLayout');
+    for (let i = 0; i < 50; i++) dyingRoot.add(new Panel('child' + i));
+    const dying = engine(dyingRoot); dying.runDebuggerProbe(); dying.tick();
+    dyingRoot.valid = false; dying.tick();
+    assert.equal(dying.tasks.size, 0);
+    assert.ok(dying.messages.some(m => m.includes('ABORTED debugger context destroyed')));
+    assert.ok(!dying.messages.some(m => m.includes('[HUD-DEBUGGER-PROBE] FINISHED')));
 });

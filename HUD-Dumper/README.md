@@ -10,12 +10,37 @@ See [class enumeration investigation](CLASS_ENUMERATION.md) for the evidence and
 the remaining requirement. A complete packet set must not be presented as a
 complete capture of classes.
 
-## Delayed native API inspection
+## Experimental native debugger row access
 
-The included `hud_api_probe.js` automatically runs after a startup delay and
-prints lines prefixed `[HUD-API-PROBE]` to the game console. No debugger JS console,
-key press, or Python receiver is required for this diagnostic. The maintainer
-must compile/repack the changed source before it can run in the client.
+The `debuglayout.xml` override retains the native core inspector layout and adds
+`hud_debugger_probe.js`. This script attempts to inspect the debugger's own UI
+context and read its `DebugLayoutPanelOpen` / `DebugLayoutPanelClose` Label text.
+It does not call internal C++ functions or require the debugger's JS console.
+
+After the maintainer compiles/repacks the updated HUD-Dumper, open Panorama
+Debugger on the live HUD and keep it open through the diagnostic. Do not expand
+the entire tree for this initial test. Look for `[HUD-DEBUGGER-PROBE] LOADED`,
+then `BEGIN`, `ROW`, and `FINISHED` in the game console. If `LOADED` never appears,
+the core layout override/script-loading path has not been verified; absence of
+output is not evidence that class data is unavailable.
+
+The probe performs a bounded, scheduled scan of current debugger widgets and
+prints a small number of raw row samples. It changes no expansion state and uses
+no clipboard. Counts, limits, failed reads and clipped sample text are explicit.
+`uiScanComplete` describes only that UI scan; `fullHudCapture` remains false.
+The script cancels on reload or context destruction. The native override is
+registered against the extracted core resource for upstream merging.
+
+Client verification is still pending. Even if row access works, the samples do
+not establish whether collapsed HUD descendants have materialized debugger rows,
+whether all native class names survive row formatting, or whether a complete tree
+can be reconstructed. These must be verified before an exporter uses this source.
+
+## Completed HUD API investigation
+
+The retained `hud_api_probe.js` prints lines prefixed `[HUD-API-PROBE]` to the game
+console after a startup delay when included in a layout. The native tests have
+completed and this script is no longer included in `base_hud.xml` by default.
 
 The probe inspects property names and descriptors across prototype chains of the
 HUD context, its direct `Hud` child when present, a small sample of direct HUD
@@ -34,8 +59,8 @@ It requests deletion of the owned panel even if a read fails. Existing HUD panel
 are not modified. This tests whether the attribute getter tracks live class
 changes; membership checks in this experiment are not a capture whitelist.
 
-Send the console output from `BEGIN` through `FINISHED` when investigating the
-missing class getter. Diagnostic limits and timing remain in the source.
+The confirmed native outcomes are recorded in [CLASS_ENUMERATION.md](CLASS_ENUMERATION.md).
+Diagnostic limits and timing remain in the source.
 
 ## Capture procedure
 

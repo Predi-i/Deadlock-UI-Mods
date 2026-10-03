@@ -32,6 +32,12 @@
       "mode": "merge"
     },
     {
+      "path": "HUD-Dumper/panorama/layout/debuglayout.xml",
+      "upstream": "game/core/pak01_dir/panorama/layout/debuglayout.xml",
+      "base": "4c6431ccdb816d2911bbbaa4335169cc34140386",
+      "mode": "merge"
+    },
+    {
       "path": "Deadlock-Fly/panorama/layout/base_hud.xml",
       "upstream": "game/citadel/pak01_dir/panorama/layout/base_hud.xml",
       "base": "e180c06bed109fd30b6d77d763ae8e8fa9b8b7bc",

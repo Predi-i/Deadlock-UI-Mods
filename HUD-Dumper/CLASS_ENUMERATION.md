@@ -82,6 +82,13 @@ implemented here as a substitute for a native class-list export.
 
 ## Remaining verification
 
+An experimental `debuglayout.xml` override now includes `hud_debugger_probe.js`
+inside the native inspector resource. It attempts a bounded read of the current
+debugger row Labels and prints raw samples to the game console. The script's
+loading in this core UI context and its native row access remain unverified.
+This is a candidate data-source test, not a full exporter. The completed HUD API
+probe is retained in source but removed from the default HUD includes.
+
 A usable native inspector export or another verified native enumeration bridge
 must expose panel identity, parent/child relationships, and the complete current
 class list. Before integrating it, verify that it includes collapsed descendants,
