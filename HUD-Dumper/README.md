@@ -10,6 +10,26 @@ See [class enumeration investigation](CLASS_ENUMERATION.md) for the evidence and
 the remaining requirement. A complete packet set must not be presented as a
 complete capture of classes.
 
+## Delayed native API inspection
+
+The included `hud_api_probe.js` automatically runs after a startup delay and
+prints lines prefixed `[HUD-API-PROBE]` to the game console. No debugger JS console,
+key press, or Python receiver is required for this diagnostic. The maintainer
+must compile/repack the changed source before it can run in the client.
+
+The probe inspects property names and descriptors across prototype chains of the
+HUD context, its direct `Hud` child when present, a small sample of direct HUD
+children, and `$`. It prints descriptors without evaluating unknown getters or
+calling discovered methods. Known methods are reported separately as a baseline.
+Reflection errors and limits are reported; output is spread across scheduled
+callbacks, and script reload cancels the previous probe. This discovers exposed
+API names, not class membership, and does not traverse the whole HUD. Native
+objects may expose fewer names through reflection than through direct lookup;
+absence from this report alone is not proof of absence from the engine.
+
+Send the console output from `BEGIN` through `FINISHED` when investigating the
+missing class getter. Diagnostic limits and timing remain in the source.
+
 ## Capture procedure
 
 1. The maintainer compiles and repacks this folder using the repository's normal

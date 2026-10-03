@@ -7,6 +7,7 @@ const vm = require('node:vm');
 const { spawnSync } = require('node:child_process');
 const corePath = path.resolve(__dirname, '../panorama/scripts/hud_dump_core.js');
 const adapterPath = path.resolve(__dirname, '../panorama/scripts/hud_dumper.js');
+const probePath = path.resolve(__dirname, '../panorama/scripts/hud_api_probe.js');
 const C = require(corePath);
 
 class Panel {
@@ -63,10 +64,11 @@ function engine(root, eventThrows = false) {
         if (!entry) return false;
         tasks.delete(entry[0]); now = entry[1].at; entry[1].cb(); return true;
     }
-    return { tasks, packets, messages, bindings, tick, key: () => bindings[0].cb(), elapse: ms => { now += ms; } };
+    return { tasks, packets, messages, bindings, tick, key: () => bindings[0].cb(), elapse: ms => { now += ms; },
+        now: () => now, runProbe: () => vm.runInContext(fs.readFileSync(probePath, 'utf8'), sandbox) };
 }
 
-test('captures labels and actual GetClasses data, without style/whitelist reads', () => {
+test('captures labels and fixture getter data, without style/whitelist reads', () => {
     const root = new Panel('Hud');
     root.add(new Panel('', 'Label', 'currentHealthLabel statNumber', '🚀 123 | 你好'));
     const c = C.createCollector(root);
@@ -228,4 +230,62 @@ test('adapter dispatches the first batch before finishing collection', () => {
     assert.ok(!e.messages.some(m => m.includes('Collection complete')));
     assert.ok(window.children.at(-1).reads === 0);
     window.valid = false; e.tick(); assert.equal(e.tasks.size, 0);
+});
+
+test('API probe waits for startup, samples the ready HUD and never invokes discovered getters or methods', () => {
+    const window = new Panel('WindowRoot');
+    let unknownReads = 0;
+    Object.defineProperty(window, 'unknownAccessor', { get() { unknownReads++; throw new Error('must not read'); } });
+    const e = engine(window); e.runProbe();
+    assert.equal(e.tasks.size, 1);
+    assert.equal([...e.tasks.values()][0].at, 21000);
+    assert.ok(!e.messages.some(m => m.includes('BEGIN')));
+    // Layout becomes available after the script was loaded.
+    const hud = window.add(new Panel('Hud', 'CitadelHud'));
+    const child = hud.add(new Panel('nativeChild'));
+    e.tick();
+    assert.equal(e.now(), 21000);
+    let ticks = 0;
+    while (e.tick()) {
+        assert.ok(e.tasks.size <= 1);
+        if (++ticks > 1000) throw new Error('probe stalled');
+    }
+    const text = e.messages.join('\n');
+    assert.match(text, /id="Hud" type="CitadelHud"/);
+    assert.match(text, /unknownAccessor:get/);
+    assert.match(text, /GetChildCount:function/);
+    assert.match(text, /GetClasses:function/);
+    assert.match(text, /FINISHED/);
+    assert.equal(unknownReads, 0);
+    assert.equal(window.reads + hud.reads + child.reads, 0);
+    assert.equal(e.packets.length, 0);
+});
+
+test('API probe cancels prior reload schedules and stops output when its context is destroyed', () => {
+    const root = new Panel('Hud'); const e = engine(root);
+    e.runProbe(); const oldHandle = [...e.tasks.keys()][0]; e.runProbe();
+    assert.equal(e.tasks.size, 1);
+    assert.ok(!e.tasks.has(oldHandle));
+    e.tick(); root.valid = false; e.tick();
+    assert.equal(e.tasks.size, 0);
+    assert.ok(e.messages.some(m => m.includes('context destroyed')));
+    assert.ok(!e.messages.some(m => m.includes('FINISHED')));
+    const absent = new Panel('Hud'); const beforeStart = engine(absent);
+    beforeStart.runProbe(); absent.valid = false; beforeStart.tick();
+    assert.equal(beforeStart.tasks.size, 0);
+    assert.ok(beforeStart.messages.some(m => m.includes('context unavailable')));
+});
+
+test('API probe reports missing fixture getter, reflection failures and truncated property lists', () => {
+    const root = new Panel('Hud'); root.GetClasses = undefined;
+    for (let i = 0; i < 600; i++) root['extra' + i] = i;
+    root.add(new Proxy(new Panel('proxyChild'), { ownKeys() { throw new Error('native reflection unavailable'); } }));
+    const e = engine(root); e.runProbe();
+    while (e.tick()) {}
+    const text = e.messages.join('\n');
+    assert.match(text, /GetClasses:undefined/);
+    assert.match(text, /TRUNCATED reflection limit/);
+    assert.match(text, /ERROR own names: native reflection unavailable/);
+    assert.match(text, /FINISHED/);
+    assert.equal(e.packets.length, 0);
 });
