@@ -1,7 +1,7 @@
 // Bounded capture/serialization. No style reads, UI creation or clipboard access.
 var HUDDumpCore = (() => {
     'use strict';
-    const VERSION = '3.0.0';
+    const VERSION = '4.0.0';
     const LIMITS = { maxPanels: 50000, maxDepth: 80, maxText: 4096,
         maxClasses: 512, maxClassChars: 8192, maxString: 512, chunkChars: 8192, maxChars: 8 * 1024 * 1024 };
 
@@ -19,6 +19,8 @@ var HUDDumpCore = (() => {
     }
     function createCollector(root, opts = {}) {
         const limits = Object.assign({}, LIMITS, opts.limits || {});
+        // Streaming releases dispatched chunks instead of retaining a full export.
+        if (opts.streaming) limits.maxChars = null;
         const now = opts.now || (() => Date.now());
         const started = now();
         const meta = { asynchronous: true, classMethod: 'GetClasses', stylesCaptured: false,
@@ -29,6 +31,8 @@ var HUDDumpCore = (() => {
         const seen = new Set();
         const chunks = [];
         let pending = '', chars = 0, panels = 0, done = false, cancelled = false;
+        let totalChunks = 0, takenChunks = 0;
+        function pushChunk(data) { chunks.push(data); totalChunks++; }
 
         function error(field) { meta.readErrors[field] = (meta.readErrors[field] || 0) + 1; }
         function read(panel, key, fallback) {
@@ -46,13 +50,13 @@ var HUDDumpCore = (() => {
         function append(record) {
             const line = JSON.stringify(record) + '\n';
             chars += line.length;
-            if (chars > limits.maxChars) throw new Error('capture character budget exceeded; use a smaller subtree');
+            if (limits.maxChars !== null && chars > limits.maxChars) throw new Error('capture character budget exceeded');
             pending += line;
             while (pending.length >= limits.chunkChars) {
                 let end = limits.chunkChars;
                 const last = pending.charCodeAt(end - 1);
                 if (last >= 0xd800 && last <= 0xdbff) end--;
-                chunks.push(pending.slice(0, end));
+                pushChunk(pending.slice(0, end));
                 pending = pending.slice(end);
             }
         }
@@ -111,7 +115,7 @@ var HUDDumpCore = (() => {
         function finish() {
             meta.classCoverage = meta.classesIncomplete ? 'partial' : 'GetClasses-returned';
             append({ kind: 'end', summary: { totalPanels: panels }, durationMs: now() - started, meta });
-            if (pending) { chunks.push(pending); pending = ''; }
+            if (pending) { pushChunk(pending); pending = ''; }
             done = true;
             stack.length = 0;
             seen.clear();
@@ -120,10 +124,12 @@ var HUDDumpCore = (() => {
             step(maxWork = 32, budgetMs = 3) {
                 if (cancelled) throw new Error('capture cancelled');
                 if (done) return true;
+                if (opts.streaming && chunks.length) return false;
                 if (!alive(root)) throw new Error('capture root was destroyed');
                 const deadline = now() + budgetMs;
                 let work = 0;
-                while (stack.length && work < maxWork && (work === 0 || now() < deadline)) {
+                while (stack.length && work < maxWork && (work === 0 || now() < deadline) &&
+                    (!opts.streaming || !chunks.length)) {
                     work++;
                     const frame = stack[stack.length - 1];
                     if (!alive(frame.panel)) { meta.skippedDestroyed++; stack.pop(); continue; }
@@ -148,11 +154,24 @@ var HUDDumpCore = (() => {
                 return done;
             },
             packet(session, index) {
-                if (!done || cancelled || index < 0 || index >= chunks.length) throw new Error('packet unavailable');
+                if (opts.streaming || !done || cancelled || index < 0 || index >= chunks.length) throw new Error('packet unavailable');
                 return 'HUD_DUMP3|' + session + '|' + index + '|' + chunks.length + '|' + checksum(chunks[index]) + '|' + chunks[index];
             },
-            progress: () => ({ panels, chunks: chunks.length, done }),
-            cancel() { cancelled = true; chunks.length = 0; stack.length = 0; seen.clear(); pending = ''; },
+            takePacket(session) {
+                if (!opts.streaming || cancelled) throw new Error('stream unavailable');
+                if (!chunks.length) return null;
+                const data = chunks.shift();
+                return 'HUD_DUMP4|' + session + '|' + (takenChunks++) + '|chunk|' + checksum(data) + '|' + data;
+            },
+            endPacket(session) {
+                if (!opts.streaming || !done || cancelled || chunks.length) throw new Error('stream incomplete');
+                const data = JSON.stringify({ chunks: totalChunks });
+                return 'HUD_DUMP4|' + session + '|' + totalChunks + '|end|' + checksum(data) + '|' + data;
+            },
+            progress: () => ({ panels, chunks: totalChunks, queuedChunks: chunks.length,
+                bufferedChars: pending.length + chunks.reduce((n, c) => n + c.length, 0), chars, done }),
+            cancel() { cancelled = true; chunks.length = 0; totalChunks = 0; takenChunks = 0;
+                stack.length = 0; seen.clear(); pending = ''; },
         };
     }
     return { VERSION, LIMITS, checksum, alive, createCollector };

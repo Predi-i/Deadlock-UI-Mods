@@ -132,24 +132,30 @@ test('UTF-16 checksums and packet boundaries round-trip through the Python recei
     const root = new Panel('Hud');
     root.add(new Panel('health', 'Label', 'miniModifierCore statNumber', '🚀'.repeat(2048)));
     root.add(new Panel('separators', 'Label', '', 'a\u2028b\u0085c\u2029d\nend'));
-    const c = C.createCollector(root, { limits: { chunkChars: 137 } }); drain(c);
+    const c = C.createCollector(root, { streaming: true, limits: { chunkChars: 137 } });
     const packets = [];
-    for (let i = 0; i < c.progress().chunks; i++) {
-        const packet = c.packet('test-1', i);
-        const body = packet.split('|').slice(5).join('|');
-        const last = body.charCodeAt(body.length - 1);
-        assert.ok(!(last >= 0xd800 && last <= 0xdbff), 'no split surrogate pairs');
-        packets.push(packet);
+    while (true) {
+        const done = c.step();
+        let packet;
+        while ((packet = c.takePacket('test-1'))) {
+            const body = packet.split('|').slice(5).join('|');
+            const last = body.charCodeAt(body.length - 1);
+            assert.ok(!(last >= 0xd800 && last <= 0xdbff), 'no split surrogate pairs');
+            packets.push(packet);
+        }
+        if (done) break;
     }
-    const python = `import sys,json,importlib.util
+    packets.push(c.endPacket('test-1'));
+    const python = `import sys,json,importlib.util,tempfile
 sys.stdin.reconfigure(encoding='utf-8')
 spec=importlib.util.spec_from_file_location('receiver',sys.argv[1]);m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
-r=m.Receiver();result=None
+spool=tempfile.TemporaryDirectory();r=m.Receiver(spool.name);result=None
 for packet in reversed(json.load(sys.stdin)):
  result=r.accept(packet) or result
 assert result[1]['domTree']['children'][0]['text']=='🚀'*2048
 assert result[1]['domTree']['children'][1]['text']=='a'+chr(0x2028)+'b'+chr(0x85)+'c'+chr(0x2029)+'d'+chr(10)+'end'
 assert result[1]['summary']['totalPanels']==3
+r.close();spool.cleanup()
 print('verified')`;
     const output = spawnSync('python', ['-c', python, path.resolve(__dirname, '../tools/save_dump.py')],
         { input: JSON.stringify(packets), encoding: 'utf8' });
@@ -166,8 +172,11 @@ test('adapter owns one binding and schedule; duplicate presses cannot start para
         assert.ok(e.tasks.size <= 1); e.key();
         if (++ticks > 1000) throw new Error('adapter stalled');
     }
-    const totals = e.packets.map(p => p.split('|')[3]);
-    assert.equal(e.packets.length, Number(totals[0]) * 2);
+    const end = e.packets.find(p => p.split('|')[3] === 'end');
+    assert.ok(end);
+    const count = JSON.parse(end.split('|').slice(5).join('|')).chunks;
+    assert.equal(e.packets.length, (count + 1) * 2);
+    assert.ok(e.packets.every(p => p.startsWith('HUD_DUMP4|')));
     assert.equal(new Set(e.packets.map(p => p.split('|')[1])).size, 1);
     assert.ok(e.messages.some(m => m.includes('Only the Python receiver')));
 });
@@ -178,8 +187,45 @@ test('adapter stops owned work after native dispatch failure or context destruct
     assert.equal(e.tasks.size, 0); assert.ok(e.messages.some(m => m.includes('injected clipboard')));
     const root = new Panel('Hud'); const dying = engine(root); dying.key(); root.valid = false; dying.tick();
     assert.equal(dying.tasks.size, 0); assert.equal(dying.packets.length, 0);
-    const slow = engine(new Panel('Hud')); slow.key(); slow.elapse(600001);
+    const slow = engine(new Panel('Hud')); slow.key(); slow.elapse(1800001);
     // Simulate late callback delivery after the deadline.
     const callback = [...slow.tasks.values()][0].cb; callback();
     assert.ok(slow.messages.some(m => m.includes('deadline exceeded')));
+});
+
+test('full HUD streams past the old 8M cap while releasing each bounded batch', () => {
+    const root = new Panel('Hud');
+    for (let i = 0; i < 32000; i++) root.add(new Panel('p' + i, 'Label', 'statNumber', 'x'.repeat(256)));
+    const c = C.createCollector(root, { streaming: true, now: () => 0 });
+    let packets = 0, ticks = 0, sentBeforeDone = false;
+    while (true) {
+        c.step();
+        const progress = c.progress();
+        assert.ok(progress.bufferedChars < C.LIMITS.chunkChars * 3);
+        let packet;
+        while ((packet = c.takePacket('stream-1'))) {
+            assert.equal(Number(packet.split('|')[2]), packets++);
+            assert.ok(packet.length <= 8500);
+            if (!progress.done) sentBeforeDone = true;
+        }
+        if (progress.done) break;
+        if (++ticks > 100000) throw new Error('stream stalled');
+    }
+    assert.ok(sentBeforeDone);
+    assert.ok(c.progress().chars > C.LIMITS.maxChars);
+    assert.equal(c.progress().panels, 32001);
+    assert.equal(c.progress().bufferedChars, 0);
+    assert.equal(JSON.parse(c.endPacket('stream-1').split('|').slice(5).join('|')).chunks, packets);
+});
+
+test('adapter dispatches the first batch before finishing collection', () => {
+    const window = new Panel('Hud');
+    for (let i = 0; i < 1000; i++) window.add(new Panel('p' + i, 'Label', '', 'x'.repeat(256)));
+    const e = engine(window); e.key();
+    let ticks = 0;
+    while (!e.packets.length && e.tick()) { if (++ticks > 100) throw new Error('first batch delayed'); }
+    assert.ok(e.packets.length);
+    assert.ok(!e.messages.some(m => m.includes('Collection complete')));
+    assert.ok(window.children.at(-1).reads === 0);
+    window.valid = false; e.tick(); assert.equal(e.tasks.size, 0);
 });

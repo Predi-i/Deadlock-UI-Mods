@@ -28,7 +28,65 @@ def packet(session, index, total, body):
     return f"HUD_DUMP3|{session}|{index}|{total}|{receiver.checksum(body)}|{body}"
 
 
+def stream_packet(session, index, kind, body):
+    return f"HUD_DUMP4|{session}|{index}|{kind}|{receiver.checksum(body)}|{body}"
+
+
 class ReceiverTests(unittest.TestCase):
+    def test_stream_journals_immediately_then_accepts_end_first_and_reordered_chunks(self):
+        value = stream().replace('3.0.0', '4.0.0')
+        a, b = value[:100], value[100:]
+        with tempfile.TemporaryDirectory() as folder:
+            r = receiver.Receiver(folder)
+            self.addCleanup(r.close)
+            self.assertIsNone(r.accept(stream_packet('live-1', 1, 'chunk', b)))
+            journal = r.stream.packet_files[0]
+            self.assertEqual(json.loads(journal.read_text().splitlines()[0])['data'], b)
+            self.assertTrue(all(isinstance(n, int) for n in r.stream.sessions['live-1']['chunks'][1]))
+            self.assertIsNone(r.accept(stream_packet('live-1', 1, 'chunk', b)))
+            self.assertIsNone(r.accept(stream_packet('live-1', 2, 'end', json.dumps({'chunks': 2}))))
+            _, data = r.accept(stream_packet('live-1', 0, 'chunk', a))
+            self.assertEqual(data['domTree']['children'][0]['text'], '123')
+            self.assertIsNone(r.accept(stream_packet('live-1', 2, 'end', json.dumps({'chunks': 2}))))
+            self.assertEqual(len(journal.read_text().splitlines()), 3)
+            r.close()
+
+    def test_stream_large_capture_crosses_v3_size_and_packet_count_limits(self):
+        records = [json.loads(line) for line in stream().splitlines()]
+        records[0]['version'] = '4.0.0'
+        nodes = [{"kind": "node", "index": i, "parent": 0,
+                  "node": {"id": str(i), "type": "Label", "classes": [], "text": "x" * 7200}}
+                 for i in range(1, 1201)]
+        records[-1]['summary']['totalPanels'] = 1201
+        value = '\n'.join(json.dumps(r) for r in [records[0], records[1], *nodes, records[-1]]) + '\n'
+        self.assertGreater(len(value), receiver.MAX_CHARS)
+        chunks = [value[i:i + 4096] for i in range(0, len(value), 4096)]
+        self.assertGreater(len(chunks), receiver.MAX_CHUNKS)
+        with tempfile.TemporaryDirectory() as folder:
+            r = receiver.Receiver(folder)
+            try:
+                for i, body in enumerate(chunks):
+                    self.assertIsNone(r.accept(stream_packet('large-1', i, 'chunk', body)))
+                _, data = r.accept(stream_packet('large-1', len(chunks), 'end', json.dumps({'chunks': len(chunks)})))
+                self.assertEqual(data['summary']['totalPanels'], 1201)
+                self.assertEqual(data['domTree']['children'][-1]['text'], 'x' * 7200)
+            finally:
+                r.close()
+
+    def test_incomplete_stream_keeps_journal_and_rejects_conflicting_chunks_and_end(self):
+        with tempfile.TemporaryDirectory() as folder:
+            r = receiver.Receiver(folder)
+            r.accept(stream_packet('lost-1', 0, 'chunk', 'a'))
+            with self.assertRaisesRegex(ValueError, 'conflicting'):
+                r.accept(stream_packet('lost-1', 0, 'chunk', 'b'))
+            self.assertIsNone(r.accept(stream_packet('lost-1', 2, 'end', '{"chunks":2}')))
+            with self.assertRaises(ValueError):
+                r.accept(stream_packet('lost-1', 3, 'end', '{"chunks":3}'))
+            journal = r.stream.packet_files[0]
+            r.close()
+            self.assertTrue(journal.exists())
+            self.assertEqual(len(journal.read_text().splitlines()), 2)
+
     def test_clipboard_decoding_stops_before_allocation_padding(self):
         value = "HUD_DUMP3|rocket🚀"
         self.assertEqual(receiver.decode_clipboard(value.encode("utf-16-le") + b"\0\0\xff"), value)

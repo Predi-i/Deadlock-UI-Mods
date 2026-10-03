@@ -6,9 +6,9 @@
     const ROOT_ID = 'Hud'; // Or a verified subtree ID, e.g. hudActivePlayerStats.
     const INCLUDE_MEASUREMENTS = false;
     const SLICE_DELAY = 0.02;
-    const PACKET_DELAY = 0.2;
-    const EXPORT_ROUNDS = 2;
-    const DEADLINE_MS = 600000;
+    const PACKET_DELAY = 0.1;
+    const PACKET_COPIES = 2;
+    const DEADLINE_MS = 1800000;
     let job = null, handle = null, sequence = 0, lastKeyMs = -Infinity;
 
     function log(message) { $.Msg('[HUD-DUMPER] ' + message); }
@@ -31,30 +31,37 @@
         });
     }
     function send(current) {
-        const count = current.collector.progress().chunks;
         // Signature used by QOLLOCK ui/config_tab.js. No large TextEntry or CEF.
-        const packet = current.collector.packet(current.session, current.index);
-        $.DispatchEvent('CopyStringToClipboard', packet, packet);
-        current.index++;
-        if (current.index === count) {
-            current.index = 0;
-            current.round++;
-            log('Packet pass ' + current.round + '/' + EXPORT_ROUNDS + ' sent (' + count + ' parts).');
-        }
-        if (current.round >= EXPORT_ROUNDS) {
+        $.DispatchEvent('CopyStringToClipboard', current.packet, current.packet);
+        current.copies++;
+        later(PACKET_DELAY, current.copies < PACKET_COPIES ? send : resume, current);
+    }
+    function resume(current) {
+        current.packet = null;
+        if (current.sendingEnd) {
             stop('Sending finished. Only the Python receiver can confirm a complete saved capture.');
-        } else later(PACKET_DELAY, send, current);
+            return;
+        }
+        crawl(current);
     }
     function crawl(current) {
-        if (!current.collector.step()) {
-            if (Date.now() - current.lastProgress >= 2000) {
-                current.lastProgress = Date.now();
-                log('Collecting: ' + current.collector.progress().panels + ' panels serialized.');
-            }
-            later(SLICE_DELAY, crawl, current); return;
+        const done = current.collector.step();
+        const progress = current.collector.progress();
+        if (Date.now() - current.lastProgress >= 2000) {
+            current.lastProgress = Date.now();
+            log('Streaming: ' + progress.panels + ' panels serialized; ' + current.sent + ' batches dispatched.');
         }
-        log('Capture serialized in slices: ' + current.collector.progress().panels + ' panels. Export starting.');
-        later(PACKET_DELAY, send, current);
+        current.packet = current.collector.takePacket(current.session);
+        if (current.packet) current.sent++;
+        else if (done) {
+            current.packet = current.collector.endPacket(current.session);
+            current.sendingEnd = true;
+            log('Collection complete: ' + progress.panels + ' panels; sending completion marker.');
+        }
+        if (current.packet) {
+            current.copies = 0;
+            send(current);
+        } else later(SLICE_DELAY, crawl, current);
     }
     function run() {
         const now = Date.now();
@@ -69,8 +76,8 @@
             }
             if (!CORE.alive(root)) { log('Requested root not available: ' + ROOT_ID); return; }
             job = { host, started: now, lastProgress: now, session: now.toString(36) + '-' + (++sequence).toString(36),
-                index: 0, round: 0, collector: CORE.createCollector(root, {
-                    scope: ROOT_ID, measurements: INCLUDE_MEASUREMENTS,
+                packet: null, copies: 0, sent: 0, sendingEnd: false, collector: CORE.createCollector(root, {
+                    scope: ROOT_ID, measurements: INCLUDE_MEASUREMENTS, streaming: true,
                 }) };
             log('Started ' + job.session + ' under ' + ROOT_ID + '; open the receiver before capture.');
             later(SLICE_DELAY, crawl, job);

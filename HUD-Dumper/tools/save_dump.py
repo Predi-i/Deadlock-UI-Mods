@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Receive bounded HUD_DUMP3 clipboard packets; rebuild and validate JSON offline."""
+"""Receive HUD-Dumper clipboard batches; journal v4 immediately and rebuild JSON offline."""
 import argparse
 import ctypes
 import json
@@ -13,6 +13,8 @@ import time
 MAX_CHUNKS = 2048
 MAX_CHARS = 8 * 1024 * 1024
 MAX_PACKET_CHARS = 8500
+MAX_STREAM_CHUNKS = 65536
+MAX_STREAM_CHARS = 512 * 1024 * 1024
 
 
 def checksum(text):
@@ -24,10 +26,13 @@ def checksum(text):
 
 
 class Receiver:
-    def __init__(self):
+    def __init__(self, spool_dir=None):
         self.sessions = {}
+        self.stream = StreamReceiver(spool_dir)
 
     def accept(self, text):
+        if text and text.startswith("HUD_DUMP4|"):
+            return self.stream.accept(text)
         if not text or not text.startswith("HUD_DUMP3|"):
             return None
         # Python counts Unicode code points; protocol checksums use UTF-16 units.
@@ -70,7 +75,115 @@ class Receiver:
 
     def progress(self):
         return [(session, len(state["chunks"]), state["total"])
+                for session, state in self.sessions.items()] + self.stream.progress()
+
+    def close(self):
+        self.stream.close()
+
+
+class StreamReceiver:
+    def __init__(self, spool_dir=None):
+        self.spool_dir = Path(spool_dir) if spool_dir is not None else None
+        self.sessions, self.completed, self.packet_files = {}, {}, []
+
+    def _new_session(self, session):
+        if self.spool_dir is not None:
+            self.spool_dir.mkdir(parents=True, exist_ok=True)
+        if len(self.sessions) >= 2:
+            old = self.sessions.pop(next(iter(self.sessions)))  # Preserve the evicted session's journal.
+            old["file"].close()
+        handle = tempfile.NamedTemporaryFile(mode="w+b", prefix=f"hud_packets_{session}_",
+                                             suffix=".jsonl.part", dir=self.spool_dir, delete=False)
+        self.packet_files.append(Path(handle.name))
+        state = {"file": handle, "chunks": {}, "total": None, "chars": 0, "end": None}
+        self.sessions[session] = state
+        return state
+
+    @staticmethod
+    def _journal(state, index, kind, digest, data):
+        handle = state["file"]
+        handle.seek(0, os.SEEK_END)
+        offset = handle.tell()
+        raw = (json.dumps({"index": index, "kind": kind, "checksum": digest, "data": data},
+                          ensure_ascii=True, separators=(",", ":")) + "\n").encode("utf-8")
+        handle.write(raw)
+        handle.flush()
+        return offset, len(raw)
+
+    @staticmethod
+    def _read(state, location):
+        state["file"].seek(location[0])
+        return json.loads(state["file"].read(location[1]))["data"]
+
+    def accept(self, text):
+        if len(text.encode("utf-16-le", errors="surrogatepass")) // 2 > MAX_PACKET_CHARS:
+            raise ValueError("packet too large")
+        parts = text.split("|", 5)
+        if len(parts) != 6:
+            raise ValueError("malformed stream packet")
+        _, session, index, kind, digest, data = parts
+        if not re.fullmatch(r"[a-z0-9-]{1,48}", session) or not index.isdecimal():
+            raise ValueError("invalid stream session/index")
+        index = int(index)
+        if not 0 <= index <= MAX_STREAM_CHUNKS or kind not in ("chunk", "end"):
+            raise ValueError("invalid stream index/kind")
+        if checksum(data) != digest:
+            raise ValueError("packet checksum mismatch")
+        if kind == "chunk" and index == MAX_STREAM_CHUNKS:
+            raise ValueError("stream packet index outside limits")
+        total = None
+        if kind == "end":
+            footer = json.loads(data)
+            total = footer.get("chunks") if isinstance(footer, dict) else None
+            if type(total) is not int or not 0 < total <= MAX_STREAM_CHUNKS or index != total:
+                raise ValueError("invalid stream completion count")
+        if session in self.completed:
+            return None
+        state = self.sessions.get(session) or self._new_session(session)
+        if kind == "end":
+            if state["total"] is not None and state["total"] != total:
+                raise ValueError("stream completion count changed")
+            if any(i >= total for i in state["chunks"]):
+                raise ValueError("stream chunk outside completion count")
+            if state["end"] is None:
+                self._journal(state, index, kind, digest, data)
+                state["end"] = digest
+            elif state["end"] != digest:
+                raise ValueError("conflicting stream completion marker")
+            state["total"] = total
+        else:
+            if state["total"] is not None and index >= state["total"]:
+                raise ValueError("stream chunk outside completion count")
+            if index in state["chunks"]:
+                if self._read(state, state["chunks"][index]) != data:
+                    raise ValueError("conflicting duplicate packet")
+                return None
+            chars = len(data.encode("utf-16-le", errors="surrogatepass")) // 2
+            if state["chars"] + chars > MAX_STREAM_CHARS:
+                raise ValueError("stream exceeds disk receiver limit")
+            location = self._journal(state, index, kind, digest, data)
+            state["chunks"][index] = location
+            state["chars"] += chars
+        if state["total"] is None or len(state["chunks"]) != state["total"]:
+            return None
+        # Only Python assembles the complete payload, after every index is present.
+        joined = "".join(self._read(state, state["chunks"][i]) for i in range(state["total"]))
+        state["file"].close()
+        del self.sessions[session]
+        result = reconstruct(joined)
+        self.completed[session] = True
+        if len(self.completed) > 128:
+            del self.completed[next(iter(self.completed))]
+        return session, result
+
+    def progress(self):
+        return [(session, len(state["chunks"]), state["total"] or "streaming")
                 for session, state in self.sessions.items()]
+
+    def close(self):
+        for state in self.sessions.values():
+            state["file"].close()
+        self.sessions.clear()
 
 
 def reconstruct(stream):
@@ -81,7 +194,7 @@ def reconstruct(stream):
     if len(records) < 3 or records[0].get("kind") != "start" or records[-1].get("kind") != "end":
         raise ValueError("missing start/end record")
     header, footer = records[0], records[-1]
-    if header.get("version") != "3.0.0":
+    if header.get("version") not in ("3.0.0", "4.0.0"):
         raise ValueError("unsupported capture version")
     nodes, depths = [], []
     ids, classes, types = set(), set(), set()
@@ -224,14 +337,16 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path, default=Path(__file__).resolve().parents[1] / "captures")
     parser.add_argument("--label", default="unspecified", help="scenario label: match, hero-testing, hideout, etc.")
-    parser.add_argument("--timeout", type=float, default=600)
+    parser.add_argument("--timeout", type=float, default=1800)
     args = parser.parse_args()
     if not re.fullmatch(r"[a-zA-Z0-9_-]{1,48}", args.label) or not 0 < args.timeout <= 3600:
         parser.error("invalid label or timeout")
     read = clipboard_reader()
-    receiver, last, last_progress = Receiver(), None, 0
+    receiver, last, last_progress = Receiver(args.output_dir), None, 0
+    reported_journals = 0
     started = time.monotonic()
-    print("Ready. Press M in the repacked HUD-Dumper client; waiting for v3 packets.", flush=True)
+    print("Ready. Watching clipboard for v3/v4 packets. V4 batches are written to disk immediately.", flush=True)
+    print(f"Output directory: {args.output_dir}", flush=True)
     try:
         while time.monotonic() - started < args.timeout:
             text = read()
@@ -239,6 +354,9 @@ def main():
                 last = text
                 try:
                     result = receiver.accept(text)
+                    for journal in receiver.stream.packet_files[reported_journals:]:
+                        print(f"Packet journal: {journal}", flush=True)
+                    reported_journals = len(receiver.stream.packet_files)
                     if result:
                         session, data = result
                         destination = save_capture(data, session, args.output_dir, args.label)
@@ -257,7 +375,10 @@ def main():
     except KeyboardInterrupt:
         print("Stopped. Incomplete captures were not saved.")
         return 1
-    print(f"Timed out; incomplete captures were not saved. Pending: {receiver.progress()}")
+    finally:
+        pending_progress = receiver.progress()
+        receiver.close()
+    print(f"Timed out; incomplete captures were not saved. Pending: {pending_progress}")
     return 1
 
 
