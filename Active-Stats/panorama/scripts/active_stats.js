@@ -35,6 +35,7 @@
     };
 
     const VALUE_BFS_LIMIT = 200;
+    const DISCOVERY_RETRY_MS = 800;
     const STORE_KEY = 'ActiveStats';
     const CTX = $.GetContextPanel();
 
@@ -45,7 +46,13 @@
 
     // ---------------------------------------------------------------- panel helpers
     function isValid(panel) {
-        return !!(panel && (!panel.IsValid || panel.IsValid()));
+        try { return !!(panel && typeof panel.IsValid === 'function' && panel.IsValid()); }
+        catch (_) { return false; }
+    }
+
+    function isDirectChild(panel, parent) {
+        if (!isValid(panel) || !isValid(parent)) return false;
+        try { return panel.GetParent() === parent; } catch (_) { return false; }
     }
 
     function hasClass(panel, className) {
@@ -54,8 +61,10 @@
     }
 
     function findChild(root, id) {
-        if (!isValid(root) || typeof root.Children !== 'function') return null;
+        if (!isValid(root)) return null;
         try {
+            if (typeof root.FindChild === 'function') return root.FindChild(id);
+            if (typeof root.Children !== 'function') return null;
             return (root.Children() || []).find(child => isValid(child) && child.id === id) || null;
         } catch (e) { return null; }
     }
@@ -128,9 +137,13 @@
     // ---------------------------------------------------------------- state
     const State = {
         overlay: null,
+        hudPanel: null,
         gameplayHud: null,
         nativeGameplayHud: null,
-        hudAncestors: null,
+        nextHudSearchMs: 0,
+        nextCoreSearchMs: 0,
+        nextGameplaySearchMs: 0,
+        nextSourceSearchMs: 0,
         isHudSuppressed: false,
         sourcePanel: null,
         rowPanels: new Map(),
@@ -138,6 +151,9 @@
         rowIcons: new Map(),
         sourceContainers: new Map(),
         sourceScopes: new Map(),
+        scopeParents: new Map(),
+        scopeSearchNextMs: new Map(),
+        rowSearchNextMs: new Map(),
         valuePanels: new Map(),
         lastLayoutSig: '',
         lastContentSig: '',
@@ -147,6 +163,52 @@
         scheduledTick: null,
     };
     let scoreboardListener = null;
+
+    const STAT_PATHS = {
+        fireRate: ['StatList', 'WeaponColumn'], clipSize: ['StatList', 'WeaponColumn'],
+        bulletLifesteal: ['StatList', 'WeaponColumn'],
+        range: ['StatList', 'SpiritColumn'], duration: ['StatList', 'SpiritColumn'],
+        techLifesteal: ['StatList', 'SpiritColumn'],
+        weaponPower: ['HudStatBlock', 'CoreStats', 'Weapon'], spirit: ['HudStatBlock', 'CoreStats', 'Spirit'],
+        moveSpeed: ['StatList', 'VitalityColumn'], healAmp: ['StatList', 'VitalityColumn'],
+        bulletResist: ['StatList', 'VitalityColumn'], techResist: ['StatList', 'VitalityColumn'],
+        regen: ['StatList', 'VitalityColumn'],
+    };
+
+    function resetDiscoveryDeadlines() {
+        State.nextHudSearchMs = State.nextCoreSearchMs = State.nextGameplaySearchMs = State.nextSourceSearchMs = 0;
+        State.scopeSearchNextMs.clear();
+        State.rowSearchNextMs.clear();
+    }
+
+    function clearSourceCache() {
+        State.sourcePanel = null;
+        State.sourceContainers.clear();
+        State.sourceScopes.clear();
+        State.scopeParents.clear();
+        State.scopeSearchNextMs.clear();
+        State.rowSearchNextMs.clear();
+        State.valuePanels.clear();
+        State.lastContentSig = '';
+        State.nextSourceSearchMs = 0;
+    }
+
+    function resolveHud() {
+        const root = getRoot();
+        if (isDirectChild(State.hudPanel, root)) return State.hudPanel;
+        if (State.hudPanel) State.nextHudSearchMs = 0;
+        if (Date.now() < State.nextHudSearchMs) return null;
+        State.nextHudSearchMs = Date.now() + DISCOVERY_RETRY_MS;
+        const candidate = ancestor('Hud');
+        const hud = isDirectChild(candidate, root) ? candidate : findChild(root, 'Hud');
+        if (hud !== State.hudPanel) {
+            State.gameplayHud = State.nativeGameplayHud = null;
+            State.nextCoreSearchMs = State.nextGameplaySearchMs = 0;
+            clearSourceCache();
+        }
+        State.hudPanel = hud;
+        return hud;
+    }
 
     // ---------------------------------------------------------------- value extraction & classification
     function stripHtml(s) {
@@ -195,7 +257,11 @@
     function readModifierValue(container, def) {
         if (!isValid(container)) return '';
         let labels = State.valuePanels.get(container);
-        if (!labels || !isValid(labels.value) || (labels.postfix && !isValid(labels.postfix))) {
+        const deltaStat = def.key === 'weaponPower' || def.key === 'spirit';
+        if (!labels || !isDirectChild(labels.core, container) || !isDirectChild(labels.value, labels.valueParent) ||
+            (labels.valueParent !== labels.core && !isDirectChild(labels.valueParent, labels.core)) ||
+            (labels.postfix && !isDirectChild(labels.postfix, labels.valueParent)) ||
+            (deltaStat && !isDirectChild(labels.delta, labels.core))) {
             // The core has a CLASS, not an ID. Native labels are now split into
             // statNumber + statPostfix, with core stats wrapped once more.
             const core = (container.Children() || []).find(child => hasClass(child, 'miniModifierCore'));
@@ -204,6 +270,8 @@
             const wrapper = children.find(child => hasClass(child, 'statWithPostfix'));
             const candidates = wrapper ? wrapper.Children() || [] : children;
             labels = {
+                core,
+                valueParent: wrapper || core,
                 value: candidates.find(child => hasClass(child, 'statNumber')),
                 postfix: candidates.find(child => hasClass(child, 'statPostfix')),
                 delta: children.find(child => hasClass(child, 'statNumberDelta')),
@@ -268,7 +336,7 @@
         if (!isVisible) {
             State.lastContentSig = '';
             // Immediately wake up and refresh with 0ms latency when closing scoreboard
-            if (State.scheduledTick) {
+            if (State.scheduledTick !== null) {
                 try { $.CancelScheduled(State.scheduledTick); } catch (e) {}
                 State.scheduledTick = null;
             }
@@ -282,20 +350,19 @@
 
     // ---------------------------------------------------------------- DOM & overlay creation
     function isGameplayHudShown() {
-        if (!State.hudAncestors || !isValid(State.hudAncestors[0])) {
-            const hud = ancestor('Hud') || findChild(getRoot(), 'Hud');
-            if (!isValid(hud)) return false;
-            State.hudAncestors = [];
-            let panel = hud;
-            for (let i = 0; isValid(panel) && i < 50; i++) {
-                State.hudAncestors.push(panel);
-                panel = panel.GetParent ? panel.GetParent() : null;
-            }
+        const hud = resolveHud();
+        if (!isValid(hud)) return false;
+        const ancestors = [];
+        let panel = hud;
+        for (let i = 0; isValid(panel) && i < 50; i++) {
+            ancestors.push(panel);
+            panel = panel.GetParent ? panel.GetParent() : null;
         }
+        if (panel) return false;
         // These are the game's own hud.css gates. No stat containers or
         // labels need to be touched while the gameplay HUD is hidden.
-        if (!State.hudAncestors.some(panel => hasClass(panel, 'joined_team'))) return false;
-        for (const panel of State.hudAncestors) {
+        if (!ancestors.some(panel => hasClass(panel, 'joined_team'))) return false;
+        for (const panel of ancestors) {
             if (!isValid(panel) || panel.visible === false || hasClass(panel, 'HudHiddenPanel') ||
                 hasClass(panel, 'ShowEscapeMenu') || hasClass(panel, 'HudTakeoverEnabled') ||
                 hasClass(panel, 'inPostGame') || hasClass(panel, 'GameStatePostGame') ||
@@ -303,7 +370,14 @@
         }
         const core = resolveGameplayHud();
         if (!isValid(core) || core.visible === false || hasClass(core, 'HudHiddenPanel')) return false;
-        if (!isValid(State.nativeGameplayHud)) State.nativeGameplayHud = findChild(core, IDS.gameplayHud);
+        if (!isDirectChild(State.nativeGameplayHud, core)) {
+            if (State.nativeGameplayHud) State.nextGameplaySearchMs = 0;
+            State.nativeGameplayHud = null;
+            if (Date.now() >= State.nextGameplaySearchMs) {
+                State.nativeGameplayHud = findChild(core, IDS.gameplayHud);
+                State.nextGameplaySearchMs = Date.now() + DISCOVERY_RETRY_MS;
+            }
+        }
         const gameplay = State.nativeGameplayHud;
         return isValid(gameplay) && gameplay.visible !== false && !hasClass(gameplay, 'gShopOpen') &&
             !hasClass(gameplay, 'HudHiddenPanel') && gameplay.style.visibility !== 'collapse' &&
@@ -311,55 +385,72 @@
     }
 
     function resolveGameplayHud() {
-        if (isValid(State.gameplayHud)) return State.gameplayHud;
-        const source = resolveSourcePanel();
-        const core = isValid(source) && source.GetParent ? source.GetParent() : null;
+        const hud = resolveHud();
+        if (isDirectChild(State.gameplayHud, hud) && hasClass(State.gameplayHud, 'HudCore')) return State.gameplayHud;
+        if (State.gameplayHud) State.nextCoreSearchMs = 0;
+        if (Date.now() < State.nextCoreSearchMs) return null;
+        State.nextCoreSearchMs = Date.now() + DISCOVERY_RETRY_MS;
+        const core = isValid(hud) ? (hud.Children() || []).find(child => hasClass(child, 'HudCore')) || null : null;
+        if (core !== State.gameplayHud) {
+            State.nativeGameplayHud = null;
+            State.nextGameplaySearchMs = 0;
+            clearSourceCache();
+        }
         State.gameplayHud = core;
-        return State.gameplayHud;
+        return core;
     }
 
     function resolveSourcePanel() {
-        if (isValid(State.sourcePanel)) return State.sourcePanel;
-        State.sourceContainers.clear();
-        State.sourceScopes.clear();
-        State.valuePanels.clear();
-        State.sourcePanel = ancestor(IDS.source);
-        if (!isValid(State.sourcePanel)) {
-            const hud = ancestor('Hud') || findChild(getRoot(), 'Hud');
-            const core = isValid(hud) ? (hud.Children() || []).find(panel => hasClass(panel, 'HudCore')) : null;
-            State.sourcePanel = findChild(core, IDS.source);
-        }
+        const core = resolveGameplayHud();
+        if (isDirectChild(State.sourcePanel, core)) return State.sourcePanel;
+        if (State.sourcePanel) clearSourceCache();
+        if (Date.now() < State.nextSourceSearchMs) return null;
+        State.nextSourceSearchMs = Date.now() + DISCOVERY_RETRY_MS;
+        const candidate = ancestor(IDS.source);
+        State.sourcePanel = isDirectChild(candidate, core) ? candidate : findChild(core, IDS.source);
         return State.sourcePanel;
     }
 
     function getSourceContainer(source, def) {
+        const now = Date.now();
+        let scope = source;
+        for (const id of STAT_PATHS[def.key]) {
+            const previous = State.sourceScopes.get(id);
+            let next = previous;
+            if (!isDirectChild(next, scope)) {
+                if (previous || State.scopeParents.get(id) !== scope) State.scopeSearchNextMs.set(id, 0);
+                next = null;
+                if (now >= (State.scopeSearchNextMs.get(id) || 0)) {
+                    next = findChild(scope, id);
+                    State.scopeSearchNextMs.set(id, now + DISCOVERY_RETRY_MS);
+                }
+            }
+            if (previous !== next) {
+                State.sourceContainers.clear(); State.valuePanels.clear(); State.rowSearchNextMs.clear();
+                State.lastContentSig = '';
+            }
+            State.sourceScopes.set(id, next);
+            State.scopeParents.set(id, scope);
+            scope = next;
+        }
         let container = State.sourceContainers.get(def.key);
-        if (isValid(container)) return container;
-        if (container) State.valuePanels.delete(container);
-        const weapon = ['fireRate', 'clipSize', 'bulletLifesteal'];
-        const spirit = ['duration', 'range', 'techLifesteal'];
-        const coreStat = def.key === 'weaponPower' ? 'Weapon' : def.key === 'spirit' ? 'Spirit' : null;
-        const scopeId = coreStat || (weapon.includes(def.key) ? 'WeaponColumn' : spirit.includes(def.key) ? 'SpiritColumn' : 'VitalityColumn');
-        let scope = State.sourceScopes.get(scopeId);
-        if (!isValid(scope)) {
-            scope = coreStat
-                ? findChild(findChild(findChild(source, 'HudStatBlock'), 'CoreStats'), coreStat)
-                : findChild(findChild(source, 'StatList'), scopeId);
-            if (isValid(scope)) State.sourceScopes.set(scopeId, scope);
+        if (isDirectChild(container, scope)) return container;
+        if (container) {
+            State.valuePanels.delete(container);
+            State.rowSearchNextMs.set(def.key, 0);
         }
+        if (now < (State.rowSearchNextMs.get(def.key) || 0)) return null;
+        State.rowSearchNextMs.set(def.key, now + DISCOVERY_RETRY_MS);
         container = findChild(scope, def.id);
-        if (isValid(container)) {
-            State.sourceContainers.set(def.key, container);
-            return container;
-        }
-        return null;
+        State.sourceContainers.set(def.key, container);
+        return container;
     }
 
     function ensureOverlay() {
-        if (isValid(State.overlay)) return State.overlay;
-
         const parent = resolveGameplayHud();
         if (!isValid(parent)) return null;
+        if (isDirectChild(State.overlay, parent)) return State.overlay;
+        if (isValid(State.overlay)) State.overlay.DeleteAsync(0);
 
         let overlay = findChild(parent, IDS.overlay);
         if (!isValid(overlay)) {
@@ -442,7 +533,7 @@
             try { $.UnregisterForUnhandledEvent('CitadelScoreboardToggle', scoreboardListener); } catch (e) {}
             scoreboardListener = null;
         }
-        if (State.scheduledTick) {
+        if (State.scheduledTick !== null) {
             try { $.CancelScheduled(State.scheduledTick); } catch (e) {}
             State.scheduledTick = null;
         }
@@ -452,8 +543,9 @@
         State.overlay = null;
         State.gameplayHud = null;
         State.nativeGameplayHud = null;
-        State.hudAncestors = null;
-        State.sourcePanel = null;
+        State.hudPanel = null;
+        clearSourceCache();
+        resetDiscoveryDeadlines();
         State.rowPanels.clear();
         State.rowIcons.clear();
         State.rowValues.clear();
@@ -522,6 +614,7 @@
                 State.isHudSuppressed = false;
                 State.lastContentSig = '';
                 State.lastVisibleCount = -1;
+                resetDiscoveryDeadlines();
             }
             const root = getRoot();
             if (!isValid(root)) {

@@ -15,6 +15,9 @@ let visits = 0;
 let scans = 0;
 let broad = 0;
 let childReads = 0;
+let directCalls = 0;
+let directVisitedPanels = 0;
+let directMisses = 0;
 class Panel {
     constructor(data = {}) {
         this.id = data.id || '';
@@ -32,6 +35,16 @@ class Panel {
     IsValid() { return this.alive; }
     GetParent() { return this.parent; }
     Children() { childReads++; return this.children.filter(child => child.alive); }
+    FindChild(id) {
+        directCalls++;
+        for (const child of this.children) {
+            if (!child.alive) continue;
+            directVisitedPanels++;
+            if (child.id === id) return child;
+        }
+        directMisses++;
+        return null;
+    }
     BHasClass(name) { return this.classes.has(name); }
     AddClass(name) { this.classes.add(name); }
     SetHasClass(name, enabled) { enabled ? this.classes.add(name) : this.classes.delete(name); }
@@ -50,8 +63,8 @@ class Panel {
         return null;
     }
 }
-const metrics = () => ({ scans, visitedPanels: visits, wholeHudScans: broad, childReads });
-const reset = () => { scans = visits = broad = childReads = 0; };
+const metrics = () => ({ scans, visitedPanels: visits, wholeHudScans: broad, childReads, directCalls, directVisitedPanels, directMisses });
+const reset = () => { scans = visits = broad = childReads = directCalls = directVisitedPanels = directMisses = 0; };
 const load = (file, context) => vm.runInContext(fs.readFileSync(path.join(ROOT, file), 'utf8'), context, {filename: file});
 const tree = new Panel(capture.domTree);
 const hud = tree.FindChildTraverse('Hud');
@@ -93,25 +106,30 @@ function activeStats(sourceCode, initialHidden = false) {
     core.add(new Panel({type: 'Label', classes: ['statPostfix'], text: '%'}));
     const jobs = new Map();
     const listeners = new Map();
+    let now = 1000;
     let serial = 0;
     const $ = {
         GetContextPanel: () => source,
         CreatePanel: (type, parent, id) => parent.add(new Panel({type, id})),
-        Schedule: (delay, fn) => { const id = ++serial; jobs.set(id, fn); return id; },
+        Schedule: (delay, fn) => { const id = ++serial; jobs.set(id, {at: now + delay * 1000, fn}); return id; },
         CancelScheduled: id => jobs.delete(id),
         RegisterForUnhandledEvent: (name, fn) => { listeners.set(name, fn); return fn; },
         UnregisterForUnhandledEvent: name => listeners.delete(name),
         Localize: token => token, Msg: () => {},
     };
-    const sandbox = vm.createContext({$, console});
+    const VirtualDate = class extends Date {
+        constructor(...args) { super(...(args.length ? args : [now])); }
+        static now() { return now; }
+    };
+    const sandbox = vm.createContext({$, console, Date: VirtualDate});
     if (initialHidden) root.FindChildTraverse('Hud').classes.delete('joined_team');
     reset();
     vm.runInContext(sourceCode, sandbox);
     const advance = count => {
         for (let i = 0; i < count; i++) {
-            const entry = jobs.entries().next().value;
+            const entry = [...jobs.entries()].sort((a, b) => a[1].at - b[1].at)[0];
             assert.ok(entry, 'poller stopped');
-            jobs.delete(entry[0]); entry[1]();
+            jobs.delete(entry[0]); now = entry[1].at; entry[1].fn();
         }
     };
     advance(60);
@@ -141,6 +159,7 @@ weapon.classes.add('has_delta');
 weapon.classes.add('isPositive');
 const weaponCore = weapon.children[0];
 weaponCore.classes.add('miniModifierCore');
+for (const child of weaponCore.children) child.DeleteAsync();
 weaponCore.children = [];
 const wrapper = weaponCore.add(new Panel({classes: ['statWithPostfix']}));
 wrapper.add(new Panel({type: 'Label', classes: ['statNumber'], text: '140'}));
