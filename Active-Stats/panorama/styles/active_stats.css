@@ -26,6 +26,14 @@
     visibility: collapse;
 }
 
+/* Native hud.css hides combat HUD panels with this area-specific flag.
+   Rows have no inline opacity override, so this takes effect immediately,
+   before the idle tick collapses the overlay and suspends value reads. */
+.InHideout .ActiveStatsRow
+{
+    opacity: 0;
+}
+
 .ActiveStatsRow.isBuff
 {
     border-left: 2px solid #7ae66e;

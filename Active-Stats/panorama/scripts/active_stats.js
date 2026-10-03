@@ -298,7 +298,8 @@
         for (const panel of State.hudAncestors) {
             if (!isValid(panel) || panel.visible === false || hasClass(panel, 'HudHiddenPanel') ||
                 hasClass(panel, 'ShowEscapeMenu') || hasClass(panel, 'HudTakeoverEnabled') ||
-                hasClass(panel, 'inPostGame') || hasClass(panel, 'GameStatePostGame')) return false;
+                hasClass(panel, 'inPostGame') || hasClass(panel, 'GameStatePostGame') ||
+                hasClass(panel, 'InHideout')) return false;
         }
         const core = resolveGameplayHud();
         if (!isValid(core) || core.visible === false || hasClass(core, 'HudHiddenPanel')) return false;

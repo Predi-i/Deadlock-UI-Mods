@@ -184,12 +184,17 @@ currentHud.classes.add('joined_team'); current.advance(1);
 assert.equal(overlay.style.visibility, 'visible');
 assert.equal(current.value.text, '-12%', 'HUD return must refresh hidden changes');
 const gameplay = current.root.FindChildTraverse('gameplay_hud');
-for (const flag of ['ShowEscapeMenu', 'HudTakeoverEnabled', 'GameStatePostGame', 'inPostGame']) {
+for (const flag of ['ShowEscapeMenu', 'HudTakeoverEnabled', 'GameStatePostGame', 'inPostGame', 'InHideout']) {
+    const readsBefore = valueReads;
     currentHud.classes.add(flag); current.advance(1);
     assert.equal(overlay.style.visibility, 'collapse', flag);
+    assert.equal(valueReads, readsBefore, flag + ' must suspend value reads');
     currentHud.classes.delete(flag); current.advance(1);
     assert.equal(overlay.style.visibility, 'visible', flag + ' recovery');
 }
+// The map connection remains set in both rooms; it must not hide combat UI.
+currentHud.classes.add('connectedToHideout'); current.advance(1);
+assert.equal(overlay.style.visibility, 'visible', 'connectedToHideout alone must not hide combat-room stats');
 gameplay.classes.add('gShopOpen'); current.advance(1);
 assert.equal(overlay.style.visibility, 'collapse');
 gameplay.classes.delete('gShopOpen'); current.advance(1);

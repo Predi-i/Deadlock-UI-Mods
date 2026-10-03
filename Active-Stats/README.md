@@ -19,6 +19,10 @@ previous tick and listener; destroyed source panels and labels are resolved agai
 
 The readout also follows native gameplay HUD visibility: joining/leaving the
 team, Escape/takeover screens, post-game state and the shop's gameplay-HUD gate.
+The native `InHideout` area flag hides combat UI in the first hideout room; it
+also hides Active Stats rows immediately in CSS and suspends reads in the idle
+tick. `connectedToHideout` alone does not hide stats because it remains set in
+the hideout's combat room too.
 While hidden, the existing idle tick checks only cached HUD state; it skips
 modifier lookups, value reads and row updates. Returning to the HUD refreshes the
 values and restores visibility. A hidden startup does not create the overlay.
