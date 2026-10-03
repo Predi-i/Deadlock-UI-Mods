@@ -33,6 +33,36 @@ def stream_packet(session, index, kind, body):
 
 
 class ReceiverTests(unittest.TestCase):
+    def test_windows_crlf_framing_restores_checksum_and_preserves_escaped_label_text(self):
+        records = [json.loads(line) for line in stream().splitlines()]
+        records[2]['node']['text'] = '123\r\nnext\nline'
+        value = '\n'.join(json.dumps(r) for r in records) + '\n'
+        with tempfile.TemporaryDirectory() as folder:
+            r = receiver.Receiver(folder)
+            try:
+                _, legacy = r.accept(packet('crlf-3', 0, 1, value).replace('\n', '\r\n'))
+                self.assertEqual(legacy['domTree']['children'][0]['text'], '123\r\nnext\nline')
+                self.assertIsNone(r.accept(stream_packet('crlf-4', 0, 'chunk', value).replace('\n', '\r\n')))
+                _, current = r.accept(stream_packet('crlf-4', 1, 'end', '{"chunks":1}'))
+                self.assertEqual(current['domTree']['children'][0]['text'], '123\r\nnext\nline')
+                self.assertEqual(r.normalizations(), 2)
+                with self.assertRaisesRegex(ValueError, 'checksum mismatch'):
+                    receiver.verified_payload(value.replace('\n', '\r\n') + 'corrupt', receiver.checksum(value))
+            finally:
+                r.close()
+
+    def test_rejected_packet_journal_keeps_raw_bytes_without_recording_other_clipboard_text(self):
+        with tempfile.TemporaryDirectory() as folder:
+            journal = receiver.RejectedPacketJournal(folder)
+            try:
+                self.assertIsNone(journal.record('unrelated private clipboard text', 'bad'))
+                self.assertEqual(list(Path(folder).iterdir()), [])
+                raw = 'HUD_DUMP4|test-1|0|chunk|00000000|broken\r\n'
+                file = journal.record(raw, 'checksum mismatch')
+                self.assertEqual(json.loads(file.read_text())['packet'], raw)
+            finally:
+                journal.close()
+
     def test_stream_journals_immediately_then_accepts_end_first_and_reordered_chunks(self):
         value = stream().replace('3.0.0', '4.0.0')
         a, b = value[:100], value[100:]

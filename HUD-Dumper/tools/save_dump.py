@@ -25,10 +25,52 @@ def checksum(text):
     return f"{value:08x}"
 
 
+def verified_payload(data, digest):
+    if not re.fullmatch(r"[0-9a-f]{8}", digest):
+        raise ValueError("invalid checksum header")
+    raw_digest = checksum(data)
+    if raw_digest == digest:
+        return data, False
+    # CF_UNICODETEXT uses CR-LF lines. Restore the sender's LF framing only
+    # when the original checksum verifies; JSON-escaped label text is untouched.
+    restored = data.replace("\r\n", "\n")
+    lf_digest = checksum(restored) if restored != data else raw_digest
+    if restored != data and lf_digest == digest:
+        return restored, True
+    raise ValueError(f"packet checksum mismatch (expected={digest}, raw={raw_digest}, LF={lf_digest})")
+
+
+class RejectedPacketJournal:
+    """Keep failed HUD packets for diagnosis; never journal unrelated clipboard text."""
+    def __init__(self, directory):
+        self.directory, self.handle, self.path = Path(directory), None, None
+        self.chars = 0
+
+    def record(self, text, error):
+        if not text.startswith(("HUD_DUMP3|", "HUD_DUMP4|")) or len(text) > MAX_PACKET_CHARS:
+            return None
+        if self.chars + len(text) > MAX_STREAM_CHARS:
+            return self.path
+        if self.handle is None:
+            self.directory.mkdir(parents=True, exist_ok=True)
+            self.handle = tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", prefix="hud_rejected_",
+                                                      suffix=".jsonl.part", dir=self.directory, delete=False)
+            self.path = Path(self.handle.name)
+        self.handle.write(json.dumps({"error": str(error), "packet": text}, ensure_ascii=True) + "\n")
+        self.handle.flush()
+        self.chars += len(text)
+        return self.path
+
+    def close(self):
+        if self.handle is not None:
+            self.handle.close()
+
+
 class Receiver:
     def __init__(self, spool_dir=None):
         self.sessions = {}
         self.stream = StreamReceiver(spool_dir)
+        self.newline_normalizations = 0
 
     def accept(self, text):
         if text and text.startswith("HUD_DUMP4|"):
@@ -49,8 +91,8 @@ class Receiver:
         index, total = int(index), int(total)
         if not 0 <= index < total <= MAX_CHUNKS:
             raise ValueError("packet index/count outside limits")
-        if checksum(data) != digest:
-            raise ValueError("packet checksum mismatch")
+        data, normalized = verified_payload(data, digest)
+        self.newline_normalizations += int(normalized)
         if session not in self.sessions:
             if len(self.sessions) >= 2:
                 del self.sessions[next(iter(self.sessions))]
@@ -80,11 +122,15 @@ class Receiver:
     def close(self):
         self.stream.close()
 
+    def normalizations(self):
+        return self.newline_normalizations + self.stream.newline_normalizations
+
 
 class StreamReceiver:
     def __init__(self, spool_dir=None):
         self.spool_dir = Path(spool_dir) if spool_dir is not None else None
         self.sessions, self.completed, self.packet_files = {}, {}, []
+        self.newline_normalizations = 0
 
     def _new_session(self, session):
         if self.spool_dir is not None:
@@ -127,8 +173,8 @@ class StreamReceiver:
         index = int(index)
         if not 0 <= index <= MAX_STREAM_CHUNKS or kind not in ("chunk", "end"):
             raise ValueError("invalid stream index/kind")
-        if checksum(data) != digest:
-            raise ValueError("packet checksum mismatch")
+        data, normalized = verified_payload(data, digest)
+        self.newline_normalizations += int(normalized)
         if kind == "chunk" and index == MAX_STREAM_CHUNKS:
             raise ValueError("stream packet index outside limits")
         total = None
@@ -343,7 +389,10 @@ def main():
         parser.error("invalid label or timeout")
     read = clipboard_reader()
     receiver, last, last_progress = Receiver(args.output_dir), None, 0
+    rejected = RejectedPacketJournal(args.output_dir)
     reported_journals = 0
+    reported_newlines = False
+    reported_rejections = False
     started = time.monotonic()
     print("Ready. Watching clipboard for v3/v4 packets. V4 batches are written to disk immediately.", flush=True)
     print(f"Output directory: {args.output_dir}", flush=True)
@@ -354,11 +403,15 @@ def main():
                 last = text
                 try:
                     result = receiver.accept(text)
+                    if receiver.normalizations() and not reported_newlines:
+                        print("Clipboard CR-LF framing restored to LF; original checksum verified.", flush=True)
+                        reported_newlines = True
                     for journal in receiver.stream.packet_files[reported_journals:]:
                         print(f"Packet journal: {journal}", flush=True)
                     reported_journals = len(receiver.stream.packet_files)
                     if result:
                         session, data = result
+                        data["transport"] = {"clipboardNewlineNormalizations": receiver.normalizations()}
                         destination = save_capture(data, session, args.output_dir, args.label)
                         print(f"Saved verified complete packet set: {destination}", flush=True)
                         print(f"Panels: {data['summary']['totalPanels']}; classes: {data['meta']['classCoverage']}")
@@ -366,6 +419,10 @@ def main():
                             print(f"NOTE: {warning}")
                         return 0
                 except ValueError as error:
+                    path = rejected.record(text, error)
+                    if path and not reported_rejections:
+                        print(f"Rejected packet journal: {path}", flush=True)
+                        reported_rejections = True
                     print(f"Rejected packet/capture: {error}", flush=True)
             if time.monotonic() - last_progress >= 2:
                 for session, received, total in receiver.progress():
@@ -378,6 +435,7 @@ def main():
     finally:
         pending_progress = receiver.progress()
         receiver.close()
+        rejected.close()
     print(f"Timed out; incomplete captures were not saved. Pending: {pending_progress}")
     return 1
 

@@ -158,7 +158,7 @@ assert result[1]['summary']['totalPanels']==3
 r.close();spool.cleanup()
 print('verified')`;
     const output = spawnSync('python', ['-c', python, path.resolve(__dirname, '../tools/save_dump.py')],
-        { input: JSON.stringify(packets), encoding: 'utf8' });
+        { input: JSON.stringify(packets.map(p => p.replace(/\n/g, '\r\n'))), encoding: 'utf8' });
     assert.equal(output.status, 0, output.stderr); assert.match(output.stdout, /verified/);
 });
 

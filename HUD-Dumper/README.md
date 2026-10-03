@@ -34,6 +34,12 @@ The receiver journals each validated batch immediately to a
 survive interruption and contain sequence numbers, checksums and payloads; they
 are recovery artifacts, not completed profiler captures. Only a completion
 marker plus every batch index permits reconstruction into one final JSON.
+Windows clipboard transport can change LF record delimiters into CR-LF. The
+receiver restores these delimiters only if the original sender checksum then
+matches. JSON-escaped line breaks inside Label text retain their original value.
+The saved JSON reports the normalization count in `transport`. Other checksum
+failures remain rejected; their raw HUD packets are kept separately in
+`hud_rejected_*.jsonl.part` for diagnosis. Unrelated clipboard text is not saved.
 The receiver also accepts the previously compiled v3 sender, which still has
 its old collection limit and starts transfer only after collection ends.
 
