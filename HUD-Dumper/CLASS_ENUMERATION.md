@@ -31,10 +31,13 @@ The `$` surface exposed 29 own functions without a class-list API. This is live
 client evidence, not merely a DLL string search. It does not rule out indirect
 access through other APIs or a different native control.
 
-A further controlled client experiment is prepared in `hud_api_probe.js` to
-check whether `GetAttributeString("class", ...)` tracks changes to the class list
-of an owned temporary panel. Its native result is still pending. The collector
-has not switched to this getter without verifying those semantics.
+The controlled client experiment in `hud_api_probe.js` also completed. Its owned
+temporary panel had neither test class initially; `BHasClass` then confirmed A,
+both A and B, and only B after removing A. `GetAttributeString("class",
+"<missing>")` returned `<missing>` in every state. This getter does not expose
+the current class list for that native Panel. The log confirms that deletion of
+the temporary panel was requested, not that asynchronous deletion completed.
+The collector must not switch to this getter as a source of live classes.
 
 ## Native debugger evidence
 
@@ -49,6 +52,21 @@ markup-formatting strings. These are investigation leads for the native
 inspector's panel descriptions. They do not establish a callable JavaScript
 method, a supported export, or that all collapsed descendants are materialized
 as readable debugger rows.
+
+Further read-only inspection followed the virtual call at that stage rather than
+relying on the diagnostic strings alone. In the inspected binaries,
+`CPanel2D` forwards this call to its underlying `CUIPanel`. That target creates a
+debug property named `class`, iterates the panel's stored symbol array, resolves
+the symbol names, and joins them with spaces. This establishes a native path
+for producing the per-panel class description used by the inspector. It does
+not establish a JavaScript binding or a supported tree-export operation.
+
+For reproducibility, the traced RVAs in the inspected Windows binaries were:
+`panoramauiclient.dll` `0x12257e` (debug-description virtual call), `0xcf890`
+(`CPanel2D` forwarding function), and `panorama.dll` `0x107eb0` (target function),
+with the class-symbol loop at `0x108000` through `0x10814f`. These are static
+investigation evidence for this binary version, not addresses to call or offsets
+to use in runtime code. They must not be treated as a stable engine contract.
 
 The same binary contains the panel binding-name block with `AddClass`,
 `RemoveClass`, `BHasClass`, `Children`, and attribute methods. No `GetClasses` or
