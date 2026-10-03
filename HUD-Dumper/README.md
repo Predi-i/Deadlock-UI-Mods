@@ -1,40 +1,67 @@
 # HUD-Dumper
 
 Standalone diagnostic source for streaming a live HUD tree. It records panel IDs,
-types, basic flags, and `Label`/`TextEntry` text. **Full native class enumeration
-is not implemented:** the current client capture found `GetClasses()` unavailable
-on every panel. The Windows Python receiver rebuilds the nested `domTree` JSON used by the
+types, basic flags, and `Label`/`TextEntry` text. The direct HUD collector cannot
+enumerate native classes: the current client capture found `GetClasses()` unavailable
+on every panel. Native Debugger row descriptions have now supplied real class
+lists in a client probe; the experimental exporter below uses this source.
+Full HUD coverage and description freshness still require client verification.
+The Windows Python receiver rebuilds the nested `domTree` JSON used by the
 QOLLOCK offline profiler. This is a structural capture, not an FPS measurement.
 
 See [class enumeration investigation](CLASS_ENUMERATION.md) for the evidence and
 the remaining requirement. A complete packet set must not be presented as a
 complete capture of classes.
 
-## Experimental native debugger row access
+## Experimental native debugger export
 
 The `debuglayout.xml` override retains the native core inspector layout and adds
-`hud_debugger_probe.js`. This script attempts to inspect the debugger's own UI
-context and read its `DebugLayoutPanelOpen` / `DebugLayoutPanelClose` Label text.
+`hud_dump_core.js` and `hud_debugger_export.js` in its own script context. The
+previous bounded probe successfully read native `DebugLayoutPanelOpen` Labels
+in the client, including classes assigned by the game. Its source is retained
+but is no longer included by default. The exporter reads opening and closing
+descriptions from direct row children instead of scanning every performance-bar
+widget in the inspector.
 It does not call internal C++ functions or require the debugger's JS console.
 
-After the maintainer compiles/repacks the updated HUD-Dumper, open Panorama
-Debugger on the live HUD and keep it open through the diagnostic. Do not expand
-the entire tree for this initial test. Look for `[HUD-DEBUGGER-PROBE] LOADED`,
-then `BEGIN`, `ROW`, and `FINISHED` in the game console. If `LOADED` never appears,
-the core layout override/script-loading path has not been verified; absence of
-output is not evidence that class data is unavailable.
+After maintainer compilation/repacking:
 
-The probe performs a bounded, scheduled scan of current debugger widgets and
-prints a small number of raw row samples. It changes no expansion state and uses
-no clipboard. Counts, limits, failed reads and clipped sample text are explicit.
-`uiScanComplete` describes only that UI scan; `fullHudCapture` remains false.
-The script cancels on reload or context destruction. The native override is
-registered against the extracted core resource for upstream merging.
+1. Start the same Python receiver with `--label debugger-hero-testing` before
+   opening the debugger. Do not also start an M-key HUD capture during this export.
+2. Open Panorama Debugger on the HUD tree whose root is `CitadelHudRoot`. Keep the
+   inspector open and its target and expansion state unchanged during collection.
+3. Look for `[HUD-DEBUGGER-EXPORT] LOADED`, then `BEGIN` after the startup delay.
+   The script discovers `ShowChildren` rows using the native resource contract
+   and activates collapsed `DebugLabelToggle` controls one per scheduled step.
+   It checks that the same toggle actually expanded before continuing. The first
+   successful operation logs `ACTIVATION VERIFIED` with before/after row counts.
+   An ineffective event, unexpected row structure, destroyed context or row
+   replacement aborts without sending a completion marker.
+4. Raw descriptions stream through the existing repeated/checksummed v4 batches.
+   Python journals them and saves a new JSON only after verifying every batch.
+   The game then restores the toggles it expanded, in reverse order. Wait for
+   `Cleanup finished` before closing the inspector. Reload/destruction can
+   interrupt cleanup; reopen the debugger to reset expansion state in that case.
+5. Inspect `meta.treeValid`, `remainingCollapsed`, `unrepresentedBranches` and
+   `descriptionParseErrors`. Attach the capture and game console output for the
+   first native verification. `fullHudCapture` remains false until native HUD
+   coverage and description freshness are established independently.
 
-Client verification is still pending. Even if row access works, the samples do
-not establish whether collapsed HUD descendants have materialized debugger rows,
-whether all native class names survive row formatting, or whether a complete tree
-can be reconstructed. These must be verified before an exporter uses this source.
+The `debugger-rows-v1` payload records exact raw Label descriptions and expansion
+flags. Python reconstructs parents from opening/closing tags, never debugger UI
+depth or row visibility. It retains every raw row even if native markup cannot
+form a balanced tree; in that case `domTree` is null. The debugger's visibility
+flag is recorded separately and never substituted for target HUD visibility.
+Missing text attributes on Label/TextEntry descriptions are explicit. No XML
+class whitelist is used. Successful parsing of a displayed class list means
+`Debugger-rendered`, not a verified freshly sampled HUD state.
+
+Automatic expansion and the full export have not yet been verified in the
+client. Native expansion creates actual debugger UI widgets and can be costly
+for large trees; scheduling cannot interrupt one expensive native operation.
+Collapsing after export restores the UI state, but does not prove those widgets
+are freed. The script does not promise FPS, capture speed or freedom from native
+hangs. The override remains registered for upstream merging.
 
 ## Completed HUD API investigation
 

@@ -9,6 +9,7 @@ const corePath = path.resolve(__dirname, '../panorama/scripts/hud_dump_core.js')
 const adapterPath = path.resolve(__dirname, '../panorama/scripts/hud_dumper.js');
 const probePath = path.resolve(__dirname, '../panorama/scripts/hud_api_probe.js');
 const debuggerProbePath = path.resolve(__dirname, '../panorama/scripts/hud_debugger_probe.js');
+const debuggerExportPath = path.resolve(__dirname, '../panorama/scripts/hud_debugger_export.js');
 const C = require(corePath);
 
 class Panel {
@@ -39,7 +40,7 @@ function records(c) {
     for (let i = 0; i < c.progress().chunks; i++) chunks.push(c.packet('test-1', i).split('|').slice(5).join('|'));
     return chunks.join('').trim().split('\n').map(line => JSON.parse(line));
 }
-function engine(root, eventThrows = false, probeFactory = null) {
+function engine(root, eventThrows = false, probeFactory = null, activation = null) {
     let now = 1000, next = 0;
     const tasks = new Map(), packets = [], messages = [], bindings = [];
     const sandbox = { $, Date: class extends Date { static now() { return now; } } };
@@ -56,6 +57,7 @@ function engine(root, eventThrows = false, probeFactory = null) {
         },
         DispatchEvent(name, text, repeat) {
             if (eventThrows) throw new Error('injected clipboard dispatch failure');
+            if (name === 'Activated' && activation) { assert.equal(repeat, 'mouse'); activation(text); return; }
             assert.equal(name, 'CopyStringToClipboard'); assert.equal(text, repeat);
             assert.ok(text.length <= 8500); packets.push(text);
         },
@@ -70,7 +72,8 @@ function engine(root, eventThrows = false, probeFactory = null) {
     }
     return { tasks, packets, messages, bindings, tick, key: () => bindings[0].cb(), elapse: ms => { now += ms; },
         now: () => now, runProbe: () => vm.runInContext(fs.readFileSync(probePath, 'utf8'), sandbox),
-        runDebuggerProbe: () => vm.runInContext(fs.readFileSync(debuggerProbePath, 'utf8'), sandbox) };
+        runDebuggerProbe: () => vm.runInContext(fs.readFileSync(debuggerProbePath, 'utf8'), sandbox),
+        runDebuggerExport: () => vm.runInContext(fs.readFileSync(debuggerExportPath, 'utf8'), sandbox) };
 }
 
 test('captures labels and fixture getter data, without style/whitelist reads', () => {
@@ -382,4 +385,141 @@ test('debugger probe bounds wide scans and Unicode previews and cancels on reloa
     assert.equal(dying.tasks.size, 0);
     assert.ok(dying.messages.some(m => m.includes('ABORTED debugger context destroyed')));
     assert.ok(!dying.messages.some(m => m.includes('[HUD-DEBUGGER-PROBE] FINISHED')));
+});
+
+function debuggerFixture() {
+    const root = new Panel('DebugLayout', 'DebugLayout');
+    function row(text, close = false, hasChildren = false, collapsed = false) {
+        const result = new Panel('');
+        result.add(new Panel(close ? 'DebugLayoutPanelClose' : 'DebugLayoutPanelOpen', 'Label', '', text));
+        result.BHasClass = name => { assert.equal(name, 'ShowChildren'); return hasChildren; };
+        if (hasChildren) {
+            const indent = result.add(new Panel('Indent'));
+            result.toggle = indent.add(new Panel('DebugLabelToggle', 'ToggleButton'));
+            result.toggle.selected = collapsed;
+            result.toggle.IsSelected = () => result.toggle.selected;
+            result.toggle.materialized = !collapsed;
+        }
+        return result;
+    }
+    const hud = root.add(row('<Panel id="CitadelHudRoot" class="WindowRoot">', false, true));
+    const branch = root.add(row('<CitadelHud id="Hud" class="WindowRoot alive native-only-class">', false, true, true));
+    root.add(row('</Panel>', true));
+    const nested = row('<Panel class="nested">', false, true, true);
+    branch.toggle.descendants = [row('<Label class="statNumber" text="' + 'x'.repeat(10000) + '🚀 &amp; 123" />'),
+        nested, row('</CitadelHud>', true)];
+    nested.toggle.descendants = [row('<Panel class="another-native-class" />'), row('</Panel>', true)];
+    const activated = [];
+    function activate(toggle) {
+        const parent = root.children.find(r => r.toggle === toggle);
+        assert.ok(parent); activated.push(toggle);
+        if (toggle.selected && !toggle.materialized) {
+            toggle.materialized = true;
+            root.children.splice(root.children.indexOf(parent) + 1, 0, ...toggle.descendants);
+        }
+        toggle.selected = !toggle.selected;
+    }
+    return { root, hud, branch, nested, activate, activated };
+}
+
+test('debugger exporter materializes nested branches incrementally, streams exact descriptions and restores owned toggles', () => {
+    const f = debuggerFixture(); const e = engine(f.root, false, null, f.activate);
+    e.runDebuggerExport(); assert.equal([...e.tasks.values()][0].at, 21000);
+    let ticks = 0;
+    while (e.tick()) {
+        assert.ok(e.tasks.size <= 1);
+        if (++ticks > 1000) throw new Error('export stalled');
+    }
+    assert.equal(f.activated.length, 4);
+    assert.equal(f.branch.toggle.selected, true); assert.equal(f.nested.toggle.selected, true);
+    assert.equal(f.hud.toggle.selected, false);
+    assert.ok(e.messages.some(m => m.includes('ACTIVATION VERIFIED')));
+    assert.ok(e.messages.some(m => m.includes('Sending finished')));
+    const unique = [...new Set(e.packets)], chunks = unique.filter(p => p.split('|')[3] === 'chunk');
+    assert.ok(chunks.length > 1); assert.equal(e.packets.length, unique.length * 2);
+    for (const p of unique) {
+        const parts = p.split('|'); const body = parts.slice(5).join('|');
+        assert.equal(C.checksum(body), parts[4]);
+        const last = body.charCodeAt(body.length - 1);
+        assert.ok(!(last >= 0xd800 && last <= 0xdbff), 'packet must not split a surrogate pair');
+    }
+    const records = chunks.map(p => p.split('|').slice(5).join('|')).join('').trim().split('\n').map(JSON.parse);
+    assert.equal(records[0].format, 'debugger-rows-v1');
+    assert.equal(records.at(-1).summary.totalRows, 8);
+    assert.equal(records.at(-1).meta.remainingCollapsed, 0);
+    assert.equal(records.at(-1).meta.fullHudCapture, false);
+    assert.equal(records[3].text, f.branch.toggle.descendants[0].children[0].text);
+    assert.ok(f.root.children.every(r => r.reads === 0));
+    const receiverPath = path.resolve(__dirname, '../tools/save_dump.py');
+    const code = `import importlib.util,json,sys,tempfile
+sys.stdin.reconfigure(encoding='utf-8')
+s=importlib.util.spec_from_file_location('r',sys.argv[1]);m=importlib.util.module_from_spec(s);s.loader.exec_module(m)
+with tempfile.TemporaryDirectory() as d:
+ r=m.Receiver(d)
+ try:
+  for p in json.load(sys.stdin):
+   result=r.accept(p)
+   if result:
+    x=result[1];assert x['meta']['treeValid'];assert x['summary']['totalPanels']==5
+    assert 'another-native-class' in x['uniqueClasses'];assert x['domTree']['children'][0]['children'][0]['text'].endswith('🚀 & 123')
+ finally:r.close()
+`;
+    const python = spawnSync('python', ['-c', code, receiverPath], { input: JSON.stringify(e.packets), encoding: 'utf8' });
+    assert.equal(python.status, 0, python.stderr || python.error);
+});
+
+test('debugger exporter refuses ineffective native activation and changed or unexpected rows without a completion marker', () => {
+    for (const mode of ['activation', 'rebuild', 'unknown']) {
+        const f = debuggerFixture();
+        const e = engine(f.root, false, null, mode === 'activation' ? () => {} : f.activate);
+        if (mode === 'unknown') f.root.children.unshift(new Panel('unsupported-wrapper'));
+        e.runDebuggerExport();
+        let ticks = 0;
+        while (e.tick()) {
+            if (mode === 'rebuild' && e.packets.length && !f.rebuilt) {
+                f.rebuilt = true; f.root.children[0] = new Panel('replaced');
+            }
+            if (++ticks > 1000) throw new Error('abort stalled');
+        }
+        assert.ok(e.messages.some(m => m.includes('ABORTED')));
+        assert.ok(!e.packets.some(p => p.split('|')[3] === 'end'));
+        assert.equal(e.tasks.size, 0);
+    }
+});
+
+test('debugger exporter cancels reload schedules and stops after context destruction', () => {
+    const f = debuggerFixture(); const e = engine(f.root, false, null, f.activate);
+    e.runDebuggerExport(); const old = [...e.tasks.keys()][0]; e.runDebuggerExport();
+    assert.ok(!e.tasks.has(old)); assert.equal(e.tasks.size, 1);
+    e.tick(); f.root.valid = false; e.tick();
+    assert.equal(e.tasks.size, 0); assert.equal(e.packets.length, 0);
+    assert.ok(e.messages.some(m => m.includes('debugger destroyed')));
+});
+
+test('debugger exporter scans flat rows beyond the former widget limit with bounded slices', () => {
+    const f = debuggerFixture();
+    f.root.children = [f.hud];
+    for (let i = 0; i < 2000; i++) {
+        const row = new Panel('');
+        // The old widget DFS would exhaust its budget inside these performance widgets.
+        for (let j = 0; j < 24; j++) row.add(new Panel('perf' + j));
+        row.add(new Panel('DebugLayoutPanelOpen', 'Label', '', '<Label class="native-' + i + '" />'));
+        row.BHasClass = name => { assert.equal(name, 'ShowChildren'); return false; };
+        f.root.add(row);
+    }
+    const close = f.root.add(new Panel(''));
+    close.add(new Panel('DebugLayoutPanelClose', 'Label', '', '</Panel>'));
+    const e = engine(f.root); e.runDebuggerExport();
+    let ticks = 0;
+    while (e.tick()) {
+        assert.ok(e.tasks.size <= 1);
+        if (++ticks > 10000) throw new Error('wide row scan stalled');
+    }
+    assert.ok(ticks > 100);
+    const records = [...new Set(e.packets)].filter(p => p.split('|')[3] === 'chunk')
+        .map(p => p.split('|').slice(5).join('|')).join('').trim().split('\n').map(JSON.parse);
+    assert.equal(records.at(-1).summary.openRows, 2001);
+    assert.equal(records.at(-1).summary.closeRows, 1);
+    assert.equal(records.at(-1).summary.totalRows, 2002);
+    assert.equal(records.at(-2).text, '</Panel>');
 });

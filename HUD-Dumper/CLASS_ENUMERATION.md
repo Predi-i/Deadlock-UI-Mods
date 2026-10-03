@@ -1,4 +1,4 @@
-# Full native class enumeration: unresolved
+# Native class descriptions found; full capture verification pending
 
 The required result is the actual list of every class attached to each live
 panel, associated with that panel in the captured hierarchy. Matching a fixed
@@ -80,14 +80,34 @@ RenderOperation tree, not a panel/class export. `panorama_dump_symbols` describe
 an engine-wide symbol table, not per-panel class membership. None has been
 implemented here as a substitute for a native class-list export.
 
+## Confirmed debugger row probe
+
+The client loaded the `debuglayout.xml` override and ran the bounded probe in
+the `DebugLayout` context. Eight untruncated `DebugLayoutPanelOpen` samples
+included `CitadelHudRoot`, `Hud`, `HudCore`, and their following rows. The `Hud`
+description contained the full displayed class string, including dynamic state
+such as `connectedToHeroTesting`, `alive`, `infiniteMoney`, and
+`GameStateInProgress`. The 1,500-widget scan found 62 opening and two closing
+Labels before its own limit. `uiScanComplete` and `fullHudCapture` were false;
+this result proves the data source, not full tree coverage. All sample Labels
+had debugger UI depth two, which is not their HUD hierarchy depth.
+
+Further read-only inspection of the native branch-toggle function at
+`panoramauiclient.dll` RVA `0x124f20` found an expansion path that calls child-row
+creation (`0x121b60`) when descendants are not yet materialized, and otherwise
+changes existing descendant row visibility. Its toggle selection is inverse
+to expansion. The extracted `debugger.css` agrees: a selected `DebugLabelToggle`
+uses the expand icon, while `ShowChildren` makes the control visible. These
+addresses are investigation evidence only; runtime code does not call them.
+
 ## Remaining verification
 
-An experimental `debuglayout.xml` override now includes `hud_debugger_probe.js`
-inside the native inspector resource. It attempts a bounded read of the current
-debugger row Labels and prints raw samples to the game console. The script's
-loading in this core UI context and its native row access remain unverified.
-This is a candidate data-source test, not a full exporter. The completed HUD API
-probe is retained in source but removed from the default HUD includes.
+The override now includes a streaming row exporter. It activates collapsed
+native branch controls with the existing `Activated(panel, "mouse")` signature
+used by QOLLOCK, checking the effect on this particular control before
+proceeding. The client has not yet verified those activations, direct row
+enumeration, full streaming, automatic restoration, or resulting tree validity.
+The completed API and bounded row probes are retained without default includes.
 
 A usable native inspector export or another verified native enumeration bridge
 must expose panel identity, parent/child relationships, and the complete current
@@ -95,5 +115,8 @@ class list. Before integrating it, verify that it includes collapsed descendants
 dynamically created panels, and classes assigned by native game code. A native
 client comparison is required; mock tests cannot prove these properties.
 
-The existing streaming sender and receiver can carry such data once a real source
-is established. A working full-class source has not yet been established.
+The receiver preserves raw descriptions alongside a reconstructed tree when
+valid. `Debugger-rendered` identifies the class source without asserting refresh
+timing or complete HUD coverage. Native inspector descriptions may be retained
+from an earlier build/update; that freshness must be checked before using this
+capture for class-dependent optimization conclusions.

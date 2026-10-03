@@ -9,6 +9,7 @@ import re
 import sys
 import tempfile
 import time
+import xml.etree.ElementTree as ET
 
 MAX_CHUNKS = 2048
 MAX_CHARS = 8 * 1024 * 1024
@@ -242,6 +243,10 @@ def reconstruct(stream):
     header, footer = records[0], records[-1]
     if header.get("version") not in ("3.0.0", "4.0.0"):
         raise ValueError("unsupported capture version")
+    if header.get("format") == "debugger-rows-v1":
+        return reconstruct_debugger_rows(header, footer, records[1:-1])
+    if "format" in header:
+        raise ValueError("unsupported capture format")
     nodes, depths = [], []
     ids, classes, types = set(), set(), set()
     root = None
@@ -300,6 +305,127 @@ def reconstruct(stream):
                         "uniqueClassesCount": len(classes), "uniqueTypesCount": len(types)},
             "uniqueIds": sorted(ids), "uniqueClasses": sorted(classes), "uniqueTypes": sorted(types),
             "warnings": warnings, "domTree": root}
+
+
+def reconstruct_debugger_rows(header, footer, records):
+    """Preserve native descriptions even when their markup cannot form a tree."""
+    meta = footer.get("meta")
+    summary = footer.get("summary")
+    if (header.get("version") != "4.0.0" or not isinstance(meta, dict)
+            or meta.get("classCoverage") != "Debugger-rendered"
+            or meta.get("debuggerRowsComplete") is not True
+            or meta.get("fullHudCapture") is not False):
+        raise ValueError("invalid debugger capture metadata")
+    if not isinstance(summary, dict) or type(summary.get("totalRows")) is not int or summary["totalRows"] != len(records):
+        raise ValueError("debugger row count mismatch")
+    if not 1 <= len(records) <= 100000:
+        raise ValueError("debugger row count outside limits")
+    opens = closes = failed = 0
+    ids, classes, types = set(), set(), set()
+    stack, nodes, errors = [], [], []
+    root = None
+    collapsed = 0
+
+    def error(message):
+        if len(errors) < 20:
+            errors.append(message)
+
+    for i, record in enumerate(records):
+        if (record.get("kind") != "row" or type(record.get("index")) is not int or record["index"] != i
+                or type(record.get("childIndex")) is not int or record["childIndex"] != i
+                or record.get("role") not in ("open", "close")
+                or not isinstance(record.get("text"), str)
+                or not 0 < len(record["text"].encode("utf-16-le", errors="surrogatepass")) // 2 <= 65536
+                or type(record.get("hasChildren")) is not bool or type(record.get("collapsed")) is not bool
+                or type(record.get("visible")) is not bool):
+            raise ValueError("invalid or out-of-order debugger row")
+        text = record["text"].strip()
+        if record["role"] == "close":
+            closes += 1
+            match = re.fullmatch(r"</([A-Za-z_][\w.:-]*)\s*>", text)
+            if not match or not stack or stack[-1]["type"] != match[1]:
+                error(f"Row {i}: unmatched closing description")
+            else:
+                stack.pop()
+            continue
+        opens += 1
+        if opens > 50000:
+            raise ValueError("too many described panels")
+        if len(stack) >= 80:
+            raise ValueError("debugger description depth exceeds limit")
+        collapsed += int(record["collapsed"])
+        self_closing = text.endswith("/>")
+        try:
+            if not text.startswith("<") or text.startswith("</") or not text.endswith(">"):
+                raise ValueError("not an opening tag")
+            # Parse one native tag, never a whole guessed XML document. Attributes
+            # containing unescaped markup remain raw evidence, not silently fixed.
+            element = ET.fromstring(text if self_closing else text[:-1] + "/>")
+            if not isinstance(element.tag, str) or list(element) or element.text:
+                raise ValueError("unexpected markup inside opening description")
+            attrs = dict(element.attrib)
+            node_classes = attrs.get("class", "").split()
+            node = {"id": attrs.get("id", ""), "type": element.tag,
+                    "classes": list(dict.fromkeys(node_classes)), "classesStatus": "Debugger-rendered",
+                    "children": [], "debuggerRowIndex": i, "debuggerRowVisible": record["visible"],
+                    "debuggerHasChildren": record["hasChildren"], "debuggerCollapsed": record["collapsed"],
+                    "debuggerAttributes": attrs}
+            if "text" in attrs:
+                node["text"], node["textStatus"] = attrs["text"], "Debugger-rendered"
+            elif node["type"] in ("Label", "TextEntry"):
+                node["textStatus"] = "unavailable-in-description"
+            for flag in ("visible", "enabled", "checked", "hittest", "hittestchildren"):
+                if attrs.get(flag) in ("true", "false"):
+                    node[flag] = attrs[flag] == "true"
+            if node["id"]:
+                ids.add(node["id"])
+            types.add(node["type"])
+            classes.update(node["classes"])
+            nodes.append(node)
+            if stack:
+                stack[-1]["children"].append(node)
+            elif root is None:
+                root = node
+            else:
+                error(f"Row {i}: multiple roots or omitted closing/opening descriptions")
+            if record["hasChildren"] and self_closing:
+                error(f"Row {i}: branch described as self-closing")
+            if not self_closing:
+                stack.append(node)
+        except (ET.ParseError, ValueError) as exc:
+            failed += 1
+            error(f"Row {i}: invalid opening description: {exc}")
+    if (type(summary.get("openRows")) is not int or summary["openRows"] != opens
+            or type(summary.get("closeRows")) is not int or summary["closeRows"] != closes):
+        raise ValueError("debugger opening/closing count mismatch")
+    if type(meta.get("remainingCollapsed")) is not int or meta["remainingCollapsed"] != collapsed:
+        raise ValueError("debugger collapsed branch count mismatch")
+    if stack:
+        error(f"Unclosed descriptions: {len(stack)}")
+    if root is None:
+        error("No described root")
+    unrepresented = sum(n["debuggerHasChildren"] and not n["children"] for n in nodes)
+    tree_valid = not errors
+    meta = dict(meta, treeValid=tree_valid, classesIncomplete=failed,
+                unrepresentedBranches=unrepresented, descriptionParseErrors=errors)
+    warnings = ["Native debugger descriptions may retain earlier state; their refresh timing is unverified.",
+                "Complete debugger rows do not establish complete live HUD coverage; fullHudCapture is false."]
+    if collapsed:
+        warnings.append(f"Collapsed debugger branches remain: {collapsed}")
+    if unrepresented:
+        warnings.append(f"Branches marked as having children without represented descendants: {unrepresented}")
+    if not tree_valid:
+        warnings.append("Descriptions do not form a verified tree. Raw debuggerRows retained; domTree is null.")
+    missing_text = sum(n.get("textStatus") == "unavailable-in-description" for n in nodes)
+    meta["textUnavailable"] = missing_text
+    if missing_text:
+        warnings.append(f"Label/TextEntry descriptions without a text attribute: {missing_text}")
+    return {"version": header["version"], "format": header["format"], "timestampUtc": header.get("timestampUtc"),
+            "durationMs": footer.get("durationMs"), "scope": header.get("scope"), "meta": meta,
+            "summary": {"totalPanels": opens, "totalRows": len(records), "uniqueIdsCount": len(ids),
+                        "uniqueClassesCount": len(classes), "uniqueTypesCount": len(types)},
+            "uniqueIds": sorted(ids), "uniqueClasses": sorted(classes), "uniqueTypes": sorted(types),
+            "warnings": warnings, "domTree": root if tree_valid else None, "debuggerRows": records}
 
 
 def save_capture(data, session, output_dir, label):

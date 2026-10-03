@@ -3,11 +3,12 @@
 	<styles>
 		<include src="s2r://panorama/styles/debugger.vcss_c" />
 	</styles>
-	<!-- ==== HUD-Dumper native debugger row probe ==== -->
+	<!-- ==== HUD-Dumper native debugger row export ==== -->
 	<scripts>
-		<include src="s2r://panorama/scripts/hud_debugger_probe.vjs_c" />
+		<include src="s2r://panorama/scripts/hud_dump_core.vjs_c" />
+		<include src="s2r://panorama/scripts/hud_debugger_export.vjs_c" />
 	</scripts>
-	<!-- ==== End HUD-Dumper debugger probe ==== -->
+	<!-- ==== End HUD-Dumper debugger export ==== -->
 	<snippets>
 		<snippet name="PanelStart">
 			<Panel class="DebugLabelPanelRow" acceptsfocus="true">

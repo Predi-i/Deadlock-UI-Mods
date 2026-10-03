@@ -32,7 +32,73 @@ def stream_packet(session, index, kind, body):
     return f"HUD_DUMP4|{session}|{index}|{kind}|{receiver.checksum(body)}|{body}"
 
 
+def debugger_stream(texts):
+    rows = [{"kind": "row", "index": i, "childIndex": i,
+             "role": "close" if text.startswith("</") else "open", "text": text,
+             "visible": True, "hasChildren": i == 0, "collapsed": False} for i, text in enumerate(texts)]
+    footer = {"kind": "end", "summary": {"totalRows": len(rows),
+              "openRows": sum(r["role"] == "open" for r in rows),
+              "closeRows": sum(r["role"] == "close" for r in rows)},
+              "meta": {"classCoverage": "Debugger-rendered", "debuggerRowsComplete": True,
+                       "fullHudCapture": False, "remainingCollapsed": 0, "readErrors": {}}}
+    records = [{"kind": "start", "version": "4.0.0", "format": "debugger-rows-v1"}, *rows, footer]
+    return "\n".join(json.dumps(r) for r in records) + "\n"
+
+
 class ReceiverTests(unittest.TestCase):
+    def test_debugger_classes_and_tree_are_reconstructed_from_tags_not_ui_depth_or_visibility(self):
+        text = '<Label id="health" class="native-only statNumber statNumber" text="123 &amp; &quot;x&quot;" />'
+        value = debugger_stream(['<Panel id="CitadelHudRoot" class="WindowRoot alive">', text, '</Panel>'])
+        rows = [json.loads(line) for line in value.splitlines()]
+        rows[2]["visible"] = False
+        data = receiver.reconstruct("\n".join(json.dumps(r) for r in rows))
+        self.assertTrue(data['meta']['treeValid'])
+        self.assertFalse(data['meta']['fullHudCapture'])
+        self.assertEqual(data['summary']['totalPanels'], 2)
+        label = data['domTree']['children'][0]
+        self.assertEqual(label['classes'], ['native-only', 'statNumber'])
+        self.assertEqual(label['text'], '123 & "x"')
+        self.assertFalse(label['debuggerRowVisible'])
+        self.assertNotIn('visible', label)  # Inspector visibility is not HUD visibility.
+        self.assertEqual(data['debuggerRows'][1]['text'], text)
+
+    def test_debugger_malformed_and_unbalanced_markup_retains_raw_rows_without_a_guessed_tree(self):
+        for texts in [
+            ['<Panel>', '<Label class="safe" text="unescaped & value" />', '</Panel>'],
+            ['<Panel>', '<Label class="safe" />', '</Wrong>'],
+            ['<Panel>', '<Panel>', '</Panel>'],
+            ['<Panel />', '<Panel />'],
+        ]:
+            data = receiver.reconstruct(debugger_stream(texts))
+            self.assertFalse(data['meta']['treeValid'])
+            self.assertIsNone(data['domTree'])
+            self.assertTrue(data['meta']['descriptionParseErrors'])
+            self.assertEqual([r['text'] for r in data['debuggerRows']], texts)
+
+    def test_debugger_empty_classes_and_missing_label_text_are_distinct_from_failed_descriptions(self):
+        value = debugger_stream(['<Panel>', '<Label />', '<Panel class="nativeClass" />', '</Panel>'])
+        data = receiver.reconstruct(value)
+        self.assertTrue(data['meta']['treeValid'])
+        label = data['domTree']['children'][0]
+        self.assertEqual(label['classes'], [])
+        self.assertEqual(label['classesStatus'], 'Debugger-rendered')
+        self.assertEqual(label['textStatus'], 'unavailable-in-description')
+        self.assertNotIn('text', label)
+        self.assertEqual(data['meta']['textUnavailable'], 1)
+        self.assertEqual(data['meta']['classesIncomplete'], 0)
+
+    def test_debugger_schema_rejects_missing_rows_false_completeness_and_unknown_formats(self):
+        original = [json.loads(line) for line in debugger_stream(['<Panel>', '</Panel>']).splitlines()]
+        for mode in ['index', 'count', 'completeness', 'format', 'state']:
+            records = json.loads(json.dumps(original))
+            if mode == 'index': records[1]['index'] = 1
+            if mode == 'count': records[-1]['summary']['totalRows'] = 3
+            if mode == 'completeness': records[-1]['meta']['fullHudCapture'] = True
+            if mode == 'format': records[0]['format'] = 'unknown'
+            if mode == 'state': records[1]['collapsed'] = 'false'
+            with self.assertRaises(ValueError, msg=mode):
+                receiver.reconstruct('\n'.join(json.dumps(r) for r in records))
+
     def test_windows_crlf_framing_restores_checksum_and_preserves_escaped_label_text(self):
         records = [json.loads(line) for line in stream().splitlines()]
         records[2]['node']['text'] = '123\r\nnext\nline'
