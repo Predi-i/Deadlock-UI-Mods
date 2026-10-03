@@ -50,6 +50,7 @@ function runtime(context, extra = {}) {
     const context = new Panel('element_gun');
     const gun = context.add(new Panel('gun_data'));
     const holder = gun.add(new Panel('parry_unavailable'));
+    const image = holder.add(new Panel('ParryImage'));
     const border = holder.add(new Panel('ParryCooldownBorder'));
     const inventory = new Panel('StatsAndModsContainer');
     const buffs = new Panel('BuffModifiers');
@@ -65,9 +66,17 @@ function runtime(context, extra = {}) {
     context.alive = true; r.advance();
     const label = holder.FindChildTraverse('CustomParryTimerText');
     assert.equal(label.parent, holder); assert.equal(label.style.textAlign, 'center');
-    assert.equal(holder.style.overflow, 'noclip', 'below-icon text must escape the 40px parent bounds');
+    assert.equal(holder.style.height, '66px');
+    assert.equal(holder.style.y, '68px');
+    assert.equal(image.style.height, '40px'); assert.equal(border.style.height, '40px');
+    assert.equal(-66 / 2 + 68, -40 / 2 + 55, 'native icon top must not move');
     assert.equal(label.style.height, '24px');
+    assert.ok(parseFloat(label.style.y) + parseFloat(label.style.height) <= parseFloat(holder.style.height),
+        'the whole label must fit inside its parent without overflow');
     assert.equal(label.text, '2.3');
+    // Several JS ticks see the same native clip. They must not shorten the
+    // measured elapsed time when the next native angle finally arrives.
+    now = 900; r.advance(); now = 970; r.advance();
     now = 1000; border.style.clip = '  radial(50% 50%, 0deg, -100deg) '; r.advance();
     assert.equal(label.text, '1.3');
     border.style.clip = ''; r.advance(); assert.equal(label.style.visibility, 'collapse');

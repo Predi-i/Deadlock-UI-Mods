@@ -1,5 +1,5 @@
 (function() {
-    $.Msg('[ParryTimer] Loaded angle timer v3; waiting for layout');
+    $.Msg('[ParryTimer] Loaded angle timer v4; waiting for layout');
     const BASE_PARRY_COOLDOWN = 4.5;
     const REBUTTAL_PARRY_COOLDOWN = 2.75;
 
@@ -80,8 +80,10 @@
     let job = null;
     let border = null;
     let holder = null;
+    let boundsConfigured = false;
     let lastAngle = null;
-    let lastSample = 0;
+    let sampleAngle = null;
+    let sampleTime = 0;
     let secondsPerDegree = null;
     let lastFailure = '';
     let lastException = '';
@@ -130,15 +132,25 @@
                 lastAngle = null;
                 secondsPerDegree = null;
                 State.customParryLabel = null;
+                boundsConfigured = false;
             }
             if (!holder || !border) {
                 diagnose('Waiting for gun_data/parry_unavailable/ParryCooldownBorder');
                 return;
             }
-            // The timer sits below the native 40x40 icon. Without noclip the
-            // label at y=42 is entirely outside the parent's clipping bounds.
-            phase = 'configure icon overflow';
-            if (holder.style.overflow !== 'noclip') holder.style.overflow = 'noclip';
+            // Native: 40px high, vertically centered, y=55px. Reserve 26px
+            // below it for the label. Raising y by half the added height keeps
+            // the icon's top at precisely the same screen position:
+            // -40/2 + 55 == -66/2 + 68. No child extends outside this container.
+            phase = 'reserve timer bounds';
+            if (!boundsConfigured) {
+                holder.style.height = '66px';
+                holder.style.y = '68px';
+                const image = child(holder, 'ParryImage');
+                if (image) image.style.height = '40px';
+                border.style.height = '40px';
+                boundsConfigured = true;
+            }
             phase = 'create/configure timer label';
             let label = State.customParryLabel;
             if (!label || !label.IsValid()) {
@@ -155,6 +167,7 @@
                 label.style.fontWeight = 'bold';
                 label.style.color = '#e75b5b';
                 label.style.textShadow = '0px 0px 4px #000000, 0px 1px 3px #000000';
+                label.style.zIndex = '100';
                 label.style.visibility = 'collapse';
                 State.customParryLabel = label;
             }
@@ -180,13 +193,15 @@
             phase = 'calculate remaining time';
             if (lastAngle === null || angle > lastAngle + 2) {
                 secondsPerDegree = (HasRebuttal(GetUIRoot()) ? REBUTTAL_PARRY_COOLDOWN : BASE_PARRY_COOLDOWN) / 360;
-            } else if (lastAngle - angle > 0.01 && now > lastSample) {
-                // Calibrate from native angular speed. This handles observing a
-                // cooldown halfway through and changes in its actual duration.
-                secondsPerDegree = (now - lastSample) / 1000 / (lastAngle - angle);
+                sampleAngle = angle;
+                sampleTime = now;
+            } else if (lastAngle - angle > 0.01 && now > sampleTime) {
+                // Measure from the cycle's first sample. Native clip updates
+                // can be slower than polling; unchanged ticks must not reset
+                // the time baseline and make the remaining time approach 0.1.
+                secondsPerDegree = (now - sampleTime) / 1000 / (sampleAngle - angle);
             }
             lastAngle = angle;
-            lastSample = now;
             const text = Math.max(0.1, angle * secondsPerDegree).toFixed(1);
             if (label.text !== text) label.text = text;
             label.style.visibility = 'visible';
