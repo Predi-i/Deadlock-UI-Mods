@@ -52,6 +52,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Updater regression tests failed" }
           node tools/tests/runtime_regressions.cjs
           if ($LASTEXITCODE -ne 0) { throw "HUD runtime regression tests failed" }
+          node --test HUD-Dumper/tests/hud_dumper.test.cjs
+          if ($LASTEXITCODE -ne 0) { throw "HUD dumper regression tests failed" }
           foreach ($Flag in @("", "--delayed-layout", "--old-layout", "--modern-layout", "--wrapped-effects")) {
               if ($Flag) { node Djinn-Mark-In-TopBar/tests/djinn_mark.test.cjs $Flag }
               else { node Djinn-Mark-In-TopBar/tests/djinn_mark.test.cjs }

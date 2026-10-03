@@ -1,0 +1,15 @@
+<!-- Native base HUD structure retained; diagnostic scripts only. -->
+<root>
+    <styles>
+        <include src="s2r://panorama/styles/base.vcss_c" />
+    </styles>
+    <!-- ==== HUD-Dumper incremental capture scripts ==== -->
+    <scripts>
+        <include src="s2r://panorama/scripts/hud_dump_core.vjs_c" />
+        <include src="s2r://panorama/scripts/hud_dumper.vjs_c" />
+    </scripts>
+    <!-- ==== End HUD-Dumper scripts ==== -->
+    <Panel class="WindowRoot" hittest="false" disallowedstyleflags="hover,descendantfocus">
+        <CitadelHud id="Hud" hittest="false" />
+    </Panel>
+</root>

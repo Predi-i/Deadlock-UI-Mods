@@ -29,6 +29,8 @@ Native resource synchronization and offline HUD lookup checks are documented in
 ### Included in this repository, but not published on GameBanana
 
 - `Active-Stats` — mirrors active hero combat buffs and debuffs directly beside the crosshair.
+- [HUD-Dumper](HUD-Dumper/README.md) — incremental diagnostic HUD captures with label text,
+  native returned classes and a separate Windows receiver that validates packet completeness.
 - `Minimap-Cheat` — press **M** to send two waves of minimap pings over every visible enemy marker.
 - `Rem-Bug-Abuse` — a local proof of concept that automates the cast, Tier 1 upgrade and undo
   sequence for Rem's third ability. It is intentionally not published.
