@@ -1,4 +1,4 @@
-// Temporary, read-only API discovery. Does not enumerate class membership.
+// Temporary API discovery plus an owned, hidden class-attribute experiment.
 var HUDAPIProbe = (() => {
     'use strict';
     if (typeof HUDAPIProbe !== 'undefined' && HUDAPIProbe) HUDAPIProbe.cancel();
@@ -78,6 +78,36 @@ var HUDAPIProbe = (() => {
         }
         lines.push('BASELINE ' + JSON.stringify(kinds));
     }
+    function classAttributeExperiment() {
+        let panel = null;
+        const a = 'HUDDumperProbeClassA', b = 'HUDDumperProbeClassB';
+        function snapshot(stage) {
+            lines.push('CLASS-ATTRIBUTE ' + stage + ' ' + JSON.stringify({
+                attribute: panel.GetAttributeString('class', '<missing>'),
+                hasA: panel.BHasClass(a), hasB: panel.BHasClass(b),
+            }));
+        }
+        try {
+            panel = $.CreatePanel('Panel', owner, '');
+            if (!alive(panel)) throw new Error('temporary panel unavailable');
+            panel.visible = false;
+            panel.hittest = false;
+            panel.hittestchildren = false;
+            snapshot('empty');
+            panel.AddClass(a);
+            snapshot('added-A');
+            panel.AddClass(b);
+            snapshot('added-B');
+            panel.RemoveClass(a);
+            snapshot('removed-A');
+        } catch (e) { lines.push('CLASS-ATTRIBUTE ERROR ' + (e.message || e)); }
+        finally {
+            if (alive(panel)) {
+                try { panel.DeleteAsync(0); lines.push('CLASS-ATTRIBUTE cleanup requested'); }
+                catch (e) { lines.push('CLASS-ATTRIBUTE CLEANUP ERROR ' + (e.message || e)); }
+            }
+        }
+    }
     function flush() {
         if (!alive(owner)) { cancel(); log('Aborted: HUD context destroyed'); return; }
         for (let i = 0; i < 4 && lines.length; i++) log(lines.shift());
@@ -87,7 +117,8 @@ var HUDAPIProbe = (() => {
     function start() {
         owner = $.GetContextPanel();
         if (!alive(owner)) { log('Aborted: HUD context unavailable'); return; }
-        lines.push('BEGIN after delayed startup. No class getter or unknown method is invoked.');
+        lines.push('BEGIN after delayed startup. Reflection plus owned class-attribute experiment.');
+        classAttributeExperiment();
         inspect('$ globals', $);
         const samples = [owner];
         let hud = owner;

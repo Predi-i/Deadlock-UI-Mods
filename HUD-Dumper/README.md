@@ -27,6 +27,13 @@ API names, not class membership, and does not traverse the whole HUD. Native
 objects may expose fewer names through reflection than through direct lookup;
 absence from this report alone is not proof of absence from the engine.
 
+The `CLASS-ATTRIBUTE` experiment creates one temporary hidden panel, assigns two
+test classes, then removes one. Each stage records `GetAttributeString("class",
+...)` alongside membership checks for the deliberately assigned test classes.
+It requests deletion of the owned panel even if a read fails. Existing HUD panels
+are not modified. This tests whether the attribute getter tracks live class
+changes; membership checks in this experiment are not a capture whitelist.
+
 Send the console output from `BEGIN` through `FINISHED` when investigating the
 missing class getter. Diagnostic limits and timing remain in the source.
 

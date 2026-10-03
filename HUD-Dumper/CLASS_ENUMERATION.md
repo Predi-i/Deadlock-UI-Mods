@@ -21,6 +21,21 @@ method on native panels. Running without QOLLOCK therefore does not account for
 the failed getter. The original implementation and its README incorrectly
 treated this method as available in the game.
 
+The subsequent delayed client API probe completed without reflection errors or
+truncation. The HUD context (`Panel`), `Hud` (`CitadelHud`), and two immediate HUD
+children exposed identical sets of 117 own names (89 functions) and 129 names
+including their prototype chains. Direct lookup reported `GetClasses:undefined`
+on all four. The reflected class operations mutate classes or test named
+membership; no explicit class-list method or class-list property appeared.
+The `$` surface exposed 29 own functions without a class-list API. This is live
+client evidence, not merely a DLL string search. It does not rule out indirect
+access through other APIs or a different native control.
+
+A further controlled client experiment is prepared in `hud_api_probe.js` to
+check whether `GetAttributeString("class", ...)` tracks changes to the class list
+of an owned temporary panel. Its native result is still pending. The collector
+has not switched to this getter without verifying those semantics.
+
 ## Native debugger evidence
 
 The extracted core resources include `panorama/layout/debugger.xml`,

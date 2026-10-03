@@ -38,7 +38,7 @@ function records(c) {
     for (let i = 0; i < c.progress().chunks; i++) chunks.push(c.packet('test-1', i).split('|').slice(5).join('|'));
     return chunks.join('').trim().split('\n').map(line => JSON.parse(line));
 }
-function engine(root, eventThrows = false) {
+function engine(root, eventThrows = false, probeFactory = null) {
     let now = 1000, next = 0;
     const tasks = new Map(), packets = [], messages = [], bindings = [];
     const sandbox = { $, Date: class extends Date { static now() { return now; } } };
@@ -49,7 +49,10 @@ function engine(root, eventThrows = false) {
         CancelScheduled(id) { tasks.delete(id); },
         Msg(message) { messages.push(message); },
         RegisterKeyBind(context, key, cb) { bindings.push({ context, key, cb }); },
-        CreatePanel() { throw new Error('capture must not create native UI'); },
+        CreatePanel(...args) {
+            if (probeFactory) return probeFactory(...args);
+            throw new Error('capture must not create native UI');
+        },
         DispatchEvent(name, text, repeat) {
             if (eventThrows) throw new Error('injected clipboard dispatch failure');
             assert.equal(name, 'CopyStringToClipboard'); assert.equal(text, repeat);
@@ -232,7 +235,7 @@ test('adapter dispatches the first batch before finishing collection', () => {
     window.valid = false; e.tick(); assert.equal(e.tasks.size, 0);
 });
 
-test('API probe waits for startup, samples the ready HUD and never invokes discovered getters or methods', () => {
+test('API probe waits for startup, samples the ready HUD and never invokes unknown getters or discovered methods', () => {
     const window = new Panel('WindowRoot');
     let unknownReads = 0;
     Object.defineProperty(window, 'unknownAccessor', { get() { unknownReads++; throw new Error('must not read'); } });
@@ -288,4 +291,44 @@ test('API probe reports missing fixture getter, reflection failures and truncate
     assert.match(text, /ERROR own names: native reflection unavailable/);
     assert.match(text, /FINISHED/);
     assert.equal(e.packets.length, 0);
+});
+
+test('class-attribute probe distinguishes attribute storage from live classes and deletes its owned panel on failure', () => {
+    for (const mode of ['separate', 'live', 'failure']) {
+        const root = new Panel('Hud'); const existing = root.add(new Panel('existing'));
+        let created;
+        class ProbePanel extends Panel {
+            constructor() { super(''); this.assigned = new Set(); this.deleted = false; }
+            AddClass(name) { this.assigned.add(name); }
+            RemoveClass(name) { this.assigned.delete(name); }
+            BHasClass(name) { return this.assigned.has(name); }
+            GetAttributeString(name, fallback) {
+                assert.equal(name, 'class');
+                if (mode === 'failure' && this.assigned.size) throw new Error('native read failure');
+                return mode === 'live' ? [...this.assigned].join(' ') : fallback;
+            }
+            DeleteAsync(delay) { assert.equal(delay, 0); this.deleted = true; this.valid = false; }
+        }
+        const e = engine(root, false, (type, parent, id) => {
+            assert.equal(type, 'Panel'); assert.equal(parent, root); assert.equal(id, '');
+            created = new ProbePanel(); return created;
+        });
+        e.runProbe();
+        while (e.tick()) {}
+        assert.ok(created.deleted);
+        assert.equal(created.visible, false);
+        assert.equal(created.hittest, false);
+        assert.equal(created.hittestchildren, false);
+        assert.equal(root.visible, true); assert.equal(existing.visible, true);
+        const output = e.messages.join('\n');
+        assert.match(output, /CLASS-ATTRIBUTE cleanup requested/);
+        if (mode === 'failure') assert.match(output, /CLASS-ATTRIBUTE ERROR native read failure/);
+        else {
+            const stage = e.messages.find(m => m.includes('CLASS-ATTRIBUTE removed-A '));
+            const result = JSON.parse(stage.slice(stage.indexOf('{')));
+            assert.deepEqual(result, { attribute: mode === 'live' ? 'HUDDumperProbeClassB' : '<missing>',
+                hasA: false, hasB: true });
+        }
+        assert.equal(e.packets.length, 0);
+    }
 });
