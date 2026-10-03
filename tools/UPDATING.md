@@ -54,6 +54,7 @@ branch selected by the previous whole-HUD depth-first lookup.
 
 ```text
 python -m unittest discover -s tools/tests -v
+node tools/tests/runtime_regressions.cjs
 node tools/audit_hud_lookups.cjs <full-capture.json> [baseline-git-ref]
 ```
 

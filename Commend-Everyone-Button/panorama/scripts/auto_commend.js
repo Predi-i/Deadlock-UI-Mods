@@ -1,288 +1,137 @@
-var g_lastMatchId = "";
-var g_lastObservedScreen = "";
-var g_isFreshPostMatch = false;
-var g_hasClickedCurrentMatch = false;
-
-var Utils = {
-    getRoot: function() {
-        var pnl = $.GetContextPanel();
-        var guard = 0;
-        while (pnl && pnl.GetParent && pnl.GetParent() && guard < 50) {
-            pnl = pnl.GetParent();
-            guard++;
+// One controller per post-game page. MVP loads this file too, but only
+// forwards the button action to the page controller; it starts no extra loop.
+(() => {
+    'use strict';
+    const context = $.GetContextPanel();
+    const valid = panel => !!(panel && panel.IsValid());
+    const has = (panel, name) => valid(panel) && panel.BHasClass(name);
+    const child = (panel, id) => valid(panel) ? panel.Children().find(node => node.id === id) : null;
+    const findPage = () => {
+        let panel = context;
+        for (let i = 0; valid(panel) && i < 50; i++, panel = panel.GetParent()) {
+            if (panel.id === 'CitadelPostGameNew' || panel.paneltype === 'CitadelPostGameNew') return panel;
         }
-        return pnl || null;
-    },
-
-    getPostGameRoot: function(root) {
-        if (!root || !root.FindChildTraverse) {
-            return null;
+        return null;
+    };
+    globalThis.CommendAll = () => {
+        const page = findPage();
+        if (page && page.__autoCommendController) page.__autoCommendController.commend();
+    };
+    const page = findPage();
+    // A separate MVP script context must not reset the page's match state.
+    if (!page || page !== context) return;
+    if (page.__autoCommendController) page.__autoCommendController.dispose();
+    let stopped = false;
+    let job = null;
+    const clicks = new Set();
+    let carousel = null;
+    let matchId = page.__autoCommendMatchId || '';
+    let fresh = !!page.__autoCommendFresh;
+    let busy = false;
+    let playAgain = null;
+    const getCarousel = () => {
+        if (!valid(carousel)) carousel = page.FindChildTraverse('ScreensCarousel');
+        return carousel;
+    };
+    const screens = () => valid(getCarousel()) ? getCarousel().Children() : [];
+    const selected = () => ['MVP', 'Team1', 'Team2', 'Scoreboard', 'Graphs']
+        .find(name => has(page, 'SelectedScreen_' + name)) || '';
+    const shown = () => valid(page) && has(page, 'PageVisible');
+    const buttons = () => screens().flatMap(screen => screen.Children()
+        .filter(panel => has(panel, 'AutoCommendStyle')));
+    const buttonScreen = button => button.id.replace('AutoCommend', '');
+    function setVisible(panel, visible) {
+        if (!valid(panel)) return;
+        const desired = visible ? 'visible' : 'collapse';
+        if (panel.style.visibility !== desired) panel.style.visibility = desired;
+        panel.enabled = visible;
+        panel.hittest = visible;
+    }
+    function cancelClicks() {
+        for (const handle of clicks) $.CancelScheduled(handle);
+        clicks.clear();
+        busy = false;
+    }
+    function sync() {
+        const current = selected();
+        const complete = has(page, 'AutoCommendCompleted');
+        for (const button of buttons()) {
+            const name = buttonScreen(button);
+            setVisible(button, !busy && !complete && has(page, 'CanCommendPlayers') &&
+                (fresh ? current === 'MVP' && name === 'MVP' : current === name));
         }
-        return root.FindChildTraverse("CitadelPostGameNew");
-    },
-
-    hasClass: function(panel, className) {
-        return !!(panel && panel.IsValid && panel.IsValid() && panel.BHasClass && panel.BHasClass(className));
-    },
-
-    setClass: function(panel, className, shouldHaveClass) {
-        if (!panel || !panel.IsValid || !panel.IsValid()) return;
-        if (shouldHaveClass) {
-            panel.AddClass(className);
-        } else {
-            panel.RemoveClass(className);
-        }
-    },
-
-    clickPanel: function(panel) {
-        var events;
-        var i;
-
-        if (!panel || !panel.IsValid || !panel.IsValid()) return false;
-
-        events = [
-            function() { $.DispatchEvent("MouseActivate", panel, "mouse"); },
-            function() { $.DispatchEvent("Activated", panel, "mouse"); },
-            function() { $.DispatchEvent("onactivate", panel); }
-        ];
-
-        for (i = 0; i < events.length; i++) {
-            try {
-                events[i]();
-                return true;
-            } catch (e) {}
-        }
-        return false;
-    },
-
-    setPanelState: function(panel, isVisible) {
-        if (!panel || !panel.IsValid || !panel.IsValid()) return;
-        panel.style.opacity = isVisible ? "1" : "0";
-        panel.style.visibility = isVisible ? "visible" : "collapse";
-        panel.enabled = isVisible;
-        panel.hittest = !!isVisible;
-    },
-
-    toggleCustomButtons: function(root, isVisible) {
-        var btns = root.FindChildrenWithClassTraverse("AutoCommendStyle") || [];
-        var i;
-        for (i = 0; i < btns.length; i++) {
-            Utils.setPanelState(btns[i], isVisible);
-        }
-    },
-
-    isPanelVisible: function(panel) {
-        if (!panel || !panel.IsValid || !panel.IsValid() || !panel.visible) {
-            return false;
-        }
-
-        if (panel.style) {
-            if (panel.style.visibility === "collapse") {
-                return false;
+        // The native requeue button remains controlled only within this page.
+        if (!valid(playAgain)) playAgain = page.FindChildTraverse('PlayAgainButton');
+        setVisible(playAgain, fresh && (complete || current !== 'MVP'));
+    }
+    function tick() {
+        if (stopped || !valid(page)) return;
+        if (shown()) {
+            const label = screens().map(screen => child(screen, 'MatchID')).find(valid);
+            const nextId = label ? label.text : '';
+            if (nextId && nextId !== matchId) {
+                cancelClicks();
+                matchId = nextId;
+                fresh = selected() === 'MVP';
+                page.__autoCommendMatchId = matchId;
+                page.__autoCommendFresh = fresh;
+                page.RemoveClass('AutoCommendCompleted');
             }
-            if (panel.style.opacity === "0") {
-                return false;
-            }
-        }
-
-        return true;
-    },
-
-    getVisiblePlayerActionContainers: function(root) {
-        var containers = root.FindChildrenWithClassTraverse("PlayerActionContainer") || [];
-        var visible = [];
-        var i;
-        for (i = 0; i < containers.length; i++) {
-            if (Utils.isPanelVisible(containers[i])) {
-                visible.push(containers[i]);
-            }
-        }
-        return visible;
-    },
-
-    hasPlayAgainButton: function(root) {
-        var playAgainButton = root ? root.FindChildTraverse("PlayAgainButton") : null;
-        return !!(playAgainButton && playAgainButton.IsValid && playAgainButton.IsValid());
-    },
-
-    getCurrentScreen: function(root) {
-        var postGameRoot = Utils.getPostGameRoot(root);
-
-        if (Utils.hasClass(postGameRoot, "SelectedScreen_MVP")) {
-            return "MVP";
-        }
-
-        if (Utils.hasClass(postGameRoot, "SelectedScreen_Team1")) {
-            return "Team1";
-        }
-
-        if (Utils.hasClass(postGameRoot, "SelectedScreen_Team2")) {
-            return "Team2";
-        }
-
-        if (Utils.hasClass(postGameRoot, "SelectedScreen_Scoreboard")) {
-            return "Scoreboard";
-        }
-
-        if (Utils.hasClass(postGameRoot, "SelectedScreen_Graphs")) {
-            return "Graphs";
-        }
-
-        return "";
-    },
-
-    getButtonScreen: function(button) {
-        if (!button) return "";
-        if (button.id === "AutoCommendMVP") return "MVP";
-        if (button.id === "AutoCommendTeam1") return "Team1";
-        if (button.id === "AutoCommendTeam2") return "Team2";
-        if (button.id === "AutoCommendScoreboard") return "Scoreboard";
-        return "";
-    },
-
-    syncButtonVisibility: function(root) {
-        var autoButtons;
-        var playAgainButton;
-        var currentScreen;
-        var i;
-        var button;
-        var buttonScreen;
-        var shouldShowPlayAgain;
-        var shouldShowCommend;
-
-        if (!root) return;
-
-        autoButtons = root.FindChildrenWithClassTraverse("AutoCommendStyle") || [];
-        playAgainButton = root.FindChildTraverse("PlayAgainButton");
-        currentScreen = Utils.getCurrentScreen(root);
-
-        if (g_hasClickedCurrentMatch || Utils.hasClass(Utils.getPostGameRoot(root), "AutoCommendCompleted")) {
-            g_hasClickedCurrentMatch = true;
-            Utils.toggleCustomButtons(root, false);
-            if (Utils.hasPlayAgainButton(root)) {
-                Utils.setPanelState(playAgainButton, !!g_isFreshPostMatch);
-            }
+            sync();
+        } else if (busy) cancelClicks();
+        // Hidden pages do one validity/class check, no descendant searches.
+        job = $.Schedule(shown() ? 0.25 : 1, tick);
+    }
+    function commend() {
+        if (stopped || busy || !shown() || !has(page, 'CanCommendPlayers')) return;
+        const screen = child(getCarousel(), 'ScoreboardScreen');
+        const scoreboard = child(screen, 'Scoreboard');
+        // The current scoreboard exposes the real native buttons directly under
+        // .Player. Old PlayerActionContainer targets no longer contain them.
+        const players = valid(scoreboard) ? scoreboard.FindChildrenWithClassTraverse('Player') : [];
+        const targets = players.filter(player => !has(player, 'IsLocalPlayer') &&
+            !has(player, 'CommendedPlayer') && !has(player, 'TotalsRow'))
+            .map(player => child(player, 'CommendPlayerButton'))
+            .filter(panel => valid(panel) && panel.enabled !== false);
+        if (!targets.length) {
+            $.Msg('[AutoCommend] No eligible native scoreboard buttons. Open Scoreboard and retry.');
             return;
         }
-
-        shouldShowPlayAgain = false;
-        if (g_isFreshPostMatch) {
-            shouldShowPlayAgain = currentScreen !== "MVP";
-        }
-
-        for (i = 0; i < autoButtons.length; i++) {
-            button = autoButtons[i];
-            buttonScreen = Utils.getButtonScreen(button);
-
-            if (g_isFreshPostMatch) {
-                shouldShowCommend = currentScreen === "MVP" && buttonScreen === "MVP";
-            } else {
-                shouldShowCommend = currentScreen === buttonScreen;
-            }
-
-            Utils.setPanelState(button, shouldShowCommend);
-        }
-
-        if (Utils.hasPlayAgainButton(root)) {
-            Utils.setPanelState(playAgainButton, shouldShowPlayAgain);
-        }
+        busy = true;
+        const operationMatch = matchId;
+        targets.forEach((button, index) => {
+            const handle = $.Schedule(index * 0.05, () => {
+                clicks.delete(handle);
+                if (stopped || !shown() || matchId !== operationMatch || !valid(button) ||
+                    !has(page, 'CanCommendPlayers')) return;
+                const player = button.GetParent();
+                if (!has(player, 'CommendedPlayer') && !has(player, 'IsLocalPlayer') && button.enabled !== false) {
+                    try {
+                        $.DispatchEvent('MouseActivate', button, 'mouse');
+                        // Native CommendedPlayer is the acknowledgement; never
+                        // synthesize success just because DispatchEvent returned.
+                    } catch (error) { $.Msg('[AutoCommend] Activation failed: ' + error); }
+                }
+                if (index === targets.length - 1) {
+                    busy = false;
+                    // Do not falsely report completion if no native button activated.
+                    const allAcknowledged = players.every(player => has(player, 'IsLocalPlayer') ||
+                        has(player, 'TotalsRow') || has(player, 'CommendedPlayer') || !child(player, 'CommendPlayerButton'));
+                    if (allAcknowledged) page.AddClass('AutoCommendCompleted');
+                    sync();
+                }
+            });
+            clicks.add(handle);
+        });
+        sync();
     }
-};
-
-function ResetCommendState(root) {
-    var actionContainers;
-    var autoButtons;
-    var i;
-    var container;
-    var btn;
-
-    g_hasClickedCurrentMatch = false;
-    Utils.setClass(Utils.getPostGameRoot(root), "AutoCommendCompleted", false);
-
-    actionContainers = root.FindChildrenWithClassTraverse("PlayerActionContainer") || [];
-    for (i = 0; i < actionContainers.length; i++) {
-        container = actionContainers[i];
-        btn = container ? container.FindChildTraverse("CommendPlayerButton") : null;
-        if (btn) {
-            btn.RemoveClass("ac_done");
+    page.__autoCommendController = {
+        commend,
+        dispose() {
+            stopped = true;
+            if (job !== null) $.CancelScheduled(job);
+            cancelClicks();
         }
-    }
-
-    autoButtons = root.FindChildrenWithClassTraverse("AutoCommendStyle") || [];
-    for (i = 0; i < autoButtons.length; i++) {
-        if (autoButtons[i]) {
-            autoButtons[i].RemoveClass("ac_done");
-        }
-    }
-}
-
-function CheckForNewMatch() {
-    var root = Utils.getRoot();
-    var matchIdLabel;
-    var currentMatchId;
-    var currentScreen;
-
-    if (root) {
-        matchIdLabel = root.FindChildTraverse("MatchID");
-        currentMatchId = matchIdLabel ? matchIdLabel.text : "";
-        currentScreen = Utils.getCurrentScreen(root);
-
-        if (currentMatchId && currentMatchId !== g_lastMatchId) {
-            g_lastMatchId = currentMatchId;
-            g_lastObservedScreen = currentScreen;
-            g_isFreshPostMatch = currentScreen === "MVP";
-            Utils.toggleCustomButtons(root, true);
-            ResetCommendState(root);
-        } else if (currentScreen && currentScreen !== g_lastObservedScreen) {
-            g_lastObservedScreen = currentScreen;
-        }
-
-        Utils.syncButtonVisibility(root);
-    }
-
-    $.Schedule(0.25, CheckForNewMatch);
-}
-
-function CommendAll() {
-    var root = Utils.getRoot();
-    var actionContainers;
-    var CLICK_DELAY = 0.05;
-    var delayMultiplier = 0;
-    var i;
-    var container;
-    var btn;
-    var playAgainButton;
-
-    if (!root) return;
-
-    actionContainers = Utils.getVisiblePlayerActionContainers(root);
-
-    for (i = 0; i < actionContainers.length; i++) {
-        container = actionContainers[i];
-        btn = container ? container.FindChildTraverse("CommendPlayerButton") : null;
-
-        if (btn && btn.IsValid && btn.IsValid() && btn.visible && !btn.BHasClass("ac_done")) {
-            (function(targetBtn, delay) {
-                $.Schedule(delay, function() {
-                    Utils.clickPanel(targetBtn);
-                    if (targetBtn && targetBtn.IsValid && targetBtn.IsValid()) {
-                        targetBtn.AddClass("ac_done");
-                    }
-                });
-            })(btn, delayMultiplier * CLICK_DELAY);
-
-            delayMultiplier++;
-        }
-    }
-
-    g_hasClickedCurrentMatch = true;
-    Utils.setClass(Utils.getPostGameRoot(root), "AutoCommendCompleted", true);
-    Utils.toggleCustomButtons(root, false);
-
-    playAgainButton = root.FindChildTraverse("PlayAgainButton");
-    if (Utils.hasPlayAgainButton(root)) {
-        Utils.setPanelState(playAgainButton, !!g_isFreshPostMatch);
-    }
-}
-
-CheckForNewMatch();
+    };
+    tick();
+})();

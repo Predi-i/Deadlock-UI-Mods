@@ -8,3 +8,6 @@ tools/builds/
 
 # Python bytecode generated when validating or running helper scripts.
 __pycache__/
+
+# Local Cloudflare deployment metadata.
+.wrangler/

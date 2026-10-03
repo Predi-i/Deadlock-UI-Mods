@@ -7,6 +7,11 @@
 	</styles>
 	<Citadel_AbilityHUDElement_Progress class="ability_element_progress">
 		<Panel id="channel_and_name">
+			<!-- Keep the native text-progress IDs for the engine's bindings. -->
+			<Panel id="text_container" class="SplitLabelProgressBar" style="visibility: collapse;">
+				<SplitLabel id="ability_name" text="{s:ability_name}" class="SplitLabelName" />
+				<Image id="ability_name_clipped" class="SplitLabelProgress" src="panel://ability_name" context="progress" progress="clip_right" />
+			</Panel>
 			<Panel id="ability_icon_container">
 				<Image id="ability_icon" />
 			</Panel>

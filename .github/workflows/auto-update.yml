@@ -50,6 +50,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Test dependency installation failed" }
           python -m unittest discover -s tools/tests -v
           if ($LASTEXITCODE -ne 0) { throw "Updater regression tests failed" }
+          node tools/tests/runtime_regressions.cjs
+          if ($LASTEXITCODE -ne 0) { throw "HUD runtime regression tests failed" }
           foreach ($Flag in @("", "--delayed-layout", "--old-layout", "--modern-layout", "--wrapped-effects")) {
               if ($Flag) { node Djinn-Mark-In-TopBar/tests/djinn_mark.test.cjs $Flag }
               else { node Djinn-Mark-In-TopBar/tests/djinn_mark.test.cjs }

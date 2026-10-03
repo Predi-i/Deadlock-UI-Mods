@@ -189,7 +189,7 @@
         return '';
     }
 
-    function readModifierValue(container) {
+    function readModifierValue(container, def) {
         if (!isValid(container)) return '';
         let labels = State.valuePanels.get(container);
         if (!labels || !isValid(labels.value) || (labels.postfix && !isValid(labels.postfix))) {
@@ -203,14 +203,25 @@
             labels = {
                 value: candidates.find(child => hasClass(child, 'statNumber')),
                 postfix: candidates.find(child => hasClass(child, 'statPostfix')),
+                delta: children.find(child => hasClass(child, 'statNumberDelta')),
             };
             if (!isValid(labels.value)) return readBfs(core);
             State.valuePanels.set(container, labels);
         }
-        const value = labels.value.text || '';
-        let postfix = isValid(labels.postfix) ? labels.postfix.text || '' : '';
-        if (postfix.charAt(0) === '#') postfix = $.Localize(postfix, labels.postfix);
-        return value + (postfix.charAt(0) === '#' ? '' : postfix);
+        if (def.key === 'weaponPower' || def.key === 'spirit') {
+            // The engine retains stale delta text after clearing has_delta.
+            if (!hasClass(container, 'has_delta') || !isValid(labels.delta)) return '';
+            const delta = stripHtml(labels.delta.text || '');
+            if (!delta || delta.charAt(0) === '#' || delta.indexOf('{') !== -1) return '';
+            if (def.key === 'weaponPower') return delta.endsWith('%') ? delta : delta + '%';
+            return /^[+\-\u2212]/.test(delta) ? delta : '+' + delta;
+        }
+        // Read rendered native labels. Localizing the postfix again can expand a
+        // token containing the entire number and duplicate it in the overlay.
+        const value = stripHtml(labels.value.text || '');
+        const postfix = isValid(labels.postfix) ? stripHtml(labels.postfix.text || '') : '';
+        if (!value || value.charAt(0) === '#' || value.indexOf('{') !== -1) return '';
+        return value + (postfix.charAt(0) === '#' || postfix.indexOf('{') !== -1 ? '' : postfix);
     }
 
     function classifyBySign(txt) {
@@ -231,44 +242,6 @@
             if (container.BHasClass('isPositive') || container.BHasClass('IsPositive')) return 1;
         } catch (e) {}
         return 0;
-    }
-
-    function classifyByCasterConsensus(container) {
-        if (!isValid(container)) return 0;
-        let list = null;
-        list = findChild(container, 'casterList');
-        if (!isValid(list)) return 0;
-        let casters = [];
-        try { if (list.Children) casters = list.Children() || []; } catch (e) { return 0; }
-        let enemy = 0, friend = 0;
-        // casterSnippet owns direct children; modifierList descendants do not
-        // participate in caster affiliation and need no recursive walk.
-        for (const node of casters) {
-            if (!node) continue;
-            try {
-                if (node.BHasClass && node.BHasClass('casterAndModifiers')) {
-                    if (node.BHasClass('enemy')) enemy++;
-                    else if (node.BHasClass('friend')) friend++;
-                }
-            } catch (e) {}
-        }
-        if (enemy > 0 && friend === 0) return -1;
-        if (friend > 0 && enemy === 0) return 1;
-        return 0;
-    }
-
-    function applySign(txt, isNeg) {
-        if (!txt) return txt;
-        let i = 0;
-        while (i < txt.length) {
-            const ch = txt.charAt(i);
-            if (ch === ' ' || ch === '+' || ch === '-' || ch === '\u2212') {
-                i++;
-                continue;
-            }
-            break;
-        }
-        return (isNeg ? '\u2212' : '+') + txt.substring(i);
     }
 
     function isScoreboardOpen(root) {
@@ -309,7 +282,7 @@
         if (isValid(State.gameplayHud)) return State.gameplayHud;
         const source = resolveSourcePanel();
         const core = isValid(source) && source.GetParent ? source.GetParent() : null;
-        State.gameplayHud = findChild(core, IDS.gameplayHud);
+        State.gameplayHud = core;
         return State.gameplayHud;
     }
 
@@ -319,6 +292,11 @@
         State.sourceScopes.clear();
         State.valuePanels.clear();
         State.sourcePanel = ancestor(IDS.source);
+        if (!isValid(State.sourcePanel)) {
+            const hud = ancestor('Hud') || findChild(getRoot(), 'Hud');
+            const core = isValid(hud) ? (hud.Children() || []).find(panel => hasClass(panel, 'HudCore')) : null;
+            State.sourcePanel = findChild(core, IDS.source);
+        }
         return State.sourcePanel;
     }
 
@@ -555,18 +533,14 @@
                     continue;
                 }
 
-                const valueText = stripHtml(readModifierValue(container));
-                const consensus = classifyByCasterConsensus(container);
-                let cls = 0;
-                let displayValue = valueText;
-
-                if (consensus < 0) {
-                    cls = -1;
-                    displayValue = applySign(valueText, true);
-                } else {
-                    cls = classifyByGameClass(container);
-                    if (cls === 0) cls = classifyBySign(valueText);
+                const displayValue = readModifierValue(container, def);
+                if (!displayValue) {
+                    contentParts.push('');
+                    continue;
                 }
+                // Native classes describe the net effect; individual casters may
+                // disagree and must not overwrite the game's classification.
+                const cls = classifyByGameClass(container) || classifyBySign(displayValue);
 
                 const isNeg = (cls < 0);
                 if (isNeg ? !CONFIG.SHOW_DEBUFFS : !CONFIG.SHOW_BUFFS) {

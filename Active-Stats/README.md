@@ -3,11 +3,14 @@
 Mirrors the active modifiers from the native `hudActivePlayerStats` panel beside
 the crosshair. The October 2026 layout separates the weapon, spirit and vitality
 columns under `StatList`; weapon power and spirit power belong to `HudStatBlock`.
-The script resolves its own native ancestor and reads only these branches.
+The script resolves the native stats panel and reads only these branches. The
+overlay belongs to HudCore, matching the working SecondEye placement.
 
-Values use the native `statNumber` and optional `statPostfix` labels. The core
-panel is identified by its class, not by an invented ID. Caster affiliation uses
-the direct `casterSnippet` children without scanning each caster's modifiers.
+Modifier values use the rendered native `statNumber` and optional `statPostfix`
+labels. Weapon/spirit power use `statNumberDelta` only while `has_delta` is set;
+stale deltas and empty values never paint. Buff/debuff classification uses the
+native `isPositive`/`isNegative` classes rather than individual caster affiliation.
+The core panel is identified by its class, not by an invented ID.
 The removed bullet-evasion and damage-amplification containers are no longer
 polled. Existing polling rates and presentation settings remain unchanged.
 

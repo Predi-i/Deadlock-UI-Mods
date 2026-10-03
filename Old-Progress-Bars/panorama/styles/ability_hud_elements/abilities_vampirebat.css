@@ -1,23 +1,24 @@
 /* Prettified by Source 2 Viewer 17.0.0.0 - https://valveresourceformat.github.io */
 
 @import url("s2r://panorama/styles/citadel_base_styles.vcss_c");
+@import url("s2r://panorama/styles/old_progress_bars.vcss_c");
 @keyframes 'DefaultAnim'
 {
 	0%
 	{
 		transform: translateX( 1px );
 	}
-	
+
 	50%
 	{
 		transform: translateY( 1px );
 	}
-	
+
 	100%
 	{
 		transform: translateX( -1px );
 	}
-	
+
 }
 
 #fancy_progress_container

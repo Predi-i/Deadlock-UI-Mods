@@ -4,6 +4,8 @@
  * Fallbacks: OpenRouter, Cloudflare Workers AI
  */
 
+import { BRIDGE_HTML } from './bridge.js';
+
 const CORS_HEADERS = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
@@ -201,6 +203,12 @@ export default {
     async fetch(request, env) {
         try {
             const url = new URL(request.url);
+
+            if (url.pathname === '/bridge' && request.method === 'GET') {
+                return new Response(BRIDGE_HTML, {
+                    headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }
+                });
+            }
 
             if (request.method === 'OPTIONS') {
                 return new Response(null, { headers: CORS_HEADERS });

@@ -1,18 +1,19 @@
 /* Prettified by Source 2 Viewer 17.0.0.0 - https://valveresourceformat.github.io */
 
 @import url("s2r://panorama/styles/citadel_base_styles.vcss_c");
+@import url("s2r://panorama/styles/old_progress_bars.vcss_c");
 @keyframes 'Alive1'
 {
 	0%
 	{
 		transform: rotateZ( 10deg ) translateY(-10px);
 	}
-	
+
 	100%
 	{
 		transform: rotateZ( 0deg ) translateY(0px);
 	}
-	
+
 }
 
 @keyframes 'Alive2'
@@ -21,12 +22,12 @@
 	{
 		transform: rotateZ( 10deg ) translateY(10px);
 	}
-	
+
 	100%
 	{
 		transform: rotateZ( 0deg ) translateY(0px);
 	}
-	
+
 }
 
 @keyframes 'DefaultAnim'
@@ -35,17 +36,17 @@
 	{
 		transform: translateX( 1px );
 	}
-	
+
 	50%
 	{
 		transform: translateY( 1px );
 	}
-	
+
 	100%
 	{
 		transform: translateX( -1px );
 	}
-	
+
 }
 
 .ability_element_progress.ability_frank_painaura

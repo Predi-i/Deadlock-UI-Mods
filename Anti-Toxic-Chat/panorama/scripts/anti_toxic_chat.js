@@ -80,6 +80,7 @@
 
     const store = getStore();
     const previous = store[STORE_KEY];
+    if (previous && typeof previous.cleanup === 'function') previous.cleanup();
     const GENERATION = ((previous && previous.generation) || 0) + 1;
     store[STORE_KEY] = { generation: GENERATION };
 
@@ -166,111 +167,59 @@
     }
 
     // ---------------------------------------------------------------- CEF HTML Bridge
-    function encDataUrl(s) {
-        let out = s.replace(/%/g, '%25');
-        out = out.replace(/#/g, '%23');
-        out = out.replace(/&/g, '%26');
-        out = out.replace(/\?/g, '%3F');
-        out = out.replace(/"/g, '%22');
-        out = out.replace(/\+/g, '%2B');
-        out = out.replace(/ /g, '%20');
-        return out;
-    }
-
-    function buildBridgeHtml() {
-        const js = [
-            "window.sendToWorker = function(raw, reqId, cmd) {",
-            "  var safeFallback = raw;",
-            "  function clean(t) {",
-            "    if (!t) return safeFallback;",
-            "    var s = String(t).trim();",
-            "    s = s.replace(/^[\"\'\\u00AB\\u201C](.*)[\"\'\\u00BB\\u201D]$/s, '$1').trim();",
-            "    s = s.replace(/[*_~`#]/g, '');",
-            "    return s || safeFallback;",
-            "  }",
-            "  var ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;",
-            "  var tid = setTimeout(function() {",
-            "    if (ctrl) ctrl.abort();",
-            "    document.title = ['AT', reqId, cmd, encodeURIComponent(safeFallback)].join('|');",
-            "  }, 3200);",
-            "  fetch(" + JSON.stringify(CONFIG.WORKER_URL) + ", {",
-            "    method: 'POST',",
-            "    headers: { 'Content-Type': 'application/json' },",
-            "    body: JSON.stringify({ text: raw }),",
-            "    signal: ctrl ? ctrl.signal : undefined",
-            "  })",
-            "  .then(function(r) {",
-            "    clearTimeout(tid);",
-            "    if (!r.ok) throw new Error('HTTP ' + r.status);",
-            "    return r.json();",
-            "  })",
-            "  .then(function(d) {",
-            "    var t = (d && d.text) ? clean(d.text) : safeFallback;",
-            "    document.title = ['AT', reqId, cmd, encodeURIComponent(t)].join('|');",
-            "  })",
-            "  .catch(function() {",
-            "    clearTimeout(tid);",
-            "    document.title = ['AT', reqId, cmd, encodeURIComponent(safeFallback)].join('|');",
-            "  });",
-            "};",
-            "document.title = 'AT_READY';"
-        ].join('\n');
-
-        return '<!DOCTYPE html><html><head><title>AT_BOOT</title></head><body><script>' + js + '</script></body></html>';
-    }
-
-    function sendToCEF(rawText, reqId, targetCmd) {
+    const bridgeURL = CONFIG.WORKER_URL.replace(/\/api\/transform$/, '/bridge');
+    const bridgeSession = String(Date.now()) + ':' + GENERATION;
+    let bridgeBusy = null;
+    function navigateBridge(message) {
         if (!isValid(State.htmlPanel)) return;
-        const code = 'window.sendToWorker(' + JSON.stringify(rawText) + ',' + reqId + ',' + JSON.stringify(targetCmd) + ');void(0);';
-        try {
-            State.htmlPanel.SetURL('javascript:' + encDataUrl(code));
-        } catch (e) {
-            log('Failed to execute uplink in CEF: ' + e);
+        State.htmlPanel.SetURL(bridgeURL + '#' + encodeURIComponent(JSON.stringify(message)));
+    }
+    function pumpBridge() {
+        if (isRetired() || !State.htmlLoaded || bridgeBusy !== null) return;
+        while (State.ingressQueue.length) {
+            const item = State.ingressQueue.shift();
+            if (!State.pendingMap.has(item.id)) continue;
+            bridgeBusy = item.id;
+            navigateBridge({op: 'transform', session: bridgeSession, id: item.id, text: item.raw});
+            return;
         }
     }
-
+    function sendToCEF(rawText, reqId, targetCmd) {
+        State.ingressQueue.push({raw: rawText, id: reqId, cmd: targetCmd});
+        pumpBridge();
+    }
     function initHTMLBridge() {
         if (isValid(State.htmlPanel)) return;
-
-        const host = getRoot();
         try {
-            State.htmlPanel = $.CreatePanel('CitadelHTMLPanel', host, IDS.htmlPanel);
+            // Own the bridge under this layout so destruction does not leave a
+            // Chromium panel attached to the global window root.
+            State.htmlPanel = $.CreatePanel('CitadelHTMLPanel', CTX, IDS.htmlPanel);
             State.htmlPanel.style.width = '2px';
             State.htmlPanel.style.height = '2px';
             State.htmlPanel.style.opacity = '0.01';
-            State.htmlPanel.style.position = '0px 0px 0px';
             State.htmlPanel.SetAttributeString('hittest', 'false');
             State.htmlPanel.SetAttributeString('hittestchildren', 'false');
-        } catch (e) {
-            log('Failed to create CitadelHTMLPanel: ' + e);
-            return;
-        }
-
-        $.RegisterEventHandler('HTMLTitle', State.htmlPanel, function (panel, title) {
-            if (isRetired() || !title || typeof title !== 'string') return;
-            if (title === 'AT_READY') {
+        } catch (e) { log('Failed to create CitadelHTMLPanel: ' + e); return; }
+        $.RegisterEventHandler('HTMLTitle', State.htmlPanel, function (panelOrTitle, eventTitle) {
+            if (isRetired()) return;
+            const title = typeof eventTitle === 'string' ? eventTitle : panelOrTitle;
+            if (typeof title !== 'string' || title.indexOf('AT2:') !== 0) return;
+            let message;
+            try { message = JSON.parse(title.substring(4)); } catch (_) { return; }
+            if (message.session !== bridgeSession) return;
+            if (message.op === 'ready' && message.id === 0 && message.version === 2 && message.href === bridgeURL) {
                 State.htmlLoaded = true;
-                log('CEF HTML Bridge ready. Flushing ' + State.ingressQueue.length + ' early message(s)');
-                while (State.ingressQueue.length > 0) {
-                    const item = State.ingressQueue.shift();
-                    sendToCEF(item.raw, item.id, item.cmd);
-                }
-                return;
-            }
-            if (title.indexOf('AT|') === 0) {
-                const parts = title.split('|');
-                if (parts.length >= 4) {
-                    const reqId = parseInt(parts[1], 10);
-                    const cmd = parts[2];
-                    const text = decodeURIComponent(parts.slice(3).join('|'));
-                    onTransformComplete(reqId, cmd, text);
-                }
+                log('HTTPS bridge ready');
+                pumpBridge();
+            } else if (message.op === 'result' && message.id === bridgeBusy && typeof message.text === 'string') {
+                const item = State.pendingMap.get(message.id);
+                if (item) onTransformComplete(item.id, item.cmd, message.text);
+                bridgeBusy = null;
+                pumpBridge();
             }
         });
-
-        const html = buildBridgeHtml();
-        State.htmlPanel.SetURL('data:text/html,' + encDataUrl(html));
-        log('Initialized HTML bridge');
+        navigateBridge({op: 'hello', session: bridgeSession, id: 0});
+        log('Initialized HTTPS bridge: ' + bridgeURL);
     }
 
     // ---------------------------------------------------------------- submission & outbox queue
@@ -400,11 +349,13 @@
 
         // 4. Timeout fallback in case network drops: submit original text (NEVER "gg wp")
         $.Schedule(CONFIG.TIMEOUT_SECS, () => {
-            if (State.pendingMap.has(reqId)) {
+            if (!isRetired() && State.pendingMap.has(reqId)) {
                 log('Request #' + reqId + ' timed out, falling back to original message');
                 const timedOut = State.pendingMap.get(reqId);
                 State.pendingMap.delete(reqId);
                 enqueueOutbox(timedOut.cmd, timedOut.raw);
+                if (bridgeBusy === reqId) bridgeBusy = null;
+                pumpBridge();
             }
         });
 
@@ -424,6 +375,13 @@
 
     // Export global handler so chat.xml's oninputsubmit can call it
     globalThis.OnAntiToxicSubmit = onInputSubmit;
+
+    store[STORE_KEY].cleanup = () => {
+        if (isValid(State.htmlPanel)) State.htmlPanel.DeleteAsync(0);
+        State.pendingMap.clear();
+        State.ingressQueue.length = 0;
+        State.outboxQueue.length = 0;
+    };
 
     // Initialize bridge on HUD load
     initHTMLBridge();

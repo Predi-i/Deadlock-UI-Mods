@@ -1,10 +1,10 @@
 /* Preserve native progress IDs while showing the classic bar. */
-#fancy_progress_container
+#channel_and_name #fancy_progress_container
 {
     visibility: collapse;
 }
 
-#basic_progress_container
+#channel_and_name #basic_progress_container
 {
     visibility: visible;
 }
