@@ -23,3 +23,8 @@ After repacking, check recent and historical matches, all screen tabs, local and
 already commended rows, rapid close/reopen, switching match IDs, and native
 acknowledgements. Offline tests exercise lifecycle and targets, not server-side
 commend acceptance or whether C++ destroys the page on every navigation path.
+
+Native activation uses `DispatchEvent("Activated", button, "mouse")`, the
+source-qualified contract used by SecondEye/QOLLOCK for C++-bound panels.
+`MouseActivate` is not a supported DispatchEvent name. The offline activation
+double accepts only the confirmed event and requires its source argument.

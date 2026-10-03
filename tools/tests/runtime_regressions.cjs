@@ -81,6 +81,11 @@ function runtime(context, extra = {}) {
     screen.add(new Panel('AutoCommendScoreboard', ['AutoCommendStyle']));
     page.add(new Panel('PlayAgainButton'));
     const r = runtime(page);
+    r.$.DispatchEvent = (name, panel, source) => {
+        assert.equal(name, 'Activated', 'only the confirmed native activation event is accepted');
+        assert.equal(source, 'mouse', 'paneleventsource is required');
+        r.events.push([name, panel, source]);
+    };
     const file = 'Commend-Everyone-Button/panorama/scripts/auto_commend.js';
     r.run(file); assert.equal(r.jobs.size, 1);
     const mvp = carousel.add(new Panel('MVPScreen', [], 'CitadelPostGameProgressMVP'));

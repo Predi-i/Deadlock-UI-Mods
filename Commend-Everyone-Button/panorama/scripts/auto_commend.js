@@ -107,7 +107,9 @@
                 const player = button.GetParent();
                 if (!has(player, 'CommendedPlayer') && !has(player, 'IsLocalPlayer') && button.enabled !== false) {
                     try {
-                        $.DispatchEvent('MouseActivate', button, 'mouse');
+                        // Confirmed C++-bound activation contract used by
+                        // SecondEye build_storage and QOLLOCK panel helpers.
+                        $.DispatchEvent('Activated', button, 'mouse');
                         // Native CommendedPlayer is the acknowledgement; never
                         // synthesize success just because DispatchEvent returned.
                     } catch (error) { $.Msg('[AutoCommend] Activation failed: ' + error); }
