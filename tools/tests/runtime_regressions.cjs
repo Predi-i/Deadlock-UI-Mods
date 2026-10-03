@@ -56,7 +56,13 @@ function runtime(context, extra = {}) {
     const r = runtime(context, {ModHudLookup: {find: id => ({gun_data: gun, StatsAndModsContainer: inventory, BuffModifiers: buffs})[id]}});
     let now = 0; r.sandbox.Date = {now: () => now};
     context.AddClass('parry_on_cooldown'); border.style.clip = 'radial(50% 50%, 0deg, -180deg)';
+    // Included scripts execute before the layout is ready. Startup must defer
+    // the first validity check instead of silently exiting forever.
+    context.alive = false;
     r.run('Parry-Cooldown/panorama/scripts/parry_cooldooown.js');
+    assert.equal(r.jobs.size, 1);
+    assert.equal(holder.FindChildTraverse('CustomParryTimerText'), null);
+    context.alive = true; r.advance();
     const label = holder.FindChildTraverse('CustomParryTimerText');
     assert.equal(label.parent, holder); assert.equal(label.style.textAlign, 'center');
     assert.equal(holder.style.overflow, 'noclip', 'below-icon text must escape the 40px parent bounds');
@@ -65,7 +71,16 @@ function runtime(context, extra = {}) {
     now = 1000; border.style.clip = '  radial(50% 50%, 0deg, -100deg) '; r.advance();
     assert.equal(label.text, '1.3');
     border.style.clip = ''; r.advance(); assert.equal(label.style.visibility, 'collapse');
+    border.GetAttributeString = () => 'clip: radial(50% 50%, 0deg, -100deg);';
+    r.advance(); assert.equal(label.style.visibility, 'visible', 'native style attribute fallback');
     r.run('Parry-Cooldown/panorama/scripts/parry_cooldooown.js'); assert.equal(r.jobs.size, 1);
+    const errors = [];
+    r.$.Msg = message => errors.push(message);
+    Object.defineProperty(border.style, 'clip', {get() { throw new Error('native clip getter failed'); }, configurable: true});
+    r.advance(); r.advance();
+    const failures = errors.filter(message => message.includes('Runtime failure'));
+    assert.equal(failures.length, 1, 'a repeated native exception must report its phase without log spam');
+    assert.match(failures[0], /read native cooldown class and radial clip/);
     context.alive = false; r.advance(); assert.equal(r.jobs.size, 0);
 }
 // The MVP include must not start a second poller or reset match completion.

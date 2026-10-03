@@ -1,4 +1,5 @@
 (function() {
+    $.Msg('[ParryTimer] Loaded angle timer v3; waiting for layout');
     const BASE_PARRY_COOLDOWN = 4.5;
     const REBUTTAL_PARRY_COOLDOWN = 2.75;
 
@@ -83,6 +84,8 @@
     let lastSample = 0;
     let secondsPerDegree = null;
     let lastFailure = '';
+    let lastException = '';
+    let wasActive = false;
     const diagnose = message => {
         if (message !== lastFailure) $.Msg('[ParryTimer] ' + message);
         lastFailure = message;
@@ -92,7 +95,13 @@
 
     // Native C++ writes the radial clip on this border; the icon is static.
     function readAngle(panel) {
-        const clip = String(panel.style.clip || '').trim();
+        let clip = String(panel.style.clip || '').trim();
+        // The native inline style can be exposed through the style attribute
+        // instead of the JS style getter (also handled by QOLLOCK's reader).
+        if (!clip && panel.GetAttributeString) {
+            const match = /clip\s*:\s*([^;]+)/i.exec(panel.GetAttributeString('style', ''));
+            if (match) clip = match[1].trim();
+        }
         if (!/^radial\s*\(/i.test(clip)) return null;
         const degrees = clip.match(/[-+]?(?:\d+\.?\d*|\.\d+)\s*deg/gi);
         if (!degrees || degrees.length !== 2) return null;
@@ -101,8 +110,13 @@
     }
 
     function update() {
-        if (stopped || !context.IsValid()) return;
+        if (stopped) return;
+        if (!context.IsValid()) {
+            diagnose('Layout was deleted; timer stopped');
+            return;
+        }
         let delay = 0.1;
+        let phase = 'resolve native panels';
         try {
             let gun = State.cachedGunData;
             if (!gun || !gun.IsValid()) {
@@ -123,7 +137,9 @@
             }
             // The timer sits below the native 40x40 icon. Without noclip the
             // label at y=42 is entirely outside the parent's clipping bounds.
+            phase = 'configure icon overflow';
             if (holder.style.overflow !== 'noclip') holder.style.overflow = 'noclip';
+            phase = 'create/configure timer label';
             let label = State.customParryLabel;
             if (!label || !label.IsValid()) {
                 label = child(holder, 'CustomParryTimerText') || $.CreatePanel('Label', holder, 'CustomParryTimerText');
@@ -143,18 +159,25 @@
                 State.customParryLabel = label;
             }
             const gunElement = gun.GetParent();
+            phase = 'read native cooldown class and radial clip';
             const active = gunElement && gunElement.BHasClass('parry_on_cooldown');
+            if (active && !wasActive) $.Msg('[ParryTimer] Native cooldown detected');
+            wasActive = !!active;
             const angle = active ? readAngle(border) : null;
             if (active && angle === null) diagnose('Native radial clip is unreadable: ' + String(border.style.clip).slice(0, 160));
-            else lastFailure = '';
             const now = Date.now();
-            if (!active || angle === null || angle <= 0 || IsCarryingUrn(GetUIRoot())) {
+            phase = 'check urn modifier';
+            const carryingUrn = active && angle !== null && angle > 0 && IsCarryingUrn(GetUIRoot());
+            if (carryingUrn) diagnose('Timer hidden: holding urn');
+            if (active && angle === 0) diagnose('Timer hidden: native radial sweep is zero');
+            if (!active || angle === null || angle <= 0 || carryingUrn) {
                 label.style.visibility = 'collapse';
                 lastAngle = null;
                 secondsPerDegree = null;
                 return;
             }
             delay = 0.03;
+            phase = 'calculate remaining time';
             if (lastAngle === null || angle > lastAngle + 2) {
                 secondsPerDegree = (HasRebuttal(GetUIRoot()) ? REBUTTAL_PARRY_COOLDOWN : BASE_PARRY_COOLDOWN) / 360;
             } else if (lastAngle - angle > 0.01 && now > lastSample) {
@@ -167,6 +190,12 @@
             const text = Math.max(0.1, angle * secondsPerDegree).toFixed(1);
             if (label.text !== text) label.text = text;
             label.style.visibility = 'visible';
+            lastFailure = '';
+            lastException = '';
+        } catch (error) {
+            const message = phase + ': ' + String(error);
+            if (message !== lastException) $.Msg('[ParryTimer] Runtime failure — ' + message);
+            lastException = message;
         } finally {
             if (!stopped && context.IsValid()) job = $.Schedule(delay, update);
         }
@@ -176,5 +205,7 @@
         if (job !== null) $.CancelScheduled(job);
         if (State.customParryLabel && State.customParryLabel.IsValid()) State.customParryLabel.DeleteAsync(0);
     };
-    update();
+    // Includes run while the XML is being constructed. Keep the original
+    // deferred startup: an immediate IsValid() exit never schedules a retry.
+    job = $.Schedule(1.0, update);
 })();
