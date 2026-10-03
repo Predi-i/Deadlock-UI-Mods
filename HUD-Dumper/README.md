@@ -1,9 +1,14 @@
 # HUD-Dumper
 
 Standalone diagnostic source for streaming a live HUD tree. It records panel IDs,
-types, classes returned by `GetClasses()`, basic flags, and `Label`/`TextEntry`
-text. The Windows Python receiver rebuilds the nested `domTree` JSON used by the
+types, basic flags, and `Label`/`TextEntry` text. **Full native class enumeration
+is not implemented:** the current client capture found `GetClasses()` unavailable
+on every panel. The Windows Python receiver rebuilds the nested `domTree` JSON used by the
 QOLLOCK offline profiler. This is a structural capture, not an FPS measurement.
+
+See [class enumeration investigation](CLASS_ENUMERATION.md) for the evidence and
+the remaining requirement. A complete packet set must not be presented as a
+complete capture of classes.
 
 ## Capture procedure
 
@@ -81,10 +86,12 @@ character limit. Record the last console stage if a hang recurs. Optional
 measurements and all capture limits live in the source.
 
 The result spans a collection interval, so values can come from different
-frames. `GetClasses-returned` describes the API's returned list; it does not
-guarantee engine-internal class completeness. Text or class truncation and
-unavailable reads are explicit. Styles are deliberately absent. An offline
-importer cannot infer missing native state from this JSON.
+frames. `GetClasses-returned` is a legacy metadata value for a successful getter
+in the collector or its test fixtures; it is not evidence that native Panorama
+exposes that getter. Unavailable class reads and text truncation are explicit.
+Styles are deliberately absent. An offline importer cannot infer missing native
+state from this JSON, and class-dependent profiling is incomplete when class
+reads are unavailable.
 
 ## Offline verification
 
