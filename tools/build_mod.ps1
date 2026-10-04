@@ -1,12 +1,24 @@
 [CmdletBinding()]
 param(
     [string]$ModFolderName,
-    [switch]$Force
+    [switch]$Force,
+    [switch]$Batch,
+    [string]$SourcePath,
+    [string]$OutputPath
 )
 
-[console]::TreatControlCAsInput = $false
+if (-not $Batch) { [console]::TreatControlCAsInput = $false }
 $ErrorActionPreference = "Stop"
-$Host.UI.RawUI.WindowTitle = "Deadlock Mod Compiler"
+if ($Batch -and ([string]::IsNullOrWhiteSpace($ModFolderName) -or [string]::IsNullOrWhiteSpace($OutputPath))) {
+    throw "-Batch requires -ModFolderName and -OutputPath."
+}
+if ($Batch -and $ModFolderName -notmatch '^[A-Za-z0-9][A-Za-z0-9_-]*$') {
+    throw "Invalid batch build name: $ModFolderName"
+}
+if (-not $Batch -and ($SourcePath -or $OutputPath)) {
+    throw "-SourcePath and -OutputPath require -Batch."
+}
+if (-not $Batch) { $Host.UI.RawUI.WindowTitle = "Deadlock Mod Compiler" }
 
 $ScriptDir = (Resolve-Path "$PSScriptRoot").Path
 $RepoRoot = (Resolve-Path "$ScriptDir\..").Path
@@ -271,6 +283,17 @@ function Invoke-NativeCommand {
 # executables exist, so callers can keep the UI reachable instead of hard-exiting
 # (which previously made the in-app "fix CSDK path" Settings flow impossible).
 function Resolve-BuildPaths {
+    # Release automation only needs the CSDK. Do not discover or create game addons.
+    if ($Batch) {
+        $resolvedCsdk = $Config.CsdkPath
+        if (-not (Test-Path (Join-Path $resolvedCsdk "game\bin_cs2\win64\resourcecompiler.exe"))) {
+            $resolvedCsdk = Join-Path $resolvedCsdk "Reduced_CSDK_12"
+        }
+        $script:CsdkRoot = $resolvedCsdk
+        $script:Compiler = Join-Path $resolvedCsdk "game\bin_cs2\win64\resourcecompiler.exe"
+        $script:Packer = Join-Path $resolvedCsdk "game\bin\win64\CSDKCfgVPK.exe"
+        return ((Test-Path $script:Compiler) -and (Test-Path $script:Packer))
+    }
     $resolvedSteam = $Config.SteamPath
     if ([string]::IsNullOrWhiteSpace($resolvedSteam) -or -not (Test-Path $resolvedSteam)) {
         $resolvedSteam = "C:\Program Files (x86)\Steam"
@@ -329,7 +352,15 @@ $DefaultConfig = [ordered]@{
     CsdkPath         = "C:\Reduced_CSDK_12"
 }
 
-if (-not (Test-Path $ConfigPath)) {
+if ($Batch) {
+    $Config = [pscustomobject]$DefaultConfig
+    if (Test-Path $ConfigPath) {
+        $savedConfig = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
+        if ($savedConfig.CsdkPath) { $Config.CsdkPath = $savedConfig.CsdkPath }
+    }
+    $Config.BuildDestination = "Builds"
+    $Config.ExecutionMode = "BuildOnly"
+} elseif (-not (Test-Path $ConfigPath)) {
     $DefaultConfig | ConvertTo-Json -Depth 2 | Set-Content $ConfigPath -Encoding UTF8
     $Config = $DefaultConfig
     Write-Host "Created default config.json" -ForegroundColor DarkGray
@@ -354,6 +385,7 @@ if (-not (Test-Path $ConfigPath)) {
 # PATH RESOLUTION
 # ==============================================================================
 if (-not (Resolve-BuildPaths)) {
+    if ($Batch) { throw "CSDK compiler/packer not found at '$CsdkRoot'. Configure the existing builder first." }
     Write-Host "WARNING: CSDK compiler/packer not found at '$CsdkRoot'." -ForegroundColor Yellow
     Write-Host "Open Settings ([0] in the menu) to set a valid CSDK path, or edit data\config.json." -ForegroundColor Yellow
     Start-Sleep -Seconds 2
@@ -365,7 +397,7 @@ if (-not (Resolve-BuildPaths)) {
 $InitialMod = $ModFolderName
 
 while ($true) {
-    Clear-Host
+    if (-not $Batch) { Clear-Host }
     Write-Host "=== Deadlock Mod Compiler (Incremental Build) ===" -ForegroundColor Cyan
     Write-Host "Tip: add '-Force' (or '-f') after the number, e.g. '6 -Force', for a full clean rebuild of that mod.`n" -ForegroundColor DarkGray
     
@@ -438,8 +470,10 @@ while ($true) {
 
     $InitialMod = $null
     $ModSourcePath = Join-Path $RepoRoot $SelectedMod
+    if ($Batch -and $SourcePath) { $ModSourcePath = (Resolve-Path -LiteralPath $SourcePath).Path }
 
     if (-not (Test-Path $ModSourcePath)) {
+        if ($Batch) { throw "Mod source folder not found: $ModSourcePath" }
         Write-Host "ERROR: Mod folder '$SelectedMod' not found." -ForegroundColor Red
         Wait-KeyPressAndExit
     }
@@ -462,7 +496,13 @@ while ($true) {
     }
 
     $OutputVpk = ""
-    if ($BuildMode -eq 1) {
+    if ($Batch) {
+        $OutputVpk = [System.IO.Path]::GetFullPath($OutputPath)
+        $outputDirectory = Split-Path $OutputVpk
+        if (-not (Test-Path -LiteralPath $outputDirectory)) {
+            New-Item -ItemType Directory -Path $outputDirectory -Force | Out-Null
+        }
+    } elseif ($BuildMode -eq 1) {
         if (Test-Path $BuildsDir -PathType Leaf) { Remove-Item $BuildsDir -Force }
         if (-not (Test-Path $BuildsDir)) { New-Item -ItemType Directory -Force -Path $BuildsDir | Out-Null }
         $OutputVpk = Join-Path $BuildsDir "$SelectedMod.vpk"
@@ -489,6 +529,15 @@ while ($true) {
 
     $TempContent = Join-Path $CsdkRoot "content\citadel_addons\build_$SelectedMod"
     $TempGame    = Join-Path $CsdkRoot "game\citadel_addons\build_$SelectedMod"
+    if ($Batch) {
+        foreach ($entry in @(@($TempContent, "content"), @($TempGame, "game"))) {
+            $allowedParent = [System.IO.Path]::GetFullPath((Join-Path $CsdkRoot "$($entry[1])\citadel_addons"))
+            $resolvedTarget = [System.IO.Path]::GetFullPath($entry[0])
+            if (-not $resolvedTarget.StartsWith($allowedParent + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
+                throw "Build target escapes CSDK staging: $resolvedTarget"
+            }
+        }
+    }
 
     try {
         if (-not (Test-Path $Compiler) -or -not (Test-Path $Packer)) {
@@ -608,6 +657,12 @@ while ($true) {
 
             if ($AllowedExts -contains $file.Extension -and ($needsCopy -or $needsCompile)) {
                 $FilesToCompile.Add($contentDest)
+            }
+            if ($file.Extension -in @('.html', '.htm', '.json', '.txt')) {
+                $rawDest = Join-Path $TempGame $relPath
+                $rawDir = Split-Path $rawDest
+                if (-not (Test-Path -LiteralPath $rawDir)) { New-Item -ItemType Directory -Path $rawDir -Force | Out-Null }
+                Copy-Item -LiteralPath $file.FullName -Destination $rawDest -Force
             }
 
             if ($AutoVtexSourceExts -contains $file.Extension) {
@@ -784,6 +839,9 @@ while ($true) {
             Write-Host $packResult.Output -ForegroundColor DarkRed
             throw "VPK Packer failed with exit code $($packResult.ExitCode)."
         }
+        if (-not (Test-Path -LiteralPath $OutputVpk -PathType Leaf) -or (Get-Item -LiteralPath $OutputVpk).Length -eq 0) {
+            throw "VPK packer did not produce a nonempty output: $OutputVpk"
+        }
 
         Write-Host "`n=== BUILD SUCCESSFUL ===" -ForegroundColor Green
         Write-Host "Output saved to: $OutputVpk" -ForegroundColor White
@@ -803,6 +861,7 @@ while ($true) {
         Start-Sleep -Milliseconds 500 
     }
 
+    if ($Batch) { break }
     Write-Host "`nPress ANY KEY to return to the main menu, or ESC to exit..." -ForegroundColor Cyan
     $key = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
     if ($key.VirtualKeyCode -eq 27) { break }

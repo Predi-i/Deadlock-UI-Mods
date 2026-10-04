@@ -67,6 +67,30 @@ instead. It creates a temporary `*-stripped` folder and leaves the source tree u
 Add the resulting `.vpk` to [Deadlock Mod Manager](https://gamebanana.com/tools/20646) or
 [Grimoire Mod Manager](https://gamebanana.com/tools/22583), then enable it.
 
+### Package GameBanana releases
+
+Run `tools\package_releases.bat` (Python 3.11+ and the configured CSDK are required).
+Enter a date to build published mods with asset changes since that date, or `all`
+to build every published mod whose sources are in this repository. Pressing Enter
+uses the first day of the current month. Tracked local edits and untracked assets
+are included; documentation changes alone do not select a mod. The two top-bar
+nickname variants are selected together.
+
+```text
+python tools/package_releases.py --since 2026-10-01 --plan
+python tools/package_releases.py --since 2026-10-01
+python tools/package_releases.py --mods Bridge-Buff-Reminder Parry-Cooldown
+```
+
+Each run creates a new folder under `tools/releases` containing individual ZIPs,
+VPKs, compiler logs and `release-report.json`. Each ZIP contains a single VPK at
+its root. Bridge Buff Reminder is built in five variants: 4:50, 4:45, 4:40, 4:35
+and 4:30, using temporary source copies. The original alert setting is preserved.
+Batch builds use a full rebuild and the existing compiler's CSDK path; they do
+not change its saved settings, install into game addons, restart the game or upload.
+A failed build stops the batch and records the failure. Completed archives from
+that batch remain available; rerun the command to create a new batch.
+
 ## 📜 License & Usage
 
 Unless a file says otherwise (for example, bundled third-party assets), this repository is licensed
