@@ -48,7 +48,7 @@ jobs:
       - name: Validate source updates
         shell: pwsh
         run: |
-          pip install requests beautifulsoup4
+          pip install requests beautifulsoup4 vpk==1.4.0
           if ($LASTEXITCODE -ne 0) { throw "Test dependency installation failed" }
           python -m unittest discover -s tools/tests -v
           if ($LASTEXITCODE -ne 0) { throw "Updater regression tests failed" }
@@ -117,15 +117,20 @@ jobs:
           }
 
           $Compiler = "$CsdkRoot\game\bin_cs2\win64\resourcecompiler.exe"
-          $Packer = "$CsdkRoot\game\bin\win64\CSDKCfgVPK.exe"
 
           New-Item -ItemType Directory -Force -Path "builds" | Out-Null
           foreach ($ModName in $ModNames) {
-              $ContentDir = "$CsdkRoot\content\citadel_addons\build_$ModName"
-              $GameDir = "$CsdkRoot\game\citadel_addons\build_$ModName"
+              # Fresh trees cannot contain stale resources bundled in the SDK ZIP.
+              $AddonName = "build_${ModName}_" + [guid]::NewGuid().ToString('N')
+              $ContentDir = "$CsdkRoot\content\citadel_addons\$AddonName"
+              $GameDir = "$CsdkRoot\game\citadel_addons\$AddonName"
 
               New-Item -ItemType Directory -Force -Path $ContentDir | Out-Null
-              Copy-Item -Path "$ModName\panorama" -Destination $ContentDir -Recurse -Force
+              foreach ($Root in @('panorama', 'soundevents', 'sounds', 'materials', 'models', 'particles', 'scripts', 'resource', 'maps', 'shaders', 'vscripts')) {
+                  if (Test-Path -LiteralPath "$ModName\$Root" -PathType Container) {
+                      Copy-Item -LiteralPath "$ModName\$Root" -Destination $ContentDir -Recurse
+                  }
+              }
               python tools/prepare_ci_assets.py --content $ContentDir --game $GameDir
               if ($LASTEXITCODE -ne 0) { throw "Asset preparation failed: $ModName" }
 
@@ -141,24 +146,12 @@ jobs:
                   if ($LASTEXITCODE -ne 0) { throw "Compilation failed: $($f.FullName)" }
                   $Relative = $f.FullName.Substring($ContentDir.Length + 1)
                   $Compiled = Join-Path $GameDir ([System.IO.Path]::ChangeExtension($Relative, $Outputs[$f.Extension]))
-                  if (-not (Test-Path -LiteralPath $Compiled)) { throw "Compiled output missing: $Compiled" }
+                  if (-not (Test-Path -LiteralPath $Compiled) -or (Get-Item -LiteralPath $Compiled).Length -eq 0) { throw "Compiled output missing or empty: $Compiled" }
               }
 
               $OutVpk = "$PWD\builds\$ModName.vpk"
-              $PackerDir = Split-Path $Packer
-              $Proc = Start-Process -FilePath $Packer -ArgumentList "`"$GameDir`"", "`"$OutVpk`"" -WorkingDirectory $PackerDir -WindowStyle Hidden -PassThru
-
-              try {
-                  $Proc | Wait-Process -Timeout 120 -ErrorAction Stop
-              } catch {
-                  $Proc | Stop-Process -Force -ErrorAction SilentlyContinue
-                  throw "VPK packing timed out: $ModName"
-              }
-
-              if ($Proc.ExitCode -ne 0 -or -not (Test-Path $OutVpk)) {
-                  Write-Error "VPK file was not found at $OutVpk"
-                  exit 1
-              }
+              python tools/pack_ci_vpk.py $GameDir $OutVpk
+              if ($LASTEXITCODE -ne 0) { throw "VPK packing or verification failed: $ModName" }
           }
           exit 0
 

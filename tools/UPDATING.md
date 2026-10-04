@@ -34,6 +34,15 @@ prove that the CSDK can compile every asset; the maintainer runs packaging/clien
 verification before relying on a release. CI itself is not dispatched by these
 offline checks.
 
+CI packs with pinned [ValvePython vpk 1.4.0](https://github.com/ValvePython/vpk),
+as used by the QHD HUD updater. CSDKCfgVPK timed out on hosted Windows runners;
+it remains the local interactive builder's packer. CI uses unique content/game
+staging directories and copies all supported content roots, including sounds.
+`pack_ci_vpk.py` creates a single embedded VPK v2, verifies its directory/data
+checksums, resource paths, CRCs and bytes against the fresh compiler output, then
+makes the package available for ZIP creation. Existing outputs and empty builds
+are rejected; verification failures leave no publishable VPK.
+
 The GameBanana edit form now requires an AI Usage matrix. The uploader derives
 names and values from its live columns/rows, using the maintainer's choice of
 Minor for Code and None for the other areas. It validates that matrix before
