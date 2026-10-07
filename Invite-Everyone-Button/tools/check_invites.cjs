@@ -41,6 +41,7 @@ function fixture(count = 15, { noise = 0, acknowledge = true, attached = true,
     const irrelevant = add(hud, 'Panel', 'HudCore');
     for (let i = 0; i < noise; i++) add(irrelevant, 'Panel', 'unrelated_' + i);
     const escape = add(hud, 'CitadelHudEscapeMenu', 'EscapeMenu');
+    const escapeClose = add(escape, 'Button', 'EscapeButton');
     const escapeMenuBody = add(add(escape, 'Panel', 'LeftStripe'), 'Panel', 'Menu');
     const anchor = add(escapeMenuBody, 'Panel', 'SubOptions');
     const settings = add(anchor, 'Panel', '', ['SettingsRow']);
@@ -63,10 +64,13 @@ function fixture(count = 15, { noise = 0, acknowledge = true, attached = true,
     if (!anchorReady) detach(anchor);
     const manager = add(hud, 'PopupManager', 'PopupManager');
     // Only these small native subtrees are captured by the provided screenshots.
-    let popup, menu, list, invited, friends = [];
+    let popup, menu, list, invited, popupClose, friends = [];
+    const popupClosures = [];
     function makePopup(size = count) {
         popup = add(manager, 'PopupPlaytestUser', '', ['PopupPanel']);
-        const left = add(add(add(popup, 'Panel', '', ['MainBody']), 'Panel', '', ['formContents']), 'Panel', '', ['LeftSide']);
+        const body = add(popup, 'Panel', '', ['MainBody']);
+        const left = add(add(body, 'Panel', '', ['formContents']), 'Panel', '', ['LeftSide']);
+        popupClose = add(body, 'Button', 'EscapeButton');
         menu = add(left, 'CitadelInviteFriendMenu', 'FriendMenu');
         const main = add(menu, 'Panel', 'FriendPanelMainAreaContainer');
         const area = add(main, 'Panel', 'FriendPanelFriendsList');
@@ -111,6 +115,16 @@ function fixture(count = 15, { noise = 0, acknowledge = true, attached = true,
     $.DispatchEvent = (event, target, from) => {
         assert.equal(event, 'Activated'); assert.equal(from, 'mouse');
         if (target === recommend) { openCalls++; open(); return; }
+        if (target.id === 'EscapeButton') {
+            assert.notEqual(target, escapeClose, 'never close the Esc menu');
+            assert.equal(target, popupClose, 'close only the captured invitation popup');
+            assert.ok(!popupClosures.some(row => row.target === target), 'close once per run');
+            assert.ok(resultDialogs.every(row => !row.dialog.IsValid()), 'await all native result dismissals');
+            popupClosures.push({ target, at: clock.now() });
+            const enabled = counters.enabled; counters.enabled = false;
+            try { popup._destroy(); } finally { counters.enabled = enabled; }
+            return;
+        }
         if (target.id === 'Button0') {
             const row = resultDialogs.find(item => item.ok === target);
             assert.ok(row, 'must activate a captured native result OK button');
@@ -158,7 +172,8 @@ function fixture(count = 15, { noise = 0, acknowledge = true, attached = true,
     init();
     return {
         clock, doc, sandbox, probe, hud, escape, anchor, escapeMenuBody, settings, tab, add,
-        requests, confirmations, resultDialogs, manager, init, load, reset, makePopup, makeResult,
+        requests, confirmations, resultDialogs, popupClosures, manager, init, load, reset, makePopup, makeResult,
+        get popupClose() { return popupClose; },
         get owner() { return owner; }, get popup() { return popup; }, get menu() { return menu; },
         get list() { return list; }, get friends() { return friends; }, get openCalls() { return openCalls; },
         get peakInFlight() { return peakInFlight; },
@@ -275,7 +290,7 @@ test('no acknowledgement never produces duplicate activation inside one run', ()
     r.start(); r.clock.advance(1000);
     assert.equal(r.requests.length, 25);
     assert.equal(r.clock.pendingCount(), 0);
-    assert.ok(r.sandbox.messages.some(line => line.includes('not a server acknowledgement')));
+    assert.ok(r.sandbox.messages.some(line => line.includes('Done: requests=25; success=25; rejected=0;')));
     r.checkErrors();
 });
 test('wait for asynchronous native popup population', () => {
@@ -338,7 +353,7 @@ test('captured limited-Steam failures close through native OK without piling up'
     r.start(); r.clock.advance(1000);
     assert.equal(r.requests.length, 100); assert.equal(r.confirmations.length, 100);
     assert.ok(r.resultDialogs.every(row => !row.dialog.IsValid()));
-    assert.ok(r.sandbox.messages.some(line => line.includes('rejected: 100')));
+    assert.ok(r.sandbox.messages.some(line => line.includes('rejected=100')));
     assert.equal(r.clock.pendingCount(), 0); r.checkErrors();
 });
 test('delayed native replies overlap with a maximum of eight in flight', () => {
@@ -418,7 +433,45 @@ test('localized native title/body matching handles rejected users', () => {
     });
     r.start(); r.clock.advance(1000);
     assert.equal(r.requests.length, 20); assert.equal(r.confirmations.length, 20);
-    assert.ok(r.sandbox.messages.some(line => line.includes('rejected: 20'))); r.checkErrors();
+    assert.ok(r.sandbox.messages.some(line => line.includes('rejected=20'))); r.checkErrors();
+});
+
+test('completion closes the invitation popup once after delayed replies and OK dismissal; logs a short result', () => {
+    const r = fixture(5, { responseDelay: 0.4, closeDelay: 0.03 });
+    r.start(); r.clock.advance(460);
+    assert.equal(r.confirmations.length, 5);
+    assert.equal(r.popupClosures.length, 0, 'do not close under a dismissing result dialog');
+    r.clock.advance(1000);
+    assert.equal(r.popupClosures.length, 1); assert.equal(r.popup.IsValid(), false);
+    assert.ok(r.hud.BHasClass('ShowEscapeMenu'));
+    const done = r.sandbox.messages.filter(line => line.includes('Done:'));
+    assert.equal(done.length, 1);
+    assert.match(done[0], /Done: requests=5; success=5; rejected=0; \d+ms; popup-close=activated\./);
+    assert.equal(r.clock.pendingCount(), 0); r.checkErrors();
+});
+
+test('cancellation, unanswered requests and unknown dialogs preserve the invitation popup', () => {
+    for (const state of ['cancel', 'timeout', 'unknown']) {
+        const r = fixture(100, { result: state === 'timeout' ? null : state === 'unknown' ? 'Unknown' : 'Success' });
+        r.start(); r.clock.advance(51);
+        if (state === 'cancel') r.hud.RemoveClass('ShowEscapeMenu');
+        r.clock.advance(6000);
+        assert.equal(r.popupClosures.length, 0); assert.ok(r.popup.IsValid());
+        assert.ok(!r.sandbox.messages.some(line => line.includes('Done:')));
+        assert.equal(r.clock.pendingCount(), 0); r.checkErrors();
+    }
+});
+
+test('missing or disabled native Close ends cleanly with a diagnostic and no idle work', () => {
+    for (const missing of [false, true]) {
+        const r = fixture(5); r.makePopup();
+        if (missing) r.popupClose._destroy(); else r.popupClose.enabled = false;
+        r.start(); r.clock.advance(1000);
+        assert.equal(r.requests.length, 5); assert.equal(r.popupClosures.length, 0);
+        assert.ok(r.popup.IsValid()); assert.equal(r.button.enabled, true);
+        assert.ok(r.sandbox.messages.some(line => line.includes('Done:') && line.includes('popup-close=unavailable')));
+        assert.equal(r.clock.pendingCount(), 0); r.checkErrors();
+    }
 });
 test('the shipped loader avoids all current QOLLOCK/Minigames XML overrides', () => {
     const layoutDir = path.resolve(__dirname, '../panorama/layout');

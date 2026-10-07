@@ -92,6 +92,7 @@
         let deadline = 0;
         let results = 0;
         let rejected = 0;
+        let startedAt = 0;
         let texts = new Map();
         const resultTokens = ['Success', 'GenericFailure', 'InvalidFriend',
             'NotFriendsLongEnough', 'AlreadyHasGame', 'LimitedUser'];
@@ -108,7 +109,11 @@
         const listIn = menu => path(menu, [
             'FriendPanelMainAreaContainer', 'FriendPanelFriendsList', 'FriendsCanInvite', 'FriendList'
         ]);
-        const finish = reason => {
+        const finish = (reason, closePopup = false) => {
+            // Native popup_playtest_user.xml and the debugger capture place this
+            // button directly in MainBody. Never look up EscapeButton in the HUD.
+            const close = closePopup && popupOpen()
+                ? child(byClass(popup, 'MainBody'), 'EscapeButton') : null;
             if (job !== null) $.CancelScheduled(job);
             job = null;
             busy = false;
@@ -119,6 +124,17 @@
             closing.clear();
             pending = 0;
             if (valid(button)) button.enabled = true;
+            if (closePopup) {
+                let closeStatus = 'unavailable';
+                // Retire this run before native close can destroy/rebuild panels.
+                if (valid(close) && close.enabled !== false && close.visible !== false) {
+                    try { $.DispatchEvent('Activated', close, 'mouse'); closeStatus = 'activated'; }
+                    catch (error) { closeStatus = 'failed: ' + error; }
+                }
+                $.Msg('[InviteEveryone] Done: requests=' + attempts + '; success=' + (results - rejected) +
+                    '; rejected=' + rejected + '; ' + (Date.now() - startedAt) + 'ms; popup-close=' + closeStatus + '.');
+                return;
+            }
             $.Msg('[InviteEveryone] ' + reason + '; native activation requests: ' + attempts +
                 '; result dialogs: ' + results + '; rejected: ' + rejected +
                 '. Dispatch is not a server acknowledgement.');
@@ -219,7 +235,7 @@
                 if (!busy) return;
             }
             if (cursor >= queue.length && pending === 0 && closing.size === 0 && canSend) {
-                finish('Finished loaded eligible list'); return;
+                finish('Finished loaded eligible list', true); return;
             }
             if (Date.now() >= deadline) { finish('Stopped: native result/OK timeout; no further invitations queued'); return; }
             schedule(canSend && cursor < queue.length && pending < batchSize ? 0.001 : responseStep, batch);
@@ -262,6 +278,7 @@
                 return;
             }
             busy = true;
+            startedAt = Date.now();
             attempts = waits = cursor = 0;
             results = rejected = pending = 0;
             texts = new Map(resultTokens.map(name => 'Result_' + name)

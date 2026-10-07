@@ -55,11 +55,23 @@ menu, popup, host or list is destroyed, hidden or replaced. Each loaded entry
 is attempted at most once per run, even without native acknowledgement. An empty
 or unavailable list restores the button after the discovery timeout. If Steam
 populates additional entries after the snapshot, click Invite again after loading.
-The invitation list stays open for inspection; recognized result dialogs are
-closed automatically. Requests already handed to the engine cannot be recalled.
+After all snapshot entries and recognized result dialogs have been processed,
+the invitation list closes through its native `MainBody/EscapeButton`. The Esc
+menu remains open. Cancellation or timeout leaves the invitation list available
+for inspection. Requests already handed to the engine cannot be recalled.
 If a run is cancelled or times out, up to eight late replies can still arrive;
 there is no permanent observer to dismiss replies outside the active run. Logs
-count activation requests, native result dialogs and rejections, not deliveries.
+count activation requests and native results, not deliveries. Normal completion
+prints one short summary, for example:
+
+```text
+[InviteEveryone] Done: requests=15; success=8; rejected=7; 420ms; popup-close=activated.
+```
+
+`success` counts native success results, `rejected` counts native rejection
+results, and elapsed time includes opening and processing the list. `popup-close`
+reports whether native Close was activated, unavailable, or threw an error;
+activation alone does not confirm the popup has finished its closing animation.
 
 ## Offline verification
 
@@ -70,18 +82,20 @@ raw schedule probe. It does not load the QOLLOCK mod or modify that checkout:
 node Invite-Everyone-Button/tools/check_invites.cjs --qollock <QOLLOCK checkout>
 ```
 
-The twenty-seven focused scenarios cover include-only startup without `onload`,
+The thirty focused scenarios cover include-only startup without `onload`,
 initially invalid/detached contexts, delayed anchors, bounded startup failure,
 inherited HUD/WindowRoot contexts, duplicate initialization, invalid/disabled
 cards, delayed/empty popups, unacknowledged activations, closure during a batch,
 panel replacement, native failures, localized result dialogs, delayed parallel
 responses, one-time native OK activation, unrelated dialog preservation,
-override collisions and idle work. On the fixture with 1,000
+override collisions, final popup closure, completion logging, missing/disabled
+Close and preservation on cancellation/timeout. On the fixture with 1,000
 friends and 5,000 unrelated HUD panels, the run performs one popup-scoped
 recursive lookup, 126 callbacks with one pending continuation at most, and no
 scheduled work afterwards. The modeled 1,000 immediate result dialogs are all
-acknowledged. Direct/scoped lookups visit 10,644 modeled nodes in total;
-separate `Children()` enumeration counts 7,131 references. These are distinct
+acknowledged before the invitation popup closes. Direct/scoped lookups visit
+10,647 modeled nodes in total; separate `Children()` enumeration counts 7,132
+references. These are distinct
 operation counts, not native CPU timings or FPS. Fixture counts exclude native
 engine reactions and do not prove dynamic panels are instantiated identically.
 
@@ -96,7 +110,9 @@ appears, check that the mod's `citadel_hud_combat_log.xml` and script are actual
 including override order relative to other VPKs. Logs alone do not prove styling.
 Click Invite with a small eligible list first: confirm native cards actually move
 to the pending/invited category, successful and rejected result dialogs close,
-and limited-user failures are skipped without a growing popup stack. Test delayed
+and limited-user failures are skipped without a growing popup stack. Confirm the
+invitation list closes at completion, the Esc menu stays open, and the `Done`
+summary reflects the native results. Test delayed
 replies and native processing dialogs; these are not validated by source reading.
 Compare native counts before/after, including offline friends and lists requiring
 scrolling. Check a large list, close the popup/Esc mid-run and reopen, and confirm
