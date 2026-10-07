@@ -29,7 +29,8 @@ function test(name, callback) {
     passed++;
     console.log('PASS ' + name);
 }
-function fixture(count = 15, { noise = 0, acknowledge = true } = {}) {
+function fixture(count = 15, { noise = 0, acknowledge = true, attached = true,
+    contextValid = true, anchorReady = true, contextSource = 'sidebar' } = {}) {
     counters.enabled = false;
     const clock = new Clock();
     const doc = new Document(clock);
@@ -39,7 +40,8 @@ function fixture(count = 15, { noise = 0, acknowledge = true } = {}) {
     const irrelevant = add(hud, 'Panel', 'HudCore');
     for (let i = 0; i < noise; i++) add(irrelevant, 'Panel', 'unrelated_' + i);
     const escape = add(hud, 'CitadelHudEscapeMenu', 'EscapeMenu');
-    const anchor = add(add(add(escape, 'Panel', 'LeftStripe'), 'Panel', 'Menu'), 'Panel', 'SubOptions');
+    const escapeMenuBody = add(add(escape, 'Panel', 'LeftStripe'), 'Panel', 'Menu');
+    const anchor = add(escapeMenuBody, 'Panel', 'SubOptions');
     const settings = add(anchor, 'Panel', '', ['SettingsRow']);
     const contents = add(add(escape, 'Panel', 'RightSide'), 'Panel', '', ['FriendsOrPlayersContents']);
     const tab = add(contents, 'TabContents', 'FriendsTabContents');
@@ -47,6 +49,16 @@ function fixture(count = 15, { noise = 0, acknowledge = true } = {}) {
     const makeRecommend = sidebar => add(add(add(sidebar, 'Panel', '', ['Footer']), 'Panel', '', ['RecommendSection']),
         'Button', '', ['RecommendButton']);
     let recommend = makeRecommend(owner);
+    // The simulator's SetParent(null) is a no-op; model native pre-attachment
+    // explicitly rather than accidentally testing an already mounted sidebar.
+    const detach = panel => {
+        const parent = panel.GetParent();
+        if (parent) parent._children.splice(parent._children.indexOf(panel), 1);
+        panel._parent = null;
+    };
+    if (!attached) detach(owner);
+    if (!contextValid) owner._valid = false;
+    if (!anchorReady) detach(anchor);
     const manager = add(hud, 'PopupManager', 'PopupManager');
     // Only these small native subtrees are captured by the provided screenshots.
     let popup, menu, list, invited, friends = [];
@@ -71,7 +83,8 @@ function fixture(count = 15, { noise = 0, acknowledge = true } = {}) {
     }
     const sandbox = new Sandbox({ clock, doc });
     const $ = sandbox.global.$;
-    $.GetContextPanel = () => owner;
+    if (contextSource === 'window') doc.absRoot.AddClass('WindowRoot');
+    $.GetContextPanel = () => contextSource === 'hud' ? hud : contextSource === 'window' ? doc.absRoot : owner;
     const probe = installScheduleProbe(sandbox);
     const requests = [];
     let openCalls = 0;
@@ -90,11 +103,14 @@ function fixture(count = 15, { noise = 0, acknowledge = true } = {}) {
         counters.enabled = enabled;
     };
     const load = () => vm.runInContext(source, sandbox.context, { filename: sourcePath });
-    const init = () => { load(); $.InviteEveryoneInit(); };
+    // Execute the actual include and its deferred boot. Do not synthesize XML
+    // onload or call the initializer manually: that hid the original defect.
+    const init = () => { load(); clock.advance(0); };
     const reset = () => { counters.reset(); enumeration = { calls: 0, nodes: 0 }; probe.resetWindow(); counters.enabled = true; };
     init();
     return {
-        clock, doc, sandbox, probe, hud, escape, anchor, settings, tab, add, requests, init, reset, makePopup,
+        clock, doc, sandbox, probe, hud, escape, anchor, escapeMenuBody, settings, tab, add,
+        requests, init, load, reset, makePopup,
         get owner() { return owner; }, get popup() { return popup; }, get menu() { return menu; },
         get list() { return list; }, get friends() { return friends; }, get openCalls() { return openCalls; },
         get button() { return anchor.FindChild('InviteEveryone'); },
@@ -116,7 +132,55 @@ test('single controller/button, native insertion and 60 seconds with zero idle s
     assert.equal(r.clock.pendingCount(), 0);
     assert.equal(counters.snapshot(60).total.costUnits, 0);
     assert.deepEqual(enumeration, { calls: 0, nodes: 0 });
-    assert.deepEqual(r.probe.snapshot(), []);
+    assert.ok(r.probe.snapshot().every(row => row.scheduled === 0 && row.fired === 0 && row.pending === 0));
+});
+test('include alone inserts the button without an XML onload callback', () => {
+    const r = fixture();
+    assert.ok(r.button && r.button.IsValid());
+    assert.equal(r.button.Children()[0].text, 'Invite');
+    assert.equal(r.clock.pendingCount(), 0);
+    r.checkErrors();
+});
+test('HUD/WindowRoot inherited script contexts resolve the native Esc route directly', () => {
+    for (const contextSource of ['hud', 'window']) {
+        const r = fixture(15, { contextSource });
+        assert.ok(r.button && r.button.IsValid());
+        assert.equal(r.clock.pendingCount(), 0);
+        r.start(); r.clock.advance(1000);
+        assert.equal(r.requests.length, 15); r.checkErrors();
+    }
+});
+test('detached/initially invalid sidebar and missing anchor retry once per tick then stop', () => {
+    for (const state of [{ attached: false }, { contextValid: false }, { anchorReady: false }]) {
+        const r = fixture(15, state);
+        assert.ok(r.button === null);
+        assert.equal(r.clock.pendingCount(), 1);
+        for (let i = 0; i < 20; i++) r.load();
+        assert.equal(r.clock.pendingCount(), 1, 'repeat includes must reuse the pending bootstrap');
+        r.clock.advance(100);
+        r.owner._valid = true;
+        if (state.attached === false) r.owner.SetParent(r.tab);
+        if (state.anchorReady === false) r.anchor.SetParent(r.escapeMenuBody);
+        r.clock.advance(100);
+        assert.ok(r.button && r.button.IsValid());
+        assert.equal(r.clock.pendingCount(), 0);
+        assert.equal(r.anchor.Children().filter(panel => panel.id === 'InviteEveryone').length, 1);
+        r.reset(); r.clock.advance(60000);
+        assert.equal(counters.snapshot(60).total.costUnits, 0);
+        assert.equal(r.clock.pendingCount(), 0); r.checkErrors();
+    }
+});
+test('bootstrap times out with a specific diagnostic; no perpetual injection loop', () => {
+    const r = fixture(15, { attached: false });
+    r.clock.advance(6000);
+    assert.equal(r.button, null); assert.equal(r.clock.pendingCount(), 0);
+    assert.ok(r.sandbox.messages.some(line => line.includes('Button initialization timed out: sidebar attachment')));
+    r.checkErrors();
+});
+test('destroyed sidebar stops a pending bootstrap', () => {
+    const r = fixture(15, { attached: false });
+    r.owner._destroy(); r.clock.advance(100);
+    assert.equal(r.button, null); assert.equal(r.clock.pendingCount(), 0); r.checkErrors();
 });
 test('1000 friends: bounded batches, one pending continuation, only popup-scoped traversal', () => {
     const r = fixture(1000, { noise: 5000 });

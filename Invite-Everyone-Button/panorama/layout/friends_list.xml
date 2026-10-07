@@ -33,8 +33,7 @@
 			</Panel>
 		</snippet>
 	</snippets>
-	<!-- ==== Invite Everyone: initialize after the sidebar layout is ready ==== -->
-	<CitadelFriendsList hittest="false" onload="$.InviteEveryoneInit()">
+	<CitadelFriendsList hittest="false">
 		<Panel id="FriendsCategories" hittest="false" />
 		<Panel class="Footer">
 			<Panel class="RecommendSection">

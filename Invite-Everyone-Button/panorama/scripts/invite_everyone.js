@@ -1,34 +1,54 @@
 // Loaded by friends_list.xml, never by individual friend cards or popups.
 (() => {
     'use strict';
+    const owner = $.GetContextPanel();
+    // Includes can execute before a custom C++ panel has loaded/attached its
+    // layout. Root onload alone does not cover that lifecycle. Reuse one bounded
+    // bootstrap even when the engine evaluates this include more than once.
+    if (owner && owner.__inviteEveryoneBootstrap) {
+        $.InviteEveryoneInit = owner.__inviteEveryoneBootstrap.kick;
+        $.InviteEveryoneInit();
+        return;
+    }
     const valid = panel => !!(panel && panel.IsValid());
     const child = (panel, id) => valid(panel) ? panel.FindChild(id) : null;
     const byClass = (panel, name) => valid(panel)
         ? panel.Children().find(node => valid(node) && node.BHasClass(name)) || null : null;
     const path = (panel, ids) => ids.reduce(child, panel);
 
-    $.InviteEveryoneInit = () => {
-        const owner = $.GetContextPanel();
+    let waitingFor = 'sidebar context';
+    const initialize = () => {
+        if (!valid(owner)) { waitingFor = 'valid sidebar context'; return false; }
         let escape = owner;
-        for (let i = 0; valid(escape) && escape.paneltype !== 'CitadelHudEscapeMenu' && i < 12; i++) {
+        for (let i = 0; valid(escape) && escape.id !== 'EscapeMenu' &&
+            escape.paneltype !== 'CitadelHudEscapeMenu' && escape.id !== 'Hud' && i < 50; i++) {
             escape = escape.GetParent();
         }
+        // Some native layout includes inherit the HUD/WindowRoot script context.
+        // These direct routes are present in hud.xml/base_hud.xml, not a root DFS.
+        if (owner.id === 'Hud') escape = child(owner, 'EscapeMenu');
+        else if (owner.BHasClass('WindowRoot')) escape = child(child(owner, 'Hud'), 'EscapeMenu');
         // Other friends-list instances (e.g. dashboard) do no work.
-        if (!valid(escape) || escape.paneltype !== 'CitadelHudEscapeMenu') return;
+        if (valid(escape) && escape.id === 'Hud') {
+            waitingFor = 'sidebar outside EscapeMenu'; return true;
+        }
+        if (!valid(escape) || (escape.id !== 'EscapeMenu' && escape.paneltype !== 'CitadelHudEscapeMenu')) {
+            waitingFor = 'sidebar attachment to EscapeMenu'; return false;
+        }
         // onload/repeated script evaluation must not allocate a second controller.
         if (escape.__inviteEveryoneController) {
             const previous = escape.__inviteEveryoneController;
-            if (valid(previous.owner)) { previous.ensureButton(); return; }
+            if (valid(previous.owner)) { waitingFor = 'SubOptions'; return previous.ensureButton(); }
             // A destroyed script context cannot own future scheduled work.
             previous.dispose();
         }
         const hud = escape.GetParent();
-        if (!valid(hud) || hud.id !== 'Hud') return;
+        if (!valid(hud) || hud.id !== 'Hud') { waitingFor = 'EscapeMenu parent Hud'; return false; }
         let button = null;
         const ensureButton = () => {
-            if (valid(button)) return;
+            if (valid(button)) return true;
             const anchor = path(escape, ['LeftStripe', 'Menu', 'SubOptions']);
-            if (!valid(anchor)) { $.Msg('[InviteEveryone] Native SubOptions unavailable.'); return; }
+            if (!valid(anchor)) return false;
             button = child(anchor, 'InviteEveryone');
             if (!valid(button)) {
                 button = $.CreatePanel('Button', anchor, 'InviteEveryone');
@@ -41,6 +61,7 @@
                 if (valid(settings)) anchor.MoveChildBefore(button, settings);
             }
             button.SetPanelEvent('onactivate', start);
+            return true;
         };
 
         // Work limits, not persisted settings. A single continuation yields
@@ -168,6 +189,42 @@
             owner, ensureButton,
             dispose() { disposed = true; if (busy) finish('Controller disposed'); }
         };
-        ensureButton();
+        waitingFor = 'SubOptions';
+        return ensureButton();
     };
+
+    let bootstrapJob = null;
+    let bootstrapAttempts = 0;
+    let initialized = false;
+    let seenValid = false;
+    const bootstrap = () => {
+        bootstrapJob = null;
+        if (seenValid && !valid(owner)) return; // destroyed, not still constructing
+        seenValid = seenValid || valid(owner);
+        try {
+            if (initialize()) {
+                initialized = true;
+                $.Msg(waitingFor === 'sidebar outside EscapeMenu'
+                    ? '[InviteEveryone] Sidebar outside EscapeMenu; injection skipped.'
+                    : '[InviteEveryone] Ready: Invite button at EscapeMenu/LeftStripe/Menu/SubOptions.');
+                return;
+            }
+        } catch (error) { waitingFor = String(error); }
+        if (++bootstrapAttempts >= 100) {
+            $.Msg('[InviteEveryone] Button initialization timed out: ' + waitingFor +
+                '. Check that friends_list.xml and invite_everyone.js from this mod are loaded.');
+            return;
+        }
+        bootstrapJob = $.Schedule(0.05, bootstrap);
+    };
+    const kick = () => {
+        if (bootstrapJob !== null) return;
+        if (initialized && valid(owner) && initialize()) return;
+        bootstrapAttempts = 0;
+        initialized = false;
+        bootstrapJob = $.Schedule(0, bootstrap);
+    };
+    if (owner) owner.__inviteEveryoneBootstrap = { kick };
+    $.InviteEveryoneInit = kick;
+    kick(); // Do not depend on a C++ root onload callback to insert the button.
 })();
