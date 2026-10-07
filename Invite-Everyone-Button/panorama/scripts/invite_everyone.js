@@ -1,4 +1,4 @@
-// Loaded by friends_list.xml, never by individual friend cards or popups.
+// Loaded once by the native HUD combat-log layout, which QOLLOCK does not override.
 (() => {
     'use strict';
     const owner = $.GetContextPanel();
@@ -16,9 +16,9 @@
         ? panel.Children().find(node => valid(node) && node.BHasClass(name)) || null : null;
     const path = (panel, ids) => ids.reduce(child, panel);
 
-    let waitingFor = 'sidebar context';
+    let waitingFor = 'HUD host context';
     const initialize = () => {
-        if (!valid(owner)) { waitingFor = 'valid sidebar context'; return false; }
+        if (!valid(owner)) { waitingFor = 'valid HUD host context'; return false; }
         let escape = owner;
         for (let i = 0; valid(escape) && escape.id !== 'EscapeMenu' &&
             escape.paneltype !== 'CitadelHudEscapeMenu' && escape.id !== 'Hud' && i < 50; i++) {
@@ -28,12 +28,16 @@
         // These direct routes are present in hud.xml/base_hud.xml, not a root DFS.
         if (owner.id === 'Hud') escape = child(owner, 'EscapeMenu');
         else if (owner.BHasClass('WindowRoot')) escape = child(child(owner, 'Hud'), 'EscapeMenu');
+        else if (valid(escape) && escape.id === 'Hud' &&
+            (owner.id === 'CitadelHudCombatLog' || owner.paneltype === 'CitadelHudCombatLog')) {
+            escape = child(escape, 'EscapeMenu');
+        }
         // Other friends-list instances (e.g. dashboard) do no work.
         if (valid(escape) && escape.id === 'Hud') {
             waitingFor = 'sidebar outside EscapeMenu'; return true;
         }
         if (!valid(escape) || (escape.id !== 'EscapeMenu' && escape.paneltype !== 'CitadelHudEscapeMenu')) {
-            waitingFor = 'sidebar attachment to EscapeMenu'; return false;
+            waitingFor = 'HUD host attachment to EscapeMenu'; return false;
         }
         // onload/repeated script evaluation must not allocate a second controller.
         if (escape.__inviteEveryoneController) {
@@ -69,6 +73,8 @@
         const batchSize = 8;
         const waitStep = 0.05;
         const waitLimit = 100;
+        const responseStep = 0.01;
+        const responseTimeout = 5000;
         let job = null;
         let busy = false;
         let disposed = false;
@@ -79,6 +85,22 @@
         let cursor = 0;
         let attempts = 0;
         let waits = 0;
+        let manager = null;
+        let baseline = new Set();
+        let closing = new Set();
+        let pending = 0;
+        let deadline = 0;
+        let results = 0;
+        let rejected = 0;
+        let texts = new Map();
+        const resultTokens = ['Success', 'GenericFailure', 'InvalidFriend',
+            'NotFriendsLongEnough', 'AlreadyHasGame', 'LimitedUser'];
+        const token = name => '#Citadel_PlaytestUser_' + name;
+        const normalize = text => String(text || '').replace(/\s+/g, ' ').trim();
+        const matches = (text, name) => {
+            const value = normalize(text);
+            return value === token(name) || value === texts.get(name);
+        };
         const active = () => !disposed && valid(owner) && valid(escape) && valid(hud) &&
             hud.BHasClass('ShowEscapeMenu');
         const popupOpen = () => active() && valid(popup) &&
@@ -92,8 +114,13 @@
             busy = false;
             queue = [];
             popup = menu = list = null;
+            manager = null;
+            baseline.clear();
+            closing.clear();
+            pending = 0;
             if (valid(button)) button.enabled = true;
             $.Msg('[InviteEveryone] ' + reason + '; native activation requests: ' + attempts +
+                '; result dialogs: ' + results + '; rejected: ' + rejected +
                 '. Dispatch is not a server acknowledgement.');
         };
         const schedule = (delay, callback) => {
@@ -121,14 +148,61 @@
                 currentMenu === menu && popupAncestor === popup &&
                 child(category, 'FriendList') === list;
         };
+        const collectResults = () => {
+            if (!valid(manager) || manager !== child(hud, 'PopupManager')) {
+                finish('Cancelled: popup manager replaced'); return false;
+            }
+            let blocked = false;
+            for (const dialog of closing) {
+                if (!valid(dialog) || dialog.BHasClass('Hidden') || dialog.visible === false) closing.delete(dialog);
+                else blocked = true; // native OK was already clicked; never click it twice
+            }
+            // Process the top of the native popup stack first. Do not touch old
+            // dialogs or unrelated new UI. ConfirmUseTool/Button0/isAutoConfirm
+            // come from the maintainer's actual result-dialog debugger capture.
+            for (const dialog of manager.Children().reverse()) {
+                if (!valid(dialog) || dialog === popup || baseline.has(dialog) || closing.has(dialog) ||
+                    !dialog.BHasClass('PopupPanel') || dialog.BHasClass('Hidden') || dialog.visible === false) continue;
+                if (dialog.paneltype !== 'PopupGeneric') { blocked = true; continue; }
+                const title = child(dialog, 'TitleLabel');
+                const message = child(byClass(dialog, 'MessagePanel'), 'MessageLabel');
+                if (valid(title) && valid(message) && matches(title.text, 'SubmitProcessingTitle') &&
+                    matches(message.text, 'SubmitProcessing')) continue; // allow bounded overlapping requests
+                if (dialog.id !== 'ConfirmUseTool') { blocked = true; continue; }
+                const kind = valid(message) ? resultTokens.find(name => matches(message.text, 'Result_' + name)) : null;
+                if (!kind || !valid(title) || !matches(title.text,
+                    'Result_' + (kind === 'Success' ? 'SuccessTitle' : 'GenericFailureTitle'))) {
+                    blocked = true; continue; // loading or unrecognized message: wait, do not acknowledge
+                }
+                const buttons = child(dialog, 'ButtonContainer');
+                const ok = child(buttons, 'Button0');
+                if (!valid(ok) || ok.enabled === false || !ok.BHasClass('PopupButton') ||
+                    !ok.BHasClass('isAutoConfirm') || buttons.GetChildCount() !== 1) { blocked = true; continue; }
+                closing.add(dialog);
+                baseline.add(dialog); // retain identity after native hide; never acknowledge it twice
+                // A native result ends one outstanding request. The content is
+                // counted separately so a rejection never becomes a success.
+                pending = Math.max(0, pending - 1);
+                results++;
+                if (kind !== 'Success') rejected++;
+                deadline = Date.now() + responseTimeout;
+                $.DispatchEvent('Activated', ok, 'mouse');
+                if (!busy || !popupOpen()) return false;
+                if (!valid(dialog) || dialog.BHasClass('Hidden') || dialog.visible === false) closing.delete(dialog);
+                else blocked = true;
+            }
+            return !blocked;
+        };
         const batch = () => {
             if (!popupOpen() || !listStillOwned()) { finish('Cancelled: menu/list closed or replaced'); return; }
-            const end = Math.min(cursor + batchSize, queue.length);
-            for (; cursor < end; cursor++) {
+            let canSend = collectResults();
+            if (!busy) return;
+            let processed = 0;
+            while (canSend && cursor < queue.length && pending < batchSize && processed++ < batchSize) {
                 if (!popupOpen() || !valid(list) || !valid(menu) || menu.BHasClass('Hidden')) {
                     finish('Cancelled: popup closed'); return;
                 }
-                const entry = queue[cursor];
+                const entry = queue[cursor++];
                 if (!valid(entry) || entry.GetParent() !== list || entry.enabled === false ||
                     entry.visible === false || !entry.BHasClass('Visible')) continue;
                 // The debugger capture shows one native CitadelFriend directly
@@ -136,15 +210,23 @@
                 const friend = entry.Children().find(node => valid(node) && node.paneltype === 'CitadelFriend');
                 if (!valid(friend) || friend.enabled === false || friend.visible === false ||
                     !friend.BHasClass('CanInvite') || !friend.BHasClass('FriendMenu')) continue;
-                $.DispatchEvent('Activated', friend, 'mouse');
                 attempts++;
+                pending++;
+                deadline = Date.now() + responseTimeout;
+                $.DispatchEvent('Activated', friend, 'mouse');
+                if (!busy) return;
+                canSend = collectResults();
+                if (!busy) return;
             }
-            if (cursor < queue.length) schedule(0.001, batch);
-            else finish('Finished loaded eligible list');
+            if (cursor >= queue.length && pending === 0 && closing.size === 0 && canSend) {
+                finish('Finished loaded eligible list'); return;
+            }
+            if (Date.now() >= deadline) { finish('Stopped: native result/OK timeout; no further invitations queued'); return; }
+            schedule(canSend && cursor < queue.length && pending < batchSize ? 0.001 : responseStep, batch);
         };
         const waitForList = () => {
             if (!active()) { finish('Cancelled: escape menu closed'); return; }
-            const manager = child(hud, 'PopupManager');
+            manager = child(hud, 'PopupManager');
             const next = valid(manager) ? manager.Children().find(node => valid(node) &&
                 node.paneltype === 'PopupPlaytestUser' && !node.BHasClass('Hidden') && node.visible !== false) : null;
             // Once bound, never redirect an in-flight operation to a new popup.
@@ -156,7 +238,12 @@
                 list = listIn(menu);
                 if (valid(menu) && !menu.BHasClass('Hidden') && valid(list)) {
                     queue = list.Children();
-                    if (queue.length) { cursor = 0; schedule(0.001, batch); return; }
+                    if (queue.length) {
+                        baseline = new Set(manager.Children());
+                        cursor = 0;
+                        deadline = Date.now() + responseTimeout;
+                        schedule(0.001, batch); return;
+                    }
                 }
             }
             if (++waits >= waitLimit) { finish('No loaded eligible list within 5 seconds; reopen and retry if still loading'); return; }
@@ -176,6 +263,10 @@
             }
             busy = true;
             attempts = waits = cursor = 0;
+            results = rejected = pending = 0;
+            texts = new Map(resultTokens.map(name => 'Result_' + name)
+                .concat(['Result_SuccessTitle', 'Result_GenericFailureTitle', 'SubmitProcessingTitle', 'SubmitProcessing'])
+                .map(name => [name, normalize($.Localize(token(name)))]));
             button.enabled = false;
             try {
                 $.DispatchEvent('Activated', recommend, 'mouse');
@@ -212,7 +303,7 @@
         } catch (error) { waitingFor = String(error); }
         if (++bootstrapAttempts >= 100) {
             $.Msg('[InviteEveryone] Button initialization timed out: ' + waitingFor +
-                '. Check that friends_list.xml and invite_everyone.js from this mod are loaded.');
+                '. Check that citadel_hud_combat_log.xml and invite_everyone.js from this mod are loaded.');
             return;
         }
         bootstrapJob = $.Schedule(0.05, bootstrap);

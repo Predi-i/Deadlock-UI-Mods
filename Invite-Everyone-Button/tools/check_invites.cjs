@@ -30,7 +30,8 @@ function test(name, callback) {
     console.log('PASS ' + name);
 }
 function fixture(count = 15, { noise = 0, acknowledge = true, attached = true,
-    contextValid = true, anchorReady = true, contextSource = 'sidebar' } = {}) {
+    contextValid = true, anchorReady = true, contextSource = 'host', result = 'Success',
+    responseDelay = 0, closeDelay = 0, dismiss = true, processing = false } = {}) {
     counters.enabled = false;
     const clock = new Clock();
     const doc = new Document(clock);
@@ -45,10 +46,11 @@ function fixture(count = 15, { noise = 0, acknowledge = true, attached = true,
     const settings = add(anchor, 'Panel', '', ['SettingsRow']);
     const contents = add(add(escape, 'Panel', 'RightSide'), 'Panel', '', ['FriendsOrPlayersContents']);
     const tab = add(contents, 'TabContents', 'FriendsTabContents');
-    let owner = add(tab, 'CitadelFriendsList', 'FriendsList');
+    const sidebar = add(tab, 'CitadelFriendsList', 'FriendsList');
+    let owner = add(hud, 'CitadelHudCombatLog', 'CitadelHudCombatLog', ['Closed']);
     const makeRecommend = sidebar => add(add(add(sidebar, 'Panel', '', ['Footer']), 'Panel', '', ['RecommendSection']),
         'Button', '', ['RecommendButton']);
-    let recommend = makeRecommend(owner);
+    const recommend = makeRecommend(sidebar);
     // The simulator's SetParent(null) is a no-op; model native pre-attachment
     // explicitly rather than accidentally testing an already mounted sidebar.
     const detach = panel => {
@@ -87,20 +89,66 @@ function fixture(count = 15, { noise = 0, acknowledge = true, attached = true,
     $.GetContextPanel = () => contextSource === 'hud' ? hud : contextSource === 'window' ? doc.absRoot : owner;
     const probe = installScheduleProbe(sandbox);
     const requests = [];
+    const confirmations = [];
+    const resultDialogs = [];
+    let inFlight = 0;
+    let peakInFlight = 0;
+    function makeResult(kind = 'Success', { id = 'ConfirmUseTool', raw = true } = {}) {
+        const dialog = add(manager, 'PopupGeneric', id, ['PopupPanel']);
+        const title = add(dialog, 'Label', 'TitleLabel');
+        const message = add(add(dialog, 'Panel', '', ['MessagePanel']), 'Label', 'MessageLabel');
+        const prefix = '#Citadel_PlaytestUser_Result_';
+        title.text = raw ? prefix + (kind === 'Success' ? 'SuccessTitle' : 'GenericFailureTitle') :
+            $.Localize(prefix + (kind === 'Success' ? 'SuccessTitle' : 'GenericFailureTitle'));
+        message.text = raw ? prefix + kind : $.Localize(prefix + kind);
+        const ok = add(add(dialog, 'Panel', 'ButtonContainer'), 'Button', 'Button0', ['PopupButton', 'isAutoConfirm']);
+        resultDialogs.push({ dialog, ok, kind });
+        return { dialog, ok, kind };
+    }
     let openCalls = 0;
     let open = () => { if (!popup || !popup.IsValid()) makePopup(); };
     let onFriend = () => {};
     $.DispatchEvent = (event, target, from) => {
         assert.equal(event, 'Activated'); assert.equal(from, 'mouse');
         if (target === recommend) { openCalls++; open(); return; }
+        if (target.id === 'Button0') {
+            const row = resultDialogs.find(item => item.ok === target);
+            assert.ok(row, 'must activate a captured native result OK button');
+            assert.ok(!confirmations.includes(target), 'never activate the same OK twice');
+            confirmations.push(target);
+            const enabled = counters.enabled; counters.enabled = false;
+            try {
+                if (dismiss) {
+                    if (closeDelay) clock.schedule(closeDelay, () => row.dialog._destroy());
+                    else row.dialog._destroy();
+                }
+            } finally { counters.enabled = enabled; }
+            return;
+        }
         assert.equal(target.paneltype, 'CitadelFriend');
         assert.equal(target.GetParent().GetParent(), list, 'must target CanInvite, never another category');
         requests.push({ target, at: clock.now() });
+        inFlight++; peakInFlight = Math.max(peakInFlight, inFlight);
         // Exclude native engine reaction from script-operation counters.
         const enabled = counters.enabled; counters.enabled = false;
-        if (acknowledge) { target.RemoveClass('CanInvite'); target.GetParent().SetParent(invited); }
-        onFriend(target);
-        counters.enabled = enabled;
+        try {
+            if (acknowledge) { target.RemoveClass('CanInvite'); target.GetParent().SetParent(invited); }
+            let loading = null;
+            if (processing) {
+                loading = makeResult('Success').dialog;
+                loading.FindChild('TitleLabel').text = '#Citadel_PlaytestUser_SubmitProcessingTitle';
+                loading.FindChildTraverse('MessageLabel').text = '#Citadel_PlaytestUser_SubmitProcessing';
+            }
+            if (result) {
+                const reply = () => {
+                    if (loading && loading.IsValid()) loading._destroy();
+                    makeResult(result); inFlight--;
+                };
+                if (responseDelay) clock.schedule(responseDelay, reply);
+                else reply();
+            }
+            onFriend(target);
+        } finally { counters.enabled = enabled; }
     };
     const load = () => vm.runInContext(source, sandbox.context, { filename: sourcePath });
     // Execute the actual include and its deferred boot. Do not synthesize XML
@@ -110,12 +158,13 @@ function fixture(count = 15, { noise = 0, acknowledge = true, attached = true,
     init();
     return {
         clock, doc, sandbox, probe, hud, escape, anchor, escapeMenuBody, settings, tab, add,
-        requests, init, load, reset, makePopup,
+        requests, confirmations, resultDialogs, manager, init, load, reset, makePopup, makeResult,
         get owner() { return owner; }, get popup() { return popup; }, get menu() { return menu; },
         get list() { return list; }, get friends() { return friends; }, get openCalls() { return openCalls; },
+        get peakInFlight() { return peakInFlight; },
         get button() { return anchor.FindChild('InviteEveryone'); },
         setOpen(fn) { open = fn; }, setOnFriend(fn) { onFriend = fn; },
-        replaceOwner() { owner._destroy(); owner = add(tab, 'CitadelFriendsList', 'FriendsList'); recommend = makeRecommend(owner); init(); },
+        replaceOwner() { owner._destroy(); owner = add(hud, 'CitadelHudCombatLog', 'CitadelHudCombatLog', ['Closed']); init(); },
         start() { this.button.activate(); },
         checkErrors() { assert.deepEqual(clock.errors, []); assert.deepEqual(doc.eventErrors, []); }
     };
@@ -150,7 +199,7 @@ test('HUD/WindowRoot inherited script contexts resolve the native Esc route dire
         assert.equal(r.requests.length, 15); r.checkErrors();
     }
 });
-test('detached/initially invalid sidebar and missing anchor retry once per tick then stop', () => {
+test('detached/initially invalid HUD host and missing anchor retry once per tick then stop', () => {
     for (const state of [{ attached: false }, { contextValid: false }, { anchorReady: false }]) {
         const r = fixture(15, state);
         assert.ok(r.button === null);
@@ -159,7 +208,7 @@ test('detached/initially invalid sidebar and missing anchor retry once per tick 
         assert.equal(r.clock.pendingCount(), 1, 'repeat includes must reuse the pending bootstrap');
         r.clock.advance(100);
         r.owner._valid = true;
-        if (state.attached === false) r.owner.SetParent(r.tab);
+        if (state.attached === false) r.owner.SetParent(r.hud);
         if (state.anchorReady === false) r.anchor.SetParent(r.escapeMenuBody);
         r.clock.advance(100);
         assert.ok(r.button && r.button.IsValid());
@@ -174,10 +223,10 @@ test('bootstrap times out with a specific diagnostic; no perpetual injection loo
     const r = fixture(15, { attached: false });
     r.clock.advance(6000);
     assert.equal(r.button, null); assert.equal(r.clock.pendingCount(), 0);
-    assert.ok(r.sandbox.messages.some(line => line.includes('Button initialization timed out: sidebar attachment')));
+    assert.ok(r.sandbox.messages.some(line => line.includes('Button initialization timed out: HUD host attachment')));
     r.checkErrors();
 });
-test('destroyed sidebar stops a pending bootstrap', () => {
+test('destroyed HUD host stops a pending bootstrap', () => {
     const r = fixture(15, { attached: false });
     r.owner._destroy(); r.clock.advance(100);
     assert.equal(r.button, null); assert.equal(r.clock.pendingCount(), 0); r.checkErrors();
@@ -273,18 +322,117 @@ test('owner replacement cancels old work and rebinds the existing button', () =>
     r.start(); r.clock.advance(1000);
     assert.equal(r.requests.length, 100); assert.equal(r.openCalls, 2); r.checkErrors();
 });
-test('button replacement reattaches only on layout init; dashboard lists create no controller', () => {
+test('button replacement reattaches only on host layout init', () => {
     const r = fixture(); r.button._destroy(); r.init();
     assert.ok(r.button.IsValid()); assert.equal(r.clock.pendingCount(), 0);
-    r.owner.SetParent(r.hud);
-    delete r.escape.__inviteEveryoneController;
-    r.init(); assert.equal(r.escape.__inviteEveryoneController, undefined);
 });
 test('native opening failure/reentrant owner replacement leaves no retired schedules', () => {
     for (const replace of [false, true]) {
         const r = fixture();
         r.setOpen(() => { if (replace) r.replaceOwner(); else throw new Error('native failure'); });
         r.start(); assert.equal(r.clock.pendingCount(), 0); assert.equal(r.button.enabled, true); r.checkErrors();
+    }
+});
+test('captured limited-Steam failures close through native OK without piling up', () => {
+    const r = fixture(100, { result: 'LimitedUser', acknowledge: false });
+    r.start(); r.clock.advance(1000);
+    assert.equal(r.requests.length, 100); assert.equal(r.confirmations.length, 100);
+    assert.ok(r.resultDialogs.every(row => !row.dialog.IsValid()));
+    assert.ok(r.sandbox.messages.some(line => line.includes('rejected: 100')));
+    assert.equal(r.clock.pendingCount(), 0); r.checkErrors();
+});
+test('delayed native replies overlap with a maximum of eight in flight', () => {
+    for (const processing of [false, true]) {
+        const r = fixture(40, { result: 'LimitedUser', responseDelay: 0.2, processing });
+        r.start(); r.clock.advance(100);
+        assert.equal(r.requests.length, 8); assert.equal(r.confirmations.length, 0);
+        r.clock.advance(2000);
+        assert.equal(r.requests.length, 40); assert.equal(r.confirmations.length, 40);
+        assert.equal(r.peakInFlight, 8);
+        assert.equal(r.clock.pendingCount(), 0);
+        assert.ok(r.probe.snapshot().every(row => row.peak <= 1 && row.pending === 0));
+        r.checkErrors();
+    }
+});
+test('last asynchronous replies are closed even after the friend snapshot was exhausted', () => {
+    const r = fixture(5, { responseDelay: 0.4 });
+    r.start(); r.clock.advance(100);
+    assert.equal(r.requests.length, 5); assert.equal(r.confirmations.length, 0);
+    assert.equal(r.button.enabled, false);
+    r.clock.advance(1000);
+    assert.equal(r.confirmations.length, 5); assert.equal(r.button.enabled, true);
+    assert.equal(r.clock.pendingCount(), 0); r.checkErrors();
+});
+test('unanswered native requests stop at eight and time out without endless schedules', () => {
+    const r = fixture(100, { result: null });
+    r.start(); r.clock.advance(6000);
+    assert.equal(r.requests.length, 8); assert.equal(r.confirmations.length, 0);
+    assert.equal(r.clock.pendingCount(), 0); assert.equal(r.button.enabled, true);
+    assert.ok(r.sandbox.messages.some(line => line.includes('native result/OK timeout')));
+    r.reset(); r.clock.advance(60000);
+    assert.equal(counters.snapshot(60).total.costUnits, 0); r.checkErrors();
+});
+test('pre-existing result dialogs and unrelated new dialogs are never acknowledged', () => {
+    const r = fixture(20); r.makePopup();
+    const old = r.makeResult('LimitedUser');
+    let unrelated;
+    r.setOnFriend(() => { unrelated = r.makeResult('Unknown'); });
+    r.start(); r.clock.advance(6000);
+    assert.equal(r.requests.length, 1);
+    assert.equal(r.confirmations.length, 1, 'close only the new recognized invitation result');
+    assert.ok(old.dialog.IsValid()); assert.ok(unrelated.dialog.IsValid());
+    assert.ok(!r.confirmations.includes(old.ok) && !r.confirmations.includes(unrelated.ok));
+    assert.equal(r.clock.pendingCount(), 0); r.checkErrors();
+});
+test('result close failure never clicks OK repeatedly or creates additional dialogs', () => {
+    const r = fixture(100, { dismiss: false });
+    r.start(); r.clock.advance(6000);
+    assert.equal(r.requests.length, 1); assert.equal(r.confirmations.length, 1);
+    assert.equal(r.clock.pendingCount(), 0); assert.equal(r.button.enabled, true); r.checkErrors();
+});
+test('asynchronous native dismissal is awaited without duplicate OK activation', () => {
+    const r = fixture(20, { closeDelay: 0.03 });
+    r.start(); r.clock.advance(2000);
+    assert.equal(r.requests.length, 20); assert.equal(r.confirmations.length, 20);
+    assert.equal(r.clock.pendingCount(), 0); r.checkErrors();
+});
+test('a dialog without the captured single auto-confirm button is preserved', () => {
+    const r = fixture(100);
+    r.setOnFriend(() => r.resultDialogs.at(-1).ok.RemoveClass('isAutoConfirm'));
+    r.start(); r.clock.advance(6000);
+    assert.equal(r.requests.length, 1); assert.equal(r.confirmations.length, 0);
+    assert.equal(r.clock.pendingCount(), 0); r.checkErrors();
+});
+test('localized native title/body matching handles rejected users', () => {
+    const r = fixture(20, { result: 'LimitedUser' });
+    Object.assign(r.sandbox.localization, {
+        Citadel_PlaytestUser_Result_GenericFailureTitle: 'Отправить не удалось',
+        Citadel_PlaytestUser_Result_LimitedUser: 'У этого пользователя ограниченный аккаунт Steam.'
+    });
+    r.setOnFriend(() => {
+        const dialog = r.resultDialogs.at(-1).dialog;
+        const title = dialog.FindChild('TitleLabel');
+        const message = dialog.FindChildTraverse('MessageLabel');
+        title.text = r.sandbox.global.$.Localize(title.text);
+        message.text = r.sandbox.global.$.Localize(message.text);
+    });
+    r.start(); r.clock.advance(1000);
+    assert.equal(r.requests.length, 20); assert.equal(r.confirmations.length, 20);
+    assert.ok(r.sandbox.messages.some(line => line.includes('rejected: 20'))); r.checkErrors();
+});
+test('the shipped loader avoids all current QOLLOCK/Minigames XML overrides', () => {
+    const layoutDir = path.resolve(__dirname, '../panorama/layout');
+    const xml = fs.readFileSync(path.join(layoutDir, 'citadel_hud_combat_log.xml'), 'utf8');
+    assert.ok(xml.includes('s2r://panorama/scripts/invite_everyone.vjs_c'));
+    assert.ok(!fs.existsSync(path.join(layoutDir, 'friends_list.xml')));
+    assert.ok(!fs.existsSync(path.join(layoutDir, 'hud_escape_menu.xml')));
+    const qollock = path.resolve(process.argv[flag + 1]);
+    assert.ok(fs.readFileSync(path.join(qollock, 'panorama/layout/friends_list.xml'), 'utf8').includes('FriendSearchInput'));
+    assert.ok(fs.readFileSync(path.join(qollock, 'panorama/layout/hud.xml'), 'utf8')
+        .includes('<CitadelHudCombatLog id="CitadelHudCombatLog"'));
+    for (const name of fs.readdirSync(layoutDir)) {
+        assert.ok(!fs.existsSync(path.join(qollock, 'panorama/layout', name)));
+        assert.ok(!fs.existsSync(path.resolve(__dirname, '../../Minigames/panorama/layout', name)));
     }
 });
 console.log(`${passed} focused regressions passed. Model operations/schedules only; no engine FPS or server acceptance measured.`);

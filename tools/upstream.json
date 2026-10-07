@@ -2,8 +2,8 @@
   "version": 1,
   "files": [
     {
-      "path": "Invite-Everyone-Button/panorama/layout/friends_list.xml",
-      "upstream": "game/citadel/pak01_dir/panorama/layout/friends_list.xml",
+      "path": "Invite-Everyone-Button/panorama/layout/citadel_hud_combat_log.xml",
+      "upstream": "game/citadel/pak01_dir/panorama/layout/citadel_hud_combat_log.xml",
       "base": "7148202fea070a8cceb1523ee3ca7fc35095f710",
       "mode": "merge"
     },
