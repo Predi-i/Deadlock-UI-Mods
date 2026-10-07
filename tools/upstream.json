@@ -2,6 +2,12 @@
   "version": 1,
   "files": [
     {
+      "path": "Invite-Everyone-Button/panorama/layout/friends_list.xml",
+      "upstream": "game/citadel/pak01_dir/panorama/layout/friends_list.xml",
+      "base": "7148202fea070a8cceb1523ee3ca7fc35095f710",
+      "mode": "merge"
+    },
+    {
       "path": "Anti-Toxic-Chat/panorama/layout/chat.xml",
       "upstream": "game/citadel/pak01_dir/panorama/layout/chat.xml",
       "base": "4c6431ccdb816d2911bbbaa4335169cc34140386",

@@ -29,6 +29,7 @@ Native resource synchronization and offline HUD lookup checks are documented in
 ### Included in this repository, but not published on GameBanana
 
 - `Active-Stats` — mirrors active hero combat buffs and debuffs directly beside the crosshair.
+- [Invite-Everyone-Button](Invite-Everyone-Button/README.md) — adds Invite to Esc via the friends sidebar and activates eligible native playtest invitation cards on demand, with no idle polling.
 - [HUD-Dumper](HUD-Dumper/README.md) — incremental diagnostic HUD captures with label text
   and a Windows receiver that validates packet completeness; full class enumeration is unresolved.
 - `Minimap-Cheat` — press **M** to send two waves of minimap pings over every visible enemy marker.
