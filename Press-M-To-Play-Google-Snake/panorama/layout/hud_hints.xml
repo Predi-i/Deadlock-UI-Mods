@@ -1,0 +1,22 @@
+<!-- Press-M-To-Play-Google-Snake - hud_hints override -->
+<root>
+	<styles>
+		<include src="s2r://panorama/styles/hud_hints.vcss_c" />
+		<include src="s2r://panorama/styles/google_snake.vcss_c" />
+	</styles>
+	<scripts>
+		<include src="s2r://panorama/scripts/google_snake.vjs_c" />
+	</scripts>
+	<Panel class="hintPanel" hittest="false">
+		<Panel class="container">
+			<Panel class="capLeft" />
+			<Panel class="body">
+				<Panel class="infoIcon" hittest="false">
+					<Label text="i" html="true" />
+				</Panel>
+				<Label id="hintText" text="{s:hint_text}" html="true" />
+			</Panel>
+			<Panel class="capRight" />
+		</Panel>
+	</Panel>
+</root>
