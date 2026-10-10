@@ -10,283 +10,283 @@
     {
       "path": "Anti-Toxic-Chat/panorama/layout/chat.xml",
       "upstream": "game/citadel/pak01_dir/panorama/layout/chat.xml",
-      "base": "4c6431ccdb816d2911bbbaa4335169cc34140386",
+      "base": "5d2ef889362e2a71321c2c3270d78a96131110bf",
       "mode": "merge"
     },
     {
       "path": "Bridge-Buff-Reminder/panorama/layout/base_hud.xml",
       "upstream": "game/citadel/pak01_dir/panorama/layout/base_hud.xml",
-      "base": "4c6431ccdb816d2911bbbaa4335169cc34140386",
+      "base": "5d2ef889362e2a71321c2c3270d78a96131110bf",
       "mode": "merge"
     },
     {
       "path": "Commend-Everyone-Button/panorama/layout/post_game/citadel_db_page_post_game_new.xml",
       "upstream": "game/citadel/pak01_dir/panorama/layout/post_game/citadel_db_page_post_game_new.xml",
-      "base": "4c6431ccdb816d2911bbbaa4335169cc34140386",
+      "base": "5d2ef889362e2a71321c2c3270d78a96131110bf",
       "mode": "merge"
     },
     {
       "path": "Commend-Everyone-Button/panorama/layout/post_game/citadel_db_post_game_progress_mvp.xml",
       "upstream": "game/citadel/pak01_dir/panorama/layout/post_game/citadel_db_post_game_progress_mvp.xml",
-      "base": "4c6431ccdb816d2911bbbaa4335169cc34140386",
+      "base": "5d2ef889362e2a71321c2c3270d78a96131110bf",
       "mode": "merge"
     },
     {
       "path": "Deadlock-Fly/panorama/layout/base_hud.xml",
       "upstream": "game/citadel/pak01_dir/panorama/layout/base_hud.xml",
-      "base": "4c6431ccdb816d2911bbbaa4335169cc34140386",
+      "base": "5d2ef889362e2a71321c2c3270d78a96131110bf",
       "mode": "merge"
     },
     {
       "path": "Djinn-Mark-In-TopBar/panorama/layout/citadel_hud_top_bar_player.xml",
       "upstream": "game/citadel/pak01_dir/panorama/layout/citadel_hud_top_bar_player.xml",
-      "base": "4c6431ccdb816d2911bbbaa4335169cc34140386",
+      "base": "5d2ef889362e2a71321c2c3270d78a96131110bf",
       "mode": "merge"
     },
     {
       "path": "Djinn-Mark-In-TopBar/panorama/layout/unit_status_overlay.xml",
       "upstream": "game/citadel/pak01_dir/panorama/layout/unit_status_overlay.xml",
-      "base": "4c6431ccdb816d2911bbbaa4335169cc34140386",
+      "base": "5d2ef889362e2a71321c2c3270d78a96131110bf",
       "mode": "merge"
     },
     {
       "path": "Djinn-Mark-In-TopBar/panorama/layout/unit_status_overlay_old.xml",
       "upstream": "game/citadel/pak01_dir/panorama/layout/unit_status_overlay_old.xml",
-      "base": "4c6431ccdb816d2911bbbaa4335169cc34140386",
+      "base": "5d2ef889362e2a71321c2c3270d78a96131110bf",
       "mode": "merge"
     },
     {
       "path": "DL-Arcade-Cloudflare/panorama/layout/base_hud.xml",
       "upstream": "game/citadel/pak01_dir/panorama/layout/base_hud.xml",
-      "base": "4c6431ccdb816d2911bbbaa4335169cc34140386",
+      "base": "5d2ef889362e2a71321c2c3270d78a96131110bf",
       "mode": "merge"
     },
     {
       "path": "File-Read-Probe/panorama/layout/base_hud.xml",
       "upstream": "game/citadel/pak01_dir/panorama/layout/base_hud.xml",
-      "base": "4c6431ccdb816d2911bbbaa4335169cc34140386",
+      "base": "5d2ef889362e2a71321c2c3270d78a96131110bf",
       "mode": "merge"
     },
     {
       "path": "File-Write-Probe/panorama/layout/base_hud.xml",
       "upstream": "game/citadel/pak01_dir/panorama/layout/base_hud.xml",
-      "base": "4c6431ccdb816d2911bbbaa4335169cc34140386",
+      "base": "5d2ef889362e2a71321c2c3270d78a96131110bf",
       "mode": "merge"
     },
     {
       "path": "Good-Game-After-Death/panorama/layout/hud_modifiers.xml",
       "upstream": "game/citadel/pak01_dir/panorama/layout/hud_modifiers.xml",
-      "base": "4c6431ccdb816d2911bbbaa4335169cc34140386",
+      "base": "5d2ef889362e2a71321c2c3270d78a96131110bf",
       "mode": "merge"
     },
     {
       "path": "HTML-Probe/panorama/layout/base_hud.xml",
       "upstream": "game/citadel/pak01_dir/panorama/layout/base_hud.xml",
-      "base": "4c6431ccdb816d2911bbbaa4335169cc34140386",
+      "base": "5d2ef889362e2a71321c2c3270d78a96131110bf",
       "mode": "merge"
     },
     {
       "path": "Match-History-Cards-Redesign/panorama/layout/citadel_match_history_block_large.xml",
       "upstream": "game/citadel/pak01_dir/panorama/layout/citadel_match_history_block_large.xml",
-      "base": "4c6431ccdb816d2911bbbaa4335169cc34140386",
+      "base": "5d2ef889362e2a71321c2c3270d78a96131110bf",
       "mode": "merge"
     },
     {
       "path": "Match-History-Cards-Redesign/panorama/layout/citadel_match_history_block_small.xml",
       "upstream": "game/citadel/pak01_dir/panorama/layout/citadel_match_history_block_small.xml",
-      "base": "4c6431ccdb816d2911bbbaa4335169cc34140386",
+      "base": "5d2ef889362e2a71321c2c3270d78a96131110bf",
       "mode": "merge"
     },
     {
       "path": "Minigames/panorama/layout/base_hud.xml",
       "upstream": "game/citadel/pak01_dir/panorama/layout/base_hud.xml",
-      "base": "4c6431ccdb816d2911bbbaa4335169cc34140386",
+      "base": "5d2ef889362e2a71321c2c3270d78a96131110bf",
       "mode": "merge"
     },
     {
       "path": "Minimap-Cheat/panorama/layout/base_hud.xml",
       "upstream": "game/citadel/pak01_dir/panorama/layout/base_hud.xml",
-      "base": "4c6431ccdb816d2911bbbaa4335169cc34140386",
+      "base": "5d2ef889362e2a71321c2c3270d78a96131110bf",
       "mode": "merge"
     },
     {
       "path": "Old-Progress-Bars/panorama/layout/hud_modifiers_entry_center.xml",
       "upstream": "game/citadel/pak01_dir/panorama/layout/hud_modifiers_entry_center.xml",
-      "base": "4c6431ccdb816d2911bbbaa4335169cc34140386",
+      "base": "5d2ef889362e2a71321c2c3270d78a96131110bf",
       "mode": "merge"
     },
     {
       "path": "Old-Progress-Bars/panorama/styles/ability_hud_elements/abilities_fencer.css",
       "upstream": "game/citadel/pak01_dir/panorama/styles/ability_hud_elements/abilities_fencer.css",
-      "base": "4c6431ccdb816d2911bbbaa4335169cc34140386",
+      "base": "5d2ef889362e2a71321c2c3270d78a96131110bf",
       "mode": "merge"
     },
     {
       "path": "Old-Progress-Bars/panorama/styles/ability_hud_elements/abilities_frank.css",
       "upstream": "game/citadel/pak01_dir/panorama/styles/ability_hud_elements/abilities_frank.css",
-      "base": "4c6431ccdb816d2911bbbaa4335169cc34140386",
+      "base": "5d2ef889362e2a71321c2c3270d78a96131110bf",
       "mode": "merge"
     },
     {
       "path": "Old-Progress-Bars/panorama/styles/ability_hud_elements/abilities_synth.css",
       "upstream": "game/citadel/pak01_dir/panorama/styles/ability_hud_elements/abilities_synth.css",
-      "base": "4c6431ccdb816d2911bbbaa4335169cc34140386",
+      "base": "5d2ef889362e2a71321c2c3270d78a96131110bf",
       "mode": "merge"
     },
     {
       "path": "Old-Progress-Bars/panorama/styles/ability_hud_elements/abilities_tengu.css",
       "upstream": "game/citadel/pak01_dir/panorama/styles/ability_hud_elements/abilities_tengu.css",
-      "base": "4c6431ccdb816d2911bbbaa4335169cc34140386",
+      "base": "5d2ef889362e2a71321c2c3270d78a96131110bf",
       "mode": "merge"
     },
     {
       "path": "Old-Progress-Bars/panorama/styles/ability_hud_elements/abilities_vampirebat.css",
       "upstream": "game/citadel/pak01_dir/panorama/styles/ability_hud_elements/abilities_vampirebat.css",
-      "base": "4c6431ccdb816d2911bbbaa4335169cc34140386",
+      "base": "5d2ef889362e2a71321c2c3270d78a96131110bf",
       "mode": "merge"
     },
     {
       "path": "Old-Progress-Bars/panorama/layout/ability_hud_elements/element_progress_bar_text.xml",
       "upstream": "game/citadel/pak01_dir/panorama/layout/ability_hud_elements/element_progress_bar_text.xml",
-      "base": "4c6431ccdb816d2911bbbaa4335169cc34140386",
+      "base": "5d2ef889362e2a71321c2c3270d78a96131110bf",
       "mode": "merge"
     },
     {
       "path": "Parry-Cooldown/panorama/layout/ability_hud_elements/element_gun.xml",
       "upstream": "game/citadel/pak01_dir/panorama/layout/ability_hud_elements/element_gun.xml",
-      "base": "4c6431ccdb816d2911bbbaa4335169cc34140386",
+      "base": "5d2ef889362e2a71321c2c3270d78a96131110bf",
       "mode": "merge"
     },
     {
       "path": "Rem-Bug-Abuse/panorama/layout/base_hud.xml",
       "upstream": "game/citadel/pak01_dir/panorama/layout/base_hud.xml",
-      "base": "4c6431ccdb816d2911bbbaa4335169cc34140386",
+      "base": "5d2ef889362e2a71321c2c3270d78a96131110bf",
       "mode": "merge"
     },
     {
       "path": "Show-Nicknames-Above-Heroes/panorama/styles/base/unit_status.css",
       "upstream": "game/citadel/pak01_dir/panorama/styles/unit_status.css",
-      "base": "4c6431ccdb816d2911bbbaa4335169cc34140386",
+      "base": "5d2ef889362e2a71321c2c3270d78a96131110bf",
       "mode": "copy"
     },
     {
       "path": "Show-Nicknames-Above-Heroes/panorama/styles/base/unit_status_old.css",
       "upstream": "game/citadel/pak01_dir/panorama/styles/unit_status_old.css",
-      "base": "4c6431ccdb816d2911bbbaa4335169cc34140386",
+      "base": "5d2ef889362e2a71321c2c3270d78a96131110bf",
       "mode": "copy"
     },
     {
       "path": "Show-Nicknames-Above-Heroes/panorama/styles/base/unit_status_v2.css",
       "upstream": "game/citadel/pak01_dir/panorama/styles/unit_status_v2.css",
-      "base": "4c6431ccdb816d2911bbbaa4335169cc34140386",
+      "base": "5d2ef889362e2a71321c2c3270d78a96131110bf",
       "mode": "copy"
     },
     {
       "path": "Show-Nicknames-In-TopBar/panorama/layout/citadel_hud_top_bar_player.xml",
       "upstream": "game/citadel/pak01_dir/panorama/layout/citadel_hud_top_bar_player.xml",
-      "base": "4c6431ccdb816d2911bbbaa4335169cc34140386",
+      "base": "5d2ef889362e2a71321c2c3270d78a96131110bf",
       "mode": "merge"
     },
     {
       "path": "Show-Nicknames-In-TopBar/panorama/styles/base/citadel_hud_top_bar.css",
       "upstream": "game/citadel/pak01_dir/panorama/styles/citadel_hud_top_bar.css",
-      "base": "4c6431ccdb816d2911bbbaa4335169cc34140386",
+      "base": "5d2ef889362e2a71321c2c3270d78a96131110bf",
       "mode": "copy"
     },
     {
       "path": "Show-Nicknames-In-TopBar-No-Offsets/panorama/layout/citadel_hud_top_bar_player.xml",
       "upstream": "game/citadel/pak01_dir/panorama/layout/citadel_hud_top_bar_player.xml",
-      "base": "4c6431ccdb816d2911bbbaa4335169cc34140386",
+      "base": "5d2ef889362e2a71321c2c3270d78a96131110bf",
       "mode": "merge"
     },
     {
       "path": "Show-Nicknames-In-TopBar-No-Offsets/panorama/styles/base/citadel_hud_top_bar.css",
       "upstream": "game/citadel/pak01_dir/panorama/styles/citadel_hud_top_bar.css",
-      "base": "4c6431ccdb816d2911bbbaa4335169cc34140386",
+      "base": "5d2ef889362e2a71321c2c3270d78a96131110bf",
       "mode": "copy"
     },
     {
       "path": "Smaller-Commend-Box/panorama/styles/commend_toast.css",
       "upstream": "game/citadel/pak01_dir/panorama/styles/commend_toast.css",
-      "base": "4c6431ccdb816d2911bbbaa4335169cc34140386",
+      "base": "5d2ef889362e2a71321c2c3270d78a96131110bf",
       "mode": "merge"
     },
     {
       "path": "Well-Played-On-Kill/panorama/layout/hud_damage_impact.xml",
       "upstream": "game/citadel/pak01_dir/panorama/layout/hud_damage_impact.xml",
-      "base": "4c6431ccdb816d2911bbbaa4335169cc34140386",
+      "base": "5d2ef889362e2a71321c2c3270d78a96131110bf",
       "mode": "merge"
     },
     {
       "path": "Active-Stats/panorama/layout/citadel_hud_active_player_stats.xml",
       "upstream": "game/citadel/pak01_dir/panorama/layout/citadel_hud_active_player_stats.xml",
-      "base": "4c6431ccdb816d2911bbbaa4335169cc34140386",
+      "base": "5d2ef889362e2a71321c2c3270d78a96131110bf",
       "mode": "merge"
     },
     {
       "path": "Djinn-Mark-In-TopBar/panorama/layout/unit_status_overlay_v2.xml",
       "upstream": "game/citadel/pak01_dir/panorama/layout/unit_status_overlay_v2.xml",
-      "base": "4c6431ccdb816d2911bbbaa4335169cc34140386",
+      "base": "5d2ef889362e2a71321c2c3270d78a96131110bf",
       "mode": "merge"
     },
     {
       "path": "Match-History-Cards-Redesign/panorama/styles/citadel_match_history_block_large.css",
       "upstream": "game/citadel/pak01_dir/panorama/styles/citadel_match_history_block_large.css",
-      "base": "4c6431ccdb816d2911bbbaa4335169cc34140386",
+      "base": "5d2ef889362e2a71321c2c3270d78a96131110bf",
       "mode": "owned"
     },
     {
       "path": "Match-History-Cards-Redesign/panorama/styles/citadel_match_history_block_small.css",
       "upstream": "game/citadel/pak01_dir/panorama/styles/citadel_match_history_block_small.css",
-      "base": "4c6431ccdb816d2911bbbaa4335169cc34140386",
+      "base": "5d2ef889362e2a71321c2c3270d78a96131110bf",
       "mode": "owned"
     },
     {
       "path": "No-Incoming-Damage/panorama/styles/hud_damage_report.css",
       "upstream": "game/citadel/pak01_dir/panorama/styles/hud_damage_report.css",
-      "base": "4c6431ccdb816d2911bbbaa4335169cc34140386",
+      "base": "5d2ef889362e2a71321c2c3270d78a96131110bf",
       "mode": "owned"
     },
     {
       "path": "Show-Nicknames-Above-Heroes/panorama/styles/unit_status.css",
       "upstream": "game/citadel/pak01_dir/panorama/styles/unit_status.css",
-      "base": "4c6431ccdb816d2911bbbaa4335169cc34140386",
+      "base": "5d2ef889362e2a71321c2c3270d78a96131110bf",
       "mode": "owned"
     },
     {
       "path": "Show-Nicknames-Above-Heroes/panorama/styles/unit_status_old.css",
       "upstream": "game/citadel/pak01_dir/panorama/styles/unit_status_old.css",
-      "base": "4c6431ccdb816d2911bbbaa4335169cc34140386",
+      "base": "5d2ef889362e2a71321c2c3270d78a96131110bf",
       "mode": "owned"
     },
     {
       "path": "Show-Nicknames-Above-Heroes/panorama/styles/unit_status_v2.css",
       "upstream": "game/citadel/pak01_dir/panorama/styles/unit_status_v2.css",
-      "base": "4c6431ccdb816d2911bbbaa4335169cc34140386",
+      "base": "5d2ef889362e2a71321c2c3270d78a96131110bf",
       "mode": "owned"
     },
     {
       "path": "Show-Nicknames-In-TopBar/panorama/styles/citadel_hud_top_bar.css",
       "upstream": "game/citadel/pak01_dir/panorama/styles/citadel_hud_top_bar.css",
-      "base": "4c6431ccdb816d2911bbbaa4335169cc34140386",
+      "base": "5d2ef889362e2a71321c2c3270d78a96131110bf",
       "mode": "owned"
     },
     {
       "path": "Show-Nicknames-In-TopBar-No-Offsets/panorama/styles/citadel_hud_top_bar.css",
       "upstream": "game/citadel/pak01_dir/panorama/styles/citadel_hud_top_bar.css",
-      "base": "4c6431ccdb816d2911bbbaa4335169cc34140386",
+      "base": "5d2ef889362e2a71321c2c3270d78a96131110bf",
       "mode": "owned"
     },
     {
       "path": "HUD-Dumper/panorama/layout/base_hud.xml",
       "upstream": "game/citadel/pak01_dir/panorama/layout/base_hud.xml",
-      "base": "4c6431ccdb816d2911bbbaa4335169cc34140386",
+      "base": "5d2ef889362e2a71321c2c3270d78a96131110bf",
       "mode": "merge"
     },
     {
       "path": "HUD-Dumper/panorama/layout/debuglayout.xml",
       "upstream": "game/core/pak01_dir/panorama/layout/debuglayout.xml",
-      "base": "4c6431ccdb816d2911bbbaa4335169cc34140386",
+      "base": "5d2ef889362e2a71321c2c3270d78a96131110bf",
       "mode": "merge"
     }
   ]
