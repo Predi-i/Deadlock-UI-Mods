@@ -25,7 +25,9 @@ def prepare(content, game):
             descriptor = file.with_suffix(".vtex")
             if not descriptor.exists():
                 descriptor.write_text(match[1].replace("$RelFileName", relative.as_posix()) + "\n", encoding="utf-8")
-        if file.suffix.lower() in (".html", ".htm", ".json", ".txt"):
+        if file.suffix.lower() in (".ttf", ".vxml_c", ".vcss_c", ".vjs_c", ".vsndevts_c",
+                                   ".vsnd_c", ".vtex_c", ".vdata_c", ".vsvg_c", ".vpcf_c",
+                                   ".vmdl_c", ".vmat_c"):
             target = game / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(file, target)

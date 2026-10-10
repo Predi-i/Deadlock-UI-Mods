@@ -23,7 +23,7 @@ assets = load("prepare_ci_assets")
 
 
 class UpdaterTests(unittest.TestCase):
-    def test_ci_prepares_textures_and_preserves_raw_html(self):
+    def test_ci_prepares_textures_and_preserves_fonts_not_raw_html(self):
         with tempfile.TemporaryDirectory() as folder:
             content = pathlib.Path(folder) / "content"
             game = pathlib.Path(folder) / "game"
@@ -32,10 +32,12 @@ class UpdaterTests(unittest.TestCase):
             (content / "custom.png").write_bytes(b"fixture image")
             (content / "custom.vtex").write_text('"m_algorithm" "string" "LegacyProcessor"')
             (content / "bridge.html").write_text('<html>bridge</html>')
+            (content / "font.ttf").write_bytes(b"font fixture")
             assets.prepare(content, game)
             self.assertIn('"image.png"', (content / "image.vtex").read_text())
             self.assertEqual((content / "custom.vtex").read_text(), '"m_algorithm" "string" ""')
-            self.assertEqual((game / "bridge.html").read_text(), '<html>bridge</html>')
+            self.assertFalse((game / "bridge.html").exists())
+            self.assertEqual((game / "font.ttf").read_bytes(), b"font fixture")
 
     def test_nonoverlapping_edits_and_conflict(self):
         middle = "\n".join(str(i) for i in range(10)) + "\n"
