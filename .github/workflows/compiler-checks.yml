@@ -1,0 +1,24 @@
+name: Compiler offline checks
+
+on:
+  push:
+    paths:
+      - 'tools/build_mod*.ps1'
+      - 'tools/tests/build_mod_regression.ps1'
+      - '.github/workflows/compiler-checks.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        shell: [powershell, pwsh]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check isolated compiler logic
+        shell: ${{ matrix.shell }}
+        run: ./tools/tests/build_mod_regression.ps1

@@ -59,6 +59,24 @@ Install [Reduced CSDK 12](https://deadlockmodding.pages.dev/modding-tools/csdk-1
 3. Select the mod from the menu.
 4. Find the generated `.vpk` in `tools\builds`.
 
+The builder uses the same core scripts as Deadlock-Mod-Compiler. Keep
+`build_mod_helpers.ps1` beside `build_mod.ps1` when copying the tool.
+TTF fonts and supported precompiled resources are staged directly; unsupported
+formats are reported. HTML/JSON/TXT are not automatically shipped as game assets.
+Changed or removed PNG/TGA files requeue texture descriptors, including custom
+ones. This is not a general dependency graph for all Source 2 resource types.
+Packing uses a temporary directory and replacement backups; a failed replacement
+attempts rollback. Split-file replacement is not crash-atomic.
+Addon allocation reuses existing valid mod assignments or the first free
+`pak01`-`pak99` slot based on actual files, not stale registry entries.
+If all slots are occupied, remove unused addons before building.
+
+Offline checks (no compiler, packer or VPK filesystem operations):
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/tests/build_mod_regression.ps1
+```
+
 For a public release build with source comments removed, use `tools\build_mod_strip_comments.bat`
 instead. It creates a temporary `*-stripped` folder and leaves the source tree unchanged.
 
