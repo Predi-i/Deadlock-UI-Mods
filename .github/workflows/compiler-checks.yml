@@ -14,11 +14,12 @@ permissions:
 jobs:
   regression:
     runs-on: windows-latest
-    strategy:
-      matrix:
-        shell: [powershell, pwsh]
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - name: Check isolated compiler logic
-        shell: ${{ matrix.shell }}
+      - name: Check isolated logic on Windows PowerShell 5.1
+        shell: powershell
+        run: ./tools/tests/build_mod_regression.ps1
+      - name: Check isolated logic on PowerShell 7
+        shell: pwsh
         run: ./tools/tests/build_mod_regression.ps1
