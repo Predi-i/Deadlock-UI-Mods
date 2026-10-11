@@ -95,7 +95,10 @@ release has not been published through this pipeline; it does not prove that all
 older files on GameBanana are obsolete.
 
 Run **Publish GameBanana update**, choose the submission in its dropdown and
-preview the selected archives/version with the default dry run. Disable dry run
+preview the selected archives/version with the default dry run. The preview also
+authenticates and checks Add Update permission and the current Edit form, without
+uploading files, editing the submission, reserving a version or adding an update.
+Disable dry run
 to publish after client verification. It uses the matching immutable GitHub
 release, validates every archive checksum and supported variant, and rejects
 pending native overrides and releases that no longer match `main`. Versions

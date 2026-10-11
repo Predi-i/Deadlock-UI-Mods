@@ -22,7 +22,7 @@ on:
         description: Override automatic GB version increment (for example 1.1)
         type: string
       dry_run:
-        description: Preview version and verify archives without publishing
+        description: Verify version, archives and GameBanana form without publishing
         type: boolean
         default: true
 
