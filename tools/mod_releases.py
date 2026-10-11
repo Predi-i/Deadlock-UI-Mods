@@ -15,7 +15,9 @@ MARKER = re.compile(r"<!-- mod-release:(\{[^\n]+\}) -->")
 
 
 def gh(*args):
-    result = subprocess.run(["gh", *args], capture_output=True, text=True, check=True)
+    result = subprocess.run(["gh", *args], capture_output=True, text=True)
+    if result.returncode:
+        raise RuntimeError("GitHub " + args[0] + " failed: " + result.stderr.strip())
     return result.stdout
 
 
@@ -91,9 +93,33 @@ def write_manifest(mod, commit, folder):
     return record
 
 
+def ensure_tag(repository, tag, commit):
+    route = f"repos/{repository}/git/ref/tags/{tag}"
+    try:
+        existing = json.loads(gh("api", route))
+    except RuntimeError as error:
+        if "HTTP 404" not in str(error):
+            raise
+        try:
+            gh("api", f"repos/{repository}/git/refs", "--method", "POST",
+               "-f", "ref=refs/tags/" + tag, "-f", "sha=" + commit)
+        except RuntimeError:
+            # An overlapping plan may have created it. Read and verify its target.
+            existing = json.loads(gh("api", route))
+        else:
+            return
+    if existing.get("object", {}).get("sha") != commit or existing.get("object", {}).get("type") != "commit":
+        raise ValueError("An existing release tag targets different source; it was preserved")
+
+
 def publish(mod, commit, folder, repository):
+    previous = latest(read_releases(repository)).get(mod)
+    if previous and previous["hashes"] == hashes(mod):
+        print("Matching compiled sources already published; no duplicate release created.")
+        return
     record = write_manifest(mod, commit, folder)
     tag = f"mods/{mod}/{commit}"
+    ensure_tag(repository, tag, commit)
     found = subprocess.run(["gh", "release", "view", tag, "--repo", repository], capture_output=True)
     if found.returncode == 0:
         existing = json.loads(gh("release", "view", tag, "--repo", repository, "--json", "isDraft,body"))
@@ -105,7 +131,7 @@ def publish(mod, commit, folder, repository):
             print("Release already published; immutable archives were preserved.")
             return
     else:
-        gh("release", "create", tag, "--repo", repository, "--target", commit, "--draft", "--latest=false",
+        gh("release", "create", tag, "--repo", repository, "--verify-tag", "--draft", "--latest=false",
            "--title", f"{mod} ({commit[:7]})", "--notes-file", str(folder / "release-notes.md"))
     gh("release", "upload", tag, "--repo", repository, "--clobber", str(folder / "release.json"),
        *[str(folder / file["name"]) for file in record["files"]])
@@ -125,6 +151,8 @@ def main():
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     if args.operation == "plan":
         result = {"include": selection(read_releases(args.repository), commit, args.mod)}
+        for item in result["include"]:
+            ensure_tag(args.repository, item["tag"], commit)
         args.output.mkdir(parents=True, exist_ok=True)
         (args.output / "selection.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
         if os.environ.get("GITHUB_OUTPUT"):

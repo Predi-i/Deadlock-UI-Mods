@@ -67,6 +67,11 @@ catalog and update the workflow dropdown in the same change.
 
 Each changed catalog mod has its own build job and immutable release tag
 `mods/<mod>/<source-commit>`. The tag identifies source, not a new mod version.
+The plan reserves and verifies source tags before compilation; release creation
+uses the existing tag so a later workflow change on `main` cannot redirect it or
+require workflow-write permission for an older build. Publication jobs serialize
+per mod and recheck successful source hashes before creating a release, so
+overlapping plans do not publish the same content twice.
 The nickname submission includes both offset variants; Bridge Buff Reminder
 includes all five existing alert variants. A release is created as a draft,
 receives all ZIPs and `release.json` with archive sizes/checksums, and becomes

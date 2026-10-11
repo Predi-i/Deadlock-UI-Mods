@@ -78,10 +78,44 @@ class ReleaseWorkflowTests(unittest.TestCase):
     def test_existing_tag_with_different_metadata_is_preserved_even_if_draft(self):
         record = {'mod': 'Parry-Cooldown', 'commit': 'a' * 40, 'hashes': {'Parry-Cooldown': 'hash'}}
         for draft in (True, False):
-            with self.subTest(draft=draft), patch.object(releases, 'write_manifest', return_value=record), patch.object(releases.subprocess, 'run', return_value=MagicMock(returncode=0)), patch.object(releases, 'gh', return_value=json.dumps({'isDraft': draft, 'body': 'An unrelated release'})) as command:
+            with self.subTest(draft=draft), patch.object(releases, 'read_releases', return_value=[]), patch.object(releases, 'ensure_tag'), patch.object(releases, 'write_manifest', return_value=record), patch.object(releases.subprocess, 'run', return_value=MagicMock(returncode=0)), patch.object(releases, 'gh', return_value=json.dumps({'isDraft': draft, 'body': 'An unrelated release'})) as command:
                 with self.assertRaisesRegex(ValueError, 'different release metadata'):
                     releases.publish(record['mod'], record['commit'], pathlib.Path('unused'), 'test/repo')
                 self.assertEqual(command.call_count, 1)
+
+    def test_overlapping_plan_rechecks_successful_hash_before_creating_any_release(self):
+        mod = 'Parry-Cooldown'
+        with patch.object(releases, 'read_releases', return_value=[release_record(mod, {mod: 'hash'})]), patch.object(releases, 'hashes', return_value={mod: 'hash'}), patch.object(releases, 'write_manifest') as manifest, patch.object(releases, 'ensure_tag') as tag:
+            releases.publish(mod, 'b' * 40, pathlib.Path('unused'), 'test/repo')
+        manifest.assert_not_called()
+        tag.assert_not_called()
+
+    def test_source_tag_is_reserved_and_existing_target_cannot_be_changed(self):
+        commit = 'a' * 40
+        with patch.object(releases, 'gh', side_effect=[RuntimeError('Not Found (HTTP 404)'), '{}']) as command:
+            releases.ensure_tag('test/repo', 'mods/fixture/' + commit, commit)
+        self.assertIn('sha=' + commit, command.call_args.args)
+        self.assertIn('ref=refs/tags/mods/fixture/' + commit, command.call_args.args)
+        with patch.object(releases, 'gh', return_value=json.dumps({'object': {'type': 'commit', 'sha': 'b' * 40}})) as command:
+            with self.assertRaisesRegex(ValueError, 'different source'):
+                releases.ensure_tag('test/repo', 'mods/fixture/' + commit, commit)
+            command.assert_called_once()
+
+    def test_tag_create_lost_response_reconciles_existing_target_without_another_post(self):
+        commit = 'a' * 40
+        with patch.object(releases, 'gh', side_effect=[RuntimeError('Not Found (HTTP 404)'), RuntimeError('connection lost'), json.dumps({'object': {'type': 'commit', 'sha': commit}})]) as command:
+            releases.ensure_tag('test/repo', 'mods/fixture/' + commit, commit)
+        self.assertEqual(command.call_count, 3)
+        self.assertEqual(sum('--method' in call.args for call in command.call_args_list), 1)
+
+    def test_release_creation_uses_verified_tag_without_old_workflow_commit_target(self):
+        record = {'mod': 'Parry-Cooldown', 'commit': 'a' * 40, 'hashes': {'Parry-Cooldown': 'hash'}, 'files': [{'name': 'fixture.zip'}]}
+        with patch.object(releases, 'read_releases', return_value=[]), patch.object(releases, 'write_manifest', return_value=record), patch.object(releases, 'ensure_tag') as tag, patch.object(releases.subprocess, 'run', return_value=MagicMock(returncode=1)), patch.object(releases, 'gh') as command:
+            releases.publish(record['mod'], record['commit'], pathlib.Path('unused'), 'test/repo')
+        tag.assert_called_once()
+        create = command.call_args_list[0].args
+        self.assertIn('--verify-tag', create)
+        self.assertNotIn('--target', create)
 
     def test_downloaded_archive_must_match_release_and_supported_variants(self):
         mod = "Show-Nicknames-In-TopBar"
