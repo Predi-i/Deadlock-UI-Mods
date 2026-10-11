@@ -59,6 +59,14 @@ jobs:
           args=()
           if [[ "$DRY_RUN" == 'true' ]]; then args+=(--dry-run); fi
           python tools/gamebanana_api.py --mod "$SELECTED_MOD" --version "$SELECTED_VERSION" "${args[@]}"
+      - name: Notify acknowledged GameBanana publication
+        if: inputs.dry_run != true
+        continue-on-error: true
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_UI_MODS_WEBHOOK_URL }}
+          DISCORD_CHANNEL_ID: ${{ vars.DISCORD_UI_MODS_CHANNEL_ID }}
+          DISCORD_ROLE_ID: ${{ vars.DISCORD_UI_MODS_ROLE_ID }}
+        run: python tools/gamebanana_queue.py --notify-published "$SELECTED_MOD"
   remaining-updates:
     needs: publish
     if: success() && inputs.dry_run != true

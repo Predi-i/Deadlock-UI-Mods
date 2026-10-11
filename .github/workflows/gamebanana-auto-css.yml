@@ -1,0 +1,71 @@
+name: Auto-publish native base CSS
+
+on:
+  workflow_run:
+    workflows: [Release individual mods]
+    types: [completed]
+  schedule:
+    - cron: '49 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  plan:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.head_branch == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      changed: ${{ steps.plan.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install requests beautifulsoup4
+      - id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python tools/gamebanana_auto_css.py plan
+  publish:
+    name: GameBanana ${{ matrix.mod }}
+    needs: plan
+    if: needs.plan.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: gamebanana-publish-${{ matrix.mod }}
+      cancel-in-progress: false
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SELECTED_MOD: ${{ matrix.mod }}
+      DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_UI_MODS_WEBHOOK_URL }}
+      DISCORD_CHANNEL_ID: ${{ vars.DISCORD_UI_MODS_CHANNEL_ID }}
+      DISCORD_ROLE_ID: ${{ vars.DISCORD_UI_MODS_ROLE_ID }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install requests beautifulsoup4
+      - name: Publish only verified base CSS changes and notify success
+        env:
+          GB_USERNAME: ${{ secrets.GB_USERNAME }}
+          GB_PASSWORD: ${{ secrets.GB_PASSWORD }}
+        run: python tools/gamebanana_auto_css.py publish --mod "$SELECTED_MOD"
+      - name: Notify failed automatic publication once
+        if: failure()
+        continue-on-error: true
+        run: python tools/gamebanana_auto_css.py failure --mod "$SELECTED_MOD"

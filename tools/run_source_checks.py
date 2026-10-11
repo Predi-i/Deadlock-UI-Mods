@@ -8,7 +8,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 def main():
     for pattern in ("test_*update*.py", "test_native_review_workflow.py", "test_mod_release_workflow.py",
-                    "test_gamebanana_api.py", "test_hud_dumper_receiver.py"):
+                    "test_gamebanana_api.py", "test_gamebanana_auto_css.py", "test_hud_dumper_receiver.py"):
         subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "tools/tests", "-p", pattern],
                        cwd=ROOT, check=True)
     subprocess.run(["node", "tools/tests/runtime_regressions.cjs"], cwd=ROOT, check=True)

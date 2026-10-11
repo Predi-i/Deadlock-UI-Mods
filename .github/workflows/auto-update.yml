@@ -18,6 +18,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  actions: write
 
 concurrency:
   group: ui-mods-native-review
@@ -68,6 +69,18 @@ jobs:
         run: |
           pip install requests beautifulsoup4
           python tools/run_source_checks.py
+      - name: Accept native base CSS without manual review
+        id: css
+        env:
+          DRY_RUN: ${{ inputs.dry_run || false }}
+        run: |
+          args=()
+          if [[ "$DRY_RUN" == 'true' ]]; then args+=(--dry-run); fi
+          python tools/base_css_updates.py "${args[@]}"
+      - name: Build automatically accepted CSS
+        if: steps.css.outputs.commit != ''
+        continue-on-error: true
+        run: gh workflow run mod-releases.yml --ref "$BASE_BRANCH"
       - name: Maintain one review PR
         id: review
         env:

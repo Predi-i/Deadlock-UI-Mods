@@ -43,18 +43,45 @@ def pending(repository, releases):
         if published and published.get("hashes") == release["hashes"] and published.get("update_id"):
             continue
         notified = download_record(repository, release, "gamebanana-notified.json")
+        from gamebanana_auto_css import eligibility
+        automatic, reason = eligibility(repository, mod, releases, manifest)
         ready.append({**release, "gamebanana_id": config["gamebanana_id"],
+                      "automatic_css": bool(automatic and automatic.get("publish")), "automatic_reason": reason,
                       "notified": bool(notified and notified.get("hashes") == release["hashes"])})
     return {"ready": ready, "waiting": waiting}
+
+
+def notify_published(repository, mod):
+    release = latest(read_releases(repository)).get(mod)
+    if not release:
+        return False
+    published = download_record(repository, release, "gamebanana-published.json")
+    if not published or published.get("hashes") != release["hashes"] or not published.get("update_id"):
+        return False
+    notified = download_record(repository, release, "gamebanana-published-notified.json")
+    if notified and notified.get("update_id") == published["update_id"]:
+        return True
+    mode = "Automatic native base CSS update" if published.get("automatic_css") else "UI Mod update"
+    content = (f"{mode} published on GameBanana: {mod}, version {published['version']}.\n"
+               f"https://gamebanana.com/updates/{published['update_id']}\n"
+               f"GitHub release: {release['url']}\n"
+               f"All {len(published['file_ids'])} supported archive(s) published; previous files archived.")
+    if not send(content):
+        return False
+    store_record(repository, release["tag"], "gamebanana-published-notified.json",
+                 {"hashes": published["hashes"], "update_id": published["update_id"]})
+    return True
 
 
 def notify(repository, queue):
     # Chunk before delivery so a truncated message can never acknowledge omitted mods.
     chunks, batch, size = [], [], 0
     for item in queue["ready"]:
-        if item["notified"]:
+        if item["notified"] or item.get("automatic_css"):
             continue
         line = f"\n- {item['mod']}\n  {item['url']}"
+        if item.get("automatic_reason", "").startswith(("GB source baseline unknown", "Changes since GB")):
+            line += "\n  Review required: " + item["automatic_reason"]
         if size + len(line) > 1500 and batch:
             chunks.append(batch)
             batch, size = [], 0
@@ -78,10 +105,17 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repository", default=os.environ.get("GITHUB_REPOSITORY"))
     parser.add_argument("--notify", action="store_true")
+    parser.add_argument("--notify-published", metavar="MOD")
     parser.add_argument("--output", type=pathlib.Path, default=ROOT / ".upstream-review/gamebanana-queue.json")
     args = parser.parse_args()
     if not args.repository:
         parser.error("Specify the GitHub repository")
+    if args.notify_published:
+        if args.notify_published not in CATALOG:
+            parser.error("Select a catalog mod")
+        if not notify_published(args.repository, args.notify_published):
+            parser.exit(1, "Publication notification was not acknowledged\n")
+        return
     queue = pending(args.repository, read_releases(args.repository))
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(queue, indent=2) + "\n", encoding="utf-8")

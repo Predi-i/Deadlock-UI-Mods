@@ -353,7 +353,7 @@ def authenticate_publisher(publisher):
         raise RuntimeError("Authenticated account cannot add updates to this GameBanana submission")
 
 
-def publish(repository, mod, override="", dry_run=False):
+def publish(repository, mod, override="", dry_run=False, automatic_css=False, expected_base=None):
     if mod not in CATALOG or not CATALOG[mod]["gamebanana_id"]:
         raise ValueError("This mod has no verified GameBanana submission in the catalog")
     manifest = json.loads((ROOT / "tools/upstream.json").read_text(encoding="utf-8"))
@@ -366,10 +366,19 @@ def publish(repository, mod, override="", dry_run=False):
     logger.setLevel(logging.WARNING)
     publisher = Publisher(os.environ.get("GB_USERNAME", ""), os.environ.get("GB_PASSWORD", ""), CATALOG[mod]["gamebanana_id"])
     if done and done.get("hashes") == release["hashes"] and done.get("update_id"):
-        publisher.repair_publication(done, dry_run)
+        if not automatic_css:
+            publisher.repair_publication(done, dry_run)
         return
     metadata = publisher.metadata()
     reservation = download_record(repository, release, "gamebanana-progress.json")
+    if automatic_css:
+        if not expected_base or not expected_base.get("version") or not expected_base.get("file_ids"):
+            raise ValueError("Automatic CSS publication requires a confirmed GB baseline")
+        if reservation:
+            if reservation.get("previous_version") != expected_base["version"]:
+                raise ValueError("CSS reservation does not match the last GB publication")
+        elif metadata.get("_sVersion") != expected_base["version"] or {file["_idRow"] for file in publisher.files() if not file.get("_bIsArchived")} != set(expected_base["file_ids"]):
+            raise ValueError("GameBanana changed outside the confirmed baseline; review before automatic publication")
     if reservation and reservation.get("hashes") != release["hashes"]:
         raise ValueError("Publication reservation does not match this release")
     if reservation and metadata.get("_sVersion") not in (reservation.get("previous_version"), reservation["version"]):
@@ -395,7 +404,8 @@ def publish(repository, mod, override="", dry_run=False):
         update_id = finish_update(publisher, repository, release, reservation, version, file_ids)
         store_record(repository, release["tag"], "gamebanana-published.json",
                      {"mod": mod, "hashes": release["hashes"], "version": version, "update_id": update_id,
-                      "file_ids": file_ids, "gamebanana_id": publisher.mod_id})
+                      "file_ids": file_ids, "gamebanana_id": publisher.mod_id,
+                      "automatic_css": automatic_css, "notification_requested": True})
     print(f"GameBanana Add Update acknowledged: {update_id}; version {version}")
 
 

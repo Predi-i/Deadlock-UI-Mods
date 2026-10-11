@@ -41,8 +41,14 @@ Current v2 resources remain tracked.
 
 `auto-update.yml` checks all manifest entries on the existing dispatch events and
 an hourly schedule. It generates source proposals and a report, then creates or
-updates one `codex/native-resource-update` PR. It never pushes source changes to
-`main`, compiles a mod, creates a release, uploads to GameBanana or merges its PR.
+updates one `codex/native-resource-update` PR for changes requiring review. For a
+catalog mod whose changes are exclusively tracked native base CSS copies (and
+unchanged extensions of those copies), it commits only those sources/tracking
+bases to `main` and dispatches the individual release workflow. Both nickname
+variants are evaluated together. Any XML/custom asset change or pending resource
+keeps the complete mod in review. Independent CSS mods can proceed alongside
+XML proposals without committing their sources or tracking metadata.
+It does not compile resources or merge review PRs itself.
 Manual dispatch defaults to a dry run. Native changes affecting only unrelated
 resources do not advance merge bases or produce another proposal. Pending native
 resources retain their identity across unrelated commits.
@@ -69,6 +75,18 @@ catalog and update the workflow dropdown in the same change.
 Obsolete Show Nicknames Above Heroes is excluded from the public release catalog
 and GameBanana publication dropdown. Existing source and release history remain.
 
+`gamebanana-auto-css.yml` runs after individual release workflows and hourly for
+retries. Automatic publication requires the native CSS acceptance checkpoint,
+a matching compiled release, a confirmed earlier GB publication checkpoint, and
+an asset comparison against that GB source commit. Only tracked base CSS may
+differ: earlier unpublished XML/JS/custom changes block automatic publication
+even when the latest commit changed only CSS. The live GB version/active files
+must still match the confirmed baseline, or an already reserved attempt.
+Unknown initial GB source state needs one reviewed manual publication to establish
+the baseline. No initial bulk publication is inferred from old GitHub releases.
+The scheduled check can retry compilation dispatches; completion-triggered checks
+do not repeatedly dispatch failed builds in a workflow loop.
+
 Each changed catalog mod has its own build job and immutable release tag
 `mods/<mod>/<source-commit>`. The tag identifies source, not a new mod version.
 The plan reserves and verifies source tags before compilation; release creation
@@ -93,6 +111,12 @@ is stored on that mod's release after acknowledged delivery, so unchanged pendin
 publications do not ping every hour. An initial missing GB checkpoint means the
 release has not been published through this pipeline; it does not prove that all
 older files on GameBanana are obsolete.
+CSS releases eligible for automatic GB publication do not send a manual-publication
+request. After GB acknowledges all variants and Add Update, Discord receives the
+mod/version, update link and release link with the configured role ping. A separate
+receipt deduplicates success notifications; failed delivery retries under the same
+per-mod concurrency as manual/automatic publication without publishing again.
+Failed automatic publication sends an actionable run link once per source release.
 
 Run **Publish GameBanana update**, choose the submission in its dropdown and
 preview the selected archives/version with the default dry run. The preview also

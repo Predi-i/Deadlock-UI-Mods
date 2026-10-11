@@ -11,6 +11,59 @@ import gamebanana_api as api
 
 
 class GameBananaApiTests(unittest.TestCase):
+    def test_external_gb_version_change_blocks_automatic_css_before_authentication_or_mutation(self):
+        mod = 'Show-Nicknames-In-TopBar'
+        release = {'tag': 'fixture', 'hashes': {'fixture': 'hash'}}
+        with tempfile.TemporaryDirectory() as folder:
+            root = pathlib.Path(folder)
+            (root / 'tools').mkdir()
+            (root / 'tools/upstream.json').write_text('{"files": []}', encoding='utf-8')
+            with patch.object(api, 'ROOT', root), patch.object(api, 'read_releases'), patch.object(api, 'latest', return_value={mod: release}), patch.object(api, 'hashes', return_value=release['hashes']), patch.object(api, 'download_record', return_value=None), patch.object(api, 'gh') as gh, patch.object(api, 'store_record') as store, patch.object(api, 'Publisher') as factory:
+                publisher = factory.return_value
+                publisher.metadata.return_value = {'_sVersion': '1.2'}
+                with self.assertRaisesRegex(ValueError, 'outside the confirmed baseline'):
+                    api.publish('test/repo', mod, automatic_css=True, expected_base={'version': '1.1', 'file_ids': [10, 11]})
+            publisher.authenticate.assert_not_called()
+            publisher.register_files.assert_not_called()
+            publisher.add_update.assert_not_called()
+            gh.assert_not_called()
+            store.assert_not_called()
+    def paired_registration(self, fail_second=False):
+        publisher = api.Publisher('fixture', 'fixture', 656390)
+        previous = [[{'name': '_idFileRow', 'value': str(value)}, {'name': '_sVersion', 'value': '1.0'}] for value in (10, 11)]
+        source = ('<form><section id="Version"><input name="version" value="1.0"></section>'
+                  '<input name="files" value="' + html.escape(json.dumps(previous), quote=True) + '"></form>')
+        old = [{'_idRow': value, '_sVersion': '1.0'} for value in (10, 11)]
+        with tempfile.TemporaryDirectory() as folder:
+            archives = [pathlib.Path(folder) / name for name in ('Show-Nicknames-In-TopBar.zip', 'Show-Nicknames-In-TopBar-No-Offsets.zip')]
+            for index, archive in enumerate(archives):
+                archive.write_bytes(('variant-' + str(index)).encode())
+            new = [{'_idRow': index + 100, '_sVersion': '1.1', '_sMd5Checksum': api.hashlib.md5(archive.read_bytes()).hexdigest()} for index, archive in enumerate(archives)]
+            settled = [{**file, '_bIsArchived': True} for file in old] + new
+            uploads = [{'file_row_id': 100, 'upload_receipt_id': 'first'}, RuntimeError('second upload failed') if fail_second else {'file_row_id': 101, 'upload_receipt_id': 'second'}]
+            response = MagicMock(url='https://gamebanana.com/mods/656390', history=[], headers={}, text='ok', status_code=200)
+            with patch.object(publisher, 'files', side_effect=[old, old, old, settled, settled]), patch.object(publisher, 'metadata', side_effect=[{'_sVersion': '1.0'}, {'_sVersion': '1.1'}]), patch.object(publisher, '_get_edit_page', return_value=source), patch.object(publisher, '_get_upload_fields', return_value=('session', 'files', 'images')), patch.object(publisher, '_find_ownership_fields', return_value=[]), patch.object(publisher, 'upload_zip', side_effect=uploads) as upload, patch.object(publisher, '_request', return_value=response) as request:
+                if fail_second:
+                    with self.assertRaisesRegex(RuntimeError, 'second upload failed'):
+                        publisher.register_files(archives, '1.1')
+                    request.assert_not_called()
+                    return
+                ids = publisher.register_files(archives, '1.1')
+                self.assertEqual(ids, [100, 101])
+                self.assertEqual([call.args[0].name for call in upload.call_args_list], [archive.name for archive in archives])
+                files = [dict((field['name'], field['value']) for field in entry) for entry in json.loads(dict(request.call_args.kwargs['data'])['files'])]
+                self.assertEqual([file.get('_bIsArchived') for file in files], ['1', '1', None, None])
+        with patch.object(publisher, 'find_update', return_value=None), patch.object(publisher, 'api', return_value={'_idRow': 42}) as request:
+            self.assertEqual(publisher.add_update('1.1', ids), 42)
+        self.assertEqual(request.call_args.args[2]['_aFileRowIds'], [100, 101])
+        self.assertEqual(request.call_args.args[2]['_sText'], '')
+
+    def test_nickname_pair_uploads_both_files_archives_both_old_variants_and_links_one_update(self):
+        self.paired_registration()
+
+    def test_failed_second_nickname_upload_does_not_register_first_or_archive_old_files(self):
+        self.paired_registration(fail_second=True)
+
     def test_new_publication_archives_previous_files_and_keeps_new_variant_active(self):
         publisher = api.Publisher('fixture', 'fixture', 670840)
         response = MagicMock(url='https://gamebanana.com/mods/670840', history=[], headers={}, text='ok', status_code=200)
