@@ -1,0 +1,32 @@
+name: Test Discord developer webhook
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Send and acknowledge one clearly identified test message
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_UI_MODS_WEBHOOK_URL }}
+          DISCORD_CHANNEL_ID: ${{ vars.DISCORD_UI_MODS_CHANNEL_ID }}
+          DISCORD_ROLE_ID: ${{ vars.DISCORD_UI_MODS_ROLE_ID }}
+          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python - <<'PY'
+          import os, sys
+          sys.path.insert(0, 'tools')
+          from notify_mod_updates import send
+          if not send('UI Mods Discord delivery test.\nNo game resources, releases or GameBanana submissions were changed.\n' + os.environ['RUN_URL']):
+              raise SystemExit('UI Mods developer webhook is not configured')
+          print('Discord acknowledged the test message in the configured channel with the configured role mention.')
+          PY

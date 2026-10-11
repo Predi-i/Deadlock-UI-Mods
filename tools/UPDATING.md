@@ -118,6 +118,11 @@ assets; workflows do not commit build/publication bookkeeping into `main`.
 
 ### Repository setup
 
+After configuring Discord, run **Test Discord developer webhook**. It sends one
+clearly identified test message with the configured role mention, checks the
+webhook channel first and requires Discord's returned message ID/channel before
+reporting success. It does not create a PR, compile a mod or publish to GB.
+
 - Allow GitHub Actions to create pull requests in the repository's Actions
   workflow-permissions settings. The source workflow requests `contents: write`
   and `pull-requests: write` and runs its source tests before opening the PR.
