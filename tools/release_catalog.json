@@ -1,0 +1,93 @@
+{
+  "Active-Stats": {
+    "sources": [
+      "Active-Stats"
+    ],
+    "gamebanana_id": null
+  },
+  "Anti-Toxic-Chat": {
+    "sources": [
+      "Anti-Toxic-Chat"
+    ],
+    "gamebanana_id": null
+  },
+  "Bridge-Buff-Reminder": {
+    "sources": [
+      "Bridge-Buff-Reminder"
+    ],
+    "gamebanana_id": 645941
+  },
+  "Commend-Everyone-Button": {
+    "sources": [
+      "Commend-Everyone-Button"
+    ],
+    "gamebanana_id": 670840
+  },
+  "DL-Arcade-Cloudflare": {
+    "sources": [
+      "DL-Arcade-Cloudflare"
+    ],
+    "gamebanana_id": 699538
+  },
+  "Good-Game-After-Death": {
+    "sources": [
+      "Good-Game-After-Death"
+    ],
+    "gamebanana_id": null
+  },
+  "Match-History-Cards-Redesign": {
+    "sources": [
+      "Match-History-Cards-Redesign"
+    ],
+    "gamebanana_id": 674856
+  },
+  "No-Incoming-Damage": {
+    "sources": [
+      "No-Incoming-Damage"
+    ],
+    "gamebanana_id": 648923
+  },
+  "Old-Minimap-Player-Icon": {
+    "sources": [
+      "Old-Minimap-Player-Icon"
+    ],
+    "gamebanana_id": 684302
+  },
+  "Old-Progress-Bars": {
+    "sources": [
+      "Old-Progress-Bars"
+    ],
+    "gamebanana_id": 658996
+  },
+  "Parry-Cooldown": {
+    "sources": [
+      "Parry-Cooldown"
+    ],
+    "gamebanana_id": 682538
+  },
+  "Show-Nicknames-Above-Heroes": {
+    "sources": [
+      "Show-Nicknames-Above-Heroes"
+    ],
+    "gamebanana_id": 656352
+  },
+  "Show-Nicknames-In-TopBar": {
+    "sources": [
+      "Show-Nicknames-In-TopBar",
+      "Show-Nicknames-In-TopBar-No-Offsets"
+    ],
+    "gamebanana_id": 656390
+  },
+  "Smaller-Commend-Box": {
+    "sources": [
+      "Smaller-Commend-Box"
+    ],
+    "gamebanana_id": 648719
+  },
+  "Well-Played-On-Kill": {
+    "sources": [
+      "Well-Played-On-Kill"
+    ],
+    "gamebanana_id": null
+  }
+}

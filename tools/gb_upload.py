@@ -377,13 +377,14 @@ class GameBananaUploader:
         return result
 
     def post_edit(self, uploads: list[dict], version: str,
-                  files_json_name: str, image_json_name: str):
+                  files_json_name: str, image_json_name: str, preserve_metadata=False):
         html = self._get_edit_page()
         fields = self._scrape_form(html)
         soup = BeautifulSoup(html, "html.parser")
-        ai_fields = self._ai_usage_fields(soup)
-        ai_names = {name for name, _ in ai_fields}
-        fields = [(name, value) for name, value in fields if name not in ai_names] + ai_fields
+        if not preserve_metadata:
+            ai_fields = self._ai_usage_fields(soup)
+            ai_names = {name for name, _ in ai_fields}
+            fields = [(name, value) for name, value in fields if name not in ai_names] + ai_fields
 
         # Find version field inside #Version section
         version_field_name = None
@@ -393,6 +394,8 @@ class GameBananaUploader:
             if version_input:
                 version_field_name = version_input.get("name")
         logger.info("version_field=%s", version_field_name)
+        if not version_field_name:
+            raise RuntimeError("GameBanana version field changed; no edit submitted")
 
         description_field_name = self._find_description_field(soup, fields)
         logger.info("description_field=%s", description_field_name)
@@ -406,6 +409,16 @@ class GameBananaUploader:
             ]
             for upload in uploads
         ]
+        if preserve_metadata:
+            previous_files = dict(fields).get(files_json_name, "")
+            if previous_files:
+                try:
+                    previous_files = json.loads(previous_files)
+                except ValueError:
+                    raise RuntimeError("GameBanana file-list schema changed; no edit submitted") from None
+                if not isinstance(previous_files, list) or any(not isinstance(item, list) for item in previous_files):
+                    raise RuntimeError("GameBanana file-list schema changed; no edit submitted")
+                file_entries = previous_files + file_entries
 
         ticket_ids = self._find_ticket_ids(html)
         image_json_entries = []
@@ -432,9 +445,9 @@ class GameBananaUploader:
         for i, (name, value) in enumerate(fields):
             if version_field_name and name == version_field_name:
                 form_data.append((name, str(version)))
-            elif description_field_name and name == description_field_name:
+            elif not preserve_metadata and description_field_name and name == description_field_name:
                 form_data.append((name, DESCRIPTION))
-            elif image_json_name and name == image_json_name:
+            elif not preserve_metadata and image_json_name and name == image_json_name:
                 for fname, fval in image_individual_fields:
                     form_data.append((fname, fval))
                 form_data.append((name, image_json_value))
@@ -452,10 +465,14 @@ class GameBananaUploader:
                 for oname, ovalue in ownership_fields:
                     form_data.append((oname, ovalue))
 
+        if first_true_index is None:
+            form_data.extend(ownership_fields)
+
         edit_url = f"{GB_BASE}/mods/edit/{self.mod_id}"
         logger.info("Submitting edit form (%d fields)", len(form_data))
         resp = self._request(
             "POST", edit_url,
+            max_retries=1,
             data=form_data,
             headers={
                 "origin": GB_BASE,

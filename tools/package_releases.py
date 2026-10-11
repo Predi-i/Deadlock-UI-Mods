@@ -16,14 +16,8 @@ CONTENT_ROOTS = {
     "scripts", "resource", "maps", "shaders", "vscripts",
 }
 # Published mods whose sources exist here (including the paired nickname variant).
-PUBLISHED = {
-    "Active-Stats", "Anti-Toxic-Chat", "Good-Game-After-Death",
-    "Well-Played-On-Kill", "DL-Arcade-Cloudflare", "Match-History-Cards-Redesign",
-    "Commend-Everyone-Button", "Parry-Cooldown", "Bridge-Buff-Reminder",
-    "Old-Minimap-Player-Icon", "Show-Nicknames-Above-Heroes", "Old-Progress-Bars",
-    "Show-Nicknames-In-TopBar", "Show-Nicknames-In-TopBar-No-Offsets",
-    "No-Incoming-Damage", "Smaller-Commend-Box",
-}
+PUBLISHED = {source for entry in json.loads((ROOT / "tools/release_catalog.json").read_text(encoding="utf-8")).values()
+             for source in entry["sources"]}
 NICKNAMES = {"Show-Nicknames-In-TopBar", "Show-Nicknames-In-TopBar-No-Offsets"}
 BRIDGE_TIMES = (290, 285, 280, 275, 270)
 

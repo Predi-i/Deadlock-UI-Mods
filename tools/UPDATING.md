@@ -56,9 +56,65 @@ sources and merge bases of its mod unchanged while other mods proceed. Resolving
 native conflicts remains a maintainer review task. No ZIP, before/after snapshots
 or diff attachments are created for developer notifications.
 
-Native review is source-only. Compilation/repacking and client verification
-remain the maintainer's responsibility. The previous combined release and
-automatic nickname upload steps are removed from this workflow.
+After changes reach `main`, `mod-releases.yml` compares catalog mod asset hashes
+with their last successful individual GitHub release. It includes every supported
+content root, not only Panorama. `release_catalog.json` is the shared public-build
+catalog: experimental folders are not published merely because they contain
+Panorama sources. Mods without a verified GameBanana ID can have GitHub releases
+but are not offered in the GameBanana dropdown. Add native overrides to
+`upstream.json`; add a new public mod or verified GB submission to the release
+catalog and update the workflow dropdown in the same change.
+
+Each changed catalog mod has its own build job and immutable release tag
+`mods/<mod>/<source-commit>`. The tag identifies source, not a new mod version.
+The nickname submission includes both offset variants; Bridge Buff Reminder
+includes all five existing alert variants. A release is created as a draft,
+receives all ZIPs and `release.json` with archive sizes/checksums, and becomes
+public only after successful compilation and packing. One failed mod does not
+cancel other builds; failed publications remain eligible on the next push or
+manual release-workflow run. Existing public releases are not replaced. Existing
+legacy combined releases are left intact and are not treated as per-mod build
+checkpoints. The first run builds the catalog because no such checkpoints exist.
+
+`gamebanana-status.yml` checks successful releases after the release workflow and
+hourly. It reports mods awaiting matching compiled releases or native fixes, and
+notifies Discord of compiled mods needing GB publication. A notification receipt
+is stored on that mod's release after acknowledged delivery, so unchanged pending
+publications do not ping every hour. An initial missing GB checkpoint means the
+release has not been published through this pipeline; it does not prove that all
+older files on GameBanana are obsolete.
+
+Run **Publish GameBanana update**, choose the submission in its dropdown and
+preview the selected archives/version with the default dry run. Disable dry run
+to publish after client verification. It uses the matching immutable GitHub
+release, validates every archive checksum and supported variant, and rejects
+pending native overrides and releases that no longer match `main`. Versions
+increment the last numeric component (`1.9` becomes `1.10`; `1.0.9` becomes
+`1.0.10`). Legacy dates or other nonnumeric versions migrate to `1.1`; the optional
+`version` input can override that first value or select a larger numeric version.
+Repository mod/schema versions are not changed by this workflow.
+
+GB authentication and file upload/registration reuse its existing upload endpoint
+and Edit form transport. They preserve the existing description, credits, AI
+fields, images and license; the current form schema is checked before uploading.
+The GB Add Update itself uses the JSON API route and fields from the site's
+[UpsertUpdate component](https://webfiles.gamebanana.com/StrangeBerry/Components/UpsertUpdate.js),
+with the API base used by its
+[client helper](https://webfiles.gamebanana.com/StrangeBerry/Static/js/common.js).
+It associates the uploaded files, sets the numeric update version and writes
+`Updated to the game's latest update.` as its notes/changelog. Authenticated form
+submission and Add Update still need verification in the first authorized run;
+offline tests do not prove that private form/API contracts remain available.
+
+Before uploading, the selected version is reserved on the release. Retries reuse
+that reservation, inspect acknowledged uploaded files and look for the existing
+update/version before creating another Add Update. Mutating GB requests are not
+blindly retried. A version changed outside the reserved attempt blocks retry.
+A partial or ambiguous failure remains unpublished in the queue;
+inspect its GB state before overriding a reserved version. The successful
+`gamebanana-published.json` checkpoint is recorded only after file/version and
+Add Update acknowledgements. These checkpoints live as small GitHub release
+assets; workflows do not commit build/publication bookkeeping into `main`.
 
 ### Repository setup
 
@@ -70,9 +126,19 @@ automatic nickname upload steps are removed from this workflow.
   QOLLOCK's configuration. Only that role can be mentioned; channel validation
   happens before sending. Notification failures leave proposals/publications
   unacknowledged and retryable without failing a successful source review.
+- Keep the existing `CSDK_DRIVE_URL`, `GB_USERNAME` and `GB_PASSWORD` secrets.
+  A separate GB API key is not assumed; its authenticated site API uses the
+  existing account session. Do not place credentials or webhook URLs in source.
 
-Source-only regressions run with `python tools/run_source_checks.py`; they do not
-invoke a native compiler/packer or the VPK filesystem tests.
+CI prepares PNG/TGA descriptors using the existing local builder's format,
+compiles supported sound/image and XML/CSS/JS resources, and stages supported
+precompiled resources/fonts. HTML/JSON/TXT do not become game assets automatically.
+CI packs with pinned [ValvePython vpk 1.4.0](https://github.com/ValvePython/vpk),
+uses unique content/game staging trees, and verifies package paths, checksums and
+bytes against compiler output before publication. Source-only checks run with
+`python tools/run_source_checks.py`; they do not invoke a compiler/packer or the
+VPK filesystem tests. The maintainer performs compilation/repacking and client
+verification; agents must not dispatch these publication workflows as a test.
 
 ## HUD lookup maintenance
 

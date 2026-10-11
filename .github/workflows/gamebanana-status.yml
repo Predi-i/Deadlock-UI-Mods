@@ -1,0 +1,41 @@
+name: Check GameBanana publication queue
+
+on:
+  workflow_call:
+  workflow_dispatch:
+  schedule:
+    - cron: '44 * * * *'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ui-mods-gamebanana-status
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Report ready mods and notify once per compiled source
+        continue-on-error: true
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_UI_MODS_WEBHOOK_URL }}
+          DISCORD_CHANNEL_ID: ${{ vars.DISCORD_UI_MODS_CHANNEL_ID }}
+          DISCORD_ROLE_ID: ${{ vars.DISCORD_UI_MODS_ROLE_ID }}
+        run: python tools/gamebanana_queue.py --notify
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gamebanana-publication-queue
+          path: .upstream-review/gamebanana-queue.json
+          include-hidden-files: true
+          if-no-files-found: error

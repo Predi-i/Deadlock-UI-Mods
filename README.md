@@ -42,7 +42,13 @@ Native resource synchronization and offline HUD lookup checks are documented in
 - [Bloody Mina Gloat Icon](https://gamebanana.com/mods/655050)
 - [Meowl Soul Container](https://gamebanana.com/mods/652905)
 
-All published releases are on [GameBanana](https://gamebanana.com/members/5107678).
+The submissions above are on [GameBanana](https://gamebanana.com/members/5107678).
+Catalog mods have separate [GitHub Releases](https://github.com/Predi-i/Deadlock-UI-Mods/releases),
+named for each mod. Native updates first arrive in a review PR; merging changed
+mod sources into `main` builds their individual releases. GameBanana publication
+is a separate manual action with a mod dropdown, automatic version increment and
+an Add Update API record. Setup and publication checkpoints are described in
+[tools/UPDATING.md](tools/UPDATING.md).
 
 ## ⚙️ Build & Installation
 

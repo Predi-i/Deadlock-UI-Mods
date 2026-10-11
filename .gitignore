@@ -15,3 +15,6 @@ __pycache__/
 
 # Source-only native compatibility reports.
 .upstream-review/
+
+# Ephemeral CI source-selection and archive staging.
+/builds/

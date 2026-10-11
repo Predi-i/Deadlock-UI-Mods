@@ -1,0 +1,99 @@
+name: Release individual mods
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ui-mods-releases
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      changed: ${{ steps.plan.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Select changed catalog mods and failed-publication retries
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python tools/mod_releases.py plan
+  release:
+    needs: plan
+    if: needs.plan.outputs.changed == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_MOD: ${{ matrix.mod }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.commit }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Source checks
+        shell: pwsh
+        run: |
+          pip install requests beautifulsoup4 vpk==1.4.0
+          if ($LASTEXITCODE -ne 0) { throw 'Dependency installation failed' }
+          python tools/run_source_checks.py
+          if ($LASTEXITCODE -ne 0) { throw 'Source checks failed' }
+      - uses: actions/cache@v4
+        id: csdk
+        with:
+          path: csdk.zip
+          key: csdk-zip-v1
+      - name: Download CSDK
+        if: steps.csdk.outputs.cache-hit != 'true'
+        shell: pwsh
+        env:
+          CSDK_DRIVE_URL: ${{ secrets.CSDK_DRIVE_URL }}
+        run: |
+          if (-not $env:CSDK_DRIVE_URL) { throw 'CSDK_DRIVE_URL is not configured' }
+          curl.exe --fail --location $env:CSDK_DRIVE_URL --output csdk.zip
+          if ($LASTEXITCODE -ne 0) { throw 'CSDK download failed' }
+      - name: Extract CSDK
+        shell: pwsh
+        run: |
+          7z x csdk.zip -oC:/ -y
+          if ($LASTEXITCODE -ne 0) { throw 'CSDK extraction failed' }
+      - name: Compile selected mod and its supported variants
+        shell: pwsh
+        run: ./tools/build_ci_release.ps1 -Mod $env:RELEASE_MOD
+      - name: Publish this mod only
+        shell: pwsh
+        run: |
+          python tools/mod_releases.py publish --mod $env:RELEASE_MOD
+          if ($LASTEXITCODE -ne 0) { throw 'Mod publication failed' }
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: ${{ matrix.mod }}-${{ matrix.commit }}
+          path: |
+            builds/*.zip
+            builds/release.json
+          if-no-files-found: error
+  gamebanana-status:
+    needs: [plan, release]
+    if: always() && needs.plan.result == 'success'
+    uses: ./.github/workflows/gamebanana-status.yml
+    secrets: inherit

@@ -1,0 +1,67 @@
+name: Publish GameBanana update
+
+on:
+  workflow_dispatch:
+    inputs:
+      mod:
+        description: GameBanana mod to update from its verified GitHub release
+        required: true
+        type: choice
+        options:
+          - Bridge-Buff-Reminder
+          - Commend-Everyone-Button
+          - DL-Arcade-Cloudflare
+          - Match-History-Cards-Redesign
+          - No-Incoming-Damage
+          - Old-Minimap-Player-Icon
+          - Old-Progress-Bars
+          - Parry-Cooldown
+          - Show-Nicknames-Above-Heroes
+          - Show-Nicknames-In-TopBar
+          - Smaller-Commend-Box
+      version:
+        description: Override automatic GB version increment (for example 1.1)
+        type: string
+      dry_run:
+        description: Preview version and verify archives without publishing
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: gamebanana-publish-${{ inputs.mod }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SELECTED_MOD: ${{ inputs.mod }}
+      SELECTED_VERSION: ${{ inputs.version }}
+      DRY_RUN: ${{ inputs.dry_run }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install API/file transport dependencies
+        run: pip install requests beautifulsoup4
+      - name: Publish selected mod and Add Update
+        env:
+          GB_USERNAME: ${{ secrets.GB_USERNAME }}
+          GB_PASSWORD: ${{ secrets.GB_PASSWORD }}
+        run: |
+          args=()
+          if [[ "$DRY_RUN" == 'true' ]]; then args+=(--dry-run); fi
+          python tools/gamebanana_api.py --mod "$SELECTED_MOD" --version "$SELECTED_VERSION" "${args[@]}"
+  remaining-updates:
+    needs: publish
+    if: success() && inputs.dry_run != true
+    uses: ./.github/workflows/gamebanana-status.yml
+    secrets: inherit
