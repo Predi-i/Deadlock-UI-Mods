@@ -121,8 +121,9 @@ The GB Add Update itself uses the JSON API route and fields from the site's
 with the API base used by its
 [client helper](https://webfiles.gamebanana.com/StrangeBerry/Static/js/common.js).
 It associates the uploaded files, sets the numeric update version and writes
-`Updated to the game's latest update.` as its notes/changelog. Authenticated form
-submission and Add Update still need verification in the first authorized run;
+`Updated to the game's latest update.` as its notes/changelog. Preview verifies
+authentication, permission and the live form before publication. Confirm the
+file/version and Add Update acknowledgements in the authorized publication run;
 offline tests do not prove that private form/API contracts remain available.
 
 Before uploading, the selected version is reserved on the release. Retries reuse
