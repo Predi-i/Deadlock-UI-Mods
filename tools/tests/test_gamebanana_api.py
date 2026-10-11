@@ -11,6 +11,26 @@ import gamebanana_api as api
 
 
 class GameBananaApiTests(unittest.TestCase):
+    def test_read_api_bypasses_stale_cdn_responses_without_changing_mutation_routes(self):
+        publisher = api.Publisher('fixture', 'fixture', 670840)
+        response = MagicMock()
+        response.json.return_value = {}
+        with patch.object(publisher, '_request', return_value=response) as request, patch.object(api.time, 'time_ns', side_effect=[10, 11]):
+            publisher.api('Mod/670840?_csvProperties=_sVersion')
+            publisher.api('Mod/670840/Files', update=True)
+            publisher.api('Mod/670840/Update', 'POST', {'fixture': True}, update=True)
+        self.assertEqual(request.call_args_list[0].args[1], 'https://gamebanana.com/apiv11/Mod/670840?_csvProperties=_sVersion&_=10')
+        self.assertEqual(request.call_args_list[1].args[1], 'https://gamebanana.com/apiv13/Mod/670840/Files?_=11')
+        self.assertEqual(request.call_args_list[2].args[1], 'https://gamebanana.com/apiv13/Mod/670840/Update')
+
+    def test_retry_during_file_analysis_cannot_upload_a_duplicate_archive(self):
+        publisher = api.Publisher('fixture', 'fixture', 670840)
+        with patch.object(publisher, 'attached_files', return_value=None), patch.object(publisher, 'files', return_value=[{'_sVersion': '1.5', '_bIsArchived': False, '_sMd5Checksum': ''}]), patch.object(publisher, 'verify_edit_form') as form, patch.object(publisher, 'upload_zip') as upload:
+            with self.assertRaisesRegex(RuntimeError, 'still analysing'):
+                publisher.register_files([], '1.5')
+        form.assert_not_called()
+        upload.assert_not_called()
+
     def dynamic_form(self, archive_value='1'):
         records = [
             {'_idFileRow': '1836888', '_sVersion': '1.4', '_sDescription': 'Current "file"', '_bIsArchived': False},

@@ -129,7 +129,10 @@ Before uploading, the selected version is reserved on the release. Retries reuse
 that reservation, inspect acknowledged uploaded files and look for the existing
 update/version before creating another Add Update. Mutating GB requests are not
 blindly retried. File/version and update acknowledgements allow up to 30 seconds
-for cached read APIs to settle, without repeating uploads or edits. Before the
+for file analysis to settle, without repeating uploads or edits. Read API
+requests use a unique query value to bypass the site's ten-minute CDN cache.
+If GB is still analyzing an existing file for the reserved version and has not
+computed its checksum, a retry stops before uploading another archive. Before the
 Add Update POST, its intent and file IDs are saved in the reservation. If its
 response is lost, later runs only inspect acknowledged files and look for the
 existing update; they cannot upload more files. An unacknowledged

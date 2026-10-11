@@ -67,6 +67,11 @@ class Publisher(GameBananaUploader):
 
     def api(self, route, method="GET", payload=None, update=False):
         base = UPDATE_API if update else "https://gamebanana.com/apiv11"
+        if method == "GET":
+            # Public API projections can remain in the CDN for ten minutes,
+            # including after an authenticated edit. A unique read URL avoids
+            # accepting a stale acknowledgement or uploading a file twice.
+            route += ("&" if "?" in route else "?") + "_=" + str(time.time_ns())
         response = self._request(method, base + "/" + route, **({"json": payload} if payload is not None else {}))
         try:
             data = response.json()
@@ -168,6 +173,8 @@ class Publisher(GameBananaUploader):
             return found
         if not allow_upload:
             raise RuntimeError("Previously submitted Add Update files are not acknowledged; reconcile before uploading again")
+        if any(file.get("_sVersion") == version and not file.get("_bIsArchived") and not file.get("_sMd5Checksum") for file in self.files()):
+            raise RuntimeError("GameBanana is still analysing files for this version; wait before retrying. No duplicate archives uploaded")
         sdpid, files_field, image_field = self.verify_edit_form()
         uploads = [self.upload_zip(archive, sdpid) for archive in archives]
         self.post_edit(uploads, version, files_field, image_field, preserve_metadata=True)
