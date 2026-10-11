@@ -58,7 +58,9 @@ or diff attachments are created for developer notifications.
 
 After changes reach `main`, `mod-releases.yml` compares catalog mod asset hashes
 with their last successful individual GitHub release. It includes every supported
-content root, not only Panorama. `release_catalog.json` is the shared public-build
+content root, not only Panorama. Hashing uses the same path ordering and normalized
+text line endings, including Source 2 descriptors, on Linux and Windows; binary
+asset bytes remain significant. `release_catalog.json` is the shared public-build
 catalog: experimental folders are not published merely because they contain
 Panorama sources. Mods without a verified GameBanana ID can have GitHub releases
 but are not offered in the GameBanana dropdown. Add native overrides to

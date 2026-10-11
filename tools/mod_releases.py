@@ -12,6 +12,8 @@ from package_releases import CONTENT_ROOTS, release_plan, prepare_source
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CATALOG = json.loads((ROOT / "tools/release_catalog.json").read_text(encoding="utf-8"))
 MARKER = re.compile(r"<!-- mod-release:(\{[^\n]+\}) -->")
+TEXT_ASSETS = {".xml", ".css", ".js", ".svg", ".vsvg", ".json", ".html", ".txt",
+               ".vtex", ".vsndevts", ".vmat", ".vmdl", ".vpcf", ".cfg", ".vdf", ".lua"}
 
 
 def gh(*args):
@@ -24,12 +26,14 @@ def gh(*args):
 def asset_hash(mod, root=ROOT):
     digest = hashlib.sha256()
     for name in sorted(CONTENT_ROOTS):
-        for path in sorted((root / mod / name).rglob("*")):
+        # Match one deterministic ordering on Linux planners and Windows builds.
+        for path in sorted((root / mod / name).rglob("*"),
+                           key=lambda value: tuple(part.casefold() for part in value.relative_to(root / mod).parts)):
             if not path.is_file():
                 continue
             digest.update(path.relative_to(root / mod).as_posix().encode() + b"\0")
             data = path.read_bytes()
-            if path.suffix in (".xml", ".css", ".js", ".svg", ".json", ".html", ".txt"):
+            if path.suffix.lower() in TEXT_ASSETS:
                 data = data.replace(b"\r\n", b"\n")
             digest.update(data + b"\0")
     return digest.hexdigest()

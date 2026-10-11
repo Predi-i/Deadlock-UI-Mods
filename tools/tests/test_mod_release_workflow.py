@@ -41,6 +41,25 @@ class ReleaseWorkflowTests(unittest.TestCase):
         legacy["body"] = "Deadlock UI Mods v142"
         self.assertEqual(releases.latest([legacy]), {})
 
+    def test_planner_and_builder_use_same_case_order_and_source2_line_endings(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = pathlib.Path(folder)
+            paths = ['panorama/images/Z.png', 'panorama/images/a.png', 'panorama/images/z.vtex', 'soundevents/event.vsndevts']
+            for name in paths:
+                file = root / 'mod' / name
+                file.parent.mkdir(parents=True, exist_ok=True)
+                file.write_bytes(b'binary\x00\r\n' if file.suffix == '.png' else b'text\r\n')
+            expected = hashlib.sha256()
+            for name in sorted(paths, key=lambda value: tuple(part.casefold() for part in value.split('/'))):
+                expected.update(name.encode() + b'\0')
+                expected.update((b'binary\x00\r\n' if name.endswith('.png') else b'text\n') + b'\0')
+            initial = releases.asset_hash('mod', root)
+            self.assertEqual(initial, expected.hexdigest())
+            for name in paths:
+                if not name.endswith('.png'):
+                    (root / 'mod' / name).write_bytes(b'text\n')
+            self.assertEqual(initial, releases.asset_hash('mod', root))
+
     def test_blocked_variant_excludes_whole_release_while_other_mod_retries(self):
         with tempfile.TemporaryDirectory() as folder:
             root = pathlib.Path(folder)
