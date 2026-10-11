@@ -2,6 +2,7 @@ import html
 import json
 import pathlib
 import sys
+import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -10,6 +11,26 @@ import gamebanana_api as api
 
 
 class GameBananaApiTests(unittest.TestCase):
+    def test_authenticated_preview_cannot_upload_edit_reserve_or_add_update(self):
+        mod = 'Commend-Everyone-Button'
+        release = {'tag': 'fixture', 'hashes': {'fixture': 'hash'}}
+        with tempfile.TemporaryDirectory() as folder:
+            root = pathlib.Path(folder)
+            (root / 'tools').mkdir()
+            (root / 'tools/upstream.json').write_text('{"files": []}', encoding='utf-8')
+            with patch.object(api, 'ROOT', root), patch.object(api, 'read_releases'), patch.object(api, 'latest', return_value={mod: release}), patch.object(api, 'hashes', return_value=release['hashes']), patch.object(api, 'download_record', return_value=None), patch.object(api, 'gh'), patch.object(api, 'verify_archives'), patch.object(api, 'store_record') as store, patch.object(api, 'Publisher') as factory:
+                publisher = factory.return_value
+                publisher.metadata.return_value = {'_sVersion': '1.4'}
+                publisher.api.return_value = {'_aAccess': {'Update_Add': True}}
+                api.publish('fixture/repo', mod, dry_run=True)
+        publisher.authenticate.assert_called_once()
+        publisher.verify_edit_form.assert_called_once()
+        publisher.register_files.assert_not_called()
+        publisher.upload_zip.assert_not_called()
+        publisher.post_edit.assert_not_called()
+        publisher.add_update.assert_not_called()
+        store.assert_not_called()
+
     def test_numeric_versions_increment_without_floats_and_legacy_dates_migrate(self):
         self.assertEqual(api.next_version('1.9'), '1.10')
         self.assertEqual(api.next_version('1.0.9'), '1.0.10')

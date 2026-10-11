@@ -168,6 +168,12 @@ class Publisher(GameBananaUploader):
         attached_ids = {str(file["_idRow"]) for file in records}
         if previous_ids != attached_ids:
             active_ids = {str(file["_idRow"]) for file in records if not file.get("_bIsArchived")}
+            file_inputs = []
+            for field in soup.select('[name="_idFileRow"]'):
+                file_inputs.append({"id": field.get("value") if str(field.get("value", "")).isdigit() else "not numeric",
+                                    "parents": [re.sub(r"[a-f0-9]{32}", "HASH", parent.get("id", "") + " " + " ".join(parent.get("class", []))) for parent in list(field.parents)[:4]]})
+            scripts = [script.get("src", "").split("?")[0] for script in soup.find_all("script", src=True)]
+            print("File form structure: " + json.dumps({"row_inputs": file_inputs, "scripts": scripts}))
             raise RuntimeError("Cannot preserve GameBanana's complete file list; no archives uploaded. "
                                f"Form IDs: {sorted(previous_ids)}; active API IDs: {sorted(active_ids)}; "
                                f"all API IDs: {sorted(attached_ids)}")
