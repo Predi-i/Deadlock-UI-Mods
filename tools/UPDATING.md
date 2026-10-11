@@ -37,36 +37,42 @@ C++ reachability or authorize deleting packed resources. They are no longer
 requested as current native files; reappearance blocks the owning mod for review.
 Current v2 resources remain tracked.
 
-The Mod Updater workflow performs source synchronization for all registered mods.
-Build selection uses hashes of each mod's Panorama assets compared with the last
-successful publication. A failed build or upload remains eligible for retry even
-if the source updater has already committed its changes. Manual dispatch builds
-every mod. GitHub Releases contain the selected mod archives; GameBanana upload
-continues to target only the nickname mod's existing submission and paired variants.
-The first run without a recorded build state builds every mod.
+## Review and publication workflows
 
-CI prepares PNG/TGA descriptors using the existing local builder's descriptor
-format, compiles sound and image resources as well as XML/CSS/JS, and copies raw
-HTML assets. Compiler and packer failures abort publication. Source tests do not
-prove that the CSDK can compile every asset; the maintainer runs packaging/client
-verification before relying on a release. CI itself is not dispatched by these
-offline checks.
+`auto-update.yml` checks all manifest entries on the existing dispatch events and
+an hourly schedule. It generates source proposals and a report, then creates or
+updates one `codex/native-resource-update` PR. It never pushes source changes to
+`main`, compiles a mod, creates a release, uploads to GameBanana or merges its PR.
+Manual dispatch defaults to a dry run. Native changes affecting only unrelated
+resources do not advance merge bases or produce another proposal. Pending native
+resources retain their identity across unrelated commits.
 
-CI packs with pinned [ValvePython vpk 1.4.0](https://github.com/ValvePython/vpk),
-as used by the QHD HUD updater. CSDKCfgVPK timed out on hosted Windows runners;
-it remains the local interactive builder's packer. CI uses unique content/game
-staging directories and copies all supported content roots, including sounds.
-`pack_ci_vpk.py` creates a single embedded VPK v2, verifies its directory/data
-checksums, resource paths, CRCs and bytes against the fresh compiler output, then
-makes the package available for ZIP creation. Existing outputs and empty builds
-are rejected; verification failures leave no publishable VPK.
+The PR body contains a resource/source fingerprint. An unchanged proposal reuses
+its open PR and sends at most one acknowledged Discord notification. A closed or
+merged proposal with the same fingerprint is not recreated. A new proposal
+can refresh a bot-only branch, with an explicit lease; maintainer commits block
+regeneration so manual fixes cannot be overwritten. An unresolved file keeps all
+sources and merge bases of its mod unchanged while other mods proceed. Resolving
+native conflicts remains a maintainer review task. No ZIP, before/after snapshots
+or diff attachments are created for developer notifications.
 
-The GameBanana edit form now requires an AI Usage matrix. The uploader derives
-names and values from its live columns/rows, using the maintainer's choice of
-Minor for Code and None for the other areas. It validates that matrix before
-uploading archives. Matrix parsing is tested offline; authenticated form submission
-still needs verification in the next authorized CI run. If the form structure
-changes, it fails with a specific diagnostic instead of guessing field hashes.
+Native review is source-only. Compilation/repacking and client verification
+remain the maintainer's responsibility. The previous combined release and
+automatic nickname upload steps are removed from this workflow.
+
+### Repository setup
+
+- Allow GitHub Actions to create pull requests in the repository's Actions
+  workflow-permissions settings. The source workflow requests `contents: write`
+  and `pull-requests: write` and runs its source tests before opening the PR.
+- Set secret `DISCORD_UI_MODS_WEBHOOK_URL` and repository variables
+  `DISCORD_UI_MODS_CHANNEL_ID` / `DISCORD_UI_MODS_ROLE_ID`. They are separate from
+  QOLLOCK's configuration. Only that role can be mentioned; channel validation
+  happens before sending. Notification failures leave proposals/publications
+  unacknowledged and retryable without failing a successful source review.
+
+Source-only regressions run with `python tools/run_source_checks.py`; they do not
+invoke a native compiler/packer or the VPK filesystem tests.
 
 ## HUD lookup maintenance
 

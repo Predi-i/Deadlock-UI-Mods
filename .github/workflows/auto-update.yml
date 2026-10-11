@@ -1,28 +1,41 @@
-name: Mod Updater
+name: Review native mod updates
 
 on:
   repository_dispatch:
     types: [game-update, auto-update]
   schedule:
-    - cron: '39 2 * * *'
+    - cron: '39 * * * *'
   workflow_dispatch:
+    inputs:
+      upstream_sha:
+        description: GameTracking commit (empty selects latest)
+        type: string
+      dry_run:
+        description: Preview without creating a PR or notifying Discord
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  pull-requests: write
 
 concurrency:
-  group: mod-updater
+  group: ui-mods-native-review
   cancel-in-progress: false
 
 jobs:
-  build:
-    runs-on: windows-latest
-    permissions:
-      contents: write
-
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BASE_BRANCH: ${{ github.event.repository.default_branch }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Checkout GameTracking
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+      - uses: actions/checkout@v4
         with:
           repository: SteamTracking/GameTracking-Deadlock
           path: upstream
@@ -31,21 +44,18 @@ jobs:
           sparse-checkout: |
             game/citadel/pak01_dir/panorama
             game/core/pak01_dir/panorama/layout
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-
-      - name: Update native overrides
-        shell: pwsh
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Prepare source proposals for all tracked mods
+        env:
+          UPSTREAM_SHA: ${{ github.event.client_payload.sha || inputs.upstream_sha }}
         run: |
-          python tools/update_mods.py --game-root upstream --allow-partial
-          if ($LASTEXITCODE -ne 0) { throw "Native override update failed" }
-          python tools/sync_hud_lookup.py
-          if ($LASTEXITCODE -ne 0) { throw "HUD helper sync failed" }
-
-      - name: Keep native compatibility review
+          python tools/update_mods.py --game-root upstream --revision "${UPSTREAM_SHA:-HEAD}" --allow-partial
+      - name: Keep compatibility review
         uses: actions/upload-artifact@v4
         with:
           name: native-update-report
@@ -54,165 +64,27 @@ jobs:
             .upstream-review/summary.json
           include-hidden-files: true
           if-no-files-found: error
-
-      - name: Validate source updates
-        shell: pwsh
+      - name: Verify source changes
         run: |
-          pip install requests beautifulsoup4 vpk==1.4.0
-          if ($LASTEXITCODE -ne 0) { throw "Test dependency installation failed" }
-          python -m unittest discover -s tools/tests -v
-          if ($LASTEXITCODE -ne 0) { throw "Updater regression tests failed" }
-          node tools/tests/runtime_regressions.cjs
-          if ($LASTEXITCODE -ne 0) { throw "HUD runtime regression tests failed" }
-          node --test HUD-Dumper/tests/hud_dumper.test.cjs
-          if ($LASTEXITCODE -ne 0) { throw "HUD dumper regression tests failed" }
-          foreach ($Flag in @("", "--delayed-layout", "--old-layout", "--modern-layout", "--wrapped-effects")) {
-              if ($Flag) { node Djinn-Mark-In-TopBar/tests/djinn_mark.test.cjs $Flag }
-              else { node Djinn-Mark-In-TopBar/tests/djinn_mark.test.cjs }
-              if ($LASTEXITCODE -ne 0) { throw "Djinn regression tests failed" }
-          }
-
-      - name: Commit source updates and select builds
-        id: git_check
-        shell: pwsh
-        run: |
-          git config user.name "Predi-i"
-          git config user.email "Predi-i@users.noreply.github.com"
-          git add -- tools/upstream.json
-          Get-ChildItem -Directory | Where-Object { Test-Path "$($_.FullName)/panorama" } | ForEach-Object { git add -- $_.Name }
-          git diff --staged --quiet
-          if ($LASTEXITCODE -eq 1) {
-              git commit -m "chore: update native panorama overrides"
-              if ($LASTEXITCODE -ne 0) { throw "Source commit failed" }
-              git push
-              if ($LASTEXITCODE -ne 0) { throw "Source push failed" }
-          } elseif ($LASTEXITCODE -ne 0) { throw "Git diff failed" }
-          python tools/select_mod_builds.py --output builds/selection.json --all="${{ github.event_name == 'workflow_dispatch' }}"
-          if ($LASTEXITCODE -ne 0) { throw "Build selection failed" }
-          $Selection = Get-Content builds/selection.json -Raw | ConvertFrom-Json
-          "changed=$($Selection.mods.Count -gt 0)".ToLowerInvariant() >> $env:GITHUB_OUTPUT
-          "nicknames=$($Selection.nicknames)".ToLowerInvariant() >> $env:GITHUB_OUTPUT
-
-      # Cache the 2.4 GB CSDK zip so we only pull it from Drive once.
-      # Bump the key (csdk-zip-v2, ...) whenever the CSDK contents change.
-      - name: Cache CSDK
-        id: cache-csdk
-        if: steps.git_check.outputs.changed == 'true'
-        uses: actions/cache@v4
-        with:
-          path: csdk.zip
-          key: csdk-zip-v1
-
-      - name: Download CSDK
-        if: (steps.git_check.outputs.changed == 'true') && steps.cache-csdk.outputs.cache-hit != 'true'
-        shell: bash
-        run: curl -L "${{ secrets.CSDK_DRIVE_URL }}" -o csdk.zip
-
-      - name: Extract CSDK
-        if: steps.git_check.outputs.changed == 'true'
-        shell: bash
-        run: 7z x csdk.zip -oC:/ -y
-
-      - name: Compile and Pack VPK
-        if: steps.git_check.outputs.changed == 'true'
-        shell: pwsh
-        run: |
-          $ModNames = (Get-Content builds/selection.json -Raw | ConvertFrom-Json).mods
-          $CsdkRoot = "C:\Reduced_CSDK_12"
-
-          if (-not (Test-Path "$CsdkRoot\game\bin_cs2\win64\resourcecompiler.exe")) {
-              if (Test-Path "$CsdkRoot\Reduced_CSDK_12\game\bin_cs2\win64\resourcecompiler.exe") {
-                  $CsdkRoot = "$CsdkRoot\Reduced_CSDK_12"
-              }
-          }
-
-          $Compiler = "$CsdkRoot\game\bin_cs2\win64\resourcecompiler.exe"
-
-          New-Item -ItemType Directory -Force -Path "builds" | Out-Null
-          foreach ($ModName in $ModNames) {
-              # Fresh trees cannot contain stale resources bundled in the SDK ZIP.
-              $AddonName = "build_${ModName}_" + [guid]::NewGuid().ToString('N')
-              $ContentDir = "$CsdkRoot\content\citadel_addons\$AddonName"
-              $GameDir = "$CsdkRoot\game\citadel_addons\$AddonName"
-
-              New-Item -ItemType Directory -Force -Path $ContentDir | Out-Null
-              foreach ($Root in @('panorama', 'soundevents', 'sounds', 'materials', 'models', 'particles', 'scripts', 'resource', 'maps', 'shaders', 'vscripts')) {
-                  if (Test-Path -LiteralPath "$ModName\$Root" -PathType Container) {
-                      Copy-Item -LiteralPath "$ModName\$Root" -Destination $ContentDir -Recurse
-                  }
-              }
-              python tools/prepare_ci_assets.py --content $ContentDir --game $GameDir
-              if ($LASTEXITCODE -ne 0) { throw "Asset preparation failed: $ModName" }
-
-              $Outputs = @{
-                  '.css' = '.vcss_c'; '.xml' = '.vxml_c'; '.js' = '.vjs_c'
-                  '.svg' = '.vsvg_c'; '.vsvg' = '.vsvg_c'; '.vtex' = '.vtex_c'
-                  '.vsndevts' = '.vsndevts_c'; '.wav' = '.vsnd_c'
-                  '.vpcf' = '.vpcf_c'; '.vmdl' = '.vmdl_c'; '.vmat' = '.vmat_c'
-              }
-              $Files = Get-ChildItem -Path $ContentDir -Recurse -File | Where-Object { $_.Extension -in @('.css', '.xml', '.js', '.svg', '.vsvg', '.vtex', '.vsndevts', '.wav', '.vpcf', '.vmdl', '.vmat') }
-              foreach ($f in $Files) {
-                  & $Compiler -i $f.FullName -nop4
-                  if ($LASTEXITCODE -ne 0) { throw "Compilation failed: $($f.FullName)" }
-                  $Relative = $f.FullName.Substring($ContentDir.Length + 1)
-                  $Compiled = Join-Path $GameDir ([System.IO.Path]::ChangeExtension($Relative, $Outputs[$f.Extension]))
-                  if (-not (Test-Path -LiteralPath $Compiled) -or (Get-Item -LiteralPath $Compiled).Length -eq 0) { throw "Compiled output missing or empty: $Compiled" }
-              }
-
-              $OutVpk = "$PWD\builds\$ModName.vpk"
-              python tools/pack_ci_vpk.py $GameDir $OutVpk
-              if ($LASTEXITCODE -ne 0) { throw "VPK packing or verification failed: $ModName" }
-          }
-          exit 0
-
-      - name: Zip VPK for upload
-        if: steps.git_check.outputs.changed == 'true'
-        shell: pwsh
-        run: |
-          $ModNames = (Get-Content builds/selection.json -Raw | ConvertFrom-Json).mods
-          $Version = (Get-Date -Format "yyyy.MM.dd")
-          foreach ($ModName in $ModNames) {
-              $ZipPath = "builds\$ModName.zip"
-              Compress-Archive -Path "builds\$ModName.vpk" -DestinationPath $ZipPath -Force
-          }
-          # Export version for downstream steps
-          echo "MOD_VERSION=$Version" >> $env:GITHUB_ENV
-          echo "MOD_ZIP_WITH_OFFSETS=builds\Show-Nicknames-In-TopBar.zip" >> $env:GITHUB_ENV
-          echo "MOD_ZIP_NO_OFFSETS=builds\Show-Nicknames-In-TopBar-No-Offsets.zip" >> $env:GITHUB_ENV
-
-      - name: Create GitHub Release
-        if: steps.git_check.outputs.changed == 'true'
-        uses: softprops/action-gh-release@v2
-        with:
-          files: builds/*.zip
-          fail_on_unmatched_files: true
-          tag_name: "v${{ github.run_number }}"
-          name: "Deadlock UI Mods ${{ env.MOD_VERSION }}"
-          target_commitish: main
-
-      - name: Install uploader dependencies
-        if: steps.git_check.outputs.nicknames == 'true'
-        shell: bash
-        run: pip install requests beautifulsoup4
-
-      - name: Upload to GameBanana
-        if: steps.git_check.outputs.nicknames == 'true'
-        shell: bash
+          pip install requests beautifulsoup4
+          python tools/run_source_checks.py
+      - name: Maintain one review PR
+        id: review
         env:
-          GB_USERNAME: ${{ secrets.GB_USERNAME }}
-          GB_PASSWORD: ${{ secrets.GB_PASSWORD }}
-        run: python tools/gb_upload.py "${{ env.MOD_ZIP_WITH_OFFSETS }}" "${{ env.MOD_ZIP_NO_OFFSETS }}" "${{ env.MOD_VERSION }}"
-
-      - name: Record published source hashes
-        if: steps.git_check.outputs.changed == 'true'
-        shell: pwsh
+          DRY_RUN: ${{ inputs.dry_run || false }}
         run: |
-          Copy-Item -LiteralPath builds/selection.json -Destination .github/mod-build-state.json
-          git add .github/mod-build-state.json
-          git diff --staged --quiet
-          if ($LASTEXITCODE -eq 1) {
-              git commit -m "chore: record published mod source hashes"
-              if ($LASTEXITCODE -ne 0) { throw "Build state commit failed" }
-              git push
-              if ($LASTEXITCODE -ne 0) { throw "Build state push failed" }
-          } elseif ($LASTEXITCODE -ne 0) { throw "Git diff failed" }
+          args=()
+          if [[ "$DRY_RUN" == 'true' ]]; then args+=(--dry-run); fi
+          python tools/prepare_native_review.py "${args[@]}"
+      - name: Notify UI Mods developer channel
+        id: notify
+        if: steps.review.outputs.pr_url != '' && steps.review.outputs.notified != 'true' && inputs.dry_run != true
+        continue-on-error: true
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_UI_MODS_WEBHOOK_URL }}
+          DISCORD_CHANNEL_ID: ${{ vars.DISCORD_UI_MODS_CHANNEL_ID }}
+          DISCORD_ROLE_ID: ${{ vars.DISCORD_UI_MODS_ROLE_ID }}
+        run: python tools/notify_mod_updates.py
+      - name: Acknowledge delivered notification
+        if: steps.notify.outputs.sent == 'true'
+        run: python tools/prepare_native_review.py --acknowledge

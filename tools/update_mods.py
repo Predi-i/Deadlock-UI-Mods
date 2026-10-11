@@ -1,5 +1,6 @@
 """Rebase native overrides on a pinned GameTracking checkout (source only)."""
 import argparse
+import hashlib
 import json
 import pathlib
 import re
@@ -29,8 +30,9 @@ def mod_name(path):
     return pathlib.PurePosixPath(path).parts[0]
 
 
-def plan(game, manifest, revision, allow_partial=False, accept_reviews=()):
+def plan(game, manifest, revision, allow_partial=False, accept_reviews=(), changes=None):
     proposals, errors, blobs = {}, {}, {}
+    observations = {}
 
     def read(ref, path):
         key = (ref, path)
@@ -48,12 +50,17 @@ def plan(game, manifest, revision, allow_partial=False, accept_reviews=()):
         target = ROOT / entry["path"]
         try:
             new = read(revision, entry["upstream"])
+            observed = hashlib.sha256(new.encode()).hexdigest() if new is not None else None
+            observations[entry["path"]] = observed
             if entry["mode"] == "retired":
                 if new is not None:
                     raise ValueError("retired native resource reappeared; review before re-enabling tracking")
                 continue
             if new is None:
                 raise ValueError("native resource was removed; retire or migrate this override explicitly")
+            old = read(entry["base"], entry["upstream"])
+            if old is None:
+                raise ValueError("native merge base is missing")
             local = target.read_text(encoding="utf-8-sig")
             if entry["mode"] == "copy":
                 content = new
@@ -69,9 +76,6 @@ def plan(game, manifest, revision, allow_partial=False, accept_reviews=()):
                     raise ValueError("CSS extension has no matching tracked native base import")
                 content = local
             elif entry["mode"] in ("merge", "owned"):
-                old = read(entry["base"], entry["upstream"])
-                if old is None:
-                    raise ValueError("native merge base is missing")
                 if entry["mode"] == "owned" and old != new and entry["path"] not in accept_reviews:
                     raise ValueError("fully owned override changed upstream; manual compatibility review required")
                 if old == new or entry["mode"] == "owned":
@@ -84,7 +88,7 @@ def plan(game, manifest, revision, allow_partial=False, accept_reviews=()):
                 raise ValueError(f"Unknown update mode: {entry['mode']}")
             if target.suffix == ".xml":
                 ET.fromstring(content)
-            proposals[entry["path"]] = (target, content, local)
+            proposals[entry["path"]] = (target, content, local, old != new)
         except (ValueError, ET.ParseError, subprocess.CalledProcessError, OSError) as error:
             errors[entry["path"]] = str(error)
     if errors and not allow_partial:
@@ -94,27 +98,47 @@ def plan(game, manifest, revision, allow_partial=False, accept_reviews=()):
     for entry in manifest["files"]:
         path = entry["path"]
         if path in errors:
-            entry["pending"] = {"revision": revision, "reason": errors[path]}
+            pending = {"revision": revision, "reason": errors[path], "resource": observations.get(path)}
+            previous = entry.get("pending", {})
+            if previous.get("resource") == pending["resource"] and previous.get("reason") == pending["reason"]:
+                pending["revision"] = previous.get("revision", revision)
+            entry["pending"] = pending
         else:
+            was_pending = "pending" in entry
             entry.pop("pending", None)
+        proposal = proposals.get(path)
+        native_changed = proposal is not None and proposal[3]
+        if changes is not None and (native_changed or path in errors or (proposal and proposal[1] != proposal[2])):
+            changes.append({"path": path, "upstream": entry["upstream"], "resource": observations.get(path),
+                            "status": "blocked" if mod_name(path) in blocked else "updated",
+                            "reason": errors.get(path, ""),
+                            "source_sha256": hashlib.sha256((proposal[1] if proposal and mod_name(path) not in blocked
+                                                             else (ROOT / path).read_text(encoding="utf-8-sig")
+                                                             if (ROOT / path).is_file() else "").encode()).hexdigest()})
         if mod_name(path) in blocked or entry["mode"] == "retired":
             continue
-        target, content, local = proposals[path]
+        target, content, local, native_changed = proposals[path]
         if content != local:
             updates[target] = content
-        entry["base"] = revision
+        if native_changed or was_pending:
+            entry["base"] = revision
     return updates
 
 
-def review(manifest, revision, output):
+def review(manifest, revision, output, changes=()):
     pending = [{"path": entry["path"], **entry["pending"]}
                for entry in manifest["files"] if "pending" in entry]
+    fingerprint = hashlib.sha256(json.dumps(list(changes), sort_keys=True).encode()).hexdigest()
     summary = {"revision": revision, "blocked_mods": sorted({mod_name(item["path"]) for item in pending}),
-               "pending": pending}
+               "pending": pending, "changes": list(changes), "changed": bool(changes), "fingerprint": fingerprint}
     output.mkdir(parents=True, exist_ok=True)
     (output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     lines = ["# Native resource review", "", f"Upstream: `{revision}`", "",
-             "Blocked mods are excluded from publication; their sources and merge bases are preserved.", "",
+             "Review source changes before merging. XML merges still require compilation and client checks.", "",
+             "Blocked mods keep their sources and merge bases; independent mods can update in this PR.", "",
+             "## Changed native resources", "", "| Mod source | Result |", "| --- | --- |"]
+    lines += [f"| `{item['path']}` | {item['status']} |" for item in changes]
+    lines += ["", "## Unresolved overrides", "",
              "| File | Reason |", "| --- | --- |"]
     lines += [f"| `{item['path']}` | {item['reason'].replace('|', '/').replace(chr(10), ' ')} |" for item in pending]
     if not pending:
@@ -138,17 +162,18 @@ def main():
     ).strip()
     original = MANIFEST.read_text(encoding="utf-8")
     manifest = json.loads(original)
+    changes = []
     try:
         unknown = set(args.accept_review) - {entry["path"] for entry in manifest["files"]}
         if unknown:
             raise ValueError("Unknown review paths: " + ", ".join(sorted(unknown)))
-        updates = plan(args.game_root, manifest, revision, args.allow_partial, args.accept_review)
+        updates = plan(args.game_root, manifest, revision, args.allow_partial, args.accept_review, changes)
     except ValueError as error:
         parser.exit(1, f"Update aborted; no files written:\n{error}\n")
     for file in updates:
         print(file.relative_to(ROOT).as_posix())
     print(f"{len(updates)} source files changed at {revision[:12]}")
-    summary = review(manifest, revision, args.output)
+    summary = review(manifest, revision, args.output, changes)
     if summary["blocked_mods"]:
         print("Manual review required: " + ", ".join(summary["blocked_mods"]))
     if args.check:
