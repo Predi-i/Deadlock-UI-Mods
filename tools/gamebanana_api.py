@@ -1,5 +1,6 @@
 """Publish reviewed GitHub archives and create a real GameBanana Add Update API record."""
 import argparse
+import ast
 import hashlib
 import json
 import logging
@@ -186,6 +187,31 @@ class Publisher(GameBananaUploader):
                                          "ids": [item.get("_idRow", item.get("_idFileRow")) for item in items if isinstance(item, dict)],
                                          "count": len(items)})
             print("File form structure: " + json.dumps({"row_inputs": file_inputs, "initializers": initializers}))
+            for script in soup.find_all("script"):
+                code = script.get_text()
+                if "_aFileDetails" not in code:
+                    continue
+                literals = r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\''
+                templates = []
+                def redact_literal(match):
+                    try:
+                        value = ast.literal_eval(match[0])
+                    except (ValueError, SyntaxError):
+                        return '"REDACTED"'
+                    if "<input" in value or "<textarea" in value:
+                        template = BeautifulSoup(value, "html.parser")
+                        templates.extend({"name": el.get("name"), "type": el.get("type", el.name),
+                                          "checkbox_value": el.get("value") if el.get("type") == "checkbox" else None}
+                                         for el in template.find_all(["input", "textarea"]))
+                    if value in ("checked", "change", "submit", "input", "true", "false") or (len(value) < 100 and re.search(r"_(?:idFileRow|bIsArchived|sVersion|sDescription|aFileDetails)", value)):
+                        return json.dumps(value)
+                    return '"REDACTED"'
+                masked = re.sub(literals, redact_literal, code)
+                pos = masked.find("var file")
+                print("File template fields: " + json.dumps(templates))
+                print("File initializer code: " + json.dumps(masked[max(0, pos-700):pos+2200]))
+                pos = masked.find("serializeArray")
+                print("File serialization code: " + json.dumps(masked[max(0,pos-1000):pos+1500]))
             raise RuntimeError("Cannot preserve GameBanana's complete file list; no archives uploaded. "
                                f"Form IDs: {sorted(previous_ids)}; active API IDs: {sorted(active_ids)}; "
                                f"all API IDs: {sorted(attached_ids)}")
