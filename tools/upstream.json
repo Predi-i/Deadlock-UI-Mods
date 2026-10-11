@@ -47,13 +47,15 @@
       "path": "Djinn-Mark-In-TopBar/panorama/layout/unit_status_overlay.xml",
       "upstream": "game/citadel/pak01_dir/panorama/layout/unit_status_overlay.xml",
       "base": "5d2ef889362e2a71321c2c3270d78a96131110bf",
-      "mode": "merge"
+      "mode": "retired",
+      "retired_at": "2d87734ca5663301b9cc293131f64d80cee73d38"
     },
     {
       "path": "Djinn-Mark-In-TopBar/panorama/layout/unit_status_overlay_old.xml",
       "upstream": "game/citadel/pak01_dir/panorama/layout/unit_status_overlay_old.xml",
       "base": "5d2ef889362e2a71321c2c3270d78a96131110bf",
-      "mode": "merge"
+      "mode": "retired",
+      "retired_at": "2d87734ca5663301b9cc293131f64d80cee73d38"
     },
     {
       "path": "DL-Arcade-Cloudflare/panorama/layout/base_hud.xml",
@@ -167,13 +169,15 @@
       "path": "Show-Nicknames-Above-Heroes/panorama/styles/base/unit_status.css",
       "upstream": "game/citadel/pak01_dir/panorama/styles/unit_status.css",
       "base": "5d2ef889362e2a71321c2c3270d78a96131110bf",
-      "mode": "copy"
+      "mode": "retired",
+      "retired_at": "2d87734ca5663301b9cc293131f64d80cee73d38"
     },
     {
       "path": "Show-Nicknames-Above-Heroes/panorama/styles/base/unit_status_old.css",
       "upstream": "game/citadel/pak01_dir/panorama/styles/unit_status_old.css",
       "base": "5d2ef889362e2a71321c2c3270d78a96131110bf",
-      "mode": "copy"
+      "mode": "retired",
+      "retired_at": "2d87734ca5663301b9cc293131f64d80cee73d38"
     },
     {
       "path": "Show-Nicknames-Above-Heroes/panorama/styles/base/unit_status_v2.css",
@@ -251,31 +255,33 @@
       "path": "Show-Nicknames-Above-Heroes/panorama/styles/unit_status.css",
       "upstream": "game/citadel/pak01_dir/panorama/styles/unit_status.css",
       "base": "5d2ef889362e2a71321c2c3270d78a96131110bf",
-      "mode": "owned"
+      "mode": "retired",
+      "retired_at": "2d87734ca5663301b9cc293131f64d80cee73d38"
     },
     {
       "path": "Show-Nicknames-Above-Heroes/panorama/styles/unit_status_old.css",
       "upstream": "game/citadel/pak01_dir/panorama/styles/unit_status_old.css",
       "base": "5d2ef889362e2a71321c2c3270d78a96131110bf",
-      "mode": "owned"
+      "mode": "retired",
+      "retired_at": "2d87734ca5663301b9cc293131f64d80cee73d38"
     },
     {
       "path": "Show-Nicknames-Above-Heroes/panorama/styles/unit_status_v2.css",
       "upstream": "game/citadel/pak01_dir/panorama/styles/unit_status_v2.css",
       "base": "5d2ef889362e2a71321c2c3270d78a96131110bf",
-      "mode": "owned"
+      "mode": "extension"
     },
     {
       "path": "Show-Nicknames-In-TopBar/panorama/styles/citadel_hud_top_bar.css",
       "upstream": "game/citadel/pak01_dir/panorama/styles/citadel_hud_top_bar.css",
       "base": "5d2ef889362e2a71321c2c3270d78a96131110bf",
-      "mode": "owned"
+      "mode": "extension"
     },
     {
       "path": "Show-Nicknames-In-TopBar-No-Offsets/panorama/styles/citadel_hud_top_bar.css",
       "upstream": "game/citadel/pak01_dir/panorama/styles/citadel_hud_top_bar.css",
       "base": "5d2ef889362e2a71321c2c3270d78a96131110bf",
-      "mode": "owned"
+      "mode": "extension"
     },
     {
       "path": "HUD-Dumper/panorama/layout/base_hud.xml",

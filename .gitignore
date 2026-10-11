@@ -1,5 +1,5 @@
 # Staging trees produced by tools/build_mod_strip_comments.ps1. Each is a throwaway copy of a
-# mod folder with comments stripped, handed to build_mod.ps1 and then deleted — it only lingers
+# mod folder with comments stripped, handed to build_mod.ps1 and then deleted вЂ” it only lingers
 # after -DryRun or -KeepStaging, and it must never be committed.
 *-stripped/
 
@@ -12,3 +12,6 @@ __pycache__/
 
 # Local Cloudflare deployment metadata.
 .wrangler/
+
+# Source-only native compatibility reports.
+.upstream-review/

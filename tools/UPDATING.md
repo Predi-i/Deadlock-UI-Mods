@@ -11,13 +11,31 @@ python tools/update_mods.py --game-root <GameTracking-checkout>
 python tools/sync_hud_lookup.py
 ```
 
-The updater reads committed upstream blobs, normalizes the Viewer's compiled
-reference notation, and uses three-way merging for native overrides. Base CSS
-copies are refreshed verbatim. An upstream change to a fully owned replacement
-requires manual compatibility review. Overlapping edits, missing upstream files
-and invalid XML abort the plan before any file is written. Resolve against the
-current native resource, preserve the mod additions, and advance that file's
-`base` to the reviewed upstream commit. Register new native overrides explicitly.
+The updater reads committed upstream blobs and normalizes the Viewer's compiled
+reference notation. XML uses three-way text merging plus structural checks for
+native/mod edits, ambiguous anchors, moved/deleted nodes and changed mod insertion
+contexts. Clean source merges still require client verification. Base CSS copies
+are refreshed verbatim. CSS `extension` entries retain their local rules and
+inherit updates through a verified, separately tracked native base import.
+Changes to fully `owned` replacements require manual review; acknowledge a
+reviewed file with `--revision <reviewed-commit> --accept-review <mod-path>`.
+
+The default mode aborts the complete plan on conflicts, missing resources or
+invalid XML. CI uses `--allow-partial`: an unresolved file blocks all source
+writes and merge-base advancement for its mod, while independent mods proceed.
+Pending reasons/revisions stay in the manifest and a source-only report under
+`.upstream-review/`. Repeated runs cannot silently accept the unresolved base.
+Build selection excludes blocked mods, including both topbar nickname variants
+when either is blocked, and retains their last published hashes for retries.
+Resolve against the current native resource and preserve the mod additions.
+Register new native overrides explicitly.
+
+The removed legacy `unit_status_overlay`/`unit_status_overlay_old` layouts and
+`unit_status`/`unit_status_old` CSS are explicitly `retired` tracking entries.
+Their source files remain for legacy compatibility. Retirement does not prove
+C++ reachability or authorize deleting packed resources. They are no longer
+requested as current native files; reappearance blocks the owning mod for review.
+Current v2 resources remain tracked.
 
 The Mod Updater workflow performs source synchronization for all registered mods.
 Build selection uses hashes of each mod's Panorama assets compared with the last

@@ -24,14 +24,25 @@ def source_hash(mod):
     return digest.hexdigest()
 
 
-def select(previous, force=False):
+def select(previous, force=False, blocked=()):
     hashes = {mod.name: source_hash(mod) for mod in sorted(ROOT.iterdir())
               if mod.is_dir() and (mod / "panorama").is_dir()}
     mods = [mod for mod, value in hashes.items() if force or previous.get(mod) != value]
     nicknames = bool(NICKNAMES.intersection(mods))
     if nicknames:
         mods = sorted(set(mods) | NICKNAMES)
-    return {"hashes": hashes, "mods": mods, "nicknames": nicknames}
+    excluded = set(blocked)
+    if NICKNAMES.intersection(excluded):
+        excluded.update(NICKNAMES)
+    mods = [mod for mod in mods if mod not in excluded]
+    # Preserve the last published checkpoint for each excluded mod.
+    for mod in excluded:
+        if mod in previous:
+            hashes[mod] = previous[mod]
+        else:
+            hashes.pop(mod, None)
+    nicknames = bool(NICKNAMES.intersection(mods))
+    return {"hashes": hashes, "mods": mods, "nicknames": nicknames, "blocked_mods": sorted(excluded)}
 
 
 def main():
@@ -41,7 +52,9 @@ def main():
     args = parser.parse_args()
     state = ROOT / ".github/mod-build-state.json"
     previous = json.loads(state.read_text())["hashes"] if state.exists() else {}
-    result = select(previous, args.all == "true")
+    manifest = json.loads((ROOT / "tools/upstream.json").read_text(encoding="utf-8"))
+    blocked = {pathlib.PurePosixPath(entry["path"]).parts[0] for entry in manifest["files"] if "pending" in entry}
+    result = select(previous, args.all == "true", blocked)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     print("Builds: " + ", ".join(result["mods"]))

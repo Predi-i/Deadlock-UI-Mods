@@ -40,10 +40,20 @@ jobs:
       - name: Update native overrides
         shell: pwsh
         run: |
-          python tools/update_mods.py --game-root upstream
+          python tools/update_mods.py --game-root upstream --allow-partial
           if ($LASTEXITCODE -ne 0) { throw "Native override update failed" }
           python tools/sync_hud_lookup.py
           if ($LASTEXITCODE -ne 0) { throw "HUD helper sync failed" }
+
+      - name: Keep native compatibility review
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-update-report
+          path: |
+            .upstream-review/report.md
+            .upstream-review/summary.json
+          include-hidden-files: true
+          if-no-files-found: error
 
       - name: Validate source updates
         shell: pwsh
