@@ -380,7 +380,8 @@ class GameBananaUploader:
         return result
 
     def post_edit(self, uploads: list[dict], version: str,
-                  files_json_name: str, image_json_name: str, preserve_metadata=False):
+                  files_json_name: str, image_json_name: str, preserve_metadata=False,
+                  archive_previous=False, keep_file_ids=()):
         html = self._get_edit_page()
         fields = self._preserved_form_fields(html, files_json_name, image_json_name) if preserve_metadata else self._scrape_form(html)
         soup = BeautifulSoup(html, "html.parser")
@@ -421,6 +422,15 @@ class GameBananaUploader:
                     raise RuntimeError("GameBanana file-list schema changed; no edit submitted") from None
                 if not isinstance(previous_files, list) or any(not isinstance(item, list) for item in previous_files):
                     raise RuntimeError("GameBanana file-list schema changed; no edit submitted")
+                if archive_previous:
+                    keep_ids = {str(value) for value in keep_file_ids} | {str(upload["file_row_id"]) for upload in uploads}
+                    for entry in previous_files:
+                        ids = [field.get("value") for field in entry if isinstance(field, dict) and field.get("name") == "_idFileRow"]
+                        if len(ids) != 1:
+                            raise RuntimeError("GameBanana existing file ID changed; no edit submitted")
+                        if str(ids[0]) not in keep_ids:
+                            entry[:] = [field for field in entry if field.get("name") != "_bIsArchived"]
+                            entry.append({"name": "_bIsArchived", "value": "1"})
                 file_entries = previous_files + file_entries
 
         ticket_ids = self._find_ticket_ids(html)

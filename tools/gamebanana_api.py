@@ -170,6 +170,8 @@ class Publisher(GameBananaUploader):
     def register_files(self, archives, version, allow_upload=True):
         found = self.attached_files(archives, version)
         if found:
+            if not self.file_state_ready(found):
+                raise RuntimeError("Uploaded files exist but previous files remain active; reconcile before adding an update")
             return found
         if not allow_upload:
             raise RuntimeError("Previously submitted Add Update files are not acknowledged; reconcile before uploading again")
@@ -177,14 +179,14 @@ class Publisher(GameBananaUploader):
             raise RuntimeError("GameBanana is still analysing files for this version; wait before retrying. No duplicate archives uploaded")
         sdpid, files_field, image_field = self.verify_edit_form()
         uploads = [self.upload_zip(archive, sdpid) for archive in archives]
-        self.post_edit(uploads, version, files_field, image_field, preserve_metadata=True)
+        self.post_edit(uploads, version, files_field, image_field, preserve_metadata=True, archive_previous=True)
         for attempt in range(4):
             after = self.metadata()
             for key in ("_sText", "_aCredits", "_aPreviewMedia", "_sLicense"):
                 if after.get(key) != self.original_metadata.get(key):
                     raise RuntimeError("GameBanana changed submission metadata; inspect it before creating an update")
             found = self.attached_files(archives, version)
-            if found and after.get("_sVersion") == version:
+            if found and after.get("_sVersion") == version and self.file_state_ready(found):
                 return found
             if attempt < 3:
                 time.sleep(10)
@@ -223,6 +225,7 @@ class Publisher(GameBananaUploader):
             raise RuntimeError("Cannot preserve GameBanana's complete file list; no archives uploaded. "
                                f"Form IDs: {sorted(previous_ids)}; active API IDs: {sorted(active_ids)}; "
                                f"all API IDs: {sorted(attached_ids)}")
+        self.original_file_ids = attached_ids
         preview = self.original_metadata.get("_aPreviewMedia") or {}
         images = preview.get("_aImages", []) if isinstance(preview, dict) else preview
         if images:
@@ -234,7 +237,13 @@ class Publisher(GameBananaUploader):
                 raise RuntimeError("GameBanana image form is incomplete; no archives uploaded")
         return sdpid, files_field, image_field
 
-    def find_update(self, version, file_ids):
+    def file_state_ready(self, file_ids):
+        records = self.files()
+        ids = {str(file["_idRow"]) for file in records}
+        active = {file["_idRow"] for file in records if not file.get("_bIsArchived")}
+        return active == set(file_ids) and getattr(self, "original_file_ids", set()).issubset(ids)
+
+    def find_update_record(self, version, file_ids):
         page = 1
         while True:
             data = self.api(f"Mod/{self.mod_id}/Updates?_nPage={page}&_nPerpage=50", update=True)
@@ -242,11 +251,54 @@ class Publisher(GameBananaUploader):
                 if record.get("_sVersion") == version:
                     ids = {file["_idRow"] for file in record.get("_aFiles", [])}
                     if ids == set(file_ids):
-                        return record["_idRow"]
+                        return record
                     raise RuntimeError("This GameBanana version already has a different update; reconcile it first")
             if data["_aMetadata"].get("_bIsComplete", True):
                 return None
             page += 1
+
+    def find_update(self, version, file_ids):
+        record = self.find_update_record(version, file_ids)
+        return record["_idRow"] if record else None
+
+    def repair_publication(self, receipt, dry_run=False):
+        """Correct an acknowledged publication without uploading or adding another update."""
+        version, file_ids = receipt["version"], receipt["file_ids"]
+        authenticate_publisher(self)
+        if self.metadata().get("_sVersion") != version:
+            raise RuntimeError("A newer GameBanana version exists; no old publication repaired")
+        record = self.find_update_record(version, file_ids)
+        if not record or record["_idRow"] != receipt["update_id"]:
+            raise RuntimeError("Published update does not match its receipt; no repair submitted")
+        files = self.files()
+        if not set(file_ids).issubset({file["_idRow"] for file in files if not file.get("_bIsArchived")}):
+            raise RuntimeError("Published files are missing or archived; no repair submitted")
+        old_ids = [file["_idRow"] for file in files if not file.get("_bIsArchived") and file["_idRow"] not in file_ids]
+        duplicate = record.get("_sText") == NOTE
+        _, files_field, image_field = self.verify_edit_form()
+        print(f"Published version {version}: archive previous files {old_ids}; remove duplicate blurb: {duplicate}")
+        if dry_run:
+            print("Preview complete: no files, updates or versions changed.")
+            return
+        if old_ids:
+            self.post_edit([], version, files_field, image_field, preserve_metadata=True,
+                           archive_previous=True, keep_file_ids=file_ids)
+        if duplicate:
+            payload = {"_sName": record["_sName"], "_sVersion": version, "_sText": "",
+                       "_aChangeLog": record["_aChangeLog"], "_aFileRowIds": file_ids,
+                       "_bIsSignificant": record["_bIsSignificant"]}
+            self.api(f"Update/{record['_idRow']}", "PATCH", payload, update=True)
+        for attempt in range(4):
+            current = self.find_update_record(version, file_ids)
+            after = self.metadata()
+            if any(after.get(key) != self.original_metadata.get(key) for key in ("_sText", "_aCredits", "_aPreviewMedia", "_sLicense")):
+                raise RuntimeError("Submission metadata changed during repair; inspect it")
+            if current and current["_idRow"] == receipt["update_id"] and current.get("_aChangeLog") == record.get("_aChangeLog") and (not duplicate or not current.get("_sText")) and after.get("_sVersion") == version and self.file_state_ready(file_ids):
+                print(f"Existing GameBanana update {receipt['update_id']} corrected; version {version}; no new upload or update.")
+                return
+            if attempt < 3:
+                time.sleep(10)
+        raise RuntimeError("GameBanana repair acknowledgement pending; inspect before retrying")
 
     def wait_update(self, version, file_ids):
         for attempt in range(4):
@@ -262,7 +314,7 @@ class Publisher(GameBananaUploader):
         if existing:
             return existing
         payload = {"_sName": "Game compatibility update", "_sVersion": version,
-                   "_sText": NOTE, "_aChangeLog": [{"text": NOTE, "cat": "Improvement"}],
+                   "_sText": "", "_aChangeLog": [{"text": NOTE, "cat": "Improvement"}],
                    "_aFileRowIds": file_ids, "_bIsSignificant": False}
         data = self.api(f"Mod/{self.mod_id}/Update", "POST", payload, update=True)
         update_id = data.get("_idRow") if isinstance(data, dict) else None
@@ -290,6 +342,17 @@ def finish_update(publisher, repository, release, reservation, version, file_ids
     return publisher.add_update(version, file_ids)
 
 
+def authenticate_publisher(publisher):
+    if not publisher.username or not publisher.password:
+        raise ValueError("Configure GB_USERNAME and GB_PASSWORD in GitHub Secrets")
+    publisher.authenticate()
+    if not publisher.session.headers.get("Authorization") and not publisher.session.cookies:
+        raise RuntimeError("GameBanana authentication was not acknowledged")
+    access = publisher.api(f"Mod/{publisher.mod_id}/Config", update=True)
+    if not access.get("_aAccess", {}).get("Update_Add"):
+        raise RuntimeError("Authenticated account cannot add updates to this GameBanana submission")
+
+
 def publish(repository, mod, override="", dry_run=False):
     if mod not in CATALOG or not CATALOG[mod]["gamebanana_id"]:
         raise ValueError("This mod has no verified GameBanana submission in the catalog")
@@ -300,11 +363,11 @@ def publish(repository, mod, override="", dry_run=False):
     if not release or release["hashes"] != hashes(mod):
         raise ValueError("Wait for a successful compiled release matching current main sources")
     done = download_record(repository, release, "gamebanana-published.json")
-    if done and done.get("hashes") == release["hashes"] and done.get("update_id"):
-        print("This release is already published to GameBanana; no new update/version created.")
-        return
     logger.setLevel(logging.WARNING)
     publisher = Publisher(os.environ.get("GB_USERNAME", ""), os.environ.get("GB_PASSWORD", ""), CATALOG[mod]["gamebanana_id"])
+    if done and done.get("hashes") == release["hashes"] and done.get("update_id"):
+        publisher.repair_publication(done, dry_run)
+        return
     metadata = publisher.metadata()
     reservation = download_record(repository, release, "gamebanana-progress.json")
     if reservation and reservation.get("hashes") != release["hashes"]:
@@ -319,14 +382,7 @@ def publish(repository, mod, override="", dry_run=False):
         folder = pathlib.Path(folder)
         gh("release", "download", release["tag"], "--repo", repository, "--pattern", "*.zip", "--pattern", "release.json", "--dir", str(folder))
         archives = verify_archives(mod, release, folder)
-        if not publisher.username or not publisher.password:
-            raise ValueError("Configure GB_USERNAME and GB_PASSWORD in GitHub Secrets")
-        publisher.authenticate()
-        if not publisher.session.headers.get("Authorization") and not publisher.session.cookies:
-            raise RuntimeError("GameBanana authentication was not acknowledged")
-        access = publisher.api(f"Mod/{publisher.mod_id}/Config", update=True)
-        if not access.get("_aAccess", {}).get("Update_Add"):
-            raise RuntimeError("Authenticated account cannot add updates to this GameBanana submission")
+        authenticate_publisher(publisher)
         if dry_run:
             publisher.verify_edit_form()
             print("Preview complete: release checksums, authentication, permissions and edit form verified; "

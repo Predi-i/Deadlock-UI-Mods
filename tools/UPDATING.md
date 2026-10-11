@@ -113,15 +113,17 @@ fields, images and license; the current form schema is checked before uploading.
 Existing file and image rows are initialized by the site's inline JavaScript;
 their hidden HTML fields are empty until browser submission. The publisher reads
 these static JSON initializers without executing JavaScript, restores the form's
-serialization, and preserves all active/archived files, file descriptions,
-archive flags and image captions before appending the new archives. It rejects
+serialization, and preserves all historical files, file descriptions and image
+captions. Previous files are archived when the new archives are registered;
+only the new version's supported variants remain active. It rejects
 unknown template schemas and checks the full file-ID list against the read API.
 The GB Add Update itself uses the JSON API route and fields from the site's
 [UpsertUpdate component](https://webfiles.gamebanana.com/StrangeBerry/Components/UpsertUpdate.js),
 with the API base used by its
 [client helper](https://webfiles.gamebanana.com/StrangeBerry/Static/js/common.js).
 It associates the uploaded files, sets the numeric update version and writes
-`Updated to the game's latest update.` as its notes/changelog. Preview verifies
+`Updated to the game's latest update.` once, as an Improvement changelog entry;
+the optional blurb is empty. Preview verifies
 authentication, permission and the live form before publication. Confirm the
 file/version and Add Update acknowledgements in the authorized publication run;
 offline tests do not prove that private form/API contracts remain available.
@@ -144,6 +146,12 @@ inspect its GB state before overriding a reserved version. The successful
 `gamebanana-published.json` checkpoint is recorded only after file/version and
 Add Update acknowledgements. These checkpoints live as small GitHub release
 assets; workflows do not commit build/publication bookkeeping into `main`.
+Rerunning an already acknowledged release checks its current publication and
+can archive superseded files or clear the old duplicated automated blurb in
+place. It keeps the version, existing update ID and current file variants, and
+does not upload archives or create another Add Update. Preview shows the proposed
+correction without editing. Repairs stop if a newer GB version exists or the
+stored receipt does not match the live update/files.
 
 ### Repository setup
 

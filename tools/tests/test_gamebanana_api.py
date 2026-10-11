@@ -11,6 +11,77 @@ import gamebanana_api as api
 
 
 class GameBananaApiTests(unittest.TestCase):
+    def test_new_publication_archives_previous_files_and_keeps_new_variant_active(self):
+        publisher = api.Publisher('fixture', 'fixture', 670840)
+        response = MagicMock(url='https://gamebanana.com/mods/670840', history=[], headers={}, text='ok', status_code=200)
+        with patch.object(publisher, '_get_edit_page', return_value=self.dynamic_form()), patch.object(publisher, '_find_ownership_fields', return_value=[]), patch.object(publisher, '_request', return_value=response) as request:
+            publisher.post_edit([{'file_row_id': 100, 'upload_receipt_id': 'fixture'}, {'file_row_id': 101, 'upload_receipt_id': 'fixture2'}], '1.5', 'files', 'images', preserve_metadata=True, archive_previous=True)
+        files = [dict((field['name'], field['value']) for field in entry) for entry in json.loads(dict(request.call_args.kwargs['data'])['files'])]
+        self.assertEqual([entry['_idFileRow'] for entry in files], ['1836888', '1769992', '100', '101'])
+        self.assertEqual([entry.get('_bIsArchived') for entry in files], ['1', '1', None, None])
+        self.assertEqual(files[0]['_sVersion'], '1.4')
+        self.assertEqual(files[0]['_sDescription'], 'Current "file"')
+
+    def test_repair_keeps_current_file_active_without_uploading(self):
+        publisher = api.Publisher('fixture', 'fixture', 670840)
+        response = MagicMock(url='https://gamebanana.com/mods/670840', history=[], headers={}, text='ok', status_code=200)
+        with patch.object(publisher, '_get_edit_page', return_value=self.dynamic_form()), patch.object(publisher, '_find_ownership_fields', return_value=[]), patch.object(publisher, '_request', return_value=response) as request:
+            publisher.post_edit([], '1.4', 'files', 'images', preserve_metadata=True, archive_previous=True, keep_file_ids=[1836888])
+        files = [dict((field['name'], field['value']) for field in entry) for entry in json.loads(dict(request.call_args.kwargs['data'])['files'])]
+        self.assertEqual(len(files), 2)
+        self.assertNotIn('_bIsArchived', files[0])
+        self.assertEqual(files[1]['_bIsArchived'], '1')
+
+    def test_existing_publication_is_patched_without_new_version_upload_or_add_update(self):
+        publisher = api.Publisher('fixture', 'fixture', 670840)
+        receipt = {'version': '1.5', 'file_ids': [100, 101], 'update_id': 42}
+        record = {'_idRow': 42, '_sName': 'Original title', '_sVersion': '1.5', '_sText': api.NOTE, '_aChangeLog': [{'text': api.NOTE, 'cat': 'Improvement'}], '_bIsSignificant': False}
+        publisher.original_metadata = {'_sVersion': '1.5'}
+        with patch.object(api, 'authenticate_publisher'), patch.object(publisher, 'metadata', return_value=publisher.original_metadata), patch.object(publisher, 'find_update_record', side_effect=[record, {**record, '_sText': ''}]), patch.object(publisher, 'files', return_value=[{'_idRow': 10}, {'_idRow': 100}, {'_idRow': 101}]), patch.object(publisher, 'verify_edit_form', return_value=('receipt', 'files', 'images')), patch.object(publisher, 'file_state_ready', return_value=True), patch.object(publisher, 'post_edit') as edit, patch.object(publisher, 'api') as request, patch.object(publisher, 'upload_zip') as upload, patch.object(publisher, 'add_update') as add:
+            publisher.repair_publication(receipt)
+        edit.assert_called_once_with([], '1.5', 'files', 'images', preserve_metadata=True, archive_previous=True, keep_file_ids=[100, 101])
+        route, method, payload = request.call_args.args
+        self.assertEqual((route, method), ('Update/42', 'PATCH'))
+        self.assertEqual(payload['_sText'], '')
+        self.assertEqual(payload['_aChangeLog'], record['_aChangeLog'])
+        self.assertEqual(payload['_aFileRowIds'], [100, 101])
+        self.assertEqual(payload['_sVersion'], '1.5')
+        upload.assert_not_called()
+        add.assert_not_called()
+
+    def test_preview_of_existing_publication_cannot_archive_files_or_patch_update(self):
+        publisher = api.Publisher('fixture', 'fixture', 670840)
+        record = {'_idRow': 42, '_sText': api.NOTE}
+        with patch.object(api, 'authenticate_publisher'), patch.object(publisher, 'metadata', return_value={'_sVersion': '1.5'}), patch.object(publisher, 'find_update_record', return_value=record), patch.object(publisher, 'files', return_value=[{'_idRow': 10}, {'_idRow': 100}]), patch.object(publisher, 'verify_edit_form', return_value=('receipt', 'files', 'images')), patch.object(publisher, 'post_edit') as edit, patch.object(publisher, 'api') as request:
+            publisher.repair_publication({'version': '1.5', 'file_ids': [100], 'update_id': 42}, dry_run=True)
+        edit.assert_not_called()
+        request.assert_not_called()
+
+    def test_repair_cannot_archive_files_from_a_newer_external_publication(self):
+        publisher = api.Publisher('fixture', 'fixture', 670840)
+        with patch.object(api, 'authenticate_publisher'), patch.object(publisher, 'metadata', return_value={'_sVersion': '1.6'}), patch.object(publisher, 'post_edit') as edit, patch.object(publisher, 'api') as request:
+            with self.assertRaisesRegex(RuntimeError, 'newer'):
+                publisher.repair_publication({'version': '1.5', 'file_ids': [100], 'update_id': 42})
+        edit.assert_not_called()
+        request.assert_not_called()
+
+    def test_repair_repeated_after_success_performs_no_mutations(self):
+        publisher = api.Publisher('fixture', 'fixture', 670840)
+        publisher.original_metadata = {'_sVersion': '1.5'}
+        record = {'_idRow': 42, '_sText': '', '_aChangeLog': [{'text': api.NOTE, 'cat': 'Improvement'}]}
+        with patch.object(api, 'authenticate_publisher'), patch.object(publisher, 'metadata', return_value=publisher.original_metadata), patch.object(publisher, 'find_update_record', return_value=record), patch.object(publisher, 'files', return_value=[{'_idRow': 100}, {'_idRow': 10, '_bIsArchived': True}]), patch.object(publisher, 'verify_edit_form', return_value=('receipt', 'files', 'images')), patch.object(publisher, 'file_state_ready', return_value=True), patch.object(publisher, 'post_edit') as edit, patch.object(publisher, 'api') as request:
+            publisher.repair_publication({'version': '1.5', 'file_ids': [100], 'update_id': 42})
+        edit.assert_not_called()
+        request.assert_not_called()
+
+    def test_attached_file_retry_cannot_add_update_while_previous_files_are_active(self):
+        publisher = api.Publisher('fixture', 'fixture', 670840)
+        with patch.object(publisher, 'attached_files', return_value=[100]), patch.object(publisher, 'files', return_value=[{'_idRow': 100}, {'_idRow': 10}]), patch.object(publisher, 'upload_zip') as upload, patch.object(publisher, 'post_edit') as edit:
+            with self.assertRaisesRegex(RuntimeError, 'previous files remain active'):
+                publisher.register_files([], '1.5')
+        upload.assert_not_called()
+        edit.assert_not_called()
+
     def test_read_api_bypasses_stale_cdn_responses_without_changing_mutation_routes(self):
         publisher = api.Publisher('fixture', 'fixture', 670840)
         response = MagicMock()
@@ -110,7 +181,8 @@ class GameBananaApiTests(unittest.TestCase):
         self.assertEqual(route, 'Mod/656390/Update')
         self.assertEqual(method, 'POST')
         self.assertEqual(payload['_sVersion'], '1.1')
-        self.assertEqual(payload['_sText'], "Updated to the game's latest update.")
+        self.assertEqual(payload['_sText'], '')
+        self.assertEqual(payload['_aChangeLog'], [{'text': api.NOTE, 'cat': 'Improvement'}])
         self.assertEqual(payload['_aFileRowIds'], [100, 101])
         self.assertTrue(request.call_args.kwargs['update'])
 
@@ -185,7 +257,7 @@ class GameBananaApiTests(unittest.TestCase):
         previous = [[{'name': '_idFileRow', 'value': '10'}]]
         source = ('<form><section id="Version"><input name="version" value="1.0"></section>'
                   '<input name="files" value="' + html.escape(json.dumps(previous), quote=True) + '"></form>')
-        with patch.object(publisher, 'attached_files', side_effect=[None, None, [100]]), patch.object(publisher, 'metadata', side_effect=[{'_sVersion': '1.0'}, {'_sVersion': '1.0'}, {'_sVersion': '1.1'}]), patch.object(publisher, '_get_edit_page', return_value=source), patch.object(publisher, '_get_upload_fields', return_value=('receipt', 'files', 'images')), patch.object(publisher, '_find_ownership_fields', return_value=[]), patch.object(publisher, 'files', return_value=[{'_idRow': 10}]), patch.object(publisher, 'upload_zip', return_value={'file_row_id': 100}) as upload, patch.object(publisher, 'post_edit') as edit, patch.object(api.time, 'sleep') as sleep:
+        with patch.object(publisher, 'attached_files', side_effect=[None, None, [100]]), patch.object(publisher, 'metadata', side_effect=[{'_sVersion': '1.0'}, {'_sVersion': '1.0'}, {'_sVersion': '1.1'}]), patch.object(publisher, '_get_edit_page', return_value=source), patch.object(publisher, '_get_upload_fields', return_value=('receipt', 'files', 'images')), patch.object(publisher, '_find_ownership_fields', return_value=[]), patch.object(publisher, 'files', side_effect=[[{'_idRow': 10}], [{'_idRow': 10}], [{'_idRow': 10, '_bIsArchived': True}, {'_idRow': 100, '_bIsArchived': False}]]), patch.object(publisher, 'upload_zip', return_value={'file_row_id': 100}) as upload, patch.object(publisher, 'post_edit') as edit, patch.object(api.time, 'sleep') as sleep:
             self.assertEqual(publisher.register_files([pathlib.Path('fixture.zip')], '1.1'), [100])
         upload.assert_called_once()
         edit.assert_called_once()
