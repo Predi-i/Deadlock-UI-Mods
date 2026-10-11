@@ -16,7 +16,6 @@ on:
           - Old-Minimap-Player-Icon
           - Old-Progress-Bars
           - Parry-Cooldown
-          - Show-Nicknames-Above-Heroes
           - Show-Nicknames-In-TopBar
           - Smaller-Commend-Box
       version:

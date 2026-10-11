@@ -63,7 +63,9 @@ def notify(repository, queue):
     if batch:
         chunks.append(batch)
     for batch in chunks:
-        content = ("Compiled UI Mods need a GameBanana update.\nChoose a mod in the Publish GameBanana update action:\n"
+        content = ("Compiled UI Mods are ready for GameBanana publication.\n"
+                   "Publication of these releases is not confirmed. Check existing GB downloads before publishing.\n"
+                   "Choose a mod in the Publish GameBanana update action:\n"
                    f"https://github.com/{repository}/actions/workflows/gamebanana-update.yml" +
                    "".join(line for _, line in batch))
         if not send(content):
@@ -84,7 +86,7 @@ def main():
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(queue, indent=2) + "\n", encoding="utf-8")
     for item in queue["ready"]:
-        print("GameBanana update ready: " + item["mod"])
+        print("GameBanana publication unconfirmed; compiled release ready: " + item["mod"])
     for item in queue["waiting"]:
         print(item["mod"] + ": " + item["reason"])
     if args.notify:

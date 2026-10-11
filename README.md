@@ -21,7 +21,7 @@ Native resource synchronization and offline HUD lookup checks are documented in
 | `Commend-Everyone-Button` | [Commend Everyone Button](https://gamebanana.com/mods/670840) | Adds a button that commends all eligible players after a match. |
 | `Old-Progress-Bars` | [Old Abilities Progress Bars](https://gamebanana.com/mods/658996) | Restores the classic ability-progress UI. |
 | `Show-Nicknames-In-TopBar` | [Show Nicknames in Top Bar](https://gamebanana.com/mods/656390) | Shows player nicknames in the top HUD bar. |
-| `Show-Nicknames-Above-Heroes` | [Show Nicknames Above Heroes](https://gamebanana.com/mods/656352) | Shows player nicknames above heroes; useful for broadcasts and spectators. |
+| `Show-Nicknames-Above-Heroes` | [Show Nicknames Above Heroes](https://gamebanana.com/mods/656352) | Obsolete; retained as source history and excluded from release and GameBanana publication automation. |
 | `No-Incoming-Damage` | [Remove Incoming Damage From HUD](https://gamebanana.com/mods/648923) | Removes incoming-damage notifications from the HUD. |
 | `Smaller-Commend-Box` | [Smaller Commend Notification](https://gamebanana.com/mods/648719) | Reduces the commend notification footprint. |
 | `Bridge-Buff-Reminder` | [Bridge Buff Reminder](https://gamebanana.com/mods/645941) | Alerts shortly before the bridge buff spawns. |

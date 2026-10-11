@@ -66,6 +66,8 @@ Panorama sources. Mods without a verified GameBanana ID can have GitHub releases
 but are not offered in the GameBanana dropdown. Add native overrides to
 `upstream.json`; add a new public mod or verified GB submission to the release
 catalog and update the workflow dropdown in the same change.
+Obsolete Show Nicknames Above Heroes is excluded from the public release catalog
+and GameBanana publication dropdown. Existing source and release history remain.
 
 Each changed catalog mod has its own build job and immutable release tag
 `mods/<mod>/<source-commit>`. The tag identifies source, not a new mod version.
@@ -85,7 +87,8 @@ checkpoints. The first run builds the catalog because no such checkpoints exist.
 
 `gamebanana-status.yml` checks successful releases after the release workflow and
 hourly. It reports mods awaiting matching compiled releases or native fixes, and
-notifies Discord of compiled mods needing GB publication. A notification receipt
+notifies Discord of compiled releases without confirmed GB publication, asking
+the maintainer to compare existing GB downloads before publishing. A notification receipt
 is stored on that mod's release after acknowledged delivery, so unchanged pending
 publications do not ping every hour. An initial missing GB checkpoint means the
 release has not been published through this pipeline; it does not prove that all
