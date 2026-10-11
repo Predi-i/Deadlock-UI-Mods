@@ -172,8 +172,20 @@ class Publisher(GameBananaUploader):
             for field in soup.select('[name="_idFileRow"]'):
                 file_inputs.append({"id": field.get("value") if str(field.get("value", "")).isdigit() else "not numeric",
                                     "parents": [re.sub(r"[a-f0-9]{32}", "HASH", parent.get("id", "") + " " + " ".join(parent.get("class", []))) for parent in list(field.parents)[:4]]})
-            scripts = [script.get("src", "").split("?")[0] for script in soup.find_all("script", src=True)]
-            print("File form structure: " + json.dumps({"row_inputs": file_inputs, "scripts": scripts}))
+            initializers = []
+            for script in soup.find_all("script"):
+                code = script.get_text()
+                for match in re.finditer(r"(?:var|let|const)\s+(\w+)\s*=\s*([\[{])", code):
+                    try:
+                        value, _ = json.JSONDecoder().raw_decode(code[match.start(2):])
+                    except ValueError:
+                        continue
+                    items = value if isinstance(value, list) else [value]
+                    initializers.append({"variable": match[1], "type": type(value).__name__,
+                                         "keys": sorted({key for item in items if isinstance(item, dict) for key in item}),
+                                         "ids": [item.get("_idRow", item.get("_idFileRow")) for item in items if isinstance(item, dict)],
+                                         "count": len(items)})
+            print("File form structure: " + json.dumps({"row_inputs": file_inputs, "initializers": initializers}))
             raise RuntimeError("Cannot preserve GameBanana's complete file list; no archives uploaded. "
                                f"Form IDs: {sorted(previous_ids)}; active API IDs: {sorted(active_ids)}; "
                                f"all API IDs: {sorted(attached_ids)}")
