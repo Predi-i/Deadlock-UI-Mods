@@ -110,6 +110,12 @@ Repository mod/schema versions are not changed by this workflow.
 GB authentication and file upload/registration reuse its existing upload endpoint
 and Edit form transport. They preserve the existing description, credits, AI
 fields, images and license; the current form schema is checked before uploading.
+Existing file and image rows are initialized by the site's inline JavaScript;
+their hidden HTML fields are empty until browser submission. The publisher reads
+these static JSON initializers without executing JavaScript, restores the form's
+serialization, and preserves all active/archived files, file descriptions,
+archive flags and image captions before appending the new archives. It rejects
+unknown template schemas and checks the full file-ID list against the read API.
 The GB Add Update itself uses the JSON API route and fields from the site's
 [UpsertUpdate component](https://webfiles.gamebanana.com/StrangeBerry/Components/UpsertUpdate.js),
 with the API base used by its

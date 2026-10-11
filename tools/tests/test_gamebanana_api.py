@@ -11,6 +11,49 @@ import gamebanana_api as api
 
 
 class GameBananaApiTests(unittest.TestCase):
+    def dynamic_form(self, archive_value='1'):
+        records = [
+            {'_idFileRow': '1836888', '_sVersion': '1.4', '_sDescription': 'Current "file"', '_bIsArchived': False},
+            {'_idFileRow': '1769992', '_sVersion': '1.3', '_sDescription': 'Historical file', '_bIsArchived': True},
+            {'_sTicketId': 'fixture-image', '_sCaption': 'Original "caption"'},
+        ]
+        template = ('<input name="_sDescription"><input name="_sVersion">'
+                    '<input name="_bIsArchived" type="checkbox" value="' + archive_value + '">'
+                    '<input name="_idFileRow" type="hidden"><input name="_sUploadReceiptId" type="hidden">')
+        return ('<form><section id="Version"><input name="version" value="1.4"></section>'
+                '<input name="files" value=""><input name="images" value="[]"></form>'
+                '<script>var template = \'' + template + '\';' +
+                ''.join('var file = ' + json.dumps(record) + ';' for record in records) + '</script>')
+
+    def test_dynamic_form_restores_all_files_archive_flags_and_image_captions(self):
+        publisher = api.Publisher('fixture', 'fixture', 670840)
+        values = dict(publisher._preserved_form_fields(self.dynamic_form(), 'files', 'images'))
+        files = [dict((field['name'], field['value']) for field in entry) for entry in json.loads(values['files'])]
+        self.assertEqual([entry['_idFileRow'] for entry in files], ['1836888', '1769992'])
+        self.assertNotIn('_bIsArchived', files[0])
+        self.assertEqual(files[1]['_bIsArchived'], '1')
+        self.assertEqual(files[0]['_sDescription'], 'Current "file"')
+        self.assertEqual(files[1]['_sVersion'], '1.3')
+        self.assertEqual(files[0]['_sUploadReceiptId'], 'undefined')
+        self.assertEqual(json.loads(values['images']), [{'name': '_sCaption', 'value': 'Original "caption"'}, {'name': '_sTicketId', 'value': 'fixture-image'}])
+
+    def test_changed_dynamic_archive_control_aborts_instead_of_unarchiving_history(self):
+        publisher = api.Publisher('fixture', 'fixture', 670840)
+        with self.assertRaisesRegex(RuntimeError, 'archive control changed'):
+            publisher._preserved_form_fields(self.dynamic_form(archive_value='2'), 'files', 'images')
+
+    def test_real_post_preserves_dynamic_files_and_images_before_appending_new_archive(self):
+        publisher = api.Publisher('fixture', 'fixture', 670840)
+        response = MagicMock(url='https://gamebanana.com/mods/670840', history=[], headers={}, text='ok', status_code=200)
+        with patch.object(publisher, '_get_edit_page', return_value=self.dynamic_form()), patch.object(publisher, '_find_ownership_fields', return_value=[]), patch.object(publisher, '_request', return_value=response) as request:
+            publisher.post_edit([{'file_row_id': 100, 'upload_receipt_id': 'fixture'}], '1.5', 'files', 'images', preserve_metadata=True)
+        data = dict(request.call_args.kwargs['data'])
+        files = [dict((field['name'], field['value']) for field in entry) for entry in json.loads(data['files'])]
+        self.assertEqual([entry['_idFileRow'] for entry in files], ['1836888', '1769992', '100'])
+        self.assertEqual(files[1]['_bIsArchived'], '1')
+        self.assertEqual(files[2]['_sVersion'], '1.5')
+        self.assertEqual(json.loads(data['images'])[0]['value'], 'Original "caption"')
+
     def test_authenticated_preview_cannot_upload_edit_reserve_or_add_update(self):
         mod = 'Commend-Everyone-Button'
         release = {'tag': 'fixture', 'hashes': {'fixture': 'hash'}}

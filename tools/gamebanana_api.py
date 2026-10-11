@@ -1,6 +1,5 @@
 """Publish reviewed GitHub archives and create a real GameBanana Add Update API record."""
 import argparse
-import ast
 import hashlib
 import json
 import logging
@@ -104,6 +103,51 @@ class Publisher(GameBananaUploader):
     def files(self):
         return self.api(f"Mod/{self.mod_id}/Files", update=True)
 
+    def _preserved_form_fields(self, html, files_field, image_field):
+        fields = self._scrape_form(html)
+        values = dict(fields)
+        file_entries, image_entries = [], []
+        soup = BeautifulSoup(html, "html.parser")
+        for script in soup.find_all("script"):
+            code = script.get_text()
+            for match in re.finditer(r"\bvar\s+file\s*=\s*(\{)", code):
+                try:
+                    record, _ = json.JSONDecoder().raw_decode(code[match.start(1):])
+                except ValueError:
+                    raise RuntimeError("GameBanana file initializer changed; no edit submitted") from None
+                if "_idFileRow" in record:
+                    # The site creates these inputs on page load and serializes
+                    # them on submit. The hidden HTML field starts empty.
+                    template = [BeautifulSoup(tag[0], "html.parser").find("input")
+                                for tag in re.finditer(r"<input\b[^>]*>", code)]
+                    names = {el.get("name") for el in template if el}
+                    expected = {"_sDescription", "_sVersion", "_bIsArchived", "_idFileRow", "_sUploadReceiptId"}
+                    if not expected.issubset(names) or any(name and name.startswith("_") and name not in expected | {"_sCaption", "_sTicketId"} for name in names):
+                        raise RuntimeError("GameBanana file template changed; no edit submitted")
+                    if not any(el and el.get("name") == "_bIsArchived" and el.get("type") == "checkbox" and el.get("value") == "1" for el in template):
+                        raise RuntimeError("GameBanana archive control changed; no edit submitted")
+                    if type(record.get("_bIsArchived")) is not bool or not str(record["_idFileRow"]).isdigit():
+                        raise RuntimeError("GameBanana existing file schema changed; no edit submitted")
+                    entry = [{"name": key, "value": str(record.get(key) or "")} for key in ("_sDescription", "_sVersion")]
+                    if record["_bIsArchived"]:
+                        entry.append({"name": "_bIsArchived", "value": "1"})
+                    entry.extend([{"name": "_idFileRow", "value": str(record["_idFileRow"])},
+                                  {"name": "_sUploadReceiptId", "value": str(record.get("_sUploadReceiptId", "undefined"))}])
+                    file_entries.append(entry)
+                elif "_sTicketId" in record:
+                    image_entries.extend([{"name": "_sCaption", "value": str(record.get("_sCaption") or "")},
+                                          {"name": "_sTicketId", "value": record["_sTicketId"]}])
+        replacements = {}
+        for name, entries in ((files_field, file_entries), (image_field, image_entries)):
+            if entries and name and name in values:
+                try:
+                    current = json.loads(values[name] or "[]")
+                except ValueError:
+                    raise RuntimeError("GameBanana hidden form schema changed; no edit submitted") from None
+                if not current:
+                    replacements[name] = json.dumps(entries)
+        return [(name, replacements.get(name, value)) for name, value in fields]
+
     def attached_files(self, archives, version):
         records = self.files()
         found = []
@@ -151,7 +195,7 @@ class Publisher(GameBananaUploader):
         version_input = version_section.find("input") if version_section else None
         if not files_field or not version_input or not version_input.get("name"):
             raise RuntimeError("GameBanana file/version form changed; no archives uploaded")
-        scraped = self._scrape_form(html)
+        scraped = self._preserved_form_fields(html, files_field, image_field)
         if self.original_metadata.get("_sText") and not self._find_description_field(soup, scraped):
             raise RuntimeError("Cannot preserve GameBanana's description; no archives uploaded")
         original_fields = dict(scraped)
@@ -169,55 +213,6 @@ class Publisher(GameBananaUploader):
         attached_ids = {str(file["_idRow"]) for file in records}
         if previous_ids != attached_ids:
             active_ids = {str(file["_idRow"]) for file in records if not file.get("_bIsArchived")}
-            file_inputs = []
-            for field in soup.select('[name="_idFileRow"]'):
-                file_inputs.append({"id": field.get("value") if str(field.get("value", "")).isdigit() else "not numeric",
-                                    "parents": [re.sub(r"[a-f0-9]{32}", "HASH", parent.get("id", "") + " " + " ".join(parent.get("class", []))) for parent in list(field.parents)[:4]]})
-            initializers = []
-            for script in soup.find_all("script"):
-                code = script.get_text()
-                for match in re.finditer(r"(?:var|let|const)\s+(\w+)\s*=\s*([\[{])", code):
-                    try:
-                        value, _ = json.JSONDecoder().raw_decode(code[match.start(2):])
-                    except ValueError:
-                        continue
-                    items = value if isinstance(value, list) else [value]
-                    initializers.append({"variable": match[1], "type": type(value).__name__,
-                                         "keys": sorted({key for item in items if isinstance(item, dict) for key in item}),
-                                         "ids": [item.get("_idRow", item.get("_idFileRow")) for item in items if isinstance(item, dict)],
-                                         "count": len(items)})
-            print("File form structure: " + json.dumps({"row_inputs": file_inputs, "initializers": initializers}))
-            for script in soup.find_all("script"):
-                code = script.get_text()
-                if "_aFileDetails" not in code:
-                    continue
-                literals = r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\''
-                templates = []
-                for match in re.finditer(r'<(?:input|textarea)\b[^>]*>', code):
-                    element = BeautifulSoup(match[0], "html.parser").find(["input", "textarea"])
-                    if element and str(element.get("name", "")).startswith("_"):
-                        templates.append({"name": element.get("name"), "type": element.get("type", element.name),
-                                          "checkbox_value": element.get("value") if element.get("type") == "checkbox" else None})
-                def redact_literal(match):
-                    try:
-                        value = ast.literal_eval(match[0])
-                    except (ValueError, SyntaxError):
-                        return '"REDACTED"'
-                    if "<input" in value or "<textarea" in value:
-                        template = BeautifulSoup(value, "html.parser")
-                        templates.extend({"name": el.get("name"), "type": el.get("type", el.name),
-                                          "checkbox_value": el.get("value") if el.get("type") == "checkbox" else None}
-                                         for el in template.find_all(["input", "textarea"]))
-                    if value in ("checked", "change", "submit", "input", "true", "false") or (len(value) < 100 and re.search(r"_(?:idFileRow|bIsArchived|sVersion|sDescription|aFileDetails)", value)):
-                        return json.dumps(value)
-                    return '"REDACTED"'
-                masked = re.sub(literals, redact_literal, code)
-                pos = masked.find('"_idFileRow"')
-                print("File template fields: " + json.dumps(templates))
-                print("File initializer code: " + json.dumps(masked[max(0, pos-700):pos+2200]))
-                pos = masked.rfind("serializeArray")
-                print("File serialization code: " + json.dumps(masked[max(0,pos-1000):pos+1500]))
-                print("Archive control expressions: " + json.dumps(re.findall(r"file\._bIsArchived.{0,100}", code)))
             raise RuntimeError("Cannot preserve GameBanana's complete file list; no archives uploaded. "
                                f"Form IDs: {sorted(previous_ids)}; active API IDs: {sorted(active_ids)}; "
                                f"all API IDs: {sorted(attached_ids)}")

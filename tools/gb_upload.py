@@ -254,6 +254,9 @@ class GameBananaUploader:
         logger.info("Scraped %d form fields", len(fields))
         return fields
 
+    def _preserved_form_fields(self, html, files_field, image_field):
+        return self._scrape_form(html)
+
     def _find_ownership_fields(self, html: str) -> list[tuple[str, str]]:
         """Extract the JS-generated ownership/credits fields.
 
@@ -379,7 +382,7 @@ class GameBananaUploader:
     def post_edit(self, uploads: list[dict], version: str,
                   files_json_name: str, image_json_name: str, preserve_metadata=False):
         html = self._get_edit_page()
-        fields = self._scrape_form(html)
+        fields = self._preserved_form_fields(html, files_json_name, image_json_name) if preserve_metadata else self._scrape_form(html)
         soup = BeautifulSoup(html, "html.parser")
         if not preserve_metadata:
             ai_fields = self._ai_usage_fields(soup)
