@@ -4,13 +4,12 @@ import json
 import pathlib
 import re
 import subprocess
-import tempfile
 import xml.etree.ElementTree as ET
 
 try:
-    from native_xml_merge import merge_xml
+    from native_xml_merge import merge_text, merge_xml
 except ModuleNotFoundError:
-    from tools.native_xml_merge import merge_xml
+    from tools.native_xml_merge import merge_text, merge_xml
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "tools/upstream.json"
@@ -23,14 +22,7 @@ def normalize(text):
 
 
 def merge(local, base, upstream):
-    with tempfile.TemporaryDirectory() as folder:
-        files = [pathlib.Path(folder) / name for name in ("mod", "base", "upstream")]
-        for file, content in zip(files, (local, base, upstream)):
-            file.write_text(content, encoding="utf-8", newline="\n")
-        result = subprocess.run(["git", "merge-file", "-p", *map(str, files)], capture_output=True)
-        if result.returncode:
-            raise ValueError("native changes overlap mod edits; resolve manually before updating the base")
-        return result.stdout.decode("utf-8").replace("\r\n", "\n")
+    return merge_text(local, base, upstream)
 
 
 def mod_name(path):

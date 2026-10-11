@@ -93,17 +93,22 @@ def validate_merge(local, base, native, merged):
             raise ValueError("XML edits were not preserved: " + "/".join(path))
 
 
-def merge_xml(local, base, native):
-    # Viewer comments are not merge conflicts; retain the mod's original header.
-    header = re.match(r"^(<!-- xml reconstructed by Source 2 Viewer[^\n]*-->\r?\n)", local)
-    local, base, native = map(normalize_xml, (local, base, native))
+def merge_text(local, base, native):
     with tempfile.TemporaryDirectory() as directory:
         files = [Path(directory) / name for name in ("mod", "base", "native")]
         for path, text in zip(files, (local, base, native)):
             path.write_text(text, encoding="utf-8", newline="\n")
         result = subprocess.run(["git", "merge-file", "-p", *map(str, files)], capture_output=True)
         if result.returncode:
-            raise ValueError("native changes overlap mod XML; manual review required")
+            raise ValueError("native changes overlap mod edits; manual review required")
         merged = result.stdout.decode("utf-8").replace("\r\n", "\n")
+    return merged
+
+
+def merge_xml(local, base, native):
+    # Viewer comments are not merge conflicts; retain the mod's original header.
+    header = re.match(r"^(<!-- xml reconstructed by Source 2 Viewer[^\n]*-->\r?\n)", local)
+    local, base, native = map(normalize_xml, (local, base, native))
+    merged = merge_text(local, base, native)
     validate_merge(local, base, native, merged)
     return (header.group(1).replace("\r\n", "\n") if header else "") + merged
