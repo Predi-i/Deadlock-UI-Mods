@@ -48,6 +48,10 @@ and third-party/. No HP Colors settings or other features are required.
 
 ## Packaging and validation
 
+The individual-mod release workflow builds this mod when its sources change on
+`main`. Its GitHub release includes the complete mod. No GameBanana submission ID
+is configured in the release catalog, so GameBanana publication is unavailable.
+
 Compile/repack the entire mod, including the new relay XML and JS. Merely
 updating the publisher/consumer will not install the relay layout.
 

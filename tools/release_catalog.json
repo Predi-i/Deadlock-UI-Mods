@@ -29,6 +29,12 @@
     ],
     "gamebanana_id": 699538
   },
+  "Djinn-Mark-In-TopBar": {
+    "sources": [
+      "Djinn-Mark-In-TopBar"
+    ],
+    "gamebanana_id": null
+  },
   "Good-Game-After-Death": {
     "sources": [
       "Good-Game-After-Death"

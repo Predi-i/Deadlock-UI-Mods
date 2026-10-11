@@ -29,6 +29,7 @@ Native resource synchronization and offline HUD lookup checks are documented in
 ### Included in this repository, but not published on GameBanana
 
 - `Active-Stats` — mirrors active hero combat buffs and debuffs directly beside the crosshair.
+- [Djinn-Mark-In-TopBar](Djinn-Mark-In-TopBar/README.md) — shows observed Djinn's Mark stacks beneath the matching enemy topbar portrait; included in individual GitHub Releases.
 - [Invite-Everyone-Button](Invite-Everyone-Button/README.md) — adds Invite to Esc, activates eligible playtest invitation cards with bounded parallel requests and closes native result dialogs, with no idle polling.
 - [HUD-Dumper](HUD-Dumper/README.md) — incremental diagnostic HUD captures with label text
   and a Windows receiver that validates packet completeness; full class enumeration is unresolved.
