@@ -29,6 +29,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: python tools/mod_releases.py plan
   release:
+    name: Release ${{ matrix.mod }}
     needs: plan
     if: needs.plan.outputs.changed == 'true'
     runs-on: windows-latest

@@ -138,7 +138,7 @@ class GameBananaUploader:
             match = re.search(r'"sdpid"\s*:\s*"([a-f0-9]{32})"', html)
             if match:
                 sdpid = match.group(1)
-                logger.warning("Found sdpid %s but could not determine field names", sdpid)
+                logger.warning("Found an upload session but could not determine field names")
                 return sdpid, "", ""
             raise RuntimeError(f"Could not find sdpid in edit page HTML ({len(html)} chars)")
 
