@@ -193,6 +193,11 @@ class Publisher(GameBananaUploader):
                     continue
                 literals = r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\''
                 templates = []
+                for match in re.finditer(r'<(?:input|textarea)\b[^>]*>', code):
+                    element = BeautifulSoup(match[0], "html.parser").find(["input", "textarea"])
+                    if element and str(element.get("name", "")).startswith("_"):
+                        templates.append({"name": element.get("name"), "type": element.get("type", element.name),
+                                          "checkbox_value": element.get("value") if element.get("type") == "checkbox" else None})
                 def redact_literal(match):
                     try:
                         value = ast.literal_eval(match[0])
@@ -207,11 +212,12 @@ class Publisher(GameBananaUploader):
                         return json.dumps(value)
                     return '"REDACTED"'
                 masked = re.sub(literals, redact_literal, code)
-                pos = masked.find("var file")
+                pos = masked.find('"_idFileRow"')
                 print("File template fields: " + json.dumps(templates))
                 print("File initializer code: " + json.dumps(masked[max(0, pos-700):pos+2200]))
-                pos = masked.find("serializeArray")
+                pos = masked.rfind("serializeArray")
                 print("File serialization code: " + json.dumps(masked[max(0,pos-1000):pos+1500]))
+                print("Archive control expressions: " + json.dumps(re.findall(r"file\._bIsArchived.{0,100}", code)))
             raise RuntimeError("Cannot preserve GameBanana's complete file list; no archives uploaded. "
                                f"Form IDs: {sorted(previous_ids)}; active API IDs: {sorted(active_ids)}; "
                                f"all API IDs: {sorted(attached_ids)}")
