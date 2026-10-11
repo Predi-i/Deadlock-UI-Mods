@@ -88,6 +88,14 @@ class GameBananaApiTests(unittest.TestCase):
         publisher.wait_update.assert_not_called()
         publisher.add_update.assert_not_called()
 
+    def test_update_retry_cannot_reupload_files_if_read_api_has_not_settled(self):
+        publisher = api.Publisher('fixture', 'fixture', 656390)
+        with patch.object(publisher, 'attached_files', return_value=None), patch.object(publisher, 'metadata') as metadata, patch.object(publisher, 'upload_zip') as upload:
+            with self.assertRaisesRegex(RuntimeError, 'reconcile before uploading'):
+                publisher.register_files([pathlib.Path('fixture.zip')], '1.1', allow_upload=False)
+        metadata.assert_not_called()
+        upload.assert_not_called()
+
     def test_file_registration_waits_for_cache_without_another_upload_or_edit(self):
         publisher = api.Publisher('fixture', 'fixture', 656390)
         previous = [[{'name': '_idFileRow', 'value': '10'}]]

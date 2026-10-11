@@ -117,7 +117,8 @@ update/version before creating another Add Update. Mutating GB requests are not
 blindly retried. File/version and update acknowledgements allow up to 30 seconds
 for cached read APIs to settle, without repeating uploads or edits. Before the
 Add Update POST, its intent and file IDs are saved in the reservation. If its
-response is lost, later runs only look for the existing update; an unacknowledged
+response is lost, later runs only inspect acknowledged files and look for the
+existing update; they cannot upload more files. An unacknowledged
 attempt requires manual reconciliation before another POST. A version changed
 outside the reserved attempt blocks retry.
 A partial or ambiguous failure remains unpublished in the queue;

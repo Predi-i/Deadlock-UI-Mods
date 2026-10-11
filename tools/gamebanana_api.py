@@ -117,10 +117,12 @@ class Publisher(GameBananaUploader):
             found.append(matches[0]["_idRow"])
         return found
 
-    def register_files(self, archives, version):
+    def register_files(self, archives, version, allow_upload=True):
         found = self.attached_files(archives, version)
         if found:
             return found
+        if not allow_upload:
+            raise RuntimeError("Previously submitted Add Update files are not acknowledged; reconcile before uploading again")
         self.original_metadata = self.metadata()
         html = self._get_edit_page()
         sdpid, files_field, image_field = self._get_upload_fields(html)
@@ -270,7 +272,7 @@ def publish(repository, mod, override="", dry_run=False):
         if not reservation:
             reservation = {"hashes": release["hashes"], "version": version, "previous_version": metadata.get("_sVersion")}
             store_record(repository, release["tag"], "gamebanana-progress.json", reservation)
-        file_ids = publisher.register_files(archives, version)
+        file_ids = publisher.register_files(archives, version, allow_upload=not reservation.get("add_update_started"))
         update_id = finish_update(publisher, repository, release, reservation, version, file_ids)
         store_record(repository, release["tag"], "gamebanana-published.json",
                      {"mod": mod, "hashes": release["hashes"], "version": version, "update_id": update_id,
