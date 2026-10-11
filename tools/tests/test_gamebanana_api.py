@@ -41,15 +41,63 @@ class GameBananaApiTests(unittest.TestCase):
 
     def test_missing_api_acknowledgement_cannot_be_reported_as_publication_success(self):
         publisher = api.Publisher('fixture', 'fixture', 656390)
-        with patch.object(publisher, 'find_update', return_value=None), patch.object(publisher, 'api', return_value={}):
+        with patch.object(publisher, 'find_update', return_value=None), patch.object(publisher, 'api', return_value={}), patch.object(api.time, 'sleep'):
             with self.assertRaisesRegex(RuntimeError, 'did not acknowledge'):
                 publisher.add_update('1.1', [100])
 
     def test_success_message_is_resolved_to_existing_record_without_another_post(self):
         publisher = api.Publisher('fixture', 'fixture', 656390)
-        with patch.object(publisher, 'find_update', side_effect=[None, 42]), patch.object(publisher, 'api', return_value={'_sSuccessCode': 'Success'}) as request:
+        with patch.object(publisher, 'find_update', side_effect=[None, None, 42]), patch.object(publisher, 'api', return_value={'_sSuccessCode': 'Success'}) as request, patch.object(api.time, 'sleep') as sleep:
             self.assertEqual(publisher.add_update('1.1', [100]), 42)
             self.assertEqual(request.call_count, 1)
+            sleep.assert_called_once_with(10)
+
+    def test_add_update_intent_is_saved_before_post_and_receipt_failure_prevents_post(self):
+        publisher = MagicMock()
+        events = []
+        publisher.add_update.side_effect = lambda *args: events.append('POST') or 42
+        reservation = {'hashes': {'fixture': 'hash'}, 'version': '1.1', 'previous_version': '1.0'}
+        with patch.object(api, 'store_record', side_effect=lambda *args: events.append('intent')) as store:
+            self.assertEqual(api.finish_update(publisher, 'fixture/repo', {'tag': 'fixture'}, reservation, '1.1', [100]), 42)
+        self.assertEqual(events, ['intent', 'POST'])
+        self.assertEqual(store.call_args.args[3], {**reservation, 'add_update_started': True, 'file_ids': [100]})
+        publisher.add_update.reset_mock()
+        with patch.object(api, 'store_record', side_effect=RuntimeError('receipt unavailable')):
+            with self.assertRaisesRegex(RuntimeError, 'receipt unavailable'):
+                api.finish_update(publisher, 'fixture/repo', {'tag': 'fixture'}, reservation, '1.1', [100])
+        publisher.add_update.assert_not_called()
+
+    def test_retry_of_unknown_post_outcome_only_reads_existing_update(self):
+        publisher = MagicMock()
+        publisher.wait_update.return_value = 42
+        reservation = {'add_update_started': True, 'file_ids': [100]}
+        with patch.object(api, 'store_record') as store:
+            self.assertEqual(api.finish_update(publisher, 'fixture/repo', {'tag': 'fixture'}, reservation, '1.1', [100]), 42)
+            store.assert_not_called()
+        publisher.wait_update.assert_called_once_with('1.1', [100])
+        publisher.add_update.assert_not_called()
+        publisher.wait_update.return_value = None
+        with self.assertRaisesRegex(RuntimeError, 'reconcile'):
+            api.finish_update(publisher, 'fixture/repo', {'tag': 'fixture'}, reservation, '1.1', [100])
+        publisher.add_update.assert_not_called()
+
+    def test_changed_files_after_update_attempt_abort_before_read_or_post(self):
+        publisher = MagicMock()
+        with self.assertRaisesRegex(RuntimeError, 'files changed'):
+            api.finish_update(publisher, 'fixture/repo', {'tag': 'fixture'}, {'add_update_started': True, 'file_ids': [100]}, '1.1', [101])
+        publisher.wait_update.assert_not_called()
+        publisher.add_update.assert_not_called()
+
+    def test_file_registration_waits_for_cache_without_another_upload_or_edit(self):
+        publisher = api.Publisher('fixture', 'fixture', 656390)
+        previous = [[{'name': '_idFileRow', 'value': '10'}]]
+        source = ('<form><section id="Version"><input name="version" value="1.0"></section>'
+                  '<input name="files" value="' + html.escape(json.dumps(previous), quote=True) + '"></form>')
+        with patch.object(publisher, 'attached_files', side_effect=[None, None, [100]]), patch.object(publisher, 'metadata', side_effect=[{'_sVersion': '1.0'}, {'_sVersion': '1.0'}, {'_sVersion': '1.1'}]), patch.object(publisher, '_get_edit_page', return_value=source), patch.object(publisher, '_get_upload_fields', return_value=('receipt', 'files', 'images')), patch.object(publisher, '_find_ownership_fields', return_value=[]), patch.object(publisher, 'files', return_value=[{'_idRow': 10}]), patch.object(publisher, 'upload_zip', return_value={'file_row_id': 100}) as upload, patch.object(publisher, 'post_edit') as edit, patch.object(api.time, 'sleep') as sleep:
+            self.assertEqual(publisher.register_files([pathlib.Path('fixture.zip')], '1.1'), [100])
+        upload.assert_called_once()
+        edit.assert_called_once()
+        sleep.assert_called_once_with(10)
 
     def test_incomplete_edit_file_list_aborts_before_upload_or_submission(self):
         publisher = api.Publisher('fixture', 'fixture', 656390)

@@ -109,7 +109,12 @@ offline tests do not prove that private form/API contracts remain available.
 Before uploading, the selected version is reserved on the release. Retries reuse
 that reservation, inspect acknowledged uploaded files and look for the existing
 update/version before creating another Add Update. Mutating GB requests are not
-blindly retried. A version changed outside the reserved attempt blocks retry.
+blindly retried. File/version and update acknowledgements allow up to 30 seconds
+for cached read APIs to settle, without repeating uploads or edits. Before the
+Add Update POST, its intent and file IDs are saved in the reservation. If its
+response is lost, later runs only look for the existing update; an unacknowledged
+attempt requires manual reconciliation before another POST. A version changed
+outside the reserved attempt blocks retry.
 A partial or ambiguous failure remains unpublished in the queue;
 inspect its GB state before overriding a reserved version. The successful
 `gamebanana-published.json` checkpoint is recorded only after file/version and

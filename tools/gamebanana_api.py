@@ -7,6 +7,7 @@ import os
 import pathlib
 import re
 import tempfile
+import time
 
 import requests
 from gb_upload import GameBananaUploader, BeautifulSoup, GB_BASE, logger
@@ -158,14 +159,17 @@ class Publisher(GameBananaUploader):
                 raise RuntimeError("GameBanana image form is incomplete; no archives uploaded")
         uploads = [self.upload_zip(archive, sdpid) for archive in archives]
         self.post_edit(uploads, version, files_field, image_field, preserve_metadata=True)
-        after = self.metadata()
-        for key in ("_sText", "_aCredits", "_aPreviewMedia", "_sLicense"):
-            if after.get(key) != self.original_metadata.get(key):
-                raise RuntimeError("GameBanana changed submission metadata; inspect it before creating an update")
-        found = self.attached_files(archives, version)
-        if not found or after.get("_sVersion") != version:
-            raise RuntimeError("GameBanana has not acknowledged all files/version; retry after cache settlement")
-        return found
+        for attempt in range(4):
+            after = self.metadata()
+            for key in ("_sText", "_aCredits", "_aPreviewMedia", "_sLicense"):
+                if after.get(key) != self.original_metadata.get(key):
+                    raise RuntimeError("GameBanana changed submission metadata; inspect it before creating an update")
+            found = self.attached_files(archives, version)
+            if found and after.get("_sVersion") == version:
+                return found
+            if attempt < 3:
+                time.sleep(10)
+        raise RuntimeError("GameBanana has not acknowledged all files/version; retry after cache settlement")
 
     def find_update(self, version, file_ids):
         page = 1
@@ -181,6 +185,15 @@ class Publisher(GameBananaUploader):
                 return None
             page += 1
 
+    def wait_update(self, version, file_ids):
+        for attempt in range(4):
+            existing = self.find_update(version, file_ids)
+            if existing:
+                return existing
+            if attempt < 3:
+                time.sleep(10)
+        return None
+
     def add_update(self, version, file_ids):
         existing = self.find_update(version, file_ids)
         if existing:
@@ -193,10 +206,25 @@ class Publisher(GameBananaUploader):
         # The site may acknowledge creation with a success message instead of an ID.
         # Resolve its record through the read API; never repeat the POST blindly.
         if not update_id:
-            update_id = self.find_update(version, file_ids)
+            update_id = self.wait_update(version, file_ids)
         if not update_id:
             raise RuntimeError("GameBanana did not acknowledge Add Update; reconcile before retrying")
         return update_id
+
+
+def finish_update(publisher, repository, release, reservation, version, file_ids):
+    if reservation.get("add_update_started"):
+        if set(reservation.get("file_ids", [])) != set(file_ids):
+            raise RuntimeError("Reserved Add Update files changed; reconcile the publication first")
+        update_id = publisher.wait_update(version, file_ids)
+        if not update_id:
+            raise RuntimeError("Add Update was already attempted but remains unacknowledged; reconcile it before another POST")
+        return update_id
+    # Persist intent before the mutation: a lost response must not cause another
+    # workflow run to POST the same update while the read API is still cached.
+    store_record(repository, release["tag"], "gamebanana-progress.json",
+                 {**reservation, "add_update_started": True, "file_ids": file_ids})
+    return publisher.add_update(version, file_ids)
 
 
 def publish(repository, mod, override="", dry_run=False):
@@ -240,10 +268,10 @@ def publish(repository, mod, override="", dry_run=False):
         if not access.get("_aAccess", {}).get("Update_Add"):
             raise RuntimeError("Authenticated account cannot add updates to this GameBanana submission")
         if not reservation:
-            store_record(repository, release["tag"], "gamebanana-progress.json",
-                         {"hashes": release["hashes"], "version": version, "previous_version": metadata.get("_sVersion")})
+            reservation = {"hashes": release["hashes"], "version": version, "previous_version": metadata.get("_sVersion")}
+            store_record(repository, release["tag"], "gamebanana-progress.json", reservation)
         file_ids = publisher.register_files(archives, version)
-        update_id = publisher.add_update(version, file_ids)
+        update_id = finish_update(publisher, repository, release, reservation, version, file_ids)
         store_record(repository, release["tag"], "gamebanana-published.json",
                      {"mod": mod, "hashes": release["hashes"], "version": version, "update_id": update_id,
                       "file_ids": file_ids, "gamebanana_id": publisher.mod_id})
