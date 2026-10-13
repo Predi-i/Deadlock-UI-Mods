@@ -2,7 +2,7 @@
     'use strict';
 
     const CONFIG = {
-        toggleKey: 'key_m',
+        toggleKey: 'key_å',
         url: 'https://www.google.com/fbx?fbx=snake_arcade',
         windowSize: '600px',
         debounceMs: 200,
