@@ -69,6 +69,12 @@ Install [Reduced CSDK 12](https://deadlockmodding.pages.dev/modding-tools/csdk-1
 
 The builder uses the same core scripts as Deadlock-Mod-Compiler. Keep
 `build_mod_helpers.ps1` beside `build_mod.ps1` when copying the tool.
+MP3 files under `sounds` are converted automatically to 16-bit PCM WAV in the
+temporary content directory before compilation to `.vsnd_c`. FFmpeg must be on
+PATH. The source MP3, sample rate and channel count are preserved; unchanged
+inputs reuse the generated WAV. Refer to the sound's `.vsnd` path in
+`soundevents/*.vsndevts`. Missing FFmpeg, conversion failures and an MP3/WAV pair
+with the same path and stem stop the build before packing.
 TTF fonts and supported precompiled resources are staged directly; unsupported
 formats are reported. HTML/JSON/TXT are not automatically shipped as game assets.
 Changed or removed PNG/TGA files requeue texture descriptors, including custom
@@ -83,6 +89,7 @@ Offline checks (no compiler, packer or VPK filesystem operations):
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File tools/tests/build_mod_regression.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/tests/mp3_regression.ps1
 ```
 
 For a public release build with source comments removed, use `tools\build_mod_strip_comments.bat`

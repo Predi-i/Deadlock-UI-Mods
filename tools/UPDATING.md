@@ -196,6 +196,8 @@ reporting success. It does not create a PR, compile a mod or publish to GB.
   A separate GB API key is not assumed; its authenticated site API uses the
   existing account session. Do not place credentials or webhook URLs in source.
 
+CI uses the same FFmpeg MP3-to-PCM-WAV converter as the local builder before
+sound compilation; the Windows release workflow installs FFmpeg if needed.
 CI prepares PNG/TGA descriptors using the existing local builder's format,
 compiles supported sound/image and XML/CSS/JS resources, and stages supported
 precompiled resources/fonts. HTML/JSON/TXT do not become game assets automatically.

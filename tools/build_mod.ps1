@@ -625,6 +625,7 @@ while ($true) {
             '.js'       = '.vjs_c'
             '.vsndevts' = '.vsndevts_c'
             '.wav'      = '.vsnd_c'
+            '.mp3'      = '.vsnd_c'
             '.vtex'     = '.vtex_c'
             '.vdata'    = '.vdata_c'
             '.vsvg'     = '.vsvg_c'
@@ -636,6 +637,7 @@ while ($true) {
             '.tga'      = '.vtex_c'
         }
         $AutoVtexSourceExts = @('.png', '.tga')
+        $AutoWavSourceExts = @('.mp3')
         $StaleCompiledExts = @('.vxml_c', '.vcss_c', '.vjs_c', '.vsndevts_c', '.vsnd_c', '.vtex_c', '.vdata_c', '.vsvg_c', '.vpcf_c', '.vmdl_c', '.vmat_c')
         $DirectExts = @('.ttf') + $StaleCompiledExts
         $imagesChanged = $false
@@ -646,7 +648,7 @@ while ($true) {
 
         foreach ($file in $SourceFiles) {
             $relPath = $file.FullName.Substring($ModSourcePath.Length + 1)
-            if ($file.Extension -notin ($AllowedExts + $AutoVtexSourceExts + $DirectExts)) {
+            if ($file.Extension -notin ($AllowedExts + $AutoVtexSourceExts + $AutoWavSourceExts + $DirectExts)) {
                 $unsupportedFiles.Add($relPath)
                 continue
             }
@@ -655,6 +657,15 @@ while ($true) {
 
             $compileKey = Get-CompileKeyForFile -FileInfo $file
             $contentDest = Join-Path $TempContent $relPath
+            if ($AutoWavSourceExts -contains $file.Extension) {
+                $wavRelPath = [IO.Path]::ChangeExtension($relPath, '.wav')
+                if (Test-Path -LiteralPath (Join-Path $ModSourcePath $wavRelPath)) {
+                    throw "Conflicting sound inputs: '$relPath' and '$wavRelPath'. Keep only one source for this sound."
+                }
+                $contentDest = Join-Path $TempContent $wavRelPath
+                # The generated WAV stays live on unchanged incremental builds.
+                $CurrentFiles["${SelectedMod}|${wavRelPath}".ToLower()] = $true
+            }
             $compiledDest = $null
             if ($CompileOutputs.ContainsKey($file.Extension)) {
                 $compiledDest = Get-CompiledOutputPath -BaseDir $TempGame -RelativePath $relPath -CompiledExtension $CompileOutputs[$file.Extension]
@@ -684,7 +695,12 @@ while ($true) {
                 $dir = Split-Path $contentDest
                 if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
 
-                Copy-Item -Path $file.FullName -Destination $contentDest -Force
+                if ($AutoWavSourceExts -contains $file.Extension) {
+                    Write-Host "  Converting MP3 to WAV: $relPath" -ForegroundColor DarkGray
+                    Convert-Mp3ToWav -Source $file.FullName -Destination $contentDest
+                } else {
+                    Copy-Item -Path $file.FullName -Destination $contentDest -Force
+                }
 
                 if ($file.Extension -eq '.vtex') {
                     $content = [System.IO.File]::ReadAllText($contentDest)
@@ -695,7 +711,7 @@ while ($true) {
                 }
             }
 
-            if ($AllowedExts -contains $file.Extension -and ($needsCopy -or $needsCompile)) {
+            if (($AllowedExts -contains $file.Extension -or $AutoWavSourceExts -contains $file.Extension) -and ($needsCopy -or $needsCompile)) {
                 $FilesToCompile.Add($contentDest)
             }
             # These resources are consumed directly rather than compiled.

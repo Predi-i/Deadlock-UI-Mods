@@ -1,3 +1,42 @@
+function Convert-Mp3ToWav {
+    param(
+        [Parameter(Mandatory = $true)][string]$Source,
+        [Parameter(Mandatory = $true)][string]$Destination
+    )
+    $ffmpeg = Get-Command -Name 'ffmpeg' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $ffmpeg) {
+        throw 'MP3 conversion requires FFmpeg. Install ffmpeg and add its bin directory to PATH, then restart the builder.'
+    }
+    # Decode into a temporary WAV first; a failed conversion must not replace a
+    # previous successful result or leave a partial file in the incremental cache.
+    $directory = Split-Path $Destination
+    $temporary = Join-Path $directory ('.mp3-convert-' + [guid]::NewGuid().ToString('N') + '.wav')
+    Assert-BuildChildPath -Path $temporary -Parent $directory
+    try {
+        $arguments = @('-nostdin', '-hide_banner', '-loglevel', 'error', '-y', '-i', $Source,
+            '-map', '0:a:0', '-vn', '-c:a', 'pcm_s16le', '-f', 'wav', $temporary)
+        $previousPreference = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            $output = & $ffmpeg.Source @arguments 2>&1
+            $exitCode = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $previousPreference
+        }
+        if ($exitCode -ne 0) {
+            throw "MP3 conversion failed for '$Source' (FFmpeg exit $exitCode): $($output -join [Environment]::NewLine)"
+        }
+        if (-not (Test-Path -LiteralPath $temporary -PathType Leaf) -or (Get-Item -LiteralPath $temporary).Length -le 44) {
+            throw "FFmpeg did not produce a nonempty WAV for '$Source'."
+        }
+        Move-Item -LiteralPath $temporary -Destination $Destination -Force -ErrorAction Stop
+    } finally {
+        if (Test-Path -LiteralPath $temporary) {
+            Remove-Item -LiteralPath $temporary -Force -ErrorAction Stop
+        }
+    }
+}
+
 function Get-NextPakName {
     param([string]$TargetDir)
     $occupied = @{}

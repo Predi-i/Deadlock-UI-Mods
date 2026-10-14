@@ -4,7 +4,9 @@ on:
   push:
     paths:
       - 'tools/build_mod*.ps1'
+      - 'tools/build_ci_release.ps1'
       - 'tools/tests/build_mod_regression.ps1'
+      - 'tools/tests/mp3_regression.ps1'
       - '.github/workflows/compiler-checks.yml'
   workflow_dispatch:
 
@@ -19,7 +21,11 @@ jobs:
       - uses: actions/checkout@v4
       - name: Check isolated logic on Windows PowerShell 5.1
         shell: powershell
-        run: ./tools/tests/build_mod_regression.ps1
+        run: |
+          ./tools/tests/build_mod_regression.ps1
+          ./tools/tests/mp3_regression.ps1
       - name: Check isolated logic on PowerShell 7
         shell: pwsh
-        run: ./tools/tests/build_mod_regression.ps1
+        run: |
+          ./tools/tests/build_mod_regression.ps1
+          ./tools/tests/mp3_regression.ps1

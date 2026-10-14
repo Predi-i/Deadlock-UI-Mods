@@ -4,6 +4,7 @@ param(
     [string]$Output = 'builds'
 )
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'build_mod_helpers.ps1')
 $Output = [System.IO.Path]::GetFullPath($Output)
 $Staging = Join-Path ([System.IO.Path]::GetTempPath()) ('ui-mod-release-' + [guid]::NewGuid().ToString('N'))
 python tools/mod_releases.py stage --mod $Mod --output $Staging
@@ -26,6 +27,13 @@ foreach ($Item in (Get-Content -LiteralPath (Join-Path $Staging 'build-plan.json
     New-Item -ItemType Directory -Path $Content | Out-Null
     Get-ChildItem -LiteralPath $Item.content -Directory | ForEach-Object {
         Copy-Item -LiteralPath $_.FullName -Destination $Content -Recurse
+    }
+    foreach ($Mp3 in (Get-ChildItem -LiteralPath $Content -Recurse -File | Where-Object { $_.Extension -ieq '.mp3' })) {
+        $Wav = [IO.Path]::ChangeExtension($Mp3.FullName, '.wav')
+        if (Test-Path -LiteralPath $Wav) {
+            throw "Conflicting sound inputs: '$($Mp3.FullName)' and '$Wav'. Keep only one source for this sound."
+        }
+        Convert-Mp3ToWav -Source $Mp3.FullName -Destination $Wav
     }
     python tools/prepare_ci_assets.py --content $Content --game $Game
     if ($LASTEXITCODE -ne 0) { throw "Asset preparation failed: $($Item.name)" }

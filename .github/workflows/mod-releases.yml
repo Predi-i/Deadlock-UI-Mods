@@ -80,6 +80,13 @@ jobs:
         run: |
           7z x csdk.zip -oC:/ -y
           if ($LASTEXITCODE -ne 0) { throw 'CSDK extraction failed' }
+      - name: Ensure FFmpeg is available
+        shell: pwsh
+        run: |
+          if (-not (Get-Command ffmpeg -CommandType Application -ErrorAction SilentlyContinue)) {
+            choco install ffmpeg --yes --no-progress
+            if ($LASTEXITCODE -ne 0) { throw 'FFmpeg installation failed' }
+          }
       - name: Compile selected mod and its supported variants
         shell: pwsh
         run: ./tools/build_ci_release.ps1 -Mod $env:RELEASE_MOD
