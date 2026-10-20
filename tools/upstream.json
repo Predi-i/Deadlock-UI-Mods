@@ -156,7 +156,7 @@
     {
       "path": "Parry-Cooldown/panorama/layout/ability_hud_elements/element_gun.xml",
       "upstream": "game/citadel/pak01_dir/panorama/layout/ability_hud_elements/element_gun.xml",
-      "base": "9b616d3093a7f3e25e852ec93c9b818c5d2c94ed",
+      "base": "37f9aebdc62766aa13748f73309b9b8120549833",
       "mode": "merge"
     },
     {
@@ -182,7 +182,7 @@
     {
       "path": "Show-Nicknames-Above-Heroes/panorama/styles/base/unit_status_v2.css",
       "upstream": "game/citadel/pak01_dir/panorama/styles/unit_status_v2.css",
-      "base": "9b616d3093a7f3e25e852ec93c9b818c5d2c94ed",
+      "base": "37f9aebdc62766aa13748f73309b9b8120549833",
       "mode": "copy"
     },
     {
@@ -268,7 +268,7 @@
     {
       "path": "Show-Nicknames-Above-Heroes/panorama/styles/unit_status_v2.css",
       "upstream": "game/citadel/pak01_dir/panorama/styles/unit_status_v2.css",
-      "base": "9b616d3093a7f3e25e852ec93c9b818c5d2c94ed",
+      "base": "37f9aebdc62766aa13748f73309b9b8120549833",
       "mode": "extension"
     },
     {
