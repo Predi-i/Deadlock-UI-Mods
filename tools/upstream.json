@@ -194,7 +194,7 @@
     {
       "path": "Show-Nicknames-In-TopBar/panorama/styles/base/citadel_hud_top_bar.css",
       "upstream": "game/citadel/pak01_dir/panorama/styles/citadel_hud_top_bar.css",
-      "base": "2d87734ca5663301b9cc293131f64d80cee73d38",
+      "base": "fd21313e755aaac0a1625e0851b8d5c3f03ff46d",
       "mode": "copy"
     },
     {
@@ -206,7 +206,7 @@
     {
       "path": "Show-Nicknames-In-TopBar-No-Offsets/panorama/styles/base/citadel_hud_top_bar.css",
       "upstream": "game/citadel/pak01_dir/panorama/styles/citadel_hud_top_bar.css",
-      "base": "2d87734ca5663301b9cc293131f64d80cee73d38",
+      "base": "fd21313e755aaac0a1625e0851b8d5c3f03ff46d",
       "mode": "copy"
     },
     {
@@ -274,13 +274,13 @@
     {
       "path": "Show-Nicknames-In-TopBar/panorama/styles/citadel_hud_top_bar.css",
       "upstream": "game/citadel/pak01_dir/panorama/styles/citadel_hud_top_bar.css",
-      "base": "2d87734ca5663301b9cc293131f64d80cee73d38",
+      "base": "fd21313e755aaac0a1625e0851b8d5c3f03ff46d",
       "mode": "extension"
     },
     {
       "path": "Show-Nicknames-In-TopBar-No-Offsets/panorama/styles/citadel_hud_top_bar.css",
       "upstream": "game/citadel/pak01_dir/panorama/styles/citadel_hud_top_bar.css",
-      "base": "2d87734ca5663301b9cc293131f64d80cee73d38",
+      "base": "fd21313e755aaac0a1625e0851b8d5c3f03ff46d",
       "mode": "extension"
     },
     {
