@@ -249,7 +249,12 @@
       "path": "No-Incoming-Damage/panorama/styles/hud_damage_report.css",
       "upstream": "game/citadel/pak01_dir/panorama/styles/hud_damage_report.css",
       "base": "2d87734ca5663301b9cc293131f64d80cee73d38",
-      "mode": "owned"
+      "mode": "owned",
+      "pending": {
+        "revision": "3cfcaf9ed882f2d85cc5d915315f754790b8ffb7",
+        "reason": "fully owned override changed upstream; manual compatibility review required",
+        "resource": "7dc5b68582920cbc77491915819929a140fc4ccdf0d29e6cda404fbe4403591a"
+      }
     },
     {
       "path": "Show-Nicknames-Above-Heroes/panorama/styles/unit_status.css",
