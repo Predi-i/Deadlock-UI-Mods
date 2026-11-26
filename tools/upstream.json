@@ -182,7 +182,7 @@
     {
       "path": "Show-Nicknames-Above-Heroes/panorama/styles/base/unit_status_v2.css",
       "upstream": "game/citadel/pak01_dir/panorama/styles/unit_status_v2.css",
-      "base": "37f9aebdc62766aa13748f73309b9b8120549833",
+      "base": "77b862290ad3050cafd2e9c3f47e0532e9d6dcfd",
       "mode": "copy"
     },
     {
@@ -230,7 +230,7 @@
     {
       "path": "Djinn-Mark-In-TopBar/panorama/layout/unit_status_overlay_v2.xml",
       "upstream": "game/citadel/pak01_dir/panorama/layout/unit_status_overlay_v2.xml",
-      "base": "2d87734ca5663301b9cc293131f64d80cee73d38",
+      "base": "77b862290ad3050cafd2e9c3f47e0532e9d6dcfd",
       "mode": "merge"
     },
     {
@@ -249,7 +249,12 @@
       "path": "No-Incoming-Damage/panorama/styles/hud_damage_report.css",
       "upstream": "game/citadel/pak01_dir/panorama/styles/hud_damage_report.css",
       "base": "2d87734ca5663301b9cc293131f64d80cee73d38",
-      "mode": "owned"
+      "mode": "owned",
+      "pending": {
+        "revision": "77b862290ad3050cafd2e9c3f47e0532e9d6dcfd",
+        "reason": "fully owned override changed upstream; manual compatibility review required",
+        "resource": "7dc5b68582920cbc77491915819929a140fc4ccdf0d29e6cda404fbe4403591a"
+      }
     },
     {
       "path": "Show-Nicknames-Above-Heroes/panorama/styles/unit_status.css",
@@ -268,7 +273,7 @@
     {
       "path": "Show-Nicknames-Above-Heroes/panorama/styles/unit_status_v2.css",
       "upstream": "game/citadel/pak01_dir/panorama/styles/unit_status_v2.css",
-      "base": "37f9aebdc62766aa13748f73309b9b8120549833",
+      "base": "77b862290ad3050cafd2e9c3f47e0532e9d6dcfd",
       "mode": "extension"
     },
     {
